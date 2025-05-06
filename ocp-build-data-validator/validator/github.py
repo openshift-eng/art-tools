@@ -1,5 +1,6 @@
-from . import support
 import re
+
+from . import support
 
 
 def validate(data, group_cfg):

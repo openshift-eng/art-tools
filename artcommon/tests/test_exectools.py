@@ -6,7 +6,6 @@ Test functions related to controlled command execution
 import asyncio
 import subprocess
 import unittest
-
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import exectools

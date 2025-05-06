@@ -5,20 +5,14 @@ import traceback
 
 import click
 import yaml
+from artcommonlib import exectools, redis
 
-from pyartcd import locks
-from pyartcd import util
-from pyartcd import plashets
-from artcommonlib import exectools
-from pyartcd import constants
-from pyartcd import jenkins
+from pyartcd import constants, jenkins, locks, oc, plashets, util
 from pyartcd import record as record_util
-from pyartcd import oc
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
-from artcommonlib import redis
 from pyartcd.util import mass_rebuild_score
 
 

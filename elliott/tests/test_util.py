@@ -1,8 +1,8 @@
 import unittest
-from flexmock import flexmock
-from elliottlib import util
+
+from elliottlib import brew, util
 from elliottlib.bzutil import Bug
-from elliottlib import brew
+from flexmock import flexmock
 
 
 class TestUtil(unittest.TestCase):

@@ -1,22 +1,21 @@
 import asyncio
 import gzip
-import lzma
 import io
 import logging
+import lzma
 import xml.etree.ElementTree
-import defusedxml.ElementTree as ET
 from dataclasses import dataclass, field
 from logging import Logger
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib import parse
 
 import aiohttp
-from ruamel.yaml import YAML
-from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
-
+import defusedxml.ElementTree as ET
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
-from artcommonlib.rpm_utils import parse_nvr, label_compare
+from artcommonlib.rpm_utils import label_compare, parse_nvr
+from ruamel.yaml import YAML
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
 
 LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {

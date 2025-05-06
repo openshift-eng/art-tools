@@ -4,9 +4,8 @@ from unittest.mock import Mock
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
-from flexmock import flexmock
-
 from doozerlib.source_resolver import SourceResolver
+from flexmock import flexmock
 
 
 class SourceResolverTestCase(TestCase):

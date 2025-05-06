@@ -1,8 +1,8 @@
 import unittest
-from flexmock import flexmock
 
 from artcommonlib.exectools import RetryException
 from doozerlib import distgit
+from flexmock import flexmock
 
 
 class TestDistgitPullImage(unittest.TestCase):

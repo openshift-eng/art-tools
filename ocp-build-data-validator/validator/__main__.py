@@ -3,8 +3,7 @@ import atexit
 import sys
 from multiprocessing import Pool, cpu_count
 
-from . import format, support, schema, github, distgit, cgit
-from . import exceptions, global_session
+from . import cgit, distgit, exceptions, format, github, global_session, schema, support
 
 
 def validate(file, exclude_vpn, schema_only):

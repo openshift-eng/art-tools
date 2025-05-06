@@ -4,10 +4,10 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, Union, cast
 
 import click
 import koji
-
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.release_util import split_el_suffix_in_release
+
 from doozerlib import brew
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.constants import BREWWEB_URL

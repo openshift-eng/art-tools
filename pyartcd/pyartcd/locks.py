@@ -1,10 +1,11 @@
 import enum
 import logging
 from types import coroutine
-from tenacity import retry, retry_if_exception_type, wait_fixed, stop_after_attempt, TryAgain
-from aioredlock import Aioredlock, LockError
 
+from aioredlock import Aioredlock, LockError
 from artcommonlib import redis
+from tenacity import TryAgain, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+
 from pyartcd import constants
 
 

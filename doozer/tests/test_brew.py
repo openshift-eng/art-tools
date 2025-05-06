@@ -2,7 +2,6 @@ import unittest
 from unittest import mock
 
 import koji
-
 from doozerlib import brew
 
 

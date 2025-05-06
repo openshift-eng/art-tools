@@ -1,21 +1,21 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_APPLICATION, KIND_RELEASE_PLAN
-from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
+from artcommonlib.model import Model
+from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
+from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
-    ShipmentConfig,
-    Shipment,
-    ShipmentEnv,
+    Data,
     Environments,
     Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
+    ShipmentEnv,
     Snapshot,
     Spec,
-    Data,
-    ReleaseNotes,
 )
-from artcommonlib.model import Model
 
 
 class TestWatchReleaseCli(IsolatedAsyncioTestCase):

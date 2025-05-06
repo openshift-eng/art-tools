@@ -1,15 +1,15 @@
-import os
-from typing import Optional
-import click
-import shutil
 import asyncio
-from tenacity import AsyncRetrying, stop_after_attempt
+import os
+import shutil
+from typing import Optional
 
-from pyartcd.runtime import Runtime
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+import click
 from artcommonlib.exectools import cmd_assert_async
 from doozerlib.util import mkdirs
+from tenacity import AsyncRetrying, stop_after_attempt
 
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.runtime import Runtime
 
 N_RETRIES = 4
 ALL_ARCHES_LIST = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]

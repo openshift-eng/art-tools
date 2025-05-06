@@ -1,34 +1,35 @@
-from pathlib import Path
-import tempfile
-import click
+import asyncio
 import json
 import logging
 import os
-import requests
-import asyncio
+import tempfile
 import traceback
+from pathlib import Path
 from typing import Optional, cast
 
-from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
-from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.arch_util import brew_arch_for_go_arch
+import click
+import requests
 from artcommonlib import exectools
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
+from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
+
 from pyartcd import constants, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
+    default_release_suffix,
     get_assembly_type,
+    get_microshift_builds,
+    get_release_name_for_assembly,
     isolate_el_version_in_release,
     load_group_config,
     load_releases_config,
-    default_release_suffix,
-    get_release_name_for_assembly,
-    get_microshift_builds,
 )
-from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
-from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 yaml = new_roundtrip_yaml_handler()
 

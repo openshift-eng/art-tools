@@ -1,6 +1,7 @@
 import click
-from doozerlib.cli import cli
+
 from doozerlib import util
+from doozerlib.cli import cli
 
 
 @cli.command(

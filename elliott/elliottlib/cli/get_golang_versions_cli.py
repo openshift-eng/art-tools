@@ -1,11 +1,10 @@
 import click
-
-from artcommonlib import rhcos, format_util, logutil
+from artcommonlib import format_util, logutil, rhcos
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
-from elliottlib import util, errata
-from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
-from elliottlib.cli.common import click_coroutine
+
+from elliottlib import errata, util
+from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 
 _LOGGER = logutil.get_logger(__name__)
 

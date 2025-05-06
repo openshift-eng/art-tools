@@ -2,8 +2,8 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from artcommonlib.model import Model
-from doozerlib.cli.scan_sources import ConfigScanSources
 from doozerlib import rhcos
+from doozerlib.cli.scan_sources import ConfigScanSources
 
 
 class TestScanSourcesCli(TestCase):

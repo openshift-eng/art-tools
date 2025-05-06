@@ -4,7 +4,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence, Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from artcommonlib import exectools
 

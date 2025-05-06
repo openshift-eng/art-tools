@@ -1,23 +1,23 @@
 import base64
-import click
-import os
-import yaml
-import sys
 import io
+import os
 import pathlib
+import sys
 from typing import Dict
+
+import click
+import yaml
+from artcommonlib import gitdata
+from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
+from artcommonlib.metadata import CONFIG_MODES
 from ghapi.core import GhApi
 
-from artcommonlib import gitdata
-from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
-from artcommonlib.metadata import CONFIG_MODES
-from doozerlib import metadata, Runtime
+from doozerlib import Runtime, metadata
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.util import dict_get
-from doozerlib.exceptions import DoozerFatalError
-
 
 # config:* commands are a special beast and
 # requires the same non-standard runtime options

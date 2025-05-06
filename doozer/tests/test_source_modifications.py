@@ -3,10 +3,9 @@ import pathlib
 import shutil
 import tempfile
 import unittest
-
 from unittest import mock
-import yaml.scanner
 
+import yaml.scanner
 from doozerlib.source_modifications import AddModifier, RemoveModifier, SourceModifierFactory
 
 

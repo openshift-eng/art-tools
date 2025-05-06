@@ -3,11 +3,11 @@ import sys
 from functools import update_wrapper
 
 import click
-
 from artcommonlib import dotconfig
-from artcommonlib.format_util import red_prefix, green_prefix, yellow_print
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
-from elliottlib import Runtime, constants, __version__, errata
+from artcommonlib.format_util import green_prefix, red_prefix, yellow_print
+
+from elliottlib import Runtime, __version__, constants, errata
 from elliottlib.cli import cli_opts
 
 

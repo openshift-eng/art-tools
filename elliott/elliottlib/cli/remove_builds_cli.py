@@ -1,12 +1,12 @@
-import click
 import sys
+
+import click
+from artcommonlib import logutil
 from errata_tool import ErrataException
 
-from artcommonlib import logutil
 from elliottlib import Runtime, errata
 from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.util import ensure_erratatool_auth
-
 
 LOGGER = logutil.get_logger(__name__)
 

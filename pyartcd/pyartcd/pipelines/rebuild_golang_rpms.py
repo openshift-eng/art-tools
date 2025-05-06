@@ -1,20 +1,21 @@
-import click
-import koji
+import asyncio
 import datetime
 import logging
 import os
-import asyncio
 from typing import List
-from ghapi.all import GhApi
 
+import click
+import koji
+from artcommonlib import exectools
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib import exectools
+from elliottlib import util as elliottutil
+from ghapi.all import GhApi
+
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.pipelines.update_golang import extract_and_validate_golang_nvrs, is_latest_and_available, move_golang_bugs
 from pyartcd.runtime import Runtime
-from elliottlib import util as elliottutil
-from pyartcd.pipelines.update_golang import is_latest_and_available, extract_and_validate_golang_nvrs, move_golang_bugs
 
 try:
     from specfile import Specfile  # Linux only

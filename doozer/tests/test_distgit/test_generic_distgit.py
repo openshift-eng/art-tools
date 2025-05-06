@@ -1,13 +1,12 @@
 import errno
 import os
 import unittest
-
-from flexmock import flexmock
 from unittest import mock
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from doozerlib import distgit
+from flexmock import flexmock
 
 from .support import MockConfig, MockMetadata, MockRuntime, TestDistgit
 

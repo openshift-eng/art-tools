@@ -2,16 +2,16 @@ import asyncio
 import json
 import os
 import sys
+from typing import Dict, List, Optional, Set, Union
+
 import click
-from typing import Dict, List, Optional, Union, Set
+from artcommonlib import exectools
 from semver import VersionInfo
 
-from artcommonlib import exectools
-from pyartcd.signatory import SigstoreSignatory
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.runtime import Runtime, GroupRuntime
-
+from pyartcd.runtime import GroupRuntime, Runtime
+from pyartcd.signatory import SigstoreSignatory
 
 CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
 

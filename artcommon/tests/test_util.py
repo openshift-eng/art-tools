@@ -1,8 +1,7 @@
 import unittest
 
 import yaml
-
-from artcommonlib import util, build_util, release_util
+from artcommonlib import build_util, release_util, util
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import deep_merge, isolate_major_minor_in_group

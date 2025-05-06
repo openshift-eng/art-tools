@@ -10,12 +10,12 @@ from typing import Dict, List, Optional
 
 import aiofiles
 import aiofiles.os
-
 from artcommonlib import exectools
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
+
 from doozerlib import brew
-from doozerlib.build_visibility import get_visibility_suffix, BuildVisibility
+from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata

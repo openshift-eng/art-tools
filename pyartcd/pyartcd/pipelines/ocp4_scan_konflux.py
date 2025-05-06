@@ -2,13 +2,12 @@ import logging
 
 import click
 import yaml
+from artcommonlib import exectools
 
-from pyartcd import util, jenkins, locks
-from pyartcd import constants
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+from pyartcd import constants, jenkins, locks, util
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from artcommonlib import exectools
 
 
 class Ocp4ScanPipeline:

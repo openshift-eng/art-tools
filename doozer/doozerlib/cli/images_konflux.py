@@ -8,12 +8,14 @@ import click
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
+    KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
-    KonfluxBuildOutcome,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.telemetry import start_as_current_span_async
+from opentelemetry import trace
+
 from doozerlib import constants
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
@@ -29,7 +31,6 @@ from doozerlib.cli import (
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
-from opentelemetry import trace
 
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)

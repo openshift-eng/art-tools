@@ -1,4 +1,5 @@
 import unittest
+
 from elliottlib.bzutil import JIRABugTracker
 from flexmock import flexmock
 

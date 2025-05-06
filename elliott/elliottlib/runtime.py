@@ -1,28 +1,27 @@
 import atexit
-from contextlib import contextmanager
 import os
 import re
 import shutil
 import tempfile
-from multiprocessing import Lock, RLock
 import time
+from contextlib import contextmanager
+from multiprocessing import Lock, RLock
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
 import click
 import yaml
-
-from artcommonlib import gitdata
-from artcommonlib import exectools
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
-from artcommonlib.model import Model, Missing
-from artcommonlib.runtime import GroupRuntime
+from artcommonlib import exectools, gitdata
+from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.model import Missing, Model
+from artcommonlib.runtime import GroupRuntime
+
 from elliottlib import brew, constants
+from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.rpmcfg import RPMMetadata
-from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 
 
 def remove_tmp_working_dir(runtime):

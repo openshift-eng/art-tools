@@ -1,33 +1,30 @@
-import click
-import yaml
-import sys
-import subprocess
-import urllib.request
-import urllib.parse
-import urllib.error
-from typing import cast
-import traceback
-import koji
 import io
-import urllib
 import pathlib
-from future import standard_library
+import subprocess
+import sys
+import traceback
+import urllib
+import urllib.error
+import urllib.parse
+import urllib.request
+from numbers import Number
+from typing import Optional, cast
 
+import click
+import koji
+import yaml
 from artcommonlib import exectools
-from artcommonlib.format_util import green_print, yellow_print, color_print
+from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
-from doozerlib import Runtime, state
-from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.brew import get_watch_task_info_copy
-from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch, option_commit_message, option_push
-
-from doozerlib import coverity
-from doozerlib.exceptions import DoozerFatalError
-from typing import Optional
-from numbers import Number
 from dockerfile_parse import DockerfileParser
+from future import standard_library
 
+from doozerlib import Runtime, coverity, state
+from doozerlib.brew import get_watch_task_info_copy
+from doozerlib.cli import cli, option_commit_message, option_push, pass_runtime, validate_semver_major_minor_patch
+from doozerlib.distgit import ImageDistGitRepo
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_resolver import SourceResolver
 
 

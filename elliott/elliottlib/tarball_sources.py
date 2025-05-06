@@ -1,13 +1,13 @@
-from urllib.parse import urldefrag
-import os
-from io import BytesIO
 import collections
+import os
 import tarfile
-import pygit2
-import errata_tool
-from future.standard_library import install_aliases
+from io import BytesIO
+from urllib.parse import urldefrag
 
+import errata_tool
+import pygit2
 from artcommonlib import logutil
+from future.standard_library import install_aliases
 
 install_aliases()
 

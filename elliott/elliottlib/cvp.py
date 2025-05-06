@@ -7,11 +7,11 @@ from urllib.parse import urljoin
 
 import aiohttp
 from aiohttp.client_exceptions import ClientResponseError, ServerDisconnectedError
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.constants import BREW_DOWNLOAD_URL
+from artcommonlib.exectools import limit_concurrency
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.exectools import limit_concurrency
-from artcommonlib.constants import BREW_DOWNLOAD_URL
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.resultsdb import ResultsDBAPI
 from elliottlib.util import all_same, parse_nvr

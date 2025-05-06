@@ -3,6 +3,7 @@
 import unittest
 
 from dockerfile_parse import DockerfileParser
+
 from tests_functional import DoozerRunnerTestCase
 
 

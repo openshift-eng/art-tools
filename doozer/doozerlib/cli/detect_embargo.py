@@ -6,10 +6,10 @@ from urllib.parse import urlparse
 
 import click
 import yaml
-
+from artcommonlib import exectools, rhcos
 from artcommonlib.format_util import green_print
+
 from doozerlib import Runtime, brew
-from artcommonlib import rhcos, exectools
 from doozerlib import build_status_detector as bs_detector
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.exceptions import DoozerFatalError

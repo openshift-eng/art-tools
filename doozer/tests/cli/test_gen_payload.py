@@ -1,24 +1,21 @@
+import io
 import os
 import pathlib
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from flexmock import flexmock
-
-import io
-from unittest.mock import AsyncMock
-import yaml
 import openshift_client as oc
-
-from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue
+import yaml
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes
 from artcommonlib.model import Model
-from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.cli import release_gen_payload as rgp_cli
-from doozerlib.build_info import BrewBuildRecordInspector
-from doozerlib.image import ImageMetadata
-from doozerlib.exceptions import DoozerFatalError
-from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
+from doozerlib import rhcos
+from doozerlib.assembly_inspector import AssemblyInspector
+from doozerlib.build_info import BrewBuildRecordInspector
+from doozerlib.cli import release_gen_payload as rgp_cli
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.image import ImageMetadata
+from flexmock import flexmock
 
 
 async def no_sleep(arg):

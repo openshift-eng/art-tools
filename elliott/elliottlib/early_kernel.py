@@ -1,11 +1,13 @@
-from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
 import re
+from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
+
 import koji
+from errata_tool import ErrataException, Erratum
 from errata_tool.build import Build
-from errata_tool import Erratum, ErrataException
-from jira import Issue, JIRA
-from elliottlib.config_model import KernelBugSweepConfig
+from jira import JIRA, Issue
+
 from elliottlib import brew
+from elliottlib.config_model import KernelBugSweepConfig
 
 
 def get_tracker_builds_and_tags(

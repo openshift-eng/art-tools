@@ -1,10 +1,11 @@
-import click
 from pprint import pprint
 
-from artcommonlib.assembly import AssemblyIssueCode, AssemblyIssue
+import click
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode
+
+from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.cli.release_gen_payload import PayloadGenerator
-from doozerlib.assembly_inspector import AssemblyInspector
 
 
 @cli.command("inspect:stream", short_help="Inspect stream assembly for assembly issues")

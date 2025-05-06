@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
-
 from doozerlib import constants
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
 

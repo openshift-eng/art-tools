@@ -1,12 +1,10 @@
-import unittest
-
-import re
 import datetime
-
+import re
+import unittest
 from unittest.mock import MagicMock, Mock
 
-from elliottlib.metadata import Metadata
 from artcommonlib.brew import BuildStates
+from elliottlib.metadata import Metadata
 
 
 class TestMetadata(unittest.TestCase):

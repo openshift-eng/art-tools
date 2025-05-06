@@ -8,8 +8,8 @@ in a working directory other than the CWD and return without needing to
 explicitly handle it.
 """
 
-import threading
 import pathlib
+import threading
 
 
 class Dir(object):

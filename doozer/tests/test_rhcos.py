@@ -7,10 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from urllib.error import URLError
 
 import yaml
-
 from artcommonlib.model import Model
-from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
+from doozerlib import rhcos
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 

@@ -1,51 +1,45 @@
+import atexit
+import datetime
+import io
 import itertools
+import os
+import pathlib
+import re
+import shutil
+import signal
+import tempfile
+import time
+import urllib.parse
+from contextlib import contextmanager
+from multiprocessing import Lock, RLock
+from typing import Dict, List, Optional, Tuple, Union
+
+import click
+import yaml
 from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import (
     AssemblyTypes,
-    assembly_type,
     assembly_basis_event,
     assembly_group_config,
     assembly_streams_config,
+    assembly_type,
 )
 from artcommonlib.konflux.konflux_build_record import KonfluxRecord
-from artcommonlib.model import Model, Missing
+from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import isolate_el_version_in_brew_tag, deep_merge
-from doozerlib.brew import brew_event_from_datetime
-from doozerlib.record_logger import RecordLogger
-from doozerlib.source_resolver import SourceResolver
-
-from contextlib import contextmanager
-
-import os
-import tempfile
-import shutil
-import atexit
-import datetime
-import yaml
-import click
-import urllib.parse
-import signal
-import io
-import pathlib
-from typing import Optional, List, Dict, Tuple, Union
-import time
-import re
-
+from artcommonlib.runtime import GroupRuntime
+from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
 from jira import JIRA
 
-from artcommonlib.runtime import GroupRuntime
-from doozerlib import dblib
-
-from doozerlib.image import ImageMetadata
-from doozerlib.rpmcfg import RPMMetadata
-from doozerlib import state
-from multiprocessing import Lock, RLock
-from doozerlib.repos import Repos
-from doozerlib.exceptions import DoozerFatalError
-from doozerlib import util
-from doozerlib import brew
+from doozerlib import brew, dblib, state, util
+from doozerlib.brew import brew_event_from_datetime
 from doozerlib.build_status_detector import BuildStatusDetector
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.image import ImageMetadata
+from doozerlib.record_logger import RecordLogger
+from doozerlib.repos import Repos
+from doozerlib.rpmcfg import RPMMetadata
+from doozerlib.source_resolver import SourceResolver
 
 # Values corresponds to schema for group.yml: freeze_automation. When
 # 'yes', doozer itself will inhibit build/rebase related activity

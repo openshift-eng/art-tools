@@ -2,11 +2,10 @@ import asyncio
 import base64
 from typing import Dict, Iterable, List, Optional, Set, Union, cast
 from urllib.parse import quote, urlparse
-from aiohttp import ClientResponse, ClientResponseError, ClientTimeout
 
 import aiohttp
 import gssapi
-
+from aiohttp import ClientResponse, ClientResponseError, ClientTimeout
 from artcommonlib import logutil
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.rpm_utils import parse_nvr

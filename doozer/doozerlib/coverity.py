@@ -1,14 +1,13 @@
-import os
 import hashlib
-import pathlib
 import json
-from typing import List, Optional
+import os
+import pathlib
 import shutil
-
-from dockerfile_parse import DockerfileParser
+from typing import List, Optional
 
 from artcommonlib import exectools
 from artcommonlib.pushd import Dir
+from dockerfile_parse import DockerfileParser
 
 COVSCAN_ALL_JS_FILENAME = 'all_results.js'
 COVSCAN_DIFF_JS_FILENAME = 'diff_results.js'

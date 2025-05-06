@@ -1,12 +1,11 @@
 import os
 from typing import Optional
-import yaml
 
 import click
-
+import yaml
 from artcommonlib import exectools
-from pyartcd import constants, util, locks
-from pyartcd import jenkins
+
+from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime

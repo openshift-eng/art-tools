@@ -1,18 +1,18 @@
 import asyncio
+import fnmatch
 import json
 import os
 import threading
 import time
-import fnmatch
-import requests
-import yaml
 from typing import Dict, List, cast
 
+import requests
+import yaml
 from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
-from doozerlib.repodata import Repodata, RepodataLoader
-from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_TMP_PATH, KONFLUX_REPO_CA_BUNDLE_FILENAME
 
+from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
+from doozerlib.repodata import Repodata, RepodataLoader
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
 

@@ -1,16 +1,17 @@
 import os
 import re
 import subprocess
-import requests
-import yaml
+
 import click
 import koji
-from errata_tool import Erratum
-
+import requests
+import yaml
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
 from artcommonlib.util import isolate_major_minor_in_group
-from pyartcd import util, jenkins
+from errata_tool import Erratum
+
+from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 

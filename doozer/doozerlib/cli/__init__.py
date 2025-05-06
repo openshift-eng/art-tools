@@ -4,9 +4,9 @@ import sys
 from functools import update_wrapper
 
 import click
-
 from artcommonlib import dotconfig
 from artcommonlib.format_util import yellow_print
+
 from doozerlib import __version__
 from doozerlib.cli import cli_opts
 from doozerlib.runtime import Runtime

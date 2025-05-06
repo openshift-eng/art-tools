@@ -1,23 +1,24 @@
 import asyncio
 import json
-import tempfile
 import os
+import tempfile
 from typing import Dict, List, Optional, Tuple
 from urllib import request
 from urllib.error import URLError
-import koji
-from tenacity import retry, stop_after_attempt, wait_fixed
 
+import koji
+from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from doozerlib import brew, util
+from doozerlib.constants import ART_PROD_IMAGE_REPO
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from doozerlib.constants import ART_PROD_IMAGE_REPO
-from artcommonlib import rhcos, logutil, exectools
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
 logger = logutil.get_logger(__name__)
 

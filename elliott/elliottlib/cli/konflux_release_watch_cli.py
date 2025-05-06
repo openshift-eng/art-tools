@@ -3,14 +3,14 @@ import sys
 from datetime import timedelta
 
 import click
-
-from elliottlib.cli.konflux_release_cli import konflux_release_cli
-from elliottlib.cli.common import click_coroutine
-from elliottlib.runtime import Runtime
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_client import KonfluxClient
 from artcommonlib import logutil
 from artcommonlib import util as art_util
+from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
+
+from elliottlib.cli.common import click_coroutine
+from elliottlib.cli.konflux_release_cli import konflux_release_cli
+from elliottlib.runtime import Runtime
 
 LOGGER = logutil.get_logger(__name__)
 

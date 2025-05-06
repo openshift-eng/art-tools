@@ -1,17 +1,15 @@
 import traceback
 import unittest
-
-from click.testing import CliRunner
-from flexmock import flexmock
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
+from click.testing import CliRunner
 from elliottlib import errata
-from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
-from elliottlib.cli.common import cli, Runtime
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
-from elliottlib.cli.find_bugs_sweep_cli import extras_bugs, get_assembly_bug_ids, categorize_bugs_by_type
+from elliottlib.cli.common import Runtime, cli
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, categorize_bugs_by_type, extras_bugs, get_assembly_bug_ids
+from elliottlib.exceptions import ElliottFatalError
+from flexmock import flexmock
 
 
 class TestFindBugsMode(unittest.TestCase):

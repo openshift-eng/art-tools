@@ -10,22 +10,21 @@ Classes representing an ERRATUM (a single errata)
 
 import datetime
 import json
-import ssl
 import re
+import ssl
+from functools import lru_cache
+from typing import Dict, List
+
 import click
 import requests
-from functools import lru_cache
-
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print
-from elliottlib import exceptions, constants, brew
-from elliottlib.util import chunk
-from elliottlib import bzutil
+from errata_tool import ErrataConnector, ErrataException, Erratum
 from requests_gssapi import HTTPSPNEGOAuth
-from errata_tool import Erratum, ErrataException, ErrataConnector
-from typing import List, Dict
+from tenacity import retry, stop_after_attempt, wait_fixed
+
+from elliottlib import brew, bzutil, constants, exceptions
+from elliottlib.util import chunk
 
 logger = logutil.get_logger(__name__)
 

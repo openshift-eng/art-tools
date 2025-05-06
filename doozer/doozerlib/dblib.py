@@ -1,15 +1,15 @@
-from future.utils import as_native_str
-import time
+import datetime
+import functools
 import os
 import threading
+import time
 import traceback
 
-from artcommonlib.model import Missing
-from doozerlib import constants
-import functools
-import datetime
-
 from artcommonlib.lock import get_named_semaphore
+from artcommonlib.model import Missing
+from future.utils import as_native_str
+
+from doozerlib import constants
 
 try:
     import mysql.connector as mysql_connector

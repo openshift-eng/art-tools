@@ -1,11 +1,11 @@
 import os
 from datetime import datetime, timezone
 
+from artcommonlib import logutil
+from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
 from ghapi.all import GhApi
 
-from artcommonlib import logutil
-from artcommonlib.pushd import Dir
 from doozerlib.constants import BREWWEB_URL, GITHUB_TOKEN
 
 LOGGER = logutil.get_logger(__name__)

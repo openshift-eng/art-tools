@@ -1,11 +1,11 @@
 from unittest import TestCase
 
 from doozerlib.build_visibility import (
-    get_build_system,
-    is_release_embargoed,
-    get_visibility_suffix,
     BuildVisibility,
     get_all_visibility_suffixes,
+    get_build_system,
+    get_visibility_suffix,
+    is_release_embargoed,
     isolate_pflag_in_release,
 )
 

@@ -4,7 +4,6 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 import yaml
-
 from doozerlib.cli import detect_embargo
 
 

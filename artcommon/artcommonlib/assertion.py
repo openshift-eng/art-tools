@@ -6,8 +6,8 @@ The use of the FileNotFound exception makes this Python3 ready.
 Making them functions keeps the exception definition localized.
 """
 
-import os
 import errno
+import os
 
 
 def isdir(path, message):

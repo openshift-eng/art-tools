@@ -15,18 +15,17 @@ from pathlib import Path
 from sys import getsizeof, stderr
 from typing import Dict, List, Optional, Union
 
+import artcommonlib
 import semver
 import yaml
-from async_lru import alru_cache
-from tenacity import retry, wait_fixed, stop_after_attempt
-
-import artcommonlib
 from artcommonlib import exectools
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
+from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
-from artcommonlib.model import Model, Missing
+from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_major_minor_in_group
+from async_lru import alru_cache
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 try:
     from reprlib import repr

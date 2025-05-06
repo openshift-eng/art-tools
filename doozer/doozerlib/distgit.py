@@ -14,53 +14,53 @@ import time
 import traceback
 from datetime import datetime, timezone
 from multiprocessing import Lock
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, Set, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union, cast
 
 import aiofiles
 import bashlex
 import requests
 import yaml
+from artcommonlib import assertion, exectools, logutil
+from artcommonlib.brew import BuildStates
+from artcommonlib.constants import GIT_NO_PROMPTS
+from artcommonlib.format_util import yellow_print
+from artcommonlib.git_helper import gather_git, git_clone
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.lock import get_named_semaphore
+from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.pushd import Dir
+from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    deep_merge,
+    isolate_el_version_in_brew_tag,
+    isolate_rhel_major_from_distgit_branch,
+)
 from dockerfile_parse import DockerfileParser
 from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
 import doozerlib
-from artcommonlib import assertion, logutil, exectools
-from artcommonlib.constants import GIT_NO_PROMPTS
-from artcommonlib.format_util import yellow_print
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
-from artcommonlib.model import Missing, Model, ListModel
-from artcommonlib.pushd import Dir
-from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
-from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import state, util
-from artcommonlib.brew import BuildStates
+from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.build_visibility import (
-    is_release_embargoed,
+    BuildVisibility,
     get_all_visibility_suffixes,
     get_visibility_suffix,
-    BuildVisibility,
+    is_release_embargoed,
     isolate_pflag_in_release,
 )
+from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.build_info import BrewBuildRecordInspector
-from artcommonlib.git_helper import git_clone, gather_git
-from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import (
-    convert_remote_git_to_https,
-    isolate_rhel_major_from_distgit_branch,
-    deep_merge,
-    isolate_el_version_in_brew_tag,
-)
-from doozerlib.comment_on_pr import CommentOnPr
-from doozerlib.util import extract_version_fields
 from doozerlib.source_resolver import SourceResolver
+from doozerlib.util import extract_version_fields
 
 if TYPE_CHECKING:
-    from doozerlib.metadata import Metadata
     from doozerlib.image import ImageMetadata
+    from doozerlib.metadata import Metadata
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'

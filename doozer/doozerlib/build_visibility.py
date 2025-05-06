@@ -1,6 +1,5 @@
-from enum import Enum
-
 import re
+from enum import Enum
 from typing import List, Optional
 
 # from doozerlib.util import isolate_pflag_in_release

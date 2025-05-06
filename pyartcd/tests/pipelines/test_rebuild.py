@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+
 from pyartcd import constants
 from pyartcd.pipelines.rebuild import PlashetBuildResult, RebuildPipeline, RebuildType
 

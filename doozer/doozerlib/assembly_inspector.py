@@ -1,28 +1,26 @@
-from typing import Any, List, Dict, Optional, cast
-
-from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.assembly import (
-    AssemblyTypes,
-    assembly_type,
-    assembly_permits,
-    assembly_rhcos_config,
-    AssemblyIssueCode,
-    AssemblyIssue,
-)
-from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.rpm_utils import parse_nvr, compare_nvr
-from doozerlib.plashet import PlashetBuilder
-
-from koji import ClientSession
+from typing import Any, Dict, List, Optional, cast
 
 import artcommonlib.util as artutil
-from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import (
+    AssemblyIssue,
+    AssemblyIssueCode,
+    AssemblyTypes,
+    assembly_permits,
+    assembly_rhcos_config,
+    assembly_type,
+)
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
+from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from koji import ClientSession
 
-from doozerlib import brew, util, Runtime
+from doozerlib import Runtime, brew, util
 from doozerlib.build_info import BuildRecordInspector
+from doozerlib.plashet import PlashetBuilder
+from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
+from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.rhcos import RHCOSBuildInspector, RHCOSBuildFinder
-from artcommonlib.rhcos import get_container_configs, RhcosMissingContainerException
 from doozerlib.source_resolver import SourceResolver
 
 

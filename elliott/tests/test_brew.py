@@ -2,13 +2,13 @@
 Test the brew related functions/classes
 """
 
-from flexmock import flexmock
-
-from tenacity import wait_none
 import unittest
 from unittest import mock
 
-from elliottlib import exceptions, constants, brew, errata
+from elliottlib import brew, constants, errata, exceptions
+from flexmock import flexmock
+from tenacity import wait_none
+
 from tests import test_structures
 
 

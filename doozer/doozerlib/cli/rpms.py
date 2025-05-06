@@ -1,18 +1,18 @@
 import asyncio
-import os
-from datetime import datetime
-
-import click
 import io
+import os
 import traceback
+from datetime import datetime
 from typing import List
 
+import click
 from artcommonlib import exectools
 from artcommonlib.exectools import RetryException
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_https
+
 from doozerlib.brew import get_build_objects
 from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version

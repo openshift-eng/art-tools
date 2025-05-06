@@ -2,13 +2,12 @@ import logging
 import unittest
 import xmlrpc.client
 from datetime import datetime, timezone
-
 from unittest import mock
-import requests
-from flexmock import flexmock
 
+import requests
 from elliottlib import bzutil, constants, exceptions
-from elliottlib.bzutil import Bug, JIRABugTracker, BugzillaBugTracker, BugzillaBug, JIRABug, BugTracker
+from elliottlib.bzutil import Bug, BugTracker, BugzillaBug, BugzillaBugTracker, JIRABug, JIRABugTracker
+from flexmock import flexmock
 
 hostname = "bugzilla.redhat.com"
 

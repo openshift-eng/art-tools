@@ -1,22 +1,37 @@
 import asyncio
+import hashlib
+import io
 import json
 import logging
 import os
 import re
-import io
-import sys
-import traceback
-import requests
-import aiohttp
-import click
-import tarfile
-import hashlib
 import shutil
+import sys
+import tarfile
+import traceback
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union, Set
+from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote
+
+import aiohttp
+import click
+import requests
+from artcommonlib import exectools
+from artcommonlib.arch_util import (
+    brew_arch_for_go_arch,
+    brew_suffix_for_arch,
+    go_arch_for_brew_arch,
+    go_suffix_for_arch,
+)
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.exceptions import VerificationError
+from artcommonlib.exectools import manifest_tool, to_thread
+from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.util import isolate_major_minor_in_group
+from github import Github, GithubException
 from ruamel.yaml import YAML
+from ruamel.yaml.parser import ParserError
 from semver import VersionInfo
 from tenacity import (
     RetryCallState,
@@ -28,36 +43,21 @@ from tenacity import (
     wait_fixed,
 )
 
-from artcommonlib.arch_util import (
-    brew_suffix_for_arch,
-    brew_arch_for_go_arch,
-    go_suffix_for_arch,
-    go_arch_for_brew_arch,
-)
-from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import to_thread, manifest_tool
-from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.util import isolate_major_minor_in_group
-from pyartcd.locks import Lock
-from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
-from pyartcd import constants, locks, util, jenkins
-from artcommonlib import exectools
+from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from artcommonlib.exceptions import VerificationError
 from pyartcd.jira import JIRAClient
+from pyartcd.locks import Lock
 from pyartcd.mail import MailService
 from pyartcd.oc import (
-    get_release_image_info,
-    get_release_image_pullspec,
+    extract_baremetal_installer,
     extract_release_binary,
     extract_release_client_tools,
+    get_release_image_info,
     get_release_image_info_from_pullspec,
-    extract_baremetal_installer,
+    get_release_image_pullspec,
 )
-from pyartcd.runtime import Runtime, GroupRuntime
-from github import Github, GithubException
-from ruamel.yaml.parser import ParserError
-
+from pyartcd.runtime import GroupRuntime, Runtime
+from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False

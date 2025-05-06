@@ -7,12 +7,11 @@ import pprint
 import typing
 from datetime import datetime, timedelta, timezone
 
-from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime, func, Null, BinaryExpression, Boolean
-
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord, Engine
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxRecord
+from google.cloud.bigquery import Row, SchemaField
+from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 
 SCHEMA_LEVEL = 1
 DEFAULT_SEARCH_WINDOW = 90

@@ -1,15 +1,15 @@
-from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
 import os
 import shutil
 import tempfile
-
-from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
+from pathlib import Path
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
-from pyartcd.pipelines.promote import PromotePipeline
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.model import Model
+
+from pyartcd.pipelines.promote import PromotePipeline
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):

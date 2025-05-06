@@ -8,10 +8,10 @@ from typing import Iterable, List
 from urllib.parse import urljoin
 
 import click
+from artcommonlib import exectools
+from artcommonlib.format_util import green_prefix, green_print, red_prefix, red_print, yellow_print
 from ruamel.yaml import YAML
 
-from artcommonlib import exectools
-from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_print
 from elliottlib import Runtime, brew
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cvp import CVPInspector

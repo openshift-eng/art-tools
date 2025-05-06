@@ -1,21 +1,21 @@
 import asyncio
-import json
 import datetime
+import json
 import re
-import click
 from collections import deque
 from itertools import chain
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
-from typing import Dict, Iterable, List, Optional, Tuple, Sequence, Any
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import click
 from artcommonlib import exectools
-from artcommonlib.format_util import red_prefix, green_prefix, green_print
+from artcommonlib.format_util import green_prefix, green_print, red_prefix
+from errata_tool import Erratum
+
 from elliottlib import brew
 from elliottlib.exceptions import BrewBuildException
-
-from errata_tool import Erratum
 
 # -----------------------------------------------------------------------------
 # Constants and defaults

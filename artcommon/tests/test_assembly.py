@@ -1,16 +1,15 @@
 from unittest import TestCase
 
 import yaml
-
 from artcommonlib.assembly import (
-    assembly_rhcos_config,
-    assembly_basis_event,
-    assembly_group_config,
-    assembly_config_struct,
-    assembly_metadata_config,
     _merger,
+    assembly_basis_event,
+    assembly_config_struct,
+    assembly_group_config,
+    assembly_metadata_config,
+    assembly_rhcos_config,
 )
-from artcommonlib.model import Model, Missing
+from artcommonlib.model import Missing, Model
 
 
 class TestAssembly(TestCase):

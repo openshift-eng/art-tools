@@ -1,9 +1,10 @@
 import unittest
 from unittest import mock
 from unittest.mock import MagicMock
-from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.exceptions import DoozerFatalError
+
 import yaml
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.rpmcfg import RPMMetadata
 
 
 class TestRPMMetadata(unittest.TestCase):

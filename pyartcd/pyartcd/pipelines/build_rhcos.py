@@ -1,18 +1,20 @@
+import asyncio
+import base64
+import json
+import re
+import sys
+import time
+from typing import Dict, List, Tuple
+
+import click
+import openshift_client as oc
+import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
 from pyartcd.cli import cli, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
-import openshift_client as oc
-import click
-import requests
-import re
-import base64
-import json
-import time
-import sys
-import asyncio
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
-from typing import List, Dict, Tuple
 
 JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 

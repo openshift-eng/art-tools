@@ -1,9 +1,9 @@
 import click
-
 from artcommonlib import logutil
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+
+from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.runtime import Runtime
-from elliottlib.cli.common import cli, pass_runtime, click_coroutine
 
 LOGGER = logutil.get_logger(__name__)
 

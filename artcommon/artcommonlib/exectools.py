@@ -1,6 +1,6 @@
 import asyncio
-import contextvars
 import concurrent.futures
+import contextvars
 import errno
 import functools
 import os
@@ -13,8 +13,6 @@ import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime
-
-import tenacity
 from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
@@ -22,15 +20,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.request import urlopen
 
-from future.utils import as_native_str
-from opentelemetry import trace
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from tenacity import stop_after_attempt, wait_fixed
-
+import tenacity
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.pushd import Dir
 from artcommonlib.telemetry import start_as_current_span_async
+from future.utils import as_native_str
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from tenacity import stop_after_attempt, wait_fixed
 
 SUCCESS = 0
 

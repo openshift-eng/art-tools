@@ -1,5 +1,6 @@
-import boto3
 from urllib.parse import unquote
+
+import boto3
 
 
 def lambda_handler(event, context):

@@ -1,14 +1,14 @@
-import click
-import elliottlib
-
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 
+import click
 from artcommonlib.format_util import green_print
+
+import elliottlib
 from elliottlib import errata
-from elliottlib.bzutil import BugTracker, JIRABugTracker, BugzillaBugTracker, get_jira_bz_bug_ids
-from elliottlib.util import progress_func, pbar_header
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
+from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker, get_jira_bz_bug_ids
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
+from elliottlib.util import pbar_header, progress_func
 
 
 @cli.command("repair-bugs", short_help="Move bugs attached to ADVISORY from one state to another")

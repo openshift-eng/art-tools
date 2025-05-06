@@ -1,14 +1,14 @@
 import asyncio
 import logging
-import sys
 import os
+import sys
 from functools import update_wrapper
 from pathlib import Path
 from typing import Optional
 
 import click
-
 from artcommonlib import logutil
+
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
 from pyartcd.telemetry import initialize_telemetry

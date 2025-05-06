@@ -5,29 +5,30 @@ with BugTrackers
 
 import asyncio
 import itertools
+import os
 import re
 import urllib.parse
 import xmlrpc.client
-import bugzilla
-import os
-import requests
-from requests_gssapi import HTTPSPNEGOAuth
 from datetime import datetime, timezone
 from time import sleep
 from typing import Dict, Iterable, List, Optional
-from jira import JIRA, Issue
+
+import bugzilla
+import requests
+from artcommonlib import exectools, logutil
 from errata_tool import Erratum
-from errata_tool.jira_issue import JiraIssue as ErrataJira
 from errata_tool.bug import Bug as ErrataBug
+from errata_tool.jira_issue import JiraIssue as ErrataJira
+from jira import JIRA, Issue
 from koji import ClientSession
+from requests_gssapi import HTTPSPNEGOAuth
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib import logutil, exectools
-from elliottlib import constants, exceptions, errata, util
+from elliottlib import constants, errata, exceptions, util
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
-from elliottlib.util import isolate_timestamp_in_release, chunk
+from elliottlib.util import chunk, isolate_timestamp_in_release
 
 logger = logutil.get_logger(__name__)
 

@@ -1,41 +1,41 @@
 import asyncio
-from functools import cached_property
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
-import aiofiles
-import click
-import jinja2
-import semver
+from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from io import StringIO
 from pathlib import Path
 from subprocess import PIPE
 from typing import Dict, List, Optional, Sequence, Tuple
-from jira.resources import Issue
-from tenacity import retry, stop_after_attempt, wait_fixed
-from datetime import datetime, timedelta, timezone
 
+import aiofiles
+import click
+import jinja2
+import semver
+from artcommonlib import exectools, git_helper
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
-from artcommonlib import git_helper
 from artcommonlib.model import Model
-from artcommonlib.util import get_assembly_release_date_async, new_roundtrip_yaml_handler, convert_remote_git_to_ssh
+from artcommonlib.util import convert_remote_git_to_ssh, get_assembly_release_date_async, new_roundtrip_yaml_handler
 from doozerlib.cli.release_gen_payload import (
     assembly_imagestream_base_name_generic,
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
-from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
+from elliottlib.errata import get_blocking_advisories, is_advisory_editable, push_cdn_stage, set_blocking_advisory
 from elliottlib.errata_async import AsyncErrataAPI
-from artcommonlib import exectools
+from jira.resources import Issue
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
-from pyartcd.slack import SlackClient
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
 from pyartcd.util import (
     get_assembly_basis,
     get_assembly_type,
@@ -43,7 +43,6 @@ from pyartcd.util import (
     is_greenwave_all_pass_on_advisory,
     nightlies_with_pullspecs,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()

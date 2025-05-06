@@ -3,12 +3,13 @@ import datetime
 import json
 import logging
 import urllib.parse
+
 import click
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from doozerlib import Runtime
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 DELTA_DAYS = 90  # look at latest 90 days

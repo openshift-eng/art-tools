@@ -1,9 +1,10 @@
 import asyncio
-from collections import OrderedDict
 import os
+from collections import OrderedDict
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
 from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
 
 

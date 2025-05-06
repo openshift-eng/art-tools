@@ -3,9 +3,7 @@ import sys
 
 from jsonschema import RefResolver, ValidationError
 from jsonschema.validators import validator_for
-
 from schema import SchemaError
-
 
 if sys.version_info < (3, 9):
     # importlib.resources either doesn't exist or lacks the files()

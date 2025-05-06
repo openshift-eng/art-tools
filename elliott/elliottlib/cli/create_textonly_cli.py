@@ -1,13 +1,13 @@
-from errata_tool import Erratum
 import click
-
 from artcommonlib import logutil
 from artcommonlib.format_util import green_prefix
+from errata_tool import Erratum
+
+import elliottlib
+from elliottlib.bzutil import BugTracker
 from elliottlib.cli.common import cli
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import BugTracker
-from elliottlib.util import exit_unauthorized, validate_release_date, validate_email_address
-import elliottlib
+from elliottlib.util import exit_unauthorized, validate_email_address, validate_release_date
 
 LOGGER = logutil.get_logger(__name__)
 

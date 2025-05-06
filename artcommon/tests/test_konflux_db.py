@@ -3,16 +3,15 @@ from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from google.cloud.bigquery import SchemaField, Row
-
 from artcommonlib import constants
 from artcommonlib.konflux.konflux_build_record import (
+    Engine,
+    KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
-    KonfluxBuildOutcome,
-    Engine,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from google.cloud.bigquery import Row, SchemaField
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):

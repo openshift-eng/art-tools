@@ -1,10 +1,10 @@
-from future.utils import bytes_to_native_str
-from artcommonlib.metadata import CONFIG_MODES
-import yaml
-import sys
 import csv
 import io
+import sys
 
+import yaml
+from artcommonlib.metadata import CONFIG_MODES
+from future.utils import bytes_to_native_str
 
 VALID_UPDATES = {
     'mode': CONFIG_MODES,

@@ -2,11 +2,10 @@ import os
 
 import click
 from aioredlock import LockError
-
 from artcommonlib import exectools
-from pyartcd import constants, jenkins
-from pyartcd.cli import cli, pass_runtime, click_coroutine
-from pyartcd import locks
+
+from pyartcd import constants, jenkins, locks
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime

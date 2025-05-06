@@ -1,7 +1,8 @@
-from typing import Optional, Callable, Dict, List, Any
+import logging
+from typing import Any, Callable, Dict, List, Optional
+
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
-import logging
 
 _LOGGER = logging.getLogger(__name__)
 

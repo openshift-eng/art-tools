@@ -1,13 +1,13 @@
-from click.testing import CliRunner
-from unittest.mock import patch
-from flexmock import flexmock
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from elliottlib.cli.common import cli, Runtime
-from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 import elliottlib.cli.verify_attached_bugs_cli as verify_attached_bugs_cli
+from click.testing import CliRunner
+from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
+from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.bzutil import JIRABugTracker, BugzillaBugTracker
+from flexmock import flexmock
 
 
 class VerifyAttachedBugs(IsolatedAsyncioTestCase):

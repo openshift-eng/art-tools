@@ -1,4 +1,4 @@
-from schema import Schema, Optional, And, SchemaError
+from schema import And, Optional, Schema, SchemaError
 
 STREAMS_SCHEMA = {
     And(str, len): {

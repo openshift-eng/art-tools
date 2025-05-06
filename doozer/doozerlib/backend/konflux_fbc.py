@@ -17,14 +17,13 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
-from kubernetes.dynamic import resource
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
+from kubernetes.dynamic import resource
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml

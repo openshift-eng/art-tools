@@ -1,7 +1,6 @@
-import logging
 import io
+import logging
 from pathlib import Path
-
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import gitdata

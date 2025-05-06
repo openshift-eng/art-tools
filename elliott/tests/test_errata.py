@@ -3,15 +3,16 @@ Test errata models/controllers
 """
 
 import datetime
-from unittest import mock
 import json
-from flexmock import flexmock
-import errata_tool
-
 import unittest
-from unittest.mock import patch, Mock
+from unittest import mock
+from unittest.mock import Mock, patch
+
+import errata_tool
+from elliottlib import brew, constants, errata, exceptions
+from flexmock import flexmock
+
 from tests import test_structures
-from elliottlib import errata, constants, brew, exceptions
 
 unshipped_builds = [
     Mock(

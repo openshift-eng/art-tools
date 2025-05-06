@@ -5,7 +5,6 @@ from functools import wraps
 from string import Template
 
 import redis
-
 from artcommonlib import constants
 
 logger = logging.getLogger(__name__)

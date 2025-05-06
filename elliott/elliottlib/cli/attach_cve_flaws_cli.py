@@ -1,20 +1,19 @@
+import logging
 import sys
 import traceback
-import logging
 from typing import Dict, Iterable, List, Set
 
 import click
-from errata_tool import Erratum
 from artcommonlib import arch_util
 from artcommonlib.rpm_utils import parse_nvr
+from errata_tool import Erratum
 
 from elliottlib import constants
-from elliottlib.bzutil import sort_cve_bugs
+from elliottlib.bzutil import Bug, BugTracker, get_highest_security_impact, is_first_fix_any, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
-from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any, BugTracker
 
 LOGGER = logging.getLogger(__name__)
 

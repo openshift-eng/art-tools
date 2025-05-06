@@ -1,8 +1,8 @@
 import sys
 import unittest
-from flexmock import flexmock
-from validator import support, exceptions
 
+from flexmock import flexmock
+from validator import exceptions, support
 
 group_cfg = {
     'urls': {'cgit': 'http://my.cgit.endpoint'},

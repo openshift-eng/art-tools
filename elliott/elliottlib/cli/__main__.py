@@ -10,73 +10,69 @@ web service.
 
 # Prepare for Python 3
 # stdlib
-from multiprocessing import cpu_count
-from multiprocessing.dummy import Pool as ThreadPool
 import datetime
 import json
-import sys
 import logging
+import sys
+from multiprocessing import cpu_count
+from multiprocessing.dummy import Pool as ThreadPool
 from typing import Dict, List
-
-from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_prefix, yellow_print
-
-# ours
-from elliottlib import util
-from elliottlib import Runtime
-from artcommonlib import rhcos
-import elliottlib.constants
-import elliottlib.bzutil
-import elliottlib.brew
-import elliottlib.errata
-import elliottlib.exceptions
-from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
-
-from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import progress_func, pbar_header
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory, click_coroutine
-
-# cli commands
-from elliottlib.cli.tarball_sources_cli import tarball_sources_cli
-from elliottlib.cli.find_builds_cli import find_builds_cli
-from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
-from elliottlib.cli.create_cli import create_cli
-from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.cli.change_state_cli import change_state_cli
-from elliottlib.cli.advisory_images_cli import advisory_images_cli
-from elliottlib.cli.tag_builds_cli import tag_builds_cli
-from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
-from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
-from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
-from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
-from elliottlib.cli.attach_cve_flaws_cli import attach_cve_flaws_cli
-from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
-from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
-from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
-from elliottlib.cli.validate_rhsa import validate_rhsa_cli
-from elliottlib.cli.rhcos_cli import rhcos_cli
-from elliottlib.cli.create_textonly_cli import create_textonly_cli
-from elliottlib.cli.advisory_commons_cli import advisory_commons_cli
-from elliottlib.cli.find_bugs_blocker_cli import find_bugs_blocker_cli
-from elliottlib.cli.remove_bugs_cli import remove_bugs_cli
-from elliottlib.cli.repair_bugs_cli import repair_bugs_cli
-from elliottlib.cli.find_unconsumed_rpms import find_unconsumed_rpms_cli
-from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
-from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
-from elliottlib.cli.move_builds_cli import move_builds_cli
-from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
-from elliottlib.cli.remove_builds_cli import remove_builds_cli
-from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
-from elliottlib.cli.snapshot_cli import snapshot_cli
-from elliottlib.cli.konflux_release_cli import konflux_release_cli
-from elliottlib.cli import konflux_release_watch_cli
-from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
-from elliottlib.cli.shipment_cli import shipment_cli
-
 
 # 3rd party
 import click
+from artcommonlib import rhcos
+from artcommonlib.format_util import green_prefix, green_print, red_prefix, red_print, yellow_prefix, yellow_print
 from errata_tool import ErrataException
 
+import elliottlib.brew
+import elliottlib.bzutil
+import elliottlib.constants
+import elliottlib.errata
+import elliottlib.exceptions
+
+# ours
+from elliottlib import Runtime, util
+from elliottlib.cli import konflux_release_watch_cli
+from elliottlib.cli.advisory_commons_cli import advisory_commons_cli
+from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
+from elliottlib.cli.advisory_images_cli import advisory_images_cli
+from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
+from elliottlib.cli.attach_cve_flaws_cli import attach_cve_flaws_cli
+from elliottlib.cli.change_state_cli import change_state_cli
+from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.cli.create_cli import create_cli
+from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
+from elliottlib.cli.create_textonly_cli import create_textonly_cli
+from elliottlib.cli.find_bugs_blocker_cli import find_bugs_blocker_cli
+from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
+from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
+from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
+from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
+from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
+from elliottlib.cli.find_builds_cli import find_builds_cli
+from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
+from elliottlib.cli.find_unconsumed_rpms import find_unconsumed_rpms_cli
+from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
+from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
+from elliottlib.cli.konflux_release_cli import konflux_release_cli
+from elliottlib.cli.move_builds_cli import move_builds_cli
+from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
+from elliottlib.cli.remove_bugs_cli import remove_bugs_cli
+from elliottlib.cli.remove_builds_cli import remove_builds_cli
+from elliottlib.cli.repair_bugs_cli import repair_bugs_cli
+from elliottlib.cli.rhcos_cli import rhcos_cli
+from elliottlib.cli.shipment_cli import shipment_cli
+from elliottlib.cli.snapshot_cli import snapshot_cli
+from elliottlib.cli.tag_builds_cli import tag_builds_cli
+
+# cli commands
+from elliottlib.cli.tarball_sources_cli import tarball_sources_cli
+from elliottlib.cli.validate_rhsa import validate_rhsa_cli
+from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
+from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
+from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
+from elliottlib.exceptions import ElliottFatalError
+from elliottlib.util import pbar_header, progress_func
 
 # -----------------------------------------------------------------------------
 # Constants and defaults

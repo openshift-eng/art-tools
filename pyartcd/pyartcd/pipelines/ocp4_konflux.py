@@ -2,23 +2,22 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 import shutil
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Tuple
 
 import click
 import yaml
-
 from artcommonlib import exectools, redis
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.util import extract_version_fields
 
-from pyartcd import constants, util, jenkins, locks
+from pyartcd import constants, jenkins, locks, util
+from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd import record as record_util
 from pyartcd.util import mass_rebuild_score
 
 LOGGER = logging.getLogger(__name__)

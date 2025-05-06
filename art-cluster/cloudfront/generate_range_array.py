@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 
-from typing import List, Dict, Tuple
+import json
 
 # THIS IS NOT PART OF THE LAMBDA EXECUTION. IT IS USED TO GENERATE DATA FOR
 # THE LAMBDA. COPY OUTPUT ARRAY INTO lambda_function.py.
-
 # Outputs a dict of region-name to array[[ip_start, ip_stop], [ip_start, ip_stop], ...] for
 # all EC2 CIDR ranges in the US. This is used to inform our CloudFront
 # function and should be pasted directly into its code.
-
 # In short, we want:
 # 1. all us-east-1 AWS based registry access to use VPC gateway endpoints  (free)
 # 2. all non us-east-1 AWS based registries to use their regionally replicated registry (free + replication costs)
 # 3. all other traffic to go through CloudFront (our discount + NAT costs on client side)
-
 # Understanding #1
 # OpenShift's vanilla install in AWS includes a VPC gateway endpoint
 # for S3 which allows hosts within a private subnet (all OCP instances)
@@ -47,10 +44,9 @@ from typing import List, Dict, Tuple
 #
 # It may be worth re-running this script once in awhile to refresh the IP ranges in the
 # nodejs CloudFront Viewer request Lambda@Edge function.
-
 import urllib.request
-from ipaddress import ip_network, ip_address
-import json
+from ipaddress import ip_address, ip_network
+from typing import Dict, List, Tuple
 
 AWS_IP_RANGES_URL = "https://ip-ranges.amazonaws.com/ip-ranges.json"
 

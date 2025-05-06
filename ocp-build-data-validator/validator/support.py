@@ -1,9 +1,9 @@
 import os
+
 import requests
 from ruamel.yaml import YAML
 
-from . import exceptions
-from . import global_session
+from . import exceptions, global_session
 
 
 def fail_validation(msg, parsed):

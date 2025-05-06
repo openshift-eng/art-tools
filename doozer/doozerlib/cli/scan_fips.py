@@ -5,15 +5,15 @@ For this command to work, https://github.com/openshift/check-payload binary has 
 import asyncio
 import json
 import os
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 import click
 import koji
+from artcommonlib.exectools import cmd_gather, cmd_gather_async, limit_concurrency
 
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
-from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather
 
 
 class ScanFipsCli:

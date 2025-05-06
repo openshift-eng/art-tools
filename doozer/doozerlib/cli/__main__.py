@@ -1,80 +1,78 @@
 # -*- coding: utf-8 -*-
-import click
 import os
 import shutil
-import yaml
 import sys
 import tempfile
+
+import click
+import yaml
+from artcommonlib import exectools
+from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
+from artcommonlib.pushd import Dir
 from future import standard_library
 
-from artcommonlib import exectools
-from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
-from artcommonlib.pushd import Dir
-from doozerlib import state, cli as cli_package
+from doozerlib import cli as cli_package
+from doozerlib import state
 from doozerlib.cli import cli, pass_runtime
-
-from doozerlib.cli.release_gen_payload import release_gen_payload
-from doozerlib.cli.get_nightlies import get_nightlies
-from doozerlib.cli.detect_embargo import detect_embargo
-from doozerlib.cli.images_health import images_health
-from doozerlib.cli.images_streams import images_streams, images_streams_mirror, images_streams_gen_buildconfigs
-from doozerlib.cli.images_okd import images_okd, images_okd_prs
-from doozerlib.cli.release_gen_assembly import releases_gen_assembly, gen_assembly_from_releases
-from doozerlib.cli.scan_sources import config_scan_source_changes
-from doozerlib.cli.scan_sources_konflux import config_scan_source_changes_konflux
-from doozerlib.cli.rpms_read_config import config_read_rpms
-from doozerlib.cli.config_plashet import config_plashet
-from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
-from doozerlib.cli.inspect_stream import inspect_stream
-from doozerlib.cli.config_tag_rpms import config_tag_rpms
-from doozerlib.cli.scan_osh import scan_osh
-from doozerlib.cli.scan_fips import scan_fips
-from doozerlib.cli.rpms import (
-    rpms_print,
-    rpms_rebase_and_build,
-    rpms_rebase,
-    rpms_build,
-    rpms_clone,
-    rpms_clone_sources,
-)
-from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
 from doozerlib.cli.config import (
     config_commit,
-    config_push,
+    config_gencsv,
     config_get,
-    config_read_group,
-    config_read_releases,
-    config_read_assemblies,
     config_mode,
     config_print,
-    config_gencsv,
+    config_push,
+    config_read_assemblies,
+    config_read_group,
+    config_read_releases,
     config_rhcos_src,
     config_update_required,
 )
+from doozerlib.cli.config_plashet import config_plashet
+from doozerlib.cli.config_tag_rpms import config_tag_rpms
+from doozerlib.cli.detect_embargo import detect_embargo
+from doozerlib.cli.fbc import fbc_build, fbc_import, fbc_rebase
+from doozerlib.cli.get_nightlies import get_nightlies
 from doozerlib.cli.images import (
-    images_clone,
-    images_list,
-    images_push_distgit,
-    images_covscan,
-    images_rebase,
-    images_foreach,
-    images_revert,
-    images_merge,
-    images_build_image,
-    images_push,
-    images_pull_image,
-    images_show_tree,
-    images_print,
     distgit_config_template,
+    images_build_image,
+    images_clone,
+    images_covscan,
+    images_foreach,
+    images_list,
+    images_merge,
+    images_print,
+    images_pull_image,
+    images_push,
+    images_push_distgit,
+    images_rebase,
+    images_revert,
+    images_show_tree,
     query_rpm_version,
 )
-from doozerlib.cli.images_konflux import images_konflux_rebase
-from doozerlib.cli.images_konflux import images_konflux_build
-from doozerlib.cli.fbc import fbc_import, fbc_rebase, fbc_build
-
+from doozerlib.cli.images_health import images_health
+from doozerlib.cli.images_konflux import images_konflux_build, images_konflux_rebase
+from doozerlib.cli.images_okd import images_okd, images_okd_prs
+from doozerlib.cli.images_streams import images_streams, images_streams_gen_buildconfigs, images_streams_mirror
+from doozerlib.cli.inspect_stream import inspect_stream
+from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
+from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
+from doozerlib.cli.release_gen_assembly import gen_assembly_from_releases, releases_gen_assembly
+from doozerlib.cli.release_gen_payload import release_gen_payload
+from doozerlib.cli.rpms import (
+    rpms_build,
+    rpms_clone,
+    rpms_clone_sources,
+    rpms_print,
+    rpms_rebase,
+    rpms_rebase_and_build,
+)
+from doozerlib.cli.rpms_read_config import config_read_rpms
+from doozerlib.cli.scan_fips import scan_fips
+from doozerlib.cli.scan_osh import scan_osh
+from doozerlib.cli.scan_sources import config_scan_source_changes
+from doozerlib.cli.scan_sources_konflux import config_scan_source_changes_konflux
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.util import analyze_debug_timing
-from doozerlib.util import get_release_calc_previous
+from doozerlib.util import analyze_debug_timing, get_release_calc_previous
 
 standard_library.install_aliases()
 

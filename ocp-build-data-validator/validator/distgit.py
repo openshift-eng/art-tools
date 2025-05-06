@@ -1,5 +1,7 @@
-import pygit2
 from tempfile import TemporaryDirectory
+
+import pygit2
+
 from . import support
 
 

@@ -2,25 +2,23 @@
 Utility functions for general interactions with Brew and Builds
 """
 
-from tenacity import retry, stop_after_attempt, wait_fixed
-from artcommonlib import logutil
-
 # stdlib
 import json
 import logging
+import re
 import ssl
 import threading
 import time
-import re
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Tuple, BinaryIO
+from typing import BinaryIO, Dict, Iterable, List, Optional, Tuple
 
 # 3rd party
 import koji
 import requests
-from requests_gssapi import HTTPSPNEGOAuth
-
+from artcommonlib import logutil
 from artcommonlib.model import Missing
+from requests_gssapi import HTTPSPNEGOAuth
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # ours
 from elliottlib import constants, exceptions

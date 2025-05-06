@@ -1,10 +1,9 @@
 import copy
+import typing
 from datetime import datetime
 from enum import Enum
 
-import typing
-
-from artcommonlib.model import Model, Missing, ListModel
+from artcommonlib.model import ListModel, Missing, Model
 
 
 class AssemblyTypes(Enum):
