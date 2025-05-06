@@ -174,8 +174,8 @@ async def find_builds_cli(
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
         records = await find_builds_konflux(runtime, payload)
-        for record in records:
-            print(record.nvr)
+        for nvr in sorted([r.nvr for r in records]):
+            print(nvr)
         return
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
