@@ -173,7 +173,9 @@ async def find_builds_cli(
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
-        return await find_builds_konflux(runtime, payload)
+        records = await find_builds_konflux(runtime, payload)
+        for record in records:
+            print(record.nvr)
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
@@ -695,6 +697,4 @@ async def find_builds_konflux(runtime, payload):
     LOGGER.info("Fetching NVRs from DB...")
     tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
     records: List[Dict] = list(await asyncio.gather(*tasks))
-
-    for record in records:
-        print(record.nvr)
+    return records

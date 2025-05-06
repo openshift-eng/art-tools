@@ -1,9 +1,10 @@
+import asyncio
 import unittest
 from unittest import mock
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
-from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
+from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds, find_builds_konflux
 from flexmock import flexmock
 
 
@@ -47,6 +48,39 @@ class TestFindBuildsCli(unittest.TestCase):
         actual = _find_shipped_builds(build_ids, mock.MagicMock())
         self.assertEqual(expected, actual)
         get_builds_tags.assert_called_once_with(build_ids, mock.ANY)
+
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
+        runtime = flexmock.flexmock()
+        runtime.should_receive("konflux_db.bind").with_args(MockKonfluxBuildRecord).once()
+
+        image_meta_1 = flexmock.flexmock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.should_receive("branch_el_target").and_return("el8").once()
+        image_meta_1.should_receive("get_latest_build").with_args(el_target="el8").and_return(
+            flexmock.flexmock(nvr="image1-1.0.0-1.el8")
+        ).once()
+
+        image_meta_2 = flexmock.flexmock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.should_receive("branch_el_target").and_return("el9").once()
+        image_meta_2.should_receive("get_latest_build").with_args(el_target="el9").and_return(
+            flexmock.flexmock(nvr="image2-2.0.0-1.el9")
+        ).once()
+
+        image_meta_3 = flexmock.flexmock(base_only=True, is_release=True, is_payload=True, distgit_key="image3")
+        image_meta_3.should_receive("branch_el_target").never()
+        image_meta_3.should_receive("get_latest_build").never()
+
+        image_meta_4 = flexmock.flexmock(base_only=False, is_release=False, is_payload=True, distgit_key="image4")
+        image_meta_4.should_receive("branch_el_target").never()
+        image_meta_4.should_receive("get_latest_build").never()
+
+        # Scenario 1: payload = True (only image1 should be processed)
+        runtime.should_receive("image_metas").and_return(
+            [image_meta_1, image_meta_2, image_meta_3, image_meta_4]
+        ).once()
+        actual_records = asyncio.run(find_builds_konflux(runtime, payload=True))
+        self.assertEqual(len(actual_records), 1)
+        self.assertEqual(actual_records[0].nvr, "image1-1.0.0-1.el8")
 
 
 if __name__ == "__main__":
