@@ -1145,6 +1145,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
 
     count = 0
     if short:
+
         def echo_verbose(_):
             return None
     else:

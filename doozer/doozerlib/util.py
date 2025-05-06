@@ -289,6 +289,7 @@ def total_size(o, handlers=None, verbose=False):
 
     def dict_handler(d):
         return chain.from_iterable(d.items())
+
     all_handlers = {
         tuple: iter,
         list: iter,

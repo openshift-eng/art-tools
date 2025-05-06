@@ -7,7 +7,7 @@ venv:
 	cd elliott && uv pip install '.[tests]'
 
 format-check:
-	uv run -m ruff format --check --diff --config ruff.toml
+	uv run -m ruff format --check --config ruff.toml
 
 format:
 	uv run -m ruff format --config ruff.toml

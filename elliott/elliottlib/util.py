@@ -324,8 +324,10 @@ def total_size(o, handlers={}, verbose=False):
                     OtherContainerClass: OtherContainerClass.get_elements}
 
     """
+
     def dict_handler(d):
         return chain.from_iterable(d.items())
+
     all_handlers = {
         tuple: iter,
         list: iter,
