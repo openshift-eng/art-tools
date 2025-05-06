@@ -464,7 +464,7 @@ class Runtime(GroupRuntime):
                     f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
-            if self.build_system == 'brew':
+            if self.build_system == 'brew' or isinstance(self.assembly_basis_event, int):
                 # The assembly basis event is a Brew event
                 self.brew_event = self.assembly_basis_event
 
