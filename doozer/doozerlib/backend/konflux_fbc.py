@@ -13,7 +13,6 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
-from artcommonlib.konflux.konflux_db import Engine, KonfluxBuildOutcome, KonfluxDb
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource

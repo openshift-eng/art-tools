@@ -13,7 +13,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder

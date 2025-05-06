@@ -1036,7 +1036,7 @@ class ConfigScanSources:
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
 @click_coroutine
 @pass_runtime
-async def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
+async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
     """
     Determine if any rpms / images need to be rebuilt.
 

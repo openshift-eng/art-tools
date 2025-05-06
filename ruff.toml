@@ -44,8 +44,6 @@ ignore = [
     "F401",
     # module level import not at top of file
     "E402",
-    # redefinition of unused
-    "F811",
     # bare except
     "E722",
 ]

@@ -92,7 +92,7 @@ class TestKonfluxCachi2(TestCase):
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.konflux_image_builder.KonfluxImageBuilder._is_cachi2_enabled")
-    def test_prefetch_4(self, mock_konflux_client_init, mock_is_cachito_enabled):
+    def test_prefetch_5(self, mock_konflux_client_init, mock_is_cachito_enabled):
         builder = KonfluxImageBuilder(MagicMock())
         mock_is_cachito_enabled.return_value = False
         metadata = MagicMock()
@@ -106,7 +106,7 @@ class TestKonfluxCachi2(TestCase):
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.konflux_image_builder.KonfluxImageBuilder._is_cachi2_enabled")
-    def test_prefetch_5(self, mock_konflux_client_init, mock_is_cachito_enabled):
+    def test_prefetch_6(self, mock_konflux_client_init, mock_is_cachito_enabled):
         builder = KonfluxImageBuilder(MagicMock())
         mock_is_cachito_enabled.return_value = False
         metadata = MagicMock()
