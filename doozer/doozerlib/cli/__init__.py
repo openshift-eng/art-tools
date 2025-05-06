@@ -367,7 +367,7 @@ class RemoteRequired(click.Option):
         super(RemoteRequired, self).__init__(*args, **kwargs)
 
     def handle_parse_result(self, ctx, opts, args):
-        if not ctx.obj.local and not (self.name in opts):
+        if not ctx.obj.local and self.name not in opts:
             self.required = True
 
         return super(RemoteRequired, self).handle_parse_result(ctx, opts, args)

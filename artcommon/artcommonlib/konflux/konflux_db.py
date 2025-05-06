@@ -57,15 +57,15 @@ class KonfluxDb:
             field_type = annotations.get(param_name, str)  # Default to string if type is not provided
             mode = 'NULLABLE' if param.default is param.empty else 'REQUIRED'
 
-            if field_type == int:
+            if field_type is int:
                 field_type_str = 'INTEGER'
-            elif field_type == float:
+            elif field_type is float:
                 field_type_str = 'FLOAT'
-            elif field_type == bool:
+            elif field_type is bool:
                 field_type_str = 'BOOLEAN'
-            elif field_type == datetime:
+            elif field_type is datetime:
                 field_type_str = 'TIMESTAMP'
-            elif field_type == list:
+            elif field_type is list:
                 field_type_str = 'STRING'
                 mode = 'REPEATED'
             else:
