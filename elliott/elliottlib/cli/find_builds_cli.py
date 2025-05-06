@@ -688,7 +688,7 @@ async def find_builds_konflux(runtime, payload):
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
             continue
-        if not (payload and image.is_payload):
+        if (payload and not image.is_payload) or (not payload and image.is_payload):
             continue
         image_metas.append(image)
 
