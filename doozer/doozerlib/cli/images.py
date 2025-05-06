@@ -2,7 +2,9 @@ import click
 import yaml
 import sys
 import subprocess
-import urllib.request, urllib.parse, urllib.error
+import urllib.request
+import urllib.parse
+import urllib.error
 from typing import cast
 import traceback
 import koji
