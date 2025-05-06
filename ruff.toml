@@ -42,8 +42,6 @@ ignore = [
     # __init__ often imports to make available
     # but does not use
     "F401",
-    # module level import not at top of file
-    "E402",
     # bare except
     "E722",
 ]

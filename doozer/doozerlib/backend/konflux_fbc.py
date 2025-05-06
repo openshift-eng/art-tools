@@ -9,10 +9,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
+    Engine,
     KonfluxBuildOutcome,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource

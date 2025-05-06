@@ -1,3 +1,4 @@
+from urllib.parse import urldefrag
 import os
 from io import BytesIO
 import collections
@@ -9,7 +10,7 @@ from future.standard_library import install_aliases
 from artcommonlib import logutil
 
 install_aliases()
-from urllib.parse import urldefrag
+
 
 # Exclude those files from the outputing tarball sources:
 TARBALL_IGNORES = {
