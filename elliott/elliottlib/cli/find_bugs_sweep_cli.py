@@ -1,20 +1,20 @@
 import json
-import click
 import sys
 import traceback
 from datetime import datetime
-from typing import List, Dict, Set
+from typing import Dict, List, Set
 
-from artcommonlib import logutil, arch_util
+import click
+from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
-from elliottlib.bzutil import BugTracker, Bug, JIRABug
+
 from elliottlib import Runtime, bzutil, constants, errata
+from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import chunk
-
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]

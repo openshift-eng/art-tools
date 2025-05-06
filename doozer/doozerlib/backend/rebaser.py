@@ -1,6 +1,8 @@
+import asyncio
 import copy
 import hashlib
 import io
+import json
 import logging
 import os
 import pathlib
@@ -8,23 +10,20 @@ import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
-import asyncio
-import json
-import requests
 
 import bashlex
 import bashlex.errors
+import requests
 import yaml
 from artcommonlib import exectools, release_util
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
-from artcommonlib.model import ListModel, Missing, Model
-from dockerfile_parse import DockerfileParser
-
-from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers
 from artcommonlib.brew import BuildStates
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
+from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.build_visibility import is_release_embargoed, get_visibility_suffix, BuildVisibility
+from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos

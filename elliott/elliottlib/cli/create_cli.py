@@ -1,15 +1,16 @@
-from typing import Optional
-import click
 from datetime import datetime
+from typing import Optional
+
+import click
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_prefix
-from elliottlib.errata_async import AsyncErrataAPI
+
+from elliottlib import errata
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.util import YMD, validate_release_date, validate_email_address, exit_unauthorized
-from elliottlib import errata
-
+from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.util import YMD, exit_unauthorized, validate_email_address, validate_release_date
 
 LOGGER = logutil.get_logger(__name__)
 

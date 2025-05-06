@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from setuptools import setup, find_packages
 import sys
+
+from setuptools import find_packages, setup
 
 if sys.version_info < (3, 8):
     sys.exit('Sorry, Python < 3.8 is not supported.')

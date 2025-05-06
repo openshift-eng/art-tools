@@ -1,4 +1,5 @@
 import unittest
+
 from elliottlib.bzutil import BugzillaBugTracker
 from flexmock import flexmock
 

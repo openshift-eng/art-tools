@@ -1,32 +1,29 @@
 import io
+import os
 import pathlib
+import re
+import shutil
+import tempfile
+from collections import OrderedDict
+from pathlib import Path
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import click
+import openshift_client as oc
 import yaml
-import tempfile
-import shutil
-import os
-
-from pathlib import Path
-import re
-from typing import Dict, List, Any, NamedTuple, Optional, Tuple
-from collections import OrderedDict
-
-from github import Github, UnknownObjectException
-from dockerfile_parse import DockerfileParser
-
 from artcommonlib import exectools
 from artcommonlib.format_util import yellow_print
+from artcommonlib.git_helper import git_clone
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from doozerlib.cli import cli, pass_runtime, click_coroutine
-from artcommonlib.git_helper import git_clone
+from artcommonlib.util import convert_remote_git_to_ssh, download_file_from_github, remove_prefix, split_git_url
+from dockerfile_parse import DockerfileParser
+from github import Github, UnknownObjectException
+
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import what_is_in_master, extract_version_fields
-from artcommonlib.util import split_git_url, remove_prefix, convert_remote_git_to_ssh, download_file_from_github
-
-import openshift_client as oc
+from doozerlib.util import extract_version_fields, what_is_in_master
 
 
 class ImageCoordinate(NamedTuple):

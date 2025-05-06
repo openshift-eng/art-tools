@@ -7,29 +7,28 @@ import sys
 import time
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
-import koji
 
 import click
+import koji
 import requests
 import yaml
-
-from artcommonlib.assembly import assembly_type, AssemblyTypes
+from artcommonlib import exectools
+from artcommonlib.assembly import AssemblyTypes, assembly_type
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import isolate_el_version_in_brew_tag
-from artcommonlib import exectools
-from artcommonlib.rpm_utils import parse_nvr, compare_nvr
+from elliottlib import errata
 from requests_kerberos import HTTPKerberosAuth
 
-from doozerlib.build_visibility import get_visibility_suffix, BuildVisibility
+from doozerlib.brew import get_builds_tags
+from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix
 from doozerlib.cli import cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.runtime import Runtime
-from doozerlib.brew import get_builds_tags
 from doozerlib.util import mkdirs, strip_epoch, to_nvre
-from elliottlib import errata
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"
 

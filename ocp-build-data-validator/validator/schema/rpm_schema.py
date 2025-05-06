@@ -1,6 +1,6 @@
-from schema import Schema, Optional, And, Or, Regex, SchemaError
-from validator.schema.modification_schema import modification
+from schema import And, Optional, Or, Regex, Schema, SchemaError
 
+from validator.schema.modification_schema import modification
 
 GIT_SSH_URL_REGEX = r'((git@[\w\.]+))([\w\.@\:/\-~]+)(\.git)(/)?'
 GIT_WEB_URL_REGEX = r'https://github.com\/[a-z-]+/[a-z-]+'

@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 
-from pathlib import Path
-import os
-import yaml
 import json
 import logging
-
+import os
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import yaml
 from doozerlib.build_info import BrewBuildRecordInspector
 
 

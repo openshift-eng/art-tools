@@ -1,14 +1,13 @@
 import base64
 import hmac
-import os.path
 import ipaddress
-
-from botocore.exceptions import ClientError
+import os.path
 from typing import Dict, List, Optional
 from urllib.parse import quote, unquote
 
 import boto3
-from lambda_r2_lib import get_r2_s3_client, get_secrets_manager_secret_dict, S3_BUCKET_NAME
+from botocore.exceptions import ClientError
+from lambda_r2_lib import S3_BUCKET_NAME, get_r2_s3_client, get_secrets_manager_secret_dict
 
 # Dicts of usernames and passwords which will be populated from SecretsManager
 ENTERPRISE_SERVICE_ACCOUNTS = None

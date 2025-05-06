@@ -3,20 +3,20 @@ import sys
 from functools import wraps
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
+from artcommonlib import constants
 from opentelemetry import context, metrics, trace
 from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.semconv.resource import ResourceAttributes
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
 
 from pyartcd import __version__
-from artcommonlib import constants
 
 
 def new_tracker_provider(resource: Resource, exporter: SpanExporter):

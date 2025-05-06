@@ -1,9 +1,9 @@
 import asyncio
 
 import click
-
 from artcommonlib import redis
-from pyartcd import util, jenkins
+
+from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock, LockManager
 from pyartcd.runtime import Runtime

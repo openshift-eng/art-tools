@@ -1,9 +1,10 @@
 import unittest
+
+import elliottlib.cli.remove_bugs_cli
 from click.testing import CliRunner
 from elliottlib import errata
-from elliottlib.cli.common import cli, Runtime
-import elliottlib.cli.remove_bugs_cli
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
 from flexmock import flexmock
 
 

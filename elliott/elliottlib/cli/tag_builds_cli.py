@@ -1,13 +1,13 @@
-from typing import List, Tuple
-import click
-import requests
-import koji
 import logging
+from typing import List, Tuple
 
-from artcommonlib.format_util import red_print, green_print, yellow_print
-from elliottlib import Runtime
-from elliottlib import errata, brew, constants, exceptions
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
+import click
+import koji
+import requests
+from artcommonlib.format_util import green_print, red_print, yellow_print
+
+from elliottlib import Runtime, brew, constants, errata, exceptions
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 
 pass_runtime = click.make_pass_decorator(Runtime)
 

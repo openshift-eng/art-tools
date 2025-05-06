@@ -1,5 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import Mock, AsyncMock, patch, ANY, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from pyartcd.pipelines.tarball_sources import TarballSourcesPipeline
 

@@ -1,9 +1,9 @@
-import unittest
-import os
-import sys
-import shutil
-import pathlib
 import logging
+import os
+import pathlib
+import shutil
+import sys
+import unittest
 
 from artcommonlib import exectools
 

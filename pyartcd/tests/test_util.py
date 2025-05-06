@@ -1,5 +1,6 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
+
 from pyartcd import util
 
 

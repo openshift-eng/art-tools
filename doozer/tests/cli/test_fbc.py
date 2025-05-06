@@ -2,7 +2,6 @@ import unittest
 from unittest import mock
 
 from artcommonlib.model import Model
-
 from doozerlib.cli.fbc import FbcImportCli
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver

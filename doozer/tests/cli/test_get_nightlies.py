@@ -1,7 +1,7 @@
+import json
 from typing import Dict
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch, AsyncMock
-import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib.cli import get_nightlies as subject

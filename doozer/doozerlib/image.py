@@ -1,17 +1,17 @@
-from collections import OrderedDict
 import hashlib
 import json
+from collections import OrderedDict
+from copy import copy
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple
-from copy import copy
 
-import doozerlib
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
-from doozerlib import util
-from doozerlib import brew, coverity
+
+import doozerlib
+from doozerlib import brew, coverity, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode

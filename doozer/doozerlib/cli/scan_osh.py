@@ -1,20 +1,21 @@
+import asyncio
 import re
+from enum import Enum
+from typing import Optional
+
 import click
 import koji
-import asyncio
 import requests
 import yaml
-from enum import Enum
-
 from artcommonlib import exectools
 from artcommonlib.format_util import cprint
-from doozerlib.cli import cli, click_coroutine, pass_runtime
-from doozerlib.runtime import Runtime
-from doozerlib.image import ImageMetadata
-from doozerlib.rpmcfg import RPMMetadata
-from typing import Optional
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.image import ImageMetadata
+from doozerlib.rpmcfg import RPMMetadata
+from doozerlib.runtime import Runtime
 
 SCAN_RESULTS_URL_TEMPLATE = "https://cov01.lab.eng.brq2.redhat.com/osh/task/{task_id}/log/{nvr}/scan-results-imp.js"
 

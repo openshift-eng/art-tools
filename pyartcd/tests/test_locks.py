@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import patch
 
-from pyartcd.locks import LockManager, LOCK_POLICY, Lock, DEFAULT_LOCK_TIMEOUT
+from pyartcd.locks import DEFAULT_LOCK_TIMEOUT, LOCK_POLICY, Lock, LockManager
 
 
 class TestLocks(TestCase):

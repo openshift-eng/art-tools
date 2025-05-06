@@ -1,8 +1,9 @@
-import boto3
 import os
-from urllib.parse import quote, parse_qs, unquote
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote
+
+import boto3
 
 VERBOSE = False
 

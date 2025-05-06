@@ -3,13 +3,12 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import koji
-from jira import JIRA, Issue
-
 from artcommonlib.assembly import AssemblyTypes
+from elliottlib import early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.find_bugs_kernel_clones_cli import FindBugsKernelClonesCli
 from elliottlib.config_model import KernelBugSweepConfig
-from elliottlib.bzutil import JIRABugTracker
-from elliottlib import early_kernel
+from jira import JIRA, Issue
 
 
 class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):

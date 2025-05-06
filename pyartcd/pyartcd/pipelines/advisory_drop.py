@@ -1,8 +1,10 @@
-import click
 import os
-from pyartcd.runtime import Runtime
+
+import click
 from artcommonlib import exectools
+
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.runtime import Runtime
 
 
 @cli.command('advisory-drop')

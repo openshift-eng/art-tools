@@ -1,4 +1,5 @@
 from artcommonlib import logutil
+
 from .metadata import Metadata
 
 logger = logutil.get_logger(__name__)

@@ -1,8 +1,9 @@
 import unittest
+
 from click.testing import CliRunner
-from elliottlib.cli.common import cli, Runtime
-from elliottlib.cli.find_bugs_qe_cli import FindBugsQE
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
+from elliottlib.cli.find_bugs_qe_cli import FindBugsQE
 from flexmock import flexmock
 
 

@@ -1,8 +1,8 @@
 import asyncio
 
 import click
-
 from artcommonlib import exectools
+
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL

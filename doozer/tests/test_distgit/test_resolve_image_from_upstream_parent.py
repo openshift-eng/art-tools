@@ -1,7 +1,8 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib import distgit
+
 from .support import TestDistgit
 
 

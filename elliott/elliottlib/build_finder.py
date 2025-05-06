@@ -1,14 +1,14 @@
-from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
-from artcommonlib.build_util import find_latest_builds
-from artcommonlib.model import Model
-from elliottlib.imagecfg import ImageMetadata
 import logging
 from logging import Logger
 from typing import Dict, Iterable, List, Optional, Union
 
+from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.build_util import find_latest_builds
+from artcommonlib.model import Model
 from koji import ClientSession
 
 from elliottlib.brew import get_build_objects
+from elliottlib.imagecfg import ImageMetadata
 from elliottlib.rpmcfg import RPMMetadata
 from elliottlib.util import parse_nvr, strip_epoch, to_nvre
 

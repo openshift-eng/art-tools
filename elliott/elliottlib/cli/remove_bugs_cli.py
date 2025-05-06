@@ -1,12 +1,12 @@
 import click
-from errata_tool import ErrataException
-
 from artcommonlib import logutil
 from artcommonlib.format_util import green_prefix
+from errata_tool import ErrataException
+
 from elliottlib import errata
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
+from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker, get_jira_bz_bug_ids
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import get_jira_bz_bug_ids, JIRABugTracker, BugzillaBugTracker
 
 LOGGER = logutil.get_logger(__name__)
 

@@ -2,12 +2,13 @@
 This job scans the candidate tags for a particular version, and triggers scans for builds that are tagged into it.
 """
 
-import click
 from typing import Optional
-from artcommonlib import exectools
-from artcommonlib import redis
+
+import click
+from artcommonlib import exectools, redis
+
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.cli import cli, pass_runtime, click_coroutine
 
 
 class OshScan:

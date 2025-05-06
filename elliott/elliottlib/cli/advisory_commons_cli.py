@@ -1,9 +1,11 @@
+import re
+
+import click
 from artcommonlib import logutil
 from artcommonlib.format_util import green_prefix
+from errata_tool import ErrataException, Erratum
+
 from elliottlib.cli.common import cli
-from errata_tool import Erratum, ErrataException
-import click
-import re
 
 LOGGER = logutil.get_logger(__name__)
 supported_update_fields = [

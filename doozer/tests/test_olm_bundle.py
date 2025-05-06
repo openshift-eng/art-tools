@@ -1,9 +1,8 @@
 import unittest
-
-from flexmock import flexmock
 from unittest.mock import MagicMock
 
 from doozerlib.olm.bundle import OLMBundle
+from flexmock import flexmock
 
 
 class TestOLMBundle(unittest.TestCase):

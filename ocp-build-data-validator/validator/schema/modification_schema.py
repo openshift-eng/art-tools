@@ -1,4 +1,4 @@
-from schema import Schema, Optional, And, Or
+from schema import And, Optional, Or, Schema
 
 
 def modification(file):

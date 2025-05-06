@@ -11,13 +11,12 @@ from typing import Dict, Optional, Sequence, Tuple, cast
 import aiofiles
 import yaml
 from artcommonlib import exectools
+from artcommonlib import util as artlib_util
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
-from artcommonlib import util as artlib_util
 from dockerfile_parse import DockerfileParser
-
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient, resource

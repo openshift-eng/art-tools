@@ -1,10 +1,11 @@
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
-from functional_tests import constants
-import subprocess
 
 from elliottlib.cli import verify_attached_operators_cli
 from elliottlib.runtime import Runtime
+
+from functional_tests import constants
 
 
 class TestVerifyAttachedOperators(unittest.TestCase):

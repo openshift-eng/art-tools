@@ -1,12 +1,13 @@
 import unittest
-from unittest.mock import patch, AsyncMock
-from flexmock import flexmock
-from elliottlib.cli import get_golang_versions_cli
+from unittest.mock import AsyncMock, patch
+
+from artcommonlib import rhcos
+from click.testing import CliRunner
 from elliottlib import errata as erratalib
 from elliottlib import util as utillib
-from artcommonlib import rhcos
-from elliottlib.cli.common import cli, Runtime
-from click.testing import CliRunner
+from elliottlib.cli import get_golang_versions_cli
+from elliottlib.cli.common import Runtime, cli
+from flexmock import flexmock
 
 
 class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):

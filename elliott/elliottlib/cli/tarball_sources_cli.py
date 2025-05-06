@@ -1,17 +1,17 @@
-from future.builtins import str
-import os
 import errno
-import shutil
-import koji
-
-import tempfile
+import os
 import pipes
-import click
-from typing import Set, Dict
+import shutil
+import tempfile
+from typing import Dict, Set
 
+import click
+import koji
 from artcommonlib import format_util, logutil
 from artcommonlib.format_util import green_print, yellow_print
-from elliottlib import constants, tarball_sources, brew
+from future.builtins import str
+
+from elliottlib import brew, constants, tarball_sources
 
 LOGGER = logutil.get_logger(__name__)
 

@@ -1,22 +1,22 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-
-import click
-import yaml
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 import artcommonlib.util
+import click
+import yaml
 from artcommonlib import exectools, release_util
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.arch_util import go_arch_for_brew_arch
+
 from doozerlib import brew, rhcos, util
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
+from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 

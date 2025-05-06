@@ -5,11 +5,11 @@ from urllib.parse import urlparse
 
 import requests
 import yaml
-
 from artcommonlib import exectools
 from artcommonlib.logutil import get_logger
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
+
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import is_in_directory, mkdirs
 

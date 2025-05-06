@@ -1,10 +1,10 @@
 from io import StringIO
 from typing import Optional
-from unittest import TestCase, IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
-from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
 import defusedxml.ElementTree as ET
+from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
 from ruamel.yaml import YAML
 
 

@@ -6,12 +6,12 @@ from enum import Enum
 from typing import Optional
 
 import requests
+from jenkinsapi.build import Build
+from jenkinsapi.custom_exceptions import NotFound
 from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
-from jenkinsapi.build import Build
 from jenkinsapi.utils.crumb_requester import CrumbRequester
-from jenkinsapi.custom_exceptions import NotFound
 
 from pyartcd import constants
 

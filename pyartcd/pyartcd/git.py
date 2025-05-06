@@ -1,8 +1,8 @@
 # pyartcd Git helpers
 
+import os
 from logging import getLogger
 from pathlib import Path
-import os
 from typing import Union
 
 from artcommonlib import exectools

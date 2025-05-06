@@ -1,30 +1,30 @@
-import io
-import os
-import click
-import yaml
-import json
 import hashlib
-import time
+import io
+import json
+import os
 import random
 import re
-from typing import Dict, Set, Tuple, Optional
+import time
+from typing import Dict, Optional, Set, Tuple
 
-from github import Github, UnknownObjectException, GithubException, PullRequest
-from jira import JIRA, Issue
-from tenacity import retry, stop_after_attempt, wait_fixed
-from dockerfile_parse import DockerfileParser
-
+import click
+import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
+from artcommonlib.git_helper import git_clone
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from doozerlib.cli import cli, pass_runtime
+from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
+from dockerfile_parse import DockerfileParser
+from github import Github, GithubException, PullRequest, UnknownObjectException
+from jira import JIRA, Issue
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from doozerlib import constants, util
-from artcommonlib.git_helper import git_clone
+from doozerlib.cli import cli, pass_runtime
 from doozerlib.image import ImageMetadata
-from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
 from doozerlib.source_resolver import SourceResolver
-from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
+from doozerlib.util import extract_version_fields, get_docker_config_json, what_is_in_master
 from pyartcd import jenkins
 
 transform_rhel_7_base_repos = 'rhel-7/base-repos'

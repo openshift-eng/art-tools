@@ -1,13 +1,14 @@
-import click
 import json
 import logging
 
+import click
 from artcommonlib import exectools
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
+from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch, go_suffix_for_arch
 from artcommonlib.format_util import green_print
-from elliottlib.cli.common import cli
+from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_primary_container_name
+
 from elliottlib import rhcos, util
-from artcommonlib.rhcos import get_primary_container_name, get_build_id_from_rhcos_pullspec
+from elliottlib.cli.common import cli
 
 LOGGER = logging.getLogger(__name__)
 

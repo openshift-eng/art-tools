@@ -4,19 +4,19 @@ This job is deployed on ART cluster
 """
 
 import json
-import sys
-import re
-from collections import defaultdict
 import os
+import re
+import sys
+from collections import defaultdict
+from typing import Optional
 
 import click
-from typing import Optional
-from pyartcd.runtime import Runtime
-from pyartcd.jira import JIRAClient
-from pyartcd.cli import cli, pass_runtime, click_coroutine
-from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib import exectools
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.jira import JIRAClient
+from pyartcd.runtime import Runtime
 
 JIRA_PROJECT = "OCPBUGS"
 JIRA_DOMAIN = "https://issues.redhat.com/"

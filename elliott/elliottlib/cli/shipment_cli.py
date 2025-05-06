@@ -1,22 +1,23 @@
-import click
 import sys
+
+import click
+from artcommonlib import logutil
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from ruamel.yaml import YAML
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
-from artcommonlib import logutil
 from elliottlib.shipment_model import (
-    Shipment,
-    Metadata,
+    Data,
     Environments,
+    Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
     ShipmentEnv,
     Snapshot,
     Spec,
-    ShipmentConfig,
-    Data,
-    ReleaseNotes,
 )
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 
 LOGGER = logutil.get_logger(__name__)
 

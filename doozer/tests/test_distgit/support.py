@@ -1,13 +1,12 @@
 import io
 import logging
-import tempfile
 import shutil
-
+import tempfile
 from unittest import IsolatedAsyncioTestCase
-from future import standard_library
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
+from future import standard_library
 
 standard_library.install_aliases()
 

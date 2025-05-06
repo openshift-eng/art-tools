@@ -1,11 +1,12 @@
-import click
 import json
 import re
 
+import click
 from artcommonlib import logutil
-from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.format_util import green_print
+from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
+
 from elliottlib.cli.common import cli
 
 _LOGGER = logutil.get_logger(__name__)

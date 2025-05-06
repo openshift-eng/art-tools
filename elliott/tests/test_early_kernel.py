@@ -3,12 +3,11 @@ from unittest import TestCase
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import koji
-from jira import JIRA, Issue
+from elliottlib import early_kernel
+from elliottlib.config_model import KernelBugSweepConfig
 from errata_tool import Erratum
 from errata_tool.build import Build
-
-from elliottlib.config_model import KernelBugSweepConfig
-from elliottlib import early_kernel
+from jira import JIRA, Issue
 
 
 class TestEarlyKernel(TestCase):

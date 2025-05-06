@@ -1,14 +1,12 @@
-from unittest import TestCase
-
-import re
 import datetime
-
+import re
+from unittest import TestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from artcommonlib.brew import BuildStates
 from artcommonlib.model import Model
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import Metadata, CgitAtomFeedEntry, RebuildHintCode
-from artcommonlib.brew import BuildStates
+from doozerlib.metadata import CgitAtomFeedEntry, Metadata, RebuildHintCode
 
 
 class TestMetadata(TestCase):

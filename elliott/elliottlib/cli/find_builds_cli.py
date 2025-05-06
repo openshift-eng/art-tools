@@ -9,18 +9,18 @@ from typing import Dict, List, Set, Union
 import click
 import koji
 import requests
+from artcommonlib import exectools, logutil
+from artcommonlib.arch_util import BREW_ARCHES
+from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
+from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
+from artcommonlib.rpm_utils import parse_nvr
 from errata_tool import ErrataException
 
-from artcommonlib import logutil, exectools
-from artcommonlib.arch_util import BREW_ARCHES
-from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
-from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
-from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
-from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
-from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option, click_coroutine
+from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.util import (

@@ -1,48 +1,49 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
 import hashlib
-import traceback
-import sys
-import os
 import json
+import os
+import sys
+import traceback
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, NamedTuple, Iterable, Set, Any, Callable, cast
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, cast
 from unittest.mock import MagicMock
 
 import aiofiles
 import click
 import nest_asyncio
-from tenacity import retry, stop_after_attempt, wait_fixed
-
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
+import openshift_client as oc
+import yaml
+from artcommonlib import exectools, rhcos
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
-from artcommonlib.rpm_utils import parse_nvr
-import yaml
-from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
-import openshift_client as oc
-from opentelemetry import trace
-from enum import Enum
-
-
-from doozerlib.brew import KojiWrapperMetaReturn
-from doozerlib.rhcos import RHCOSBuildInspector
-from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib.image import ImageMetadata
-from doozerlib.build_info import BuildRecordInspector, ImageInspector
-from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.runtime import Runtime
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from doozerlib.util import isolate_nightly_name_components, extract_version_fields, what_is_in_master
 from artcommonlib.util import convert_remote_git_to_https
 from elliottlib.util import chunk
-from doozerlib.exceptions import DoozerFatalError
-from doozerlib.util import find_manifest_list_sha
+from opentelemetry import trace
+from tenacity import retry, stop_after_attempt, wait_fixed
 
+from doozerlib.assembly_inspector import AssemblyInspector
+from doozerlib.brew import KojiWrapperMetaReturn
+from doozerlib.build_info import BuildRecordInspector, ImageInspector
+from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.image import ImageMetadata
+from doozerlib.rhcos import RHCOSBuildInspector
+from doozerlib.runtime import Runtime
+from doozerlib.util import (
+    extract_version_fields,
+    find_manifest_list_sha,
+    isolate_nightly_name_components,
+    what_is_in_master,
+)
 
 TRACER = trace.get_tracer(__name__)
 

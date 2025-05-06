@@ -1,6 +1,7 @@
+import json
 import unittest
 from unittest import mock
-import json
+
 import errata_tool
 import koji
 from elliottlib import tarball_sources

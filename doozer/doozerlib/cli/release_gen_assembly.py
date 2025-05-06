@@ -1,31 +1,30 @@
 import asyncio
-from datetime import datetime, timezone
-
-import requests
-import click
 import json
 import re
-from semver import VersionInfo
 import sys
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
-import yaml
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
+import click
+import requests
+import yaml
+from artcommonlib import exectools, rhcos
+from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
-from doozerlib import util
+from requests.adapters import HTTPAdapter
+from semver import VersionInfo
+from urllib3.util.retry import Retry
+
+from doozerlib import brew, util
 from doozerlib.brew import brew_event_from_datetime
-from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib import brew
-from artcommonlib import rhcos, exectools
+from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector, BuildRecordInspector
 from doozerlib.runtime import Runtime
 
 

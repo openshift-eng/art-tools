@@ -1,24 +1,22 @@
+import json
 import logging
 import os
 import re
 import shutil
 import sys
 import tempfile
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterable, List, cast
 from tempfile import TemporaryDirectory
-
-import yaml
+from typing import Dict, Iterable, List, Optional, Union, cast
 
 import artcommonlib
+import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
-from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib.assembly import assembly_type
-from artcommonlib.model import Model, Missing
-from artcommonlib.release_util import SoftwareLifecyclePhase
+from artcommonlib.model import Missing, Model
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 

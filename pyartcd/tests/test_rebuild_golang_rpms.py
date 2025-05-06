@@ -1,7 +1,8 @@
-import unittest
 import sys
+import unittest
 from unittest import TestCase
 from unittest.mock import MagicMock
+
 from pyartcd.pipelines.rebuild_golang_rpms import RebuildGolangRPMsPipeline
 
 

@@ -4,13 +4,13 @@ from typing import Dict, List, Sequence, Set, Tuple
 
 import aiohttp
 import click
+from artcommonlib import exectools, logutil
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.format_util import green_print, red_print, yellow_print
+from artcommonlib.model import Model
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib import logutil, exectools
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.format_util import green_print, yellow_print, red_print
 from doozerlib import constants
-from artcommonlib.model import Model
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime

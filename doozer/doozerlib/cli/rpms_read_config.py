@@ -1,10 +1,9 @@
 import json
 
-import yaml
 import click
+import yaml
 
-from doozerlib.cli import cli
-from doozerlib.cli import pass_runtime
+from doozerlib.cli import cli, pass_runtime
 from doozerlib.runtime import Runtime
 
 

@@ -1,5 +1,6 @@
-import unittest
 import subprocess
+import unittest
+
 from functional_tests import constants
 
 # This test may start failing once this version is EOL and we either change the

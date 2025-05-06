@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from elliottlib.bzutil import BugzillaBug
 from elliottlib import constants
+from elliottlib.bzutil import BugzillaBug
 from elliottlib.cli import attach_cve_flaws_cli
 from elliottlib.errata_async import AsyncErrataAPI
 

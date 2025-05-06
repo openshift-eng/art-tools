@@ -5,8 +5,8 @@ from typing import Dict, Optional, Tuple
 from urllib.parse import quote
 
 import koji
-
 from artcommonlib import exectools
+
 from doozerlib import brew, distgit, image, runtime
 from doozerlib.constants import BREWWEB_URL, DISTGIT_GIT_URL
 from doozerlib.exceptions import DoozerFatalError

@@ -1,31 +1,32 @@
-import click
-import koji
-import logging
-import re
-import os
-import io
 import asyncio
 import base64
-from typing import List
+import io
+import logging
+import os
+import re
 from datetime import datetime, timezone
+from typing import List
+
+import click
+import koji
+from artcommonlib import exectools
+from artcommonlib.brew import BuildStates
+from artcommonlib.constants import BREW_HUB
+from artcommonlib.release_util import split_el_suffix_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.brew import watch_task_async
+from elliottlib import util as elliottutil
+from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from ghapi.all import GhApi
 from github import Github, GithubException
 from ruamel.yaml import YAML
 
-from artcommonlib.constants import BREW_HUB
-from artcommonlib.release_util import split_el_suffix_in_release
-from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib import exectools
-from artcommonlib.util import new_roundtrip_yaml_handler
 from pyartcd import jenkins
-from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.runtime import Runtime
+from pyartcd.constants import GITHUB_OWNER
 from pyartcd.git import GitRepository
-from artcommonlib.brew import BuildStates
-from doozerlib.brew import watch_task_async
-from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
-from elliottlib import util as elliottutil
+from pyartcd.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()

@@ -1,37 +1,36 @@
 import asyncio
 import base64
+import json
 import logging
 import os
 import tempfile
 import typing
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
-
-import click
-import dateutil.parser
-import json
-import yaml
 from typing import cast
 
-from async_lru import alru_cache
-
 import artcommonlib.util
+import click
+import dateutil.parser
+import yaml
 from artcommonlib import exectools
 from artcommonlib.exectools import cmd_gather_async
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rpm_utils import parse_nvr
+from async_lru import alru_cache
+
 from doozerlib.build_info import KonfluxBuildRecordInspector
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
+from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
-from artcommonlib.release_util import isolate_timestamp_in_release
 from doozerlib.util import oc_image_info_for_arch_async__caching
 
 DEFAULT_THRESHOLD_HOURS = 6

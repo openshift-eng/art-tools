@@ -3,26 +3,25 @@ import glob
 import json
 import os
 import re
+
 import click
 import yaml
-from opentelemetry import trace
-from ghapi.all import GhApi
-
-from artcommonlib import rhcos, redis
-from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
+from artcommonlib import exectools, redis, rhcos
+from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.exectools import limit_concurrency
-from artcommonlib.release_util import SoftwareLifecyclePhase
-from artcommonlib.util import split_git_url
-from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.redis import RedisError
-from artcommonlib import exectools
-from pyartcd.cli import cli, pass_runtime, click_coroutine
-from pyartcd.oc import registry_login
-from pyartcd.runtime import Runtime, GroupRuntime
-from pyartcd import constants, locks, jenkins
-from pyartcd.util import branch_arches
-from pyartcd.jenkins import get_build_url
+from artcommonlib.release_util import SoftwareLifecyclePhase
+from artcommonlib.telemetry import start_as_current_span_async
+from artcommonlib.util import split_git_url
+from ghapi.all import GhApi
+from opentelemetry import trace
 
+from pyartcd import constants, jenkins, locks
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.jenkins import get_build_url
+from pyartcd.oc import registry_login
+from pyartcd.runtime import GroupRuntime, Runtime
+from pyartcd.util import branch_arches
 
 TRACER = trace.get_tracer(__name__)
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'

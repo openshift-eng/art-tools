@@ -1,21 +1,21 @@
-from typing import Tuple, List, Dict, Set
-import click
-from io import BytesIO
-import koji
-import re
-import requests
-import yaml
 import json
+import re
+from io import BytesIO
+from typing import Dict, List, Set, Tuple
 from zipfile import ZipFile
 
+import click
+import koji
+import requests
+import yaml
+from artcommonlib import exectools
+from artcommonlib.format_util import green_print, red_print
 from errata_tool import Erratum
 
-from artcommonlib import exectools
-from artcommonlib.format_util import red_print, green_print
 from elliottlib import brew, constants, errata
+from elliottlib.cli.common import cli, move_builds, pass_runtime
 from elliottlib.cli.find_builds_cli import find_builds_cli
-from elliottlib.cli.common import cli, pass_runtime, move_builds
-from elliottlib.exceptions import ElliottFatalError, BrewBuildException
+from elliottlib.exceptions import BrewBuildException, ElliottFatalError
 from elliottlib.runtime import Runtime
 
 

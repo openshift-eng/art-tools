@@ -1,25 +1,23 @@
 import os
-from datetime import datetime, timezone
-
-import click
 import sys
 import traceback
-
-import dateutil.parser
-import koji
+from datetime import datetime, timezone
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
+import click
+import dateutil.parser
+import koji
+from artcommonlib import exectools, logutil
+from artcommonlib.constants import BREW_HUB
+from artcommonlib.git_helper import gather_git
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBundleBuildRecord
+from artcommonlib.model import Missing
+from artcommonlib.util import convert_remote_git_to_https
 from dockerfile_parse import DockerfileParser
 
-from artcommonlib import exectools, logutil
-from artcommonlib.git_helper import gather_git
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, KonfluxBundleBuildRecord
-from artcommonlib.model import Missing
-from artcommonlib.constants import BREW_HUB
-from artcommonlib.util import convert_remote_git_to_https
 from doozerlib import Runtime, brew
 from doozerlib.cli import cli, pass_runtime
-from typing import Optional, Tuple
 from doozerlib.olm.bundle import OLMBundle
 
 LOGGER = logutil.get_logger(__name__)

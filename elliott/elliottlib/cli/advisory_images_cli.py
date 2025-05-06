@@ -1,8 +1,7 @@
 import click
 
-from elliottlib import Runtime
+from elliottlib import Runtime, errata
 from elliottlib.cli.common import cli, find_default_advisory
-from elliottlib import errata
 
 pass_runtime = click.make_pass_decorator(Runtime)
 

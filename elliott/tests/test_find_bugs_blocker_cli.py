@@ -1,9 +1,10 @@
-import unittest
 import traceback
-from click.testing import CliRunner
+import unittest
+
 import elliottlib.cli.find_bugs_blocker_cli
-from elliottlib.cli.common import cli, Runtime
+from click.testing import CliRunner
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
 from flexmock import flexmock
 
 

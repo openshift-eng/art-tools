@@ -6,13 +6,11 @@ import urllib.parse
 import ruamel.yaml
 import ruamel.yaml.util
 import yaml
-
-from future.utils import as_native_str
-
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.logutil import get_logger
 from artcommonlib.pushd import Dir
+from future.utils import as_native_str
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
 

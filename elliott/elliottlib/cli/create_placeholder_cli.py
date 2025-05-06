@@ -1,9 +1,9 @@
-from artcommonlib import logutil
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
-from elliottlib.exceptions import ElliottFatalError
-
-from errata_tool import Erratum
 import click
+from artcommonlib import logutil
+from errata_tool import Erratum
+
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
+from elliottlib.exceptions import ElliottFatalError
 
 LOGGER = logutil.get_logger(__name__)
 

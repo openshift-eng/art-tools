@@ -1,7 +1,8 @@
 import sys
-import click
 
+import click
 from artcommonlib import logutil
+
 from elliottlib import errata
 from elliottlib.cli.common import cli, move_builds
 from elliottlib.util import ensure_erratatool_auth

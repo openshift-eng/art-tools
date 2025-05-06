@@ -16,11 +16,12 @@ from typing import BinaryIO, Callable, Dict, Iterable, List, Optional, Tuple
 import koji
 import koji_cli.lib
 import requests
+from artcommonlib import exectools, logutil
+from artcommonlib.model import Missing
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.model import Missing
-from artcommonlib import logutil, exectools
 from doozerlib import constants
+
 from .util import total_size
 
 logger = logutil.get_logger(__name__)

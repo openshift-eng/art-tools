@@ -1,21 +1,20 @@
+import logging
 import re
 import sys
-import logging
 from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
 
 import click
 import koji
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.format_util import green_print
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.format_util import green_print
 from elliottlib import Runtime, early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import cli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import JIRABugTracker
-
 
 LOGGER = logging.getLogger(__name__)
 

@@ -2,8 +2,7 @@
 This file contains constants that are used to manage OCP Image and RPM builds
 """
 
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, BREW_HUB, BREW_DOWNLOAD_URL
-
+from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB, RHCOS_RELEASES_BASE_URL
 
 CINCINNATI_BASE_URL = "https://api.openshift.com/api/upgrades_info/v1/graph"
 BREW_DOWNLOAD_TEMPLATE = BREW_DOWNLOAD_URL + "/packages/{name}/{version}/{release}/files/{file_path}"

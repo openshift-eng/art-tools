@@ -1,13 +1,14 @@
-import click
+import logging
 import sys
 import traceback
-import logging
 
+import click
 from artcommonlib.format_util import green_prefix
-from elliottlib.cli.find_bugs_sweep_cli import print_report, FindBugsMode
-from elliottlib.bzutil import BugTracker
+
 from elliottlib import Runtime, constants
+from elliottlib.bzutil import BugTracker
 from elliottlib.cli.common import cli
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, print_report
 
 LOGGER = logging.getLogger(__name__)
 

@@ -1,14 +1,14 @@
-from datetime import datetime, timezone
 import logging
 import os
 import shutil
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from multiprocessing import Lock
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
-from artcommonlib import assertion, exectools, constants
+from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
 from artcommonlib.lock import get_named_semaphore

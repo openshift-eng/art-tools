@@ -6,7 +6,6 @@ from typing import List, Optional, Sequence, Union, cast
 
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
-
 from doozerlib import constants
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution

@@ -1,8 +1,8 @@
 import glob
 import io
+import json
 import os
 import re
-import json
 import shutil
 import threading
 from pathlib import Path
@@ -10,12 +10,12 @@ from typing import Optional, Tuple, Union
 from urllib.parse import urlparse
 
 import yaml
+from artcommonlib import exectools, pushd
+from artcommonlib.brew import BuildStates
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib import pushd, exectools
-from artcommonlib.brew import BuildStates
 from doozerlib import brew, util
 from doozerlib.runtime import Runtime
 

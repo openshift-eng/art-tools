@@ -1,9 +1,9 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch, Mock, ANY
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
-from artcommonlib.model import Model, ListModel
-from elliottlib.cli.pin_builds_cli import AssemblyPinBuildsCli
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome
+from artcommonlib.model import ListModel, Model
+from elliottlib.cli.pin_builds_cli import AssemblyPinBuildsCli
 
 
 class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):

@@ -1,9 +1,9 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch, ANY, Mock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli
-from artcommonlib.model import Model
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):

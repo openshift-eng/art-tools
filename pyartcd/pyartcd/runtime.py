@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import tomli
-
-from artcommonlib import runtime, model
+from artcommonlib import model, runtime
 from artcommonlib.exectools import cmd_gather_async
-from pyartcd import jenkins, util, constants
+
+from pyartcd import constants, jenkins, util
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.slack import SlackClient

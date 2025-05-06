@@ -1,15 +1,13 @@
 import asyncio
 import logging
 import os
-
 import typing
 
+from artcommonlib import constants
 from google.cloud import bigquery
 from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import BinaryExpression, UnaryExpression
 from sqlalchemy.dialects import mysql
-
-from artcommonlib import constants
 
 
 class BigQueryClient:

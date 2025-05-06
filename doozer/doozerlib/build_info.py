@@ -5,13 +5,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Awaitable, Dict, List, Optional, Tuple, Union, cast
 
-import doozerlib
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import to_nevra
+
+import doozerlib
 from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.repodata import OutdatedRPMFinder, Repodata

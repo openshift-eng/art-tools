@@ -1,13 +1,12 @@
 import errno
-import os
 import io
+import os
 import unittest
 from unittest.mock import Mock, patch
 
-from flexmock import flexmock
-
 from artcommonlib.assembly import AssemblyTypes
 from doozerlib import distgit
+from flexmock import flexmock
 
 
 class TestImageDistGitRepoPushImage(unittest.TestCase):

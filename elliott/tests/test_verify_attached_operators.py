@@ -1,10 +1,10 @@
 import json
-import yaml
-import unittest
 import os
-from unittest.mock import MagicMock, patch
+import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import yaml
 from elliottlib.cli import verify_attached_operators_cli as vaocli
 from elliottlib.exceptions import BrewBuildException
 

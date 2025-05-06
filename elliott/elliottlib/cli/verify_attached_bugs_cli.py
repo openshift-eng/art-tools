@@ -1,26 +1,25 @@
 import asyncio
-import re
 import json
-from typing import Any, Dict, Iterable, List, Set, Tuple
-import click
 import logging
+import re
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
-from errata_tool import ErrataException
-
-from artcommonlib import logutil, arch_util
+import click
+from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
+from errata_tool import ErrataException
+
 from elliottlib import bzutil, constants
+from elliottlib.bzutil import Bug
+from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
+from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.util import minor_version_tuple
-from elliottlib.bzutil import Bug
-from elliottlib.errata import get_bug_ids, sync_jira_issue
-from elliottlib.cli.attach_cve_flaws_cli import get_flaws
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
-from elliottlib.errata import is_advisory_editable
 
 logger = logging.getLogger(__name__)
 

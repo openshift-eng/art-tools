@@ -1,7 +1,8 @@
-from artcommonlib.format_util import green_prefix
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
-from errata_tool import Erratum, ErrataException
 import click
+from artcommonlib.format_util import green_prefix
+from errata_tool import ErrataException, Erratum
+
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 
 
 @cli.command("change-state", short_help="Change ADVISORY state")

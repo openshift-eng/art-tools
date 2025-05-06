@@ -6,7 +6,6 @@ import sys
 import bugzilla
 from packaging import version
 
-
 api_key = None
 try:
     api_key = open(os.path.expanduser('~/.bugzilla_apikey')).read().strip()

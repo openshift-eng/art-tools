@@ -1,6 +1,7 @@
 import unittest
-from flexmock import flexmock
+
 from doozerlib import distgit
+from flexmock import flexmock
 
 
 class TestDistgitRecursiveOverwrite(unittest.TestCase):
