@@ -46,8 +46,6 @@ ignore = [
     "E402",
     # redefinition of unused
     "F811",
-    # lambda
-    "E731",
     # bare except
     "E722",
 ]

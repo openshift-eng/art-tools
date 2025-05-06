@@ -36,7 +36,8 @@ def rpms_print(runtime, short, output, pattern):
     rpms = list(runtime.rpm_metas())
 
     if short:
-        echo_verbose = lambda _: None
+        def echo_verbose(_):
+            return None
     else:
         echo_verbose = click.echo
 

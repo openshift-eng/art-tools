@@ -1145,7 +1145,8 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
 
     count = 0
     if short:
-        echo_verbose = lambda _: None
+        def echo_verbose(_):
+            return None
     else:
         echo_verbose = click.echo
 
