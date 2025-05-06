@@ -29,7 +29,6 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from artcommonlib import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime

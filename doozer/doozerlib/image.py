@@ -592,7 +592,8 @@ class ImageMetadata(Metadata):
             }
 
         # Avoid non serializable objects. Known to occur for PosixPath objects in content.source.modifications.
-        default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
+        def default(o):
+            return f"<<non-serializable: {type(o).__qualname__}>>"
 
         digest = hashlib.sha256(json.dumps(message, sort_keys=True, default=default).encode("utf-8")).hexdigest()
         return "sha256:" + digest

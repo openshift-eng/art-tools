@@ -1,3 +1,8 @@
+import io
+import logging
+import tempfile
+import shutil
+
 from unittest import IsolatedAsyncioTestCase
 from future import standard_library
 
@@ -10,10 +15,6 @@ try:
     from importlib import reload
 except ImportError:
     pass
-import io
-import logging
-import tempfile
-import shutil
 
 
 class MockDistgit(object):

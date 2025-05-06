@@ -85,7 +85,8 @@ class TestImageDistGit(TestDistgit):
         self.assertEqual("default-method", repo.image_build_method)
 
     def test_image_build_method_imagebuilder(self):
-        get = lambda key, default: dict({"builder": "..."}) if key == "from" else default
+        def get(key, default):
+            return dict({"builder": "..."}) if key == "from" else default
 
         metadata = flexmock(
             runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
