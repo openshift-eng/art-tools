@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 from enum import Enum
 
 import typing
@@ -273,7 +274,9 @@ def _assembly_field(field_name: str, releases_config: Model, assembly: str) -> M
     return Model(dict_to_model=config_dict)
 
 
-def assembly_basis_event(releases_config: Model, assembly: str, strict: bool = False) -> typing.Optional[int]:
+def assembly_basis_event(
+    releases_config: Model, assembly: str, strict: bool = False
+) -> typing.Optional[typing.Union[int, datetime]]:
     """
     :param releases_config: The content of releases.yml in Model form.
     :param assembly: The name of the assembly to assess
@@ -288,8 +291,11 @@ def assembly_basis_event(releases_config: Model, assembly: str, strict: bool = F
 
     _check_recursion(releases_config, assembly)
     target_assembly = releases_config.releases[assembly].assembly
+
     if target_assembly.basis.brew_event:
-        return int(target_assembly.basis.brew_event)
+        return int(target_assembly.basis.brew_event)  # Integer for Brew event
+    elif target_assembly.basis.time:
+        return target_assembly.basis.time  # Datetime for Konflux
     return assembly_basis_event(releases_config, target_assembly.basis.assembly, strict=strict)
 
 

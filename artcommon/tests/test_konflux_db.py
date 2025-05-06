@@ -327,7 +327,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
             "AND `group` = 'openshift-4.18' AND outcome = 'success' "
             "AND assembly = 'stream' AND end_time IS NOT NULL "
-            f"AND end_time < '{now}' "
+            f"AND end_time <= '{now}' "
             f"AND start_time >= '{str(lower_bound)}' "
             f"AND start_time < '{now}' "
             "ORDER BY `start_time` DESC LIMIT 1"

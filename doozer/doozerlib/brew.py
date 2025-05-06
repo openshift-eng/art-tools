@@ -335,6 +335,14 @@ def list_build_rpms(build_ids: List[int], session: koji.ClientSession) -> List[O
     return [task.result for task in tasks]
 
 
+def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
+    """
+    Return the latest Brew event that happened before a given time.
+    For example: datetime.datetime(2025, 4, 4, 11, 38, 42) -> 63259598
+    """
+    return koji_api.getLastEvent(KojiWrapperOpts(brew_event_aware=False), before=datetime_obj.timestamp())['id']
+
+
 # Map that records tagId -> dict of latest package tagging event associated with that tag
 latest_tag_change_events = {}
 cache_lock = Lock()

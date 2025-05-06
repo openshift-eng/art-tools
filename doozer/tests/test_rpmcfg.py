@@ -27,8 +27,8 @@ targets:
 
     @mock.patch("artcommonlib.logutil.EntityLoggingAdapter")
     @mock.patch("doozerlib.rpmcfg.Dir")
-    def test_assert_golang_versions(self, MockDir, MockEntityLoggingAdapter):
-        runtime = mock.MagicMock(brew_logs_dir="/path/to/brew/logs")
+    def test_assert_golang_versions(self, *_):
+        runtime = mock.MagicMock(brew_logs_dir="/path/to/brew/logs", build_system="brew")
         koji_session = runtime.build_retrying_koji_client.return_value
         data_obj = mock.MagicMock(
             key="foo",
