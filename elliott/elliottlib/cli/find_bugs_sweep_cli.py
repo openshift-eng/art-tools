@@ -1,7 +1,7 @@
 import json
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Set
 
 import click
@@ -196,7 +196,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
     if bugs:
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
-            utc_ts = datetime.fromtimestamp(sweep_cutoff_timestamp, tz=datetime.timezone.utc)
+            utc_ts = datetime.fromtimestamp(sweep_cutoff_timestamp, tz=timezone.utc)
             logger.info(
                 f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
                 f"cutoff time {utc_ts}..."
