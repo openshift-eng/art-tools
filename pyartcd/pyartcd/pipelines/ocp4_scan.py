@@ -17,7 +17,8 @@ class Ocp4ScanPipeline:
         self.version = version
         self.data_path = data_path or constants.OCP_BUILD_DATA_URL  # in case we will make it a parameter
         self.logger = runtime.logger
-        self.rhcos_changed = False
+        self.rhcos_updated = False
+        self.rhcos_outdated = False
         self.rhcos_inconsistent = False
         self.inconsistent_rhcos_rpms = None
         self.changes = {}
@@ -65,8 +66,11 @@ class Ocp4ScanPipeline:
                 comment_on_pr=True,
             )
 
-        elif self.rhcos_inconsistent:
-            self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+        elif self.rhcos_inconsistent or self.rhcos_outdated:
+            if self.rhcos_inconsistent:
+                self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+            if self.rhcos_outdated:
+                self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s RHCOS build', self.version)
@@ -74,19 +78,20 @@ class Ocp4ScanPipeline:
 
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
-            self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
+            self.logger.info('Triggering a %s RHCOS build', self.version)
             jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build")
-            if int(self.version.split(".")[1]) == 19:
+            group_config = await util.load_group_config(group=f"openshift-{self.version}", assembly="stream")
+            if group_config.rhcos.get("layered_rhcos", False):
                 jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build-node-image")
 
-        elif self.rhcos_changed:
+        elif self.rhcos_updated:
             self.logger.info('Detected at least one updated RHCOS')
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s build-sync build', self.version)
                 return
 
-            self.logger.info('Triggering a %s build-sync', self.version)
+            self.logger.info('Triggering a %s build-sync to pick up latest RHCOS', self.version)
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
@@ -97,7 +102,6 @@ class Ocp4ScanPipeline:
                 assembly="stream",
                 build_system="konflux",
             )
-
         else:
             self.logger.info('*** No changes detected')
             jenkins.update_title(' [NO CHANGES]')
@@ -130,10 +134,11 @@ class Ocp4ScanPipeline:
 
         # Check for RHCOS changes
         if changes.get('rhcos', None):
-            self.rhcos_changed = True
-        else:
-            self.rhcos_changed = False
-
+            for rhcos_change in changes['rhcos']:
+                if rhcos_change.get('updated', None):
+                    self.rhcos_updated = True
+                if rhcos_change.get('outdated', None):
+                    self.rhcos_outdated = True
         self.changes = changes
         self.issues = yaml_data.get('issues', [])
 

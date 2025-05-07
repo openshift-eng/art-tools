@@ -605,7 +605,7 @@ class ConfigScanSources:
 
     def _detect_rhcos_status(self) -> list:
         """
-        gather the existing RHCOS tags and compare them to latest rhcos builds
+        gather the existing RHCOS tags and compare them to latest rhcos builds, also check outdate rpms in rhcos
         @return a list of status entries like:
             {
                 'name': "4.2-x86_64-priv",
@@ -628,18 +628,31 @@ class ConfigScanSources:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
 
-                if not latest_rhcos_value:
-                    status['changed'] = False
-                    status['reason'] = "could not find an RHCOS build to sync"
-                elif tagged_rhcos_value == latest_rhcos_value:
-                    status['changed'] = False
-                    status['reason'] = f"latest RHCOS build is still {latest_rhcos_value} -- no change from istag"
-                else:
-                    status['changed'] = True
+                if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
+                    status['updated'] = True
                     status['reason'] = (
                         f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
                     )
-                if status['changed']:
+                    statuses.append(status)
+                # check outdate rpms in rhcos
+                pullspec_for_tag = dict()
+                build_id = ""
+                for container_conf in self.runtime.group_config.rhcos.payload_tags:
+                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, arch, private).latest_container(
+                        container_conf
+                    )
+                    pullspec_for_tag[container_conf.name] = pullspec
+                non_latest_rpms = rhcos.RHCOSBuildInspector(
+                    self.runtime, pullspec_for_tag, arch, build_id
+                ).find_non_latest_rpms()
+                if non_latest_rpms:
+                    status['outdated'] = True
+                    rebuild_hints = [
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
+                        for arch, non_latest in non_latest_rpms.items()
+                        for installed_rpm, latest_rpm, repo in non_latest
+                    ]
+                    status['reason'] = ";\n".join(rebuild_hints)
                     statuses.append(status)
         return statuses
 
