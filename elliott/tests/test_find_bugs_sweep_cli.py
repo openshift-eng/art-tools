@@ -1,11 +1,11 @@
 import traceback
 import unittest
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from click.testing import CliRunner
 from elliottlib import errata
-from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, categorize_bugs_by_type, extras_bugs, get_assembly_bug_ids
 from elliottlib.exceptions import ElliottFatalError
@@ -13,37 +13,31 @@ from flexmock import flexmock
 
 
 class TestFindBugsMode(unittest.TestCase):
-    @patch.object(BugzillaBugTracker, 'login', return_value=None, autospec=True)
-    @patch.object(BugzillaBugTracker, 'search', return_value=[1, 2], autospec=True)
-    def test_find_bugs_mode_search(self, mock_search: MagicMock, mock_login: MagicMock):
+    def test_find_bugs_mode_search(self):
         config = {
             'target_release': ['4.3.0', '4.3.z'],
             'product': "product",
             'server': "server",
         }
-        bug_tracker = BugzillaBugTracker(config)
+        bug_ids = [1, 2]
+
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
+        flexmock(JIRABugTracker).should_receive("search").and_return(bug_ids)
+
+        bug_tracker = JIRABugTracker(config)
         find_bugs = FindBugsMode(status=['foo', 'bar'], cve_only=False)
         find_bugs.include_status(['alpha'])
         find_bugs.exclude_status(['foo'])
         bugs = find_bugs.search(bug_tracker_obj=bug_tracker)
-        self.assertEqual([1, 2], bugs)
-        mock_search.assert_called_once_with(bug_tracker, {'bar', 'alpha'}, verbose=False)
+        self.assertEqual(bug_ids, bugs)
 
 
 class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
-    @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
     @patch('elliottlib.cli.find_bugs_sweep_cli.FindBugsSweep.search')
-    def test_find_bugs_sweep_report_jira(self, search_mock, bugzilla_filter_mock, jira_filter_mock):
-        runner = CliRunner()
-
-        # common mocks
-        flexmock(Runtime).should_receive("initialize").and_return(None)
-        flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
-        flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
-        flexmock(Runtime).should_receive("get_default_advisories").and_return({})
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({}, [])
-
+    def test_find_bugs_sweep_report_jira(self, search_mock, jira_filter_mock):
         # jira mocks
         jira_bug = flexmock(
             id='OCPBUGS-1',
@@ -52,17 +46,22 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             summary='summary',
             created_days_ago=lambda: 7,
         )
+
+        runner = CliRunner()
+
+        # common mocks
+        flexmock(Runtime).should_receive("initialize").and_return(None)
+        flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(Runtime).should_receive("get_default_advisories").and_return({})
+        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": {jira_bug}}, [])
+
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         search_mock.return_value = [jira_bug]
         jira_filter_mock.return_value = []
-
-        # bz mocks
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(BugzillaBugTracker).should_receive("login")
-        bugzilla_filter_mock.return_value = []
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--report'])
         if result.exit_code != 0:
@@ -72,49 +71,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn('OCPBUGS-1', result.output)
 
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
-    @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
-    @patch('elliottlib.cli.find_bugs_sweep_cli.FindBugsSweep.search')
-    def test_find_bugs_sweep_report_bz(self, search_mock, bugzilla_filter_mock, jira_filter_mock):
-        runner = CliRunner()
-
-        # common mocks
-        flexmock(Runtime).should_receive("initialize").and_return(None)
-        flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
-        flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
-        flexmock(Runtime).should_receive("get_default_advisories").and_return({})
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({}, [])
-
-        # jira mocks
-        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        client = flexmock()
-        flexmock(client).should_receive("fields").and_return([])
-        flexmock(JIRABugTracker).should_receive("login").and_return(client)
-        jira_filter_mock.return_value = []
-
-        # bz mocks
-        bz_bug = flexmock(
-            id='BZ1',
-            created_days_ago=lambda: 8,
-            cf_pm_score='score',
-            component='OLM',
-            status='ON_QA',
-            summary='summary',
-        )
-
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(BugzillaBugTracker).should_receive("login")
-        search_mock.return_value = [bz_bug]
-        bugzilla_filter_mock.return_value = []
-
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--report'])
-        if result.exit_code != 0:
-            exc_type, exc_value, exc_traceback = result.exc_info
-            t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            self.fail(t)
-        self.assertIn('BZ1', result.output)
-
-    @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
-    @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
     @patch('elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp')
     def test_find_bugs_sweep_brew_event(self, *_):
         runner = CliRunner()
@@ -134,12 +90,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
 
-        # bz mocks
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(BugzillaBugTracker).should_receive("login")
-        flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
-        flexmock(BugzillaBugTracker).should_receive("filter_bugs_by_cutoff_event").and_return([])
-
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly', '4.6.52', 'find-bugs:sweep'])
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
@@ -147,8 +97,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             self.fail(t)
 
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
-    @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
-    def test_find_bugs_sweep_advisory_jira(self, bugzilla_filter_mock, jira_filter_mock):
+    def test_find_bugs_sweep_advisory_jira(self, jira_filter_mock):
         runner = CliRunner()
         bugs = [
             flexmock(
@@ -178,15 +127,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         )
         jira_filter_mock.return_value = []
 
-        # bz mocks
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
-        flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
-        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
-            [b.id for b in bugs], advisory_id=advisory_id, noop=False, verbose=False
-        )
-        bugzilla_filter_mock.return_value = []
-
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--add', str(advisory_id)])
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
@@ -194,8 +134,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             self.fail(t)
 
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
-    @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
-    def test_find_bugs_sweep_advisory_type(self, bugzilla_filter_mock, jira_filter_mock):
+    def test_find_bugs_sweep_advisory_type(self, jira_filter_mock):
         runner = CliRunner()
         bugs = [flexmock(id='BZ1')]
 
@@ -215,15 +154,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("advisory_bug_ids").and_return([])
         flexmock(JIRABugTracker).should_receive("attach_bugs").and_return()
         jira_filter_mock.return_value = []
-
-        # bz mocks
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(BugzillaBugTracker).should_receive("login")
-        flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
-        bugzilla_filter_mock.return_value = []
-        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
-            ['BZ1'], advisory_id=123, noop=False, verbose=False
-        )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--use-default-advisory', 'image'])
         if result.exit_code != 0:
