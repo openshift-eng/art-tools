@@ -12,6 +12,7 @@ from typing import cast
 import artcommonlib.util
 import click
 import dateutil.parser
+import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.exectools import cmd_gather_async
@@ -621,6 +622,10 @@ class ConfigScanSources:
             # IOError is raised by fetch_cgit_file() when config_digest could not be found
             self.logger.warning('config_digest not found for %s: skipping config check', image_meta.distgit_key)
             return
+
+        except pycares.AresError as e:
+            self.logger.error(e)
+            raise
 
         except Exception as e:
             # Something else went wrong: request a build
