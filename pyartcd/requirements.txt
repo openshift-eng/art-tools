@@ -3,6 +3,7 @@ aiofiles
 aiohttp[speedups] >= 3.6
 aiohttp_retry
 aioredlock >= 0.7.3
+awscli >= 1.37.0
 click
 contextvars
 errata-tool ~= 1.31.0
