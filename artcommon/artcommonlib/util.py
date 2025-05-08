@@ -454,6 +454,6 @@ async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, r
     Retrieve the SLSA attestation: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
     """
     cmd = f"cosign download attestation {pull_spec} --registry-username {registry_username} --registry-password {registry_password}"
-    rc, out, err = await cmd_gather_async(cmd, check=False)
+    _, out, _ = await cmd_gather_async(cmd)
 
-    return rc, out.strip(), err
+    return out.strip()
