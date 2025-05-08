@@ -152,8 +152,10 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
         flexmock(JIRABugTracker).should_receive("advisory_bug_ids").and_return([])
-        flexmock(JIRABugTracker).should_receive("attach_bugs").and_return(bugs)
         jira_filter_mock.return_value = []
+        flexmock(JIRABugTracker).should_receive("attach_bugs").with_args(
+            [b.id for b in bugs], advisory_id=123, noop=False, verbose=False
+        )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--use-default-advisory', 'image'])
         if result.exit_code != 0:
