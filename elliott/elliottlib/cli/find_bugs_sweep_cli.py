@@ -14,7 +14,7 @@ from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import chunk
+from elliottlib.util import chunk, fix_summary_suffix
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -149,6 +149,7 @@ async def find_bugs_sweep_cli(
             )
 
     runtime.initialize(mode="both")
+    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
@@ -162,6 +163,8 @@ async def find_bugs_sweep_cli(
                     runtime,
                     advisory_id,
                     default_advisory_type,
+                    major_version,
+                    minor_version,
                     find_bugs_obj,
                     noop=noop,
                     permissive=permissive,
@@ -261,6 +264,8 @@ async def find_and_attach_bugs(
     runtime: Runtime,
     advisory_id,
     default_advisory_type,
+    major_version,
+    minor_version,
     find_bugs_obj,
     noop,
     permissive,
@@ -283,8 +288,10 @@ async def find_and_attach_bugs(
         bugs,
         advisory_ids,
         included_bug_ids,
+        noop,
         permissive=permissive,
         major_version=major_version,
+        minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
     )
     for kind, kind_bugs in bugs_by_type.items():
@@ -340,9 +347,11 @@ def categorize_bugs_by_type(
     bugs: List[Bug],
     advisory_id_map: Dict[str, int],
     permitted_bug_ids,
+    noop,
+    major_version: int,
+    minor_version: int,
     operator_bundle_advisory: str = "metadata",
     permissive=False,
-    major_version: int = 4,
 ):
     """Categorize bugs into different types of advisories
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
@@ -401,6 +410,14 @@ def categorize_bugs_by_type(
 
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        # get summary of tracker-bug and update it if needed
+        summary_suffix = f"[openshift-{major_version}.{minor_version}]"
+        if not b.summary.endswith(summary_suffix):
+            new_s = fix_summary_suffix(b.summary, summary_suffix)
+            try:
+                b.update_summary(new_s, noop=noop)
+            except Exception as e:
+                logger.warning("Failed to fix summary: %s", str(e))
 
     if not advisory_id_map:
         logger.warning(

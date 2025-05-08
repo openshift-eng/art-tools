@@ -7,6 +7,7 @@ from artcommonlib import logutil
 from elliottlib import Runtime
 from elliottlib.cli.common import cli
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
+from elliottlib.util import fix_summary_suffix
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -67,6 +68,15 @@ def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
     Contact ProdSec if you have questions.
     """
                 bug_tracker.add_comment(bug.id, comment, private=True, noop=noop)
+
+                # get summary of CVE bug and update it if needed
+                summary_suffix = f"[openshift-{major_version}.{minor_version}]"
+                if not bug.summary.endswith(summary_suffix):
+                    new_s = fix_summary_suffix(bug.summary, summary_suffix)
+                    try:
+                        bug.update_summary(new_s, noop=noop)
+                    except Exception as e:
+                        LOGGER.warning("Failed to fix summary: %s", str(e))
 
             elif bug_tracker.type == 'jira':
                 # If a security level is specified, the bug won't be visible on advisories
