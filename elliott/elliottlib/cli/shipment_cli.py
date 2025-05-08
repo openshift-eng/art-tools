@@ -2,7 +2,6 @@ import sys
 
 import click
 from artcommonlib import logutil
-from artcommonlib.model import Model
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from ruamel.yaml import YAML
 
