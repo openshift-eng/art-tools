@@ -1034,12 +1034,16 @@ class KonfluxRebaser:
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
         ]
 
+        # For CI images we are checking /tmp/Current-IT-Root-CAs.pem. Since we are not releasing those images, its safe to use the default path.
+        # https://github.com/openshift-eng/ocp-build-data/blob/openshift-4.16/ci_images/rhel-8/ci-openshift-build-root/Dockerfile#L26
+        cert_path = "/tmp" if metadata.distgit_key.startswith("ci-") else constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH
+
         if network_mode != "hermetic":
             konflux_lines += [
                 "USER 0",
                 "RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
+                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {cert_path}",
             ]
 
         if network_mode == "internal-only":
