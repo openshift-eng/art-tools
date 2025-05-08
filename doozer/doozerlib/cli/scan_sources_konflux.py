@@ -406,7 +406,7 @@ class ConfigScanSources:
         await self.scan_arch_changes(image_meta)
 
         # Check for changes in the network mode
-        # await self.scan_network_mode_changes(image_meta)
+        await self.scan_network_mode_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
@@ -488,7 +488,7 @@ class ConfigScanSources:
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
         # Rebuild if there is a mismatch
-        if (network_mode == "hermetic") == is_hermetic:
+        if (network_mode == "hermetic") != is_hermetic:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
