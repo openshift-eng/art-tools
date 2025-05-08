@@ -309,7 +309,7 @@ class JIRABug(Bug):
 
     def update_summary(self, new_summary, noop=False):
         if noop:
-            logger.info(f"Would have added summary: {new_summary}")
+            logger.info(f"Would have updated summary: {new_summary}")
             return
         else:
             # Update summary field
