@@ -249,8 +249,6 @@ async def find_and_attach_bugs(
     runtime: Runtime,
     advisory_id,
     default_advisory_type,
-    major_version,
-    minor_version,
     find_bugs_obj,
     noop,
     permissive,
@@ -268,7 +266,7 @@ async def find_and_attach_bugs(
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    major_version, _ = runtime.get_major_minor()
+    major_version, minor_version = runtime.get_major_minor()
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs,
         advisory_ids,

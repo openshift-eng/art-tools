@@ -136,7 +136,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
     def test_find_bugs_sweep_advisory_type(self, jira_filter_mock):
         runner = CliRunner()
-        bugs = [flexmock(id='BZ1')]
+        bugs = [flexmock(id='OCPBUGS-1')]
 
         # common mocks
         flexmock(Runtime).should_receive("initialize")
@@ -150,9 +150,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
-        flexmock(JIRABugTracker).should_receive("search").and_return([])
+        flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
         flexmock(JIRABugTracker).should_receive("advisory_bug_ids").and_return([])
-        flexmock(JIRABugTracker).should_receive("attach_bugs").and_return()
+        flexmock(JIRABugTracker).should_receive("attach_bugs").and_return(bugs)
         jira_filter_mock.return_value = []
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--use-default-advisory', 'image'])
