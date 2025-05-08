@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -9,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 import aiohttp
 import requests
 from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -444,3 +446,14 @@ def detect_package_managers(metadata, dest_dir: Path):
         if any(dest_dir.joinpath(file).is_file() for file in files):
             pkg_managers.append(pkg_manager)
     return pkg_managers
+
+
+@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
+async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, registry_password: str):
+    """
+    Retrieve the SLSA attestation: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
+    """
+    cmd = f"cosign download attestation {pull_spec} --registry-username {registry_username} --registry-password {registry_password}"
+    rc, out, err = await cmd_gather_async(cmd, check=False)
+
+    return rc, out.strip(), err

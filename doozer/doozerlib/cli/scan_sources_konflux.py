@@ -82,6 +82,8 @@ class ConfigScanSources:
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
+        self.art_images_username = os.environ['KONFLUX_ART_IMAGES_USERNAME']
+        self.art_images_password = os.environ['KONFLUX_ART_IMAGES_PASSWORD']
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -403,6 +405,9 @@ class ConfigScanSources:
         # Check for changes in image arches
         await self.scan_arch_changes(image_meta)
 
+        # Check for changes in the network mode
+        await self.scan_network_mode_changes()
+
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -420,9 +425,6 @@ class ConfigScanSources:
 
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
-
-        # Check for changes in the network mode
-        # await self.scan_network_mode_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -463,26 +465,30 @@ class ConfigScanSources:
         network_mode = image_meta.get_konflux_network_mode()
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        rc, attestation, err = await artcommonlib.util.get_konflux_slsa_attestation(
+            pull_spec=build_record.image_pullspec,
+            registry_username=self.art_images_username,
+            registry_password=self.art_images_password,
+        )
 
-        # Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
-        # To see if the latest build is actually hermetic
-        cmd = f"cosign download attestation {build_record.image_pullspec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
-        rc, attestation, error = await exectools.cmd_gather_async(cmd)
         if rc != 0:
-            raise IOError(
-                f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}",
+            self.logger.error(
+                f"Failed to get SLA attestation from konflux for image {build_record.image_pullspec}. Error: {err}"
             )
 
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation.strip())["payload"]).decode("utf-8"))
+            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
         except Exception as e:
             raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
+
+        # Inspect the SLSA attestation to see if the build is hermetic
         is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+        is_hermetic = True if is_hermetic.lower() == "true" else False
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
         # Rebuild if there is a mismatch
-        if str(network_mode == "hermetic").lower() != is_hermetic.lower():
+        if (network_mode == "hermetic") == is_hermetic:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
@@ -506,8 +512,7 @@ class ConfigScanSources:
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
-            engine=Engine.KONFLUX.value,
-            extra_patterns={'commitish': upstream_commit_hash},
+            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -542,8 +547,7 @@ class ConfigScanSources:
 
         # Check whether a build attempt with this commit has failed before.
         failed_commit_build_record = await image_meta.get_latest_build(
-            extra_patterns={'commitish': upstream_commit_hash},
-            outcome=KonfluxBuildOutcome.FAILURE,
+            extra_patterns={'commitish': upstream_commit_hash}, outcome=KonfluxBuildOutcome.FAILURE
         )
 
         # If not, this is a net-new upstream commit. Build it.
@@ -834,8 +838,7 @@ class ConfigScanSources:
         ]
         if rebuild_hints:
             self.add_image_meta_change(
-                image_meta,
-                RebuildHint(RebuildHintCode.PACKAGE_CHANGE, ";\n".join(rebuild_hints)),
+                image_meta, RebuildHint(RebuildHintCode.PACKAGE_CHANGE, ";\n".join(rebuild_hints))
             )
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
@@ -924,9 +927,7 @@ class ConfigScanSources:
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
             upstream_commit_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target,
-                extra_patterns={'commitish': upstream_commit_hash},
-                engine=Engine.BREW.value,
+                el_target=el_target, extra_patterns={'commitish': upstream_commit_hash}, engine=Engine.BREW.value
             )
 
             if not upstream_commit_build_record:
@@ -1009,9 +1010,7 @@ class ConfigScanSources:
                     }
                 )
 
-        results = dict(
-            images=image_results,
-        )
+        results = dict(images=image_results)
 
         self.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
 
