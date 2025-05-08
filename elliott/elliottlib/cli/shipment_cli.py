@@ -44,15 +44,23 @@ class InitShipmentCli:
         advisory_key: str,
     ):
         self.runtime = runtime
-        self.application = application
-        self.snapshot = snapshot
+        self.application = application or KonfluxImageBuilder.get_application_name(self.runtime.group)
+        self.snapshot = snapshot or "test-snapshot"
         self.stage_rpa = stage_rpa
         self.prod_rpa = prod_rpa
         self.for_fbc = for_fbc
         self.advisory_key = advisory_key
 
     async def run(self):
-        self.runtime.initialize()
+        self.runtime.initialize(with_shipment=True)
+
+        # if stage/prod rpa are not given in cli, try to load them from shipment repo config
+        # where defaults are set per application
+        if not (self.stage_rpa and self.prod_rpa):
+            shipment_config = self.runtime.shipment_gitdata.load_yaml_file('config.yaml', strict=False) or {}
+            app_env_config = shipment_config.get("applications", {}).get(self.application, {}).get("environments", {})
+            self.stage_rpa = self.stage_rpa or app_env_config.get("stage", {}).get("releasePlan", "test-stage-rpa")
+            self.prod_rpa = self.prod_rpa or app_env_config.get("prod", {}).get("releasePlan", "test-prod-rpa")
 
         data = None
         if not self.for_fbc:
@@ -84,21 +92,20 @@ class InitShipmentCli:
                     ),
                 )
 
-        default_application = KonfluxImageBuilder.get_application_name(self.runtime.group)
         shipment = ShipmentConfig(
             shipment=Shipment(
                 metadata=Metadata(
                     product=self.runtime.product,
-                    application=self.application or default_application,
+                    application=self.application,
                     group=self.runtime.group,
                     assembly=self.runtime.assembly,
                     fbc=self.for_fbc,
                 ),
                 environments=Environments(
-                    stage=ShipmentEnv(releasePlan=self.stage_rpa or "test-stage-rpa"),
-                    prod=ShipmentEnv(releasePlan=self.prod_rpa or "test-prod-rpa"),
+                    stage=ShipmentEnv(releasePlan=self.stage_rpa),
+                    prod=ShipmentEnv(releasePlan=self.prod_rpa),
                 ),
-                snapshot=Snapshot(name=self.snapshot or "test-snapshot", spec=Spec(nvrs=[])),
+                snapshot=Snapshot(name=self.snapshot, spec=Spec(nvrs=[])),
                 data=data,
             ),
         )
