@@ -58,7 +58,7 @@ class InitShipmentCli:
         # if stage/prod rpa are not given in cli, try to load them from shipment repo config
         # where defaults are set per application
         if not (self.stage_rpa and self.prod_rpa):
-            shipment_config = self.runtime.shipment_gitdata.load_yaml_file('config.yaml') or {}
+            shipment_config = self.runtime.shipment_gitdata.load_yaml_file('config.yaml', strict=False) or {}
             app_env_config = shipment_config.get("applications", {}).get(self.application, {}).get("environments", {})
             self.stage_rpa = self.stage_rpa or app_env_config.get("stage", {}).get("releasePlan", "test-stage-rpa")
             self.prod_rpa = self.prod_rpa or app_env_config.get("prod", {}).get("releasePlan", "test-prod-rpa")
