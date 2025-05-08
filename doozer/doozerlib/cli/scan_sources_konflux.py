@@ -406,7 +406,7 @@ class ConfigScanSources:
         await self.scan_arch_changes(image_meta)
 
         # Check for changes in the network mode
-        await self.scan_network_mode_changes()
+        await self.scan_network_mode_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
