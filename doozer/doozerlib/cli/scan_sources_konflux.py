@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import cast
 
+import aiohttp
 import artcommonlib.util
 import click
 import dateutil.parser
@@ -39,7 +40,13 @@ DEFAULT_THRESHOLD_HOURS = 6
 
 class ConfigScanSources:
     def __init__(
-        self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool, rebase_priv: bool = False, dry_run: bool = False
+        self,
+        runtime: Runtime,
+        ci_kubeconfig: str,
+        session: aiohttp.ClientSession,
+        as_yaml: bool,
+        rebase_priv: bool = False,
+        dry_run: bool = False,
     ):
         if runtime.konflux_db is None:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
@@ -51,6 +58,7 @@ class ConfigScanSources:
 
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
+        self.session = session
         self.ci_kubeconfig = ci_kubeconfig
         self.as_yaml = as_yaml
         self.rebase_priv = rebase_priv
@@ -580,6 +588,7 @@ class ConfigScanSources:
                 path='.oit/config_digest',
                 token=self.github_token,
                 destination=config_digest,
+                session=self.session,
             )
 
             # Read and return the content of the temporary file
@@ -1072,4 +1081,12 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
     else:
         runtime.initialize(mode='both', clone_distgits=False)
 
-    await ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
+    async with aiohttp.ClientSession() as session:
+        await ConfigScanSources(
+            runtime=runtime,
+            ci_kubeconfig=ci_kubeconfig,
+            as_yaml=as_yaml,
+            rebase_priv=rebase_priv,
+            dry_run=dry_run,
+            session=session,
+        ).run()
