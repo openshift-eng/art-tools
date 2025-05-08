@@ -130,17 +130,16 @@ def split_git_url(url) -> (str, str, str):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def download_file_from_github(repository, branch, path, token: str, destination):
+async def download_file_from_github(repository, branch, path, token: str, destination, session):
     server, org, repo_name = split_git_url(repository)
     url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
     headers = {"Authorization": f'token {token}'}
 
     LOGGER.info('Downloading %s...', url)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            with open(str(destination), "wb") as f:
-                f.write((await resp.text()).encode())
+    async with session.get(url, headers=headers) as resp:
+        resp.raise_for_status()
+        with open(str(destination), "wb") as f:
+            f.write((await resp.text()).encode())
 
 
 def merge_objects(a, b):

@@ -8,6 +8,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+import aiohttp
 import click
 import openshift_client as oc
 import yaml
@@ -822,13 +823,16 @@ async def images_okd_prs(
 
         while True:  # Allows symlinks to be followed
             dockerfile_abs_path = component_source_path.joinpath(os.path.basename(dockerfile_path))
-            await download_file_from_github(
-                repository=public_repo_url,
-                branch=public_branch,
-                path=dockerfile_path,
-                token=github_access_token,
-                destination=dockerfile_abs_path,
-            )
+
+            async with aiohttp.ClientSession() as session:
+                await download_file_from_github(
+                    repository=public_repo_url,
+                    branch=public_branch,
+                    path=dockerfile_path,
+                    token=github_access_token,
+                    destination=dockerfile_abs_path,
+                    session=session,
+                )
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:
