@@ -154,31 +154,16 @@ async def find_bugs_sweep_cli(
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
 
-    bugs: type_bug_list = []
-    errors = []
-    for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-        try:
-            bugs.extend(
-                await find_and_attach_bugs(
-                    runtime,
-                    advisory_id,
-                    default_advisory_type,
-                    major_version,
-                    minor_version,
-                    find_bugs_obj,
-                    noop=noop,
-                    permissive=permissive,
-                    bug_tracker=b,
-                    operator_bundle_advisory=operator_bundle_advisory,
-                )
-            )
-        except Exception as e:
-            errors.append(e)
-            logger.error(traceback.format_exc())
-            logger.error(f'exception with {b.type} bug tracker: {e}')
-
-    if errors:
-        raise ElliottFatalError(f"Error finding or attaching bugs: {errors}. See logs for more information.")
+    bugs: type_bug_list = await find_and_attach_bugs(
+        runtime,
+        advisory_id,
+        default_advisory_type,
+        find_bugs_obj,
+        noop=noop,
+        permissive=permissive,
+        bug_tracker=runtime.get_bug_tracker('jira'),
+        operator_bundle_advisory=operator_bundle_advisory,
+    )
 
     if not bugs:
         logger.info('No bugs found')
@@ -264,8 +249,6 @@ async def find_and_attach_bugs(
     runtime: Runtime,
     advisory_id,
     default_advisory_type,
-    major_version,
-    minor_version,
     find_bugs_obj,
     noop,
     permissive,
@@ -283,7 +266,7 @@ async def find_and_attach_bugs(
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    major_version, _ = runtime.get_major_minor()
+    major_version, minor_version = runtime.get_major_minor()
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs,
         advisory_ids,
