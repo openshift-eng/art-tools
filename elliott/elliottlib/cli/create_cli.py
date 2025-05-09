@@ -24,6 +24,12 @@ def get_common_advisory_template(runtime):
 
 
 def get_advisory_boilerplate(runtime: Runtime, et_data, art_advisory_key, errata_type):
+    # rhsa/rhba keys are in lower case: https://github.com/openshift-eng/ocp-build-data/blob/main/config/advisory_templates.yml#L3
+    # Also if advisory type is RHEA, use the RHBA advisory template
+    errata_type = errata_type.lower()
+    errata_type = "rhba" if errata_type == "rhea" else errata_type
+
+    et_data["errata_type"] = errata_type
     # Group level overrides common config present in openshift-eng/ocp-build-data main branch
     # Try to get the group level boilerplate first
     boilerplate = et_data.get("boilerplates", {})
