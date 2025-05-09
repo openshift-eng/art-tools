@@ -35,8 +35,20 @@ indent-width = 4
 target-version = "py311"
 
 [lint]
-# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
-select = ["E4", "E7", "E9", "F"]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # isort
+    "I",
+    # pyupgrade
+    # "UP",
+    # flake8-bugbear
+    # "B",
+    # flake8-simplify
+    # "SIM",
+]
 ignore = [
     # imported but unused
     # __init__ often imports to make available
@@ -44,6 +56,11 @@ ignore = [
     "F401",
     # bare except
     "E722",
+    # ignore pyflakes lint warning about line too long
+    # which affects only string values
+    # does not affect code as that is auto-formatted to
+    # max line length
+    "E501",
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
