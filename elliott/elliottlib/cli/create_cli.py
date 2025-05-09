@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Optional
 
 import click
@@ -10,7 +9,14 @@ from elliottlib import errata
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.util import YMD, exit_unauthorized, validate_email_address, validate_release_date
+from elliottlib.runtime import Runtime
+from elliottlib.util import (
+    YMD,
+    exit_unauthorized,
+    get_advisory_boilerplate,
+    validate_email_address,
+    validate_release_date,
+)
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -128,31 +134,34 @@ async def create_cli(
         $ elliott -g openshift-4.14 create --art-advisory-key image --date 2018-Mar-05 --yes
     """
     runtime.initialize()
-
     et_data = runtime.get_errata_config()
 
     if sum(map(bool, [date, batch_id])) != 1:
         raise click.BadParameter("Need either --date or --batch-id")
 
-    if "boilerplates" not in et_data:
-        raise ValueError("`boilerplates` is required in erratatool.yml")
-
-    if art_advisory_key not in et_data["boilerplates"]:
-        raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
-
-    boilerplate = et_data["boilerplates"][art_advisory_key]
+    advisory_boilerplate = get_advisory_boilerplate(
+        runtime=runtime, et_data=et_data, art_advisory_key=art_advisory_key, errata_type=errata_type
+    )
 
     errata_api = AsyncErrataAPI()
+    _, minor, patch = runtime.get_major_minor_patch()
+
+    # Format the advisory boilerplate
+    synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
+    advisory_topic = advisory_boilerplate['topic'].format(MINOR=minor, PATCH=patch)
+    advisory_description = advisory_boilerplate['description'].format(MINOR=minor, PATCH=patch)
+    advisory_solution = advisory_boilerplate['solution'].format(MINOR=minor, PATCH=patch)
+
     try:
         if yes:
             created_advisory = await errata_api.create_advisory(
                 product=et_data['product'],
-                release=boilerplate.get('release', et_data['release']),
+                release=advisory_boilerplate.get('release', et_data['release']),
                 errata_type=errata_type,
-                advisory_synopsis=boilerplate['synopsis'],
-                advisory_topic=boilerplate['topic'],
-                advisory_description=boilerplate['description'],
-                advisory_solution=boilerplate['solution'],
+                advisory_synopsis=synopsis,
+                advisory_topic=advisory_topic,
+                advisory_description=advisory_description,
+                advisory_solution=advisory_solution,
                 advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
                 advisory_package_owner_email=package_owner,
                 advisory_manager_email=manager,
@@ -167,7 +176,7 @@ async def create_cli(
             print_advisory(
                 advisory_id,
                 advisory_name,
-                boilerplate['synopsis'],
+                synopsis,
                 package_owner,
                 assigned_to,
                 et_data['quality_responsibility_name'],
@@ -186,7 +195,7 @@ async def create_cli(
             # https://issues.redhat.com/browse/ART-8758
             # Do not leave a comment for a custom assembly type
             if (
-                boilerplate.get("advisory_type_comment", False) in ["yes", "True", True]
+                advisory_boilerplate.get("advisory_type_comment", False) in ["yes", "True", True]
                 and runtime.assembly_type is not AssemblyTypes.CUSTOM
             ):
                 major, minor = runtime.get_major_minor()
@@ -204,7 +213,7 @@ async def create_cli(
             print_advisory(
                 0,
                 "(unassigned)",
-                boilerplate['synopsis'],
+                synopsis,
                 package_owner,
                 assigned_to,
                 et_data['quality_responsibility_name'],

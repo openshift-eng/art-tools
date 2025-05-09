@@ -14,6 +14,7 @@ from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, u
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
+from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logging.getLogger(__name__)
 
@@ -150,7 +151,23 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
 def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
-    cve_boilerplate = errata_config['boilerplates']['cve']
+
+    # Get the advisory name, eg. image|rpm|metadata|microshift
+    releases_config = runtime.get_releases_config()
+    advisories = releases_config[runtime.assembly]['assembly']['group']['advisories']
+    art_advisory_key = None
+    for _name, _id in advisories.items():
+        if _id == advisory_id:
+            art_advisory_key = _name
+            break
+
+    if not art_advisory_key:
+        raise ValueError(f'ART advisory key not found for advisory: {advisory_id} in list {advisories.items()}')
+
+    cve_boilerplate = get_advisory_boilerplate(
+        runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
+    )
+
     advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
     if not noop and updated:
         LOGGER.info("Updating advisory details %s", advisory_id)
