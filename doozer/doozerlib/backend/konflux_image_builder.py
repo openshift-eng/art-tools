@@ -549,9 +549,10 @@ class KonfluxImageBuilder:
         source_repo = df.labels['io.openshift.build.source-location']
         commitish = df.labels['io.openshift.build.commit.id']
 
+        component_name = df.labels['com.redhat.component']
         version = df.labels['version']
         release = df.labels['release']
-        nvr = "-".join([metadata.distgit_key, version, release])
+        nvr = "-".join([component_name, version, release])
 
         pipelinerun_name = pipelinerun['metadata']['name']
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
