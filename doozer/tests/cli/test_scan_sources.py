@@ -1,5 +1,5 @@
 from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib import rhcos
@@ -26,11 +26,11 @@ class TestScanSourcesCli(TestCase):
     @patch("doozerlib.cli.scan_sources.ConfigScanSources._latest_rhcos_build_id", autospec=True)
     @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildInspector", autospec=True)
     @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildFinder.latest_container", autospec=True)
-    def test_detect_rhcos_status(self, mock_finder, mock_inspector, mock_latest, mock_tagged):
+    async def test_detect_rhcos_status(self, mock_finder, mock_inspector, mock_latest, mock_tagged):
         mock_tagged.return_value = "id-1"
         mock_latest.return_value = "id-2"
-        build_inspector = MagicMock()
-        build_inspector.find_non_latest_rpms.return_value = None
+        build_inspector = AsyncMock()
+        build_inspector.find_non_latest_rpms.return_value = AsyncMock(return_value=None)
         mock_inspector.return_value = build_inspector
         mock_finder.return_value = "4.2", "pullspec"
         runtime = MagicMock(group_config=Model())
@@ -40,7 +40,7 @@ class TestScanSourcesCli(TestCase):
 
         cli = ConfigScanSources(runtime, "dummy", False)
 
-        statuses = cli._detect_rhcos_status()
+        statuses = await cli._detect_rhcos_status()
         self.assertEqual(2, len(statuses), "expect public and private status reported")
         self.assertTrue(all(s['updated'] for s in statuses), "expect changed status reported")
         self.assertTrue(all("id-1" in s['reason'] for s in statuses), "expect previous id in reason")

@@ -19,6 +19,7 @@ class Ocp4ScanPipeline:
         self.logger = runtime.logger
         self.rhcos_updated = False
         self.rhcos_outdated = False
+        self.rhcos_rhel_outdated = False
         self.rhcos_inconsistent = False
         self.inconsistent_rhcos_rpms = None
         self.changes = {}
@@ -66,7 +67,7 @@ class Ocp4ScanPipeline:
                 comment_on_pr=True,
             )
 
-        elif self.rhcos_inconsistent or self.rhcos_outdated:
+        if self.rhcos_inconsistent or self.rhcos_outdated:
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
             if self.rhcos_outdated:
@@ -79,10 +80,13 @@ class Ocp4ScanPipeline:
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
             self.logger.info('Triggering a %s RHCOS build', self.version)
-            jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build")
             group_config = await util.load_group_config(group=f"openshift-{self.version}", assembly="stream")
-            if group_config.rhcos.get("layered_rhcos", False):
-                jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build-node-image")
+            job_name = (
+                "build-node-image"
+                if ("layered_rhcos" in group_config['rhcos'] and not self.rhcos_rhel_outdated)
+                else "build"
+            )
+            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
             self.logger.info('Detected at least one updated RHCOS')
@@ -135,10 +139,12 @@ class Ocp4ScanPipeline:
         # Check for RHCOS changes
         if changes.get('rhcos', None):
             for rhcos_change in changes['rhcos']:
-                if rhcos_change.get('updated', None):
+                if rhcos_change['reason'].get('updated', None):
                     self.rhcos_updated = True
-                if rhcos_change.get('outdated', None):
+                if rhcos_change['reason'].get('outdated', None):
                     self.rhcos_outdated = True
+                if rhcos_change['reason'].get('rhelupdate', None):
+                    self.rhcos_rhel_outdated = True
         self.changes = changes
         self.issues = yaml_data.get('issues', [])
 

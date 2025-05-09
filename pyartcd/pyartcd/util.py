@@ -238,7 +238,7 @@ def get_changes(yaml_data: dict) -> dict:
     if images:
         changes['images'] = images
 
-    rhcos = [rhcos['name'] for rhcos in yaml_data.get('rhcos', []) if rhcos['changed']]
+    rhcos = [{'name': rhcos['name'], 'reason': rhcos} for rhcos in yaml_data.get('rhcos', []) if rhcos['changed']]
     if rhcos:
         changes['rhcos'] = rhcos
 

@@ -71,7 +71,7 @@ class ConfigScanSources:
         self.check_builder_images()
 
         # We have our information. Now build and print the output report
-        self.generate_report()
+        await self.generate_report()
 
     def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str):
         reconciled = False
@@ -525,7 +525,7 @@ class ConfigScanSources:
                 RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, f'Ancestor {meta.distgit_key} is changing'),
             )
 
-    def generate_report(self):
+    async def generate_report(self):
         image_results = []
         changing_image_dgks = [meta.distgit_key for meta in self.changing_image_metas]
         for image_meta in self.all_image_metas:
@@ -562,7 +562,7 @@ class ConfigScanSources:
         self.runtime.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
 
         if self.ci_kubeconfig:  # we can determine m-os-c needs updating if we can look at imagestreams
-            results['rhcos'] = self._detect_rhcos_status()
+            results['rhcos'] = await self._detect_rhcos_status()
 
         if self.as_yaml:
             click.echo('---')
@@ -603,7 +603,7 @@ class ConfigScanSources:
             )
             return None
 
-    def _detect_rhcos_status(self) -> list:
+    async def _detect_rhcos_status(self) -> list:
         """
         gather the existing RHCOS tags and compare them to latest rhcos builds, also check outdate rpms in rhcos
         @return a list of status entries like:
@@ -630,6 +630,7 @@ class ConfigScanSources:
 
                 if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
                     status['updated'] = True
+                    status['changed'] = True
                     status['reason'] = (
                         f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
                     )
@@ -642,17 +643,23 @@ class ConfigScanSources:
                         container_conf
                     )
                     pullspec_for_tag[container_conf.name] = pullspec
-                non_latest_rpms = rhcos.RHCOSBuildInspector(
+                non_latest_rpms = await rhcos.RHCOSBuildInspector(
                     self.runtime, pullspec_for_tag, arch, build_id
                 ).find_non_latest_rpms()
                 if non_latest_rpms:
                     status['outdated'] = True
-                    rebuild_hints = [
+                    status['changed'] = True
+                    status['rhelupdate'] = any(
+                        any(
+                            repo_name in repo
+                            for repo_name in ['rhel-96-baseos', 'rhel-96-appstream', 'rhel-9-fast-datapath-rpms']
+                        )
+                        for _, _, repo in non_latest_rpms
+                    )
+                    status['reason'] = ";\n".join(
                         f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
-                        for arch, non_latest in non_latest_rpms.items()
-                        for installed_rpm, latest_rpm, repo in non_latest
-                    ]
-                    status['reason'] = ";\n".join(rebuild_hints)
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms
+                    )
                     statuses.append(status)
         return statuses
 
