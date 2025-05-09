@@ -3,11 +3,11 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import yaml
-from elliottlib.cli.create_cli import get_advisory_boilerplate
+from elliottlib.util import get_advisory_boilerplate
 
 COMMON_ADVISORY_TEMPLATE = """
 boilerplates:
-  images:
+  image:
     rhsa:
       synopsis: Common advisory rhsa synopsis
       topic: Common advisory rhsa topic
@@ -22,7 +22,7 @@ boilerplates:
 
 GROUP_ADVISORY_TEMPLATE = """
 boilerplates:
-  images:
+  image:
     rhsa:
       synopsis: Group advisory rhsa synopsis
       topic: Group advisory rhsa topic
@@ -37,7 +37,7 @@ boilerplates:
 
 GROUP_ADVISORY_TEMPLATE_LEGACY = """
 boilerplates:
-  images:
+  image:
     synopsis: Group advisory rhba synopsis
     topic: Group advisory rhba topic
     description: Group advisory rhba description
@@ -46,12 +46,12 @@ boilerplates:
 
 
 class TestGetAdvisoryBoilerplate(unittest.TestCase):
-    @mock.patch("elliottlib.cli.create_cli.get_common_advisory_template")
+    @mock.patch("elliottlib.util.get_common_advisory_template")
     def test_get_common_advisory_rhsa(self, mock_get_common_advisory_template):
         # Arrange
         et_data = {}
         mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
-        art_advisory_key = "images"
+        art_advisory_key = "image"
         errata_type = "rhsa"
         runtime = MagicMock()
         # Act
@@ -60,12 +60,12 @@ class TestGetAdvisoryBoilerplate(unittest.TestCase):
         # Assert
         self.assertEqual(result["synopsis"], "Common advisory rhsa synopsis")
 
-    @mock.patch("elliottlib.cli.create_cli.get_common_advisory_template")
+    @mock.patch("elliottlib.util.get_common_advisory_template")
     def test_get_common_advisory_rhba(self, mock_get_common_advisory_template):
         # Arrange
         et_data = {}
         mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
-        art_advisory_key = "images"
+        art_advisory_key = "image"
         errata_type = "rhba"
         runtime = MagicMock()
 
@@ -75,12 +75,12 @@ class TestGetAdvisoryBoilerplate(unittest.TestCase):
         # Assert
         self.assertEqual(result["synopsis"], "Common advisory rhba synopsis")
 
-    @mock.patch("elliottlib.cli.create_cli.get_common_advisory_template")
+    @mock.patch("elliottlib.util.get_common_advisory_template")
     def test_get_group_advisory(self, mock_get_common_advisory_template):
         # Arrange
         et_data = yaml.safe_load(GROUP_ADVISORY_TEMPLATE)
         mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
-        art_advisory_key = "images"
+        art_advisory_key = "image"
         errata_type = "rhsa"
         runtime = MagicMock()
 
@@ -90,12 +90,12 @@ class TestGetAdvisoryBoilerplate(unittest.TestCase):
         # Assert
         self.assertEqual(result["synopsis"], "Group advisory rhsa synopsis")
 
-    @mock.patch("elliottlib.cli.create_cli.get_common_advisory_template")
+    @mock.patch("elliottlib.util.get_common_advisory_template")
     def test_get_group_advisory_legacy_rhsa(self, mock_get_common_advisory_template):
         # Arrange
         et_data = yaml.safe_load(GROUP_ADVISORY_TEMPLATE_LEGACY)
         mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
-        art_advisory_key = "images"
+        art_advisory_key = "image"
         errata_type = "rhsa"
         runtime = MagicMock()
 
@@ -105,12 +105,12 @@ class TestGetAdvisoryBoilerplate(unittest.TestCase):
         # Assert
         self.assertEqual(result["synopsis"], "Group advisory rhba synopsis")
 
-    @mock.patch("elliottlib.cli.create_cli.get_common_advisory_template")
+    @mock.patch("elliottlib.util.get_common_advisory_template")
     def test_get_group_advisory_legacy_rhba(self, mock_get_common_advisory_template):
         # Arrange
         et_data = yaml.safe_load(GROUP_ADVISORY_TEMPLATE_LEGACY)
         mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
-        art_advisory_key = "images"
+        art_advisory_key = "image"
         errata_type = "rhba"
         runtime = MagicMock()
 

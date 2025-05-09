@@ -1,7 +1,6 @@
 from typing import Optional
 
 import click
-import yaml
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_prefix
@@ -11,46 +10,15 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.runtime import Runtime
-from elliottlib.util import YMD, exit_unauthorized, validate_email_address, validate_release_date
+from elliottlib.util import (
+    YMD,
+    exit_unauthorized,
+    get_advisory_boilerplate,
+    validate_email_address,
+    validate_release_date,
+)
 
 LOGGER = logutil.get_logger(__name__)
-GIT_REPO_BRANCH = "main"
-COMMON_ADVISORY_TEMPLATE_FILE = "config/advisory_templates.yml"
-
-
-def get_common_advisory_template(runtime):
-    out = runtime.get_file_from_branch(GIT_REPO_BRANCH, COMMON_ADVISORY_TEMPLATE_FILE)
-    return yaml.safe_load(out)
-
-
-def get_advisory_boilerplate(runtime: Runtime, et_data, art_advisory_key, errata_type):
-    # rhsa/rhba keys are in lower case: https://github.com/openshift-eng/ocp-build-data/blob/main/config/advisory_templates.yml#L3
-    # Also if advisory type is RHEA, use the RHBA advisory template
-    errata_type = errata_type.lower()
-    errata_type = "rhba" if errata_type == "rhea" else errata_type
-
-    et_data["errata_type"] = errata_type
-    # Group level overrides common config present in openshift-eng/ocp-build-data main branch
-    # Try to get the group level boilerplate first
-    boilerplate = et_data.get("boilerplates", {})
-    if not boilerplate:
-        # If group level is missing, use common one in openshift#main branch
-        common_advisory_template = get_common_advisory_template(runtime)
-        boilerplate = common_advisory_template.get("boilerplates", {})
-
-    if not boilerplate:
-        raise ValueError("`boilerplates` is required in erratatool.yml")
-    if art_advisory_key not in boilerplate:
-        raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
-
-    # Get the boilerplate for a type of errata and advisory type
-    try:
-        advisory_boilerplate = boilerplate[art_advisory_key][errata_type]
-    except KeyError:
-        # For backwards compatibility with older versions of erratatool.yml, i.e. rhsa, rhba keys does not exist
-        advisory_boilerplate = boilerplate[art_advisory_key]
-
-    return advisory_boilerplate
 
 
 @cli.command("create", short_help="Create a new advisory")
