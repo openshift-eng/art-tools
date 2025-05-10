@@ -74,6 +74,7 @@ class PromotePipeline:
             self.runtime.working_dir,
             self.group,
             self.assembly,
+            self._ocp_build_data_url,
         )
         return self
 
@@ -97,6 +98,7 @@ class PromotePipeline:
         use_multi_hack: bool = False,
         signing_env: Optional[str] = None,
     ) -> None:
+        self.group_runtime = None
         self.runtime = runtime
         self.group = group
         self.assembly = assembly

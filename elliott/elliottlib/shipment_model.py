@@ -52,10 +52,6 @@ class Issues(StrictBaseModel):
 class ReleaseNotes(StrictBaseModel):
     """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
-    # setting attributes after object init can result in weird behavior
-    # when dealing with yaml scalar strings
-    model_config = ConfigDict(frozen=True)
-
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
     synopsis: str
     topic: str

@@ -46,7 +46,6 @@ class FindBugsSweep(FindBugsMode):
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
-@click.option("--add", "-a", 'advisory_id', type=int, metavar='ADVISORY', help="Add found bugs to ADVISORY")
 @common.use_default_advisory_option
 @click.option(
     "--include-status",
@@ -95,7 +94,6 @@ class FindBugsSweep(FindBugsMode):
 @click_coroutine
 async def find_bugs_sweep_cli(
     runtime: Runtime,
-    advisory_id,
     default_advisory_type,
     include_status,
     exclude_status,
@@ -136,42 +134,50 @@ async def find_bugs_sweep_cli(
         $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
 
     """
-    operator_bundle_advisory = "advance" if advance_release else "metadata"
-
-    count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
+    count_advisory_attach_flags = sum(map(bool, [default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
-        raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
+        raise click.BadParameter("Use only one of --use-default-advisory <KIND> or --into-default-advisories")
 
-    if runtime.build_system == 'konflux':
-        if count_advisory_attach_flags > 0 or advisory_id:
-            raise click.BadParameter(
-                "Options not supported with --build-system=konflux: --use-default-advisory, --into-default-advisories, --add"
-            )
+    if runtime.build_system == 'konflux' and count_advisory_attach_flags:
+        raise click.BadParameter("Attaching bugs with --build-system=konflux is not supported. ")
 
     runtime.initialize(mode="both")
-    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
 
-    bugs: type_bug_list = await find_and_attach_bugs(
+    bug_tracker = runtime.get_bug_tracker('jira')
+
+    bugs_dict: type_bug_list = await find_bugs(
         runtime,
-        advisory_id,
-        default_advisory_type,
         find_bugs_obj,
+        bug_tracker,
+        advance_release=advance_release,
         noop=noop,
         permissive=permissive,
-        bug_tracker=runtime.get_bug_tracker('jira'),
-        operator_bundle_advisory=operator_bundle_advisory,
     )
 
-    if not bugs:
-        logger.info('No bugs found')
-        sys.exit(0)
+    if count_advisory_attach_flags:
+        advisories_by_kind = [default_advisory_type] if default_advisory_type else runtime.get_default_advisories()
+        bugs_dict = await attach_bugs(
+            bugs_dict,
+            advisories_by_kind,
+            bug_tracker,
+            noop=noop,
+            debug=runtime.debug,
+        )
+
+    bugs = []
+    for bug_set in bugs_dict.values():
+        bugs.extend([b.id for b in bug_set])
 
     if output == 'text':
         click.echo(f"Found {len(bugs)} bugs")
-        click.echo(", ".join(sorted(str(b.id) for b in bugs)))
+        if bugs:
+            click.echo(", ".join(sorted(bugs)))
+    elif output == 'json':
+        bugs_dict_formatted = {key: sorted([b.id for b in bug_set]) for key, bug_set in bugs_dict.items()}
+        click.echo(json.dumps(bugs_dict_formatted, indent=4))
 
     if report:
         print_report(bugs, output)
@@ -245,70 +251,69 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
     return bugs
 
 
-async def find_and_attach_bugs(
+async def find_bugs(
     runtime: Runtime,
-    advisory_id,
-    default_advisory_type,
-    find_bugs_obj,
-    noop,
-    permissive,
-    bug_tracker,
-    operator_bundle_advisory,
-):
+    find_bugs_obj: FindBugsMode,
+    bug_tracker: BugTracker,
+    advance_release: bool = False,
+    noop: bool = False,
+    permissive: bool = False,
+) -> Dict[str | int, type_bug_set]:
+    """Find bugs based on the given find_bugs_obj and bug_tracker.
+    Attach them to the advisory if specified.
+
+    returns a dict of
+    - {kind: bugs} if bugs are not requested to be attached, where kind is the advisory type for which bugs were found e.g "rpm", "image", "extras", "microshift"
+    - {advisory_id: bugs} if bugs are requested to be attached, where advisory_id is the advisory for which bugs were found and attached
+    """
+
     statuses = sorted(find_bugs_obj.status)
     tr = bug_tracker.target_release()
     logger.info(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
     bugs = await get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+    bugs_by_type = init_bugs_by_kind_dict(advance_release)
     if not bugs:
         logger.info(f"No qualified {bug_tracker.type} bugs found")
-        return []
+        return bugs_by_type
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
-    bugs_by_type, _ = categorize_bugs_by_type(
+    categorize_bugs_by_type(
         bugs,
+        bugs_by_type,
         advisory_ids,
         included_bug_ids,
         noop,
         permissive=permissive,
         major_version=major_version,
         minor_version=minor_version,
-        operator_bundle_advisory=operator_bundle_advisory,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
 
-    if runtime.build_system == 'konflux':
-        return bugs
+    return bugs_by_type
 
-    if not any([advisory_id, default_advisory_type, advisory_ids]):
-        return bugs
-    # `--add ADVISORY_NUMBER` should respect the user's wish
-    # and attach all available bugs to whatever advisory is specified.
-    if advisory_id and not default_advisory_type:
-        bug_tracker.attach_bugs([b.id for b in bugs], advisory_id=advisory_id, noop=noop, verbose=runtime.debug)
-        return bugs
 
-    if not advisory_ids:
-        logger.info("No advisories to attach to")
-        return bugs
+async def attach_bugs(
+    bugs_by_kind: Dict[str, type_bug_set],
+    advisories_by_kind: Dict[str, int],
+    bug_tracker: BugTracker,
+    noop: bool = False,
+    debug: bool = False,
+) -> Dict[str | int, type_bug_set]:
+    """Attach bugs to advisories based on the given bugs_by_kind and advisories_by_kind.
+    returns a dict of {advisory_id: bugs} where advisory_id is the advisory for which bugs were found and attached
+    """
 
-    advisory_types_to_attach = [default_advisory_type] if default_advisory_type else bugs_by_type.keys()
-    for advisory_type in sorted(advisory_types_to_attach):
-        kind_bugs = bugs_by_type.get(advisory_type)
+    attached_bugs_by_advisory = {}
+    for kind, advisory_id in advisories_by_kind.items():
+        kind_bugs = bugs_by_kind.get(kind, set())
         if kind_bugs:
-            if advisory_type not in advisory_ids:
-                logger.warning(
-                    f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory "
-                    "does not exist"
-                )
-                continue
-            bug_tracker.attach_bugs(
-                [b.id for b in kind_bugs], advisory_id=advisory_ids[advisory_type], noop=noop, verbose=runtime.debug
-            )
-    return bugs
+            bug_tracker.attach_bugs([b.id for b in kind_bugs], advisory_id=advisory_id, noop=noop, verbose=debug)
+        attached_bugs_by_advisory[advisory_id] = kind_bugs
+    return attached_bugs_by_advisory
 
 
 def get_assembly_bug_ids(runtime, bug_tracker_type):
@@ -326,22 +331,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
     return included_bug_ids, excluded_bug_ids
 
 
-def categorize_bugs_by_type(
-    bugs: List[Bug],
-    advisory_id_map: Dict[str, int],
-    permitted_bug_ids,
-    noop,
-    major_version: int,
-    minor_version: int,
-    operator_bundle_advisory: str = "metadata",
-    permissive=False,
-):
-    """Categorize bugs into different types of advisories
-    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
-    """
-    issues = []
-
-    bugs_by_type: Dict[str, type_bug_set] = {
+def init_bugs_by_kind_dict(advance_release: bool = False) -> Dict[str, type_bug_set]:
+    """Returns a dict of {advisory_type: bugs}"""
+    operator_bundle_advisory = "advance" if advance_release else "metadata"
+    return {
         "rpm": set(),
         "image": set(),
         "extras": set(),
@@ -353,6 +346,22 @@ def categorize_bugs_by_type(
         operator_bundle_advisory: set(),
         "microshift": set(),
     }
+
+
+def categorize_bugs_by_type(
+    bugs: List[Bug],
+    bugs_by_type: Dict[str, type_bug_set],
+    advisory_id_map: Dict[str, int],
+    permitted_bug_ids,
+    noop,
+    major_version: int,
+    minor_version: int,
+    permissive=False,
+):
+    """Categorize bugs into different types of advisories
+    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
+    """
+    issues = []
 
     # for 3.x, all bugs should go to the rpm advisory
     if int(major_version) < 4:

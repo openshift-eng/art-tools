@@ -105,7 +105,14 @@ async def load_group_config(
     return group_config
 
 
-async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_DATA_URL) -> Optional[Dict]:
+async def load_releases_config(
+    group: str, data_path: Optional[str] = constants.OCP_BUILD_DATA_URL, data_gitref: Optional[str] = ''
+) -> Optional[Dict]:
+    if data_gitref:
+        if '@' in group:
+            raise ValueError('it looks like group already contains a gitref')
+        group += f'@{data_gitref}'
+
     cmd = [
         'doozer',
         f'--data-path={data_path}',
@@ -124,8 +131,13 @@ async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_
 
 
 async def load_assembly(
-    group: str, assembly: str, key: str = '', data_path: str = constants.OCP_BUILD_DATA_URL
+    group: str, assembly: str, key: str = '', data_path: str = constants.OCP_BUILD_DATA_URL, data_gitref: str = ''
 ) -> Optional[Dict]:
+    if data_gitref:
+        if '@' in group:
+            raise ValueError('it looks like group already contains a gitref')
+        group += f'@{data_gitref}'
+
     cmd = [
         'doozer',
         f'--data-path={data_path}',
