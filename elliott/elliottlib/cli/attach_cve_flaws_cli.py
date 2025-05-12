@@ -67,7 +67,7 @@ async def attach_cve_flaws_cli(
 
     # Get the advisory kind-id mapping
     releases_config = runtime.get_releases_config()
-    advisories_by_kind = releases_config["releases"][runtime.assembly]['assembly']['group']['advisories']
+    advisories_by_kind = releases_config['releases'][runtime.assembly]['assembly']['group']['advisories']
 
     exit_code = 0
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
