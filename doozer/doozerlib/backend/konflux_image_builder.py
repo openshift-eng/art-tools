@@ -515,7 +515,7 @@ class KonfluxImageBuilder:
                             # get the source rpm
                             source_rpm = purl.qualifiers.get("upstream", None)
                             if source_rpm:
-                                source_rpms.add(source_rpm. removesuffix(".src.rpm"))
+                                source_rpms.add(source_rpm.removesuffix(".src.rpm"))
                     except Exception as e:
                         logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
