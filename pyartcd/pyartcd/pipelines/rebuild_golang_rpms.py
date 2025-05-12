@@ -167,7 +167,7 @@ class RebuildGolangRPMsPipeline:
         api = GhApi(owner='openshift-eng', repo='ocp-build-data', token=github_token)
         branch = f'openshift-{self.ocp_version}'
         content = api.repos.get_content(path='rpms', ref=branch)
-        return [c['name'].rstrip('.yml') for c in content if c['name'].endswith('.yml')]
+        return [c['name'].removesuffix('.yml') for c in content if c['name'].endswith('.yml')]
 
     def rebuild_art_rpms(self, rpms):
         _LOGGER.info(
