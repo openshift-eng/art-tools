@@ -155,11 +155,7 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
     # Get the advisory name, eg. image|rpm|metadata|microshift
     releases_config = runtime.get_releases_config()
     advisories = releases_config[runtime.assembly]['assembly']['group']['advisories']
-    art_advisory_key = None
-    for _name, _id in advisories.items():
-        if _id == advisory_id:
-            art_advisory_key = _name
-            break
+    art_advisory_key = next((k for k, v in advisories.items() if v == advisory_id), None)
 
     if not art_advisory_key:
         raise ValueError(f'ART advisory key not found for advisory: {advisory_id} in list {advisories.items()}')

@@ -26,8 +26,6 @@ default_release_date = datetime.datetime(1970, 1, 1, 0, 0)
 now = datetime.datetime.now()
 YMD = '%Y-%b-%d'
 LOGGER = get_logger(__name__)
-GIT_REPO_BRANCH = "main"
-COMMON_ADVISORY_TEMPLATE_FILE = "config/advisory_templates.yml"
 
 
 def exit_unauthenticated():
@@ -584,7 +582,7 @@ def fix_summary_suffix(summary, summary_suffix):
 
 
 def get_common_advisory_template(runtime):
-    out = runtime.get_file_from_branch(GIT_REPO_BRANCH, COMMON_ADVISORY_TEMPLATE_FILE)
+    out = runtime.get_file_from_branch(branch="main", filename="config/advisory_templates.yml")
     return yaml.safe_load(out)
 
 
@@ -593,8 +591,8 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     # Also if advisory type is RHEA, use the RHBA advisory template
     errata_type = errata_type.lower()
     errata_type = "rhba" if errata_type == "rhea" else errata_type
-
     et_data["errata_type"] = errata_type
+
     # Group level overrides common config present in openshift-eng/ocp-build-data main branch
     # Try to get the group level boilerplate first
     boilerplate = et_data.get("boilerplates", {})
