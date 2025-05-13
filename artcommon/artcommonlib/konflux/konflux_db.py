@@ -421,6 +421,15 @@ class KonfluxDb:
         error_or_not_found = [
             (nvr, record) for nvr, record in zip(nvrs, records) if record is None or isinstance(record, BaseException)
         ]
+
+        # TODO: Remove after July 1st, 2025 (cause hopefully by then all NVRs will have the '-container' string)
+        nvrs_to_recheck = [nvr.replace("-container", "") for nvr, _ in error_or_not_found]
+        tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs_to_recheck]
+        records = await asyncio.gather(*tasks, return_exceptions=True)
+        error_or_not_found = [
+            (nvr, record) for nvr, record in zip(nvrs, records) if record is None or isinstance(record, BaseException)
+        ]
+
         if error_or_not_found:
             error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in error_or_not_found)}"
             if strict:
