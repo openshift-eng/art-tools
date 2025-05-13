@@ -621,6 +621,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             revision=bundle_build_repo.commit_hash,
         )
         self.konflux_client.start_pipeline_run_for_image_build.assert_called_once_with(
+            metadata=metadata,
             generate_name="test-group-test-bundle-",
             namespace=self.konflux_namespace,
             application_name="test-group",

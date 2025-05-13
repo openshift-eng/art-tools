@@ -639,6 +639,7 @@ class KonfluxOlmBundleBuilder:
         logger.info(f"Konflux component {component_name} created")
         # Start a PipelineRun
         pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
+            metadata=metadata,
             generate_name=f"{component_name}-",
             namespace=namespace,
             application_name=app_name,
