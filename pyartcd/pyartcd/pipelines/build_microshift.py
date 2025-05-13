@@ -540,9 +540,7 @@ class BuildMicroShiftPipeline:
                 title,
                 body,
             )
-            d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
-            result = namedtuple('pull_request', d.keys())(*d.values())
-            return result
+            return "https://github.example.com/foo/bar/pull/1234"
         upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
