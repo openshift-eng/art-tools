@@ -149,6 +149,9 @@ class BuildMicroShiftPipeline:
         errata_api = AsyncErrataAPI()
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
+        if self.runtime.dry_run:
+            self._logger.info("[DRY-RUN] Would have created microshift advisory 0")
+            return 0
         try:
             created_advisory = await errata_api.create_advisory(
                 product=et_data['product'],
@@ -397,6 +400,9 @@ class BuildMicroShiftPipeline:
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
     async def _change_advisory_status(self, advisory_id):
+        if self.runtime.dry_run:
+            self._logger.info("[DRY-RUN] Would have changed advisory to QE")
+            return
         # move advisory status to QE
         e = Erratum(errata_id=advisory_id)
         if e.errata_state == "QE":
@@ -527,6 +533,16 @@ class BuildMicroShiftPipeline:
         branch = f"auto-pin-microshift-{self.group}-{self.assembly}"
         title = f"Pin microshift build for {self.group} {self.assembly}"
         body = f"Created by job run {jenkins.get_build_url()}"
+        if self.runtime.dry_run:
+            self._logger.warning(
+                "[DRY RUN] Would have created pull-request with head '%s', title '%s', body '%s'",
+                branch,
+                title,
+                body,
+            )
+            d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
+            result = namedtuple('pull_request', d.keys())(*d.values())
+            return result
         upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
