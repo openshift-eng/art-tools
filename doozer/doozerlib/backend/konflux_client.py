@@ -43,7 +43,7 @@ class KonfluxClient:
         "x86_64": ["linux/x86_64"],
         "s390x": ["linux/s390x"],
         "ppc64le": ["linux/ppc64le"],
-        "aarch64": ["linux/arm64"],
+        "aarch64": ["linux-mxlarge/arm64"],
     }
 
     def __init__(
