@@ -14,6 +14,7 @@ from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, u
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
+from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +64,11 @@ async def attach_cve_flaws_cli(
         advisories = [find_default_advisory(runtime, default_advisory_type)]
     else:
         advisories = [advisory_id]
+
+    # Get the advisory kind-id mapping
+    releases_config = runtime.get_releases_config()
+    advisories_by_kind = releases_config['releases'][runtime.assembly]['assembly']['group']['advisories']
+
     exit_code = 0
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
     errata_config = runtime.get_errata_config()
@@ -80,7 +86,7 @@ async def attach_cve_flaws_cli(
 
         try:
             if flaw_bugs:
-                _update_advisory(runtime, advisory, flaw_bugs, flaw_bug_tracker, noop)
+                _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
                 LOGGER.info('Associating CVEs with builds')
                 await associate_builds_with_cves(
@@ -147,10 +153,20 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     return tracker_flaws, first_fix_flaw_bugs
 
 
-def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
+def _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
-    cve_boilerplate = errata_config['boilerplates']['cve']
+
+    # Get the name of the advisory (eg. image|rpm|metadata|microshift etc.)
+    art_advisory_key = next((k for k, v in advisories_by_kind.items() if v == advisory_id), None)
+
+    if not art_advisory_key:
+        raise ValueError(f'ART advisory key not found for advisory: {advisory_id} in list {advisories_by_kind.items()}')
+
+    cve_boilerplate = get_advisory_boilerplate(
+        runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
+    )
+
     advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
     if not noop and updated:
         LOGGER.info("Updating advisory details %s", advisory_id)
