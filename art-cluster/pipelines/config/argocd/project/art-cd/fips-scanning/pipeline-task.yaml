@@ -28,7 +28,7 @@ spec:
         pip install stomp.py==8.1.0
         pip install setuptools==70.0.0
 
-        artcd -vv scan-fips --data-path $(params.data_path) --all-images
+        artcd -vv --dry-run scan-fips --data-path $(params.data_path) --all-images
 
       securityContext:
         runAsGroup: 0
