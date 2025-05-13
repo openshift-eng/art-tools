@@ -1,4 +1,6 @@
 import asyncio
+import copy
+import io
 import logging
 import os
 import re
@@ -13,7 +15,11 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_assembly_release_date, get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import isolate_nightly_name_components
+from elliottlib.errata import push_cdn_stage
+from elliottlib.errata_async import AsyncErrataAPI
+from errata_tool import Erratum
 from ghapi.all import GhApi
+from github import Github, GithubException
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -70,6 +76,7 @@ class BuildMicroShiftPipeline:
         self.releases_config = None
         self.advisory_num = None
         self.slack_client = slack_client
+        self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
         # determines OCP version
         self._ocp_version = get_ocp_version_from_group(group)
 
@@ -112,38 +119,62 @@ class BuildMicroShiftPipeline:
             await self._trigger_build_microshift_bootc()
             await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
+    def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
+        try:
+            user, repo = self.extract_git_repo(data_path)
+            upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
+            et_content = upstream_repo.get_contents("erratatool.yml", ref=group)
+            et_data = yaml.load(et_content.decoded_content)
+        except GithubException as e:
+            raise ValueError(f"Can't load errata config from {data_path}: {e}")
+        return et_data
+
+    def extract_git_repo(self, data_path: str):
+        """
+        extract git repo name from data path
+        https://github.com/openshift-eng/ocp-build-data --> openshift-eng, ocp-build-data
+        """
+        data_path = data_path.rstrip(".git")
+        parts = data_path.rstrip("/").split("/")
+        if len(parts) < 2:
+            raise ValueError(f"Invalid git repo URL: {data_path}")
+        return parts[-2], parts[-1]
+
     async def create_microshift_advisory(self) -> int:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
+        et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
+        boilerplate = et_data["boilerplates"]["microshift"]
+        errata_api = AsyncErrataAPI()
+
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
-        create_cmd = [
-            "elliott",
-            f"--working-dir={self._elliott_env_vars['ELLIOTT_WORKING_DIR']}",
-            f"--group={self.group}",
-            "--assembly",
-            self.assembly,
-            "create",
-            f"--type={advisory_type}",
-            "--art-advisory-key=microshift",
-            f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
-            f"--manager={self.runtime.config['advisory']['manager']}",
-            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
-            f"--date={release_date}",
-            "--with-liveid",
-            "--batch-id=0",
-        ]
-        if not self.runtime.dry_run:
-            create_cmd.append("--yes")
-        _, out, _ = await exectools.cmd_gather_async(create_cmd, env=self._elliott_env_vars, stderr=None)
-        match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)",
-            out,
-        )
-        assert match is not None
-        advisory_num = int(match[1])
-        self._logger.info("Created microshift advisory %s", advisory_num)
-        return advisory_num
+        if self.runtime.dry_run:
+            self._logger.info("[DRY-RUN] Would have created microshift advisory 0")
+            return 0
+        try:
+            created_advisory = await errata_api.create_advisory(
+                product=et_data['product'],
+                release=boilerplate.get('release', et_data['release']),
+                errata_type=advisory_type,
+                advisory_synopsis=boilerplate['synopsis'],
+                advisory_topic=boilerplate['topic'],
+                advisory_description=boilerplate['description'],
+                advisory_solution=boilerplate['solution'],
+                advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
+                advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
+                advisory_manager_email=self.runtime.config['advisory']['manager'],
+                advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
+                advisory_publish_date_override=release_date,
+                batch_id=0,
+            )
+            advisory_info = next(iter(created_advisory["errata"].values()))
+            advisory_id = advisory_info["id"]
+            await errata_api.request_liveid(advisory_id)
+            self._logger.info(f"Created microshift advisory {advisory_id}")
+        finally:
+            await errata_api.close()
+        return advisory_id
 
     async def _rebase_and_build_for_stream(self):
         # Do a sanity check
@@ -230,7 +261,7 @@ class BuildMicroShiftPipeline:
         if diff:
             self._logger.info("Creating PR to pin microshift build: %s", diff)
             pr = await self._create_or_update_pull_request(nvrs)
-            message = f"PR to pin microshift build to the {self.assembly} assembly has been merged: {pr.html_url}"
+            message = f"PR to pin microshift build to the {self.assembly} assembly has been merged: {pr}"
             await self.slack_client.say_in_thread(message)
 
     async def _trigger_microshift_sync(self):
@@ -284,7 +315,7 @@ class BuildMicroShiftPipeline:
         await self._attach_builds()
         await self._sweep_bugs()
         await self._attach_cve_flaws()
-        await self._change_advisory_status()
+        await self._change_advisory_status(microshift_advisory_id)
         await self._verify_microshift_bugs(microshift_advisory_id)
         await self.slack_client.say_in_thread("Completed preparing microshift advisory.")
 
@@ -368,25 +399,19 @@ class BuildMicroShiftPipeline:
 
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
-    async def _change_advisory_status(self):
-        """move advisory status to QE"""
-        cmd = [
-            "elliott",
-            "--group",
-            self.group,
-            "--assembly",
-            self.assembly,
-            "change-state",
-            "-s",
-            "QE",
-            "--from",
-            "NEW_FILES",
-            "--use-default-advisory",
-            "microshift",
-        ]
+    async def _change_advisory_status(self, advisory_id):
         if self.runtime.dry_run:
-            cmd.append("--dry-run")
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+            self._logger.info("[DRY-RUN] Would have changed advisory to QE")
+            return
+        # move advisory status to QE
+        e = Erratum(errata_id=advisory_id)
+        if e.errata_state == "QE":
+            self._logger.info(f"Errata {advisory_id} status already in QE")
+        else:
+            e.setState("QE")
+            e.commit()
+            self._logger.info(f"Changed {advisory_id} to QE")
+            push_cdn_stage(advisory_id)
 
     @staticmethod
     async def parse_release_payloads(payloads: Iterable[str]):
@@ -505,61 +530,40 @@ class BuildMicroShiftPipeline:
         return microshift_entry
 
     async def _create_or_update_pull_request(self, nvrs: List[str]):
-        self._logger.info("Creating ocp-build-data PR...")
-        # Clone ocp-build-data
-        build_data_path = self._working_dir / "ocp-build-data-push"
-        build_data = GitRepository(build_data_path, dry_run=self.runtime.dry_run)
-        ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
-        await build_data.setup(ocp_build_data_repo_push_url)
         branch = f"auto-pin-microshift-{self.group}-{self.assembly}"
-        await build_data.fetch_switch_branch(branch, self.group)
-        # Make changes
-        releases_yaml_path = build_data_path / "releases.yml"
-        releases_yaml = yaml.load(releases_yaml_path)
-        self._pin_nvrs(nvrs, releases_yaml)
-        yaml.dump(releases_yaml, releases_yaml_path)
-        # Create a PR
         title = f"Pin microshift build for {self.group} {self.assembly}"
         body = f"Created by job run {jenkins.get_build_url()}"
-        match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
-        if not match:
-            raise ValueError(
-                f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo"
-            )
-        head = f"{match[1]}:{branch}"
-        base = self.group
         if self.runtime.dry_run:
             self._logger.warning(
-                "[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'",
-                head,
-                base,
+                "[DRY RUN] Would have created pull-request with head '%s', title '%s', body '%s'",
+                branch,
                 title,
                 body,
             )
-            d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
-            result = namedtuple('pull_request', d.keys())(*d.values())
-            return result
-        pushed = await build_data.commit_push(f"{title}\n{body}")
-        result = None
-        if pushed:
-            github_token = os.environ.get('GITHUB_TOKEN')
-            if not github_token:
-                raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
-            repo = "ocp-build-data"
-            api = GhApi(owner=constants.GITHUB_OWNER, repo=repo, token=github_token)
-            existing_prs = api.pulls.list(state="open", base=base, head=head)
-            if not existing_prs.items:
-                result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
-                api.pulls.merge(
-                    owner=constants.GITHUB_OWNER, repo=repo, pull_number=result.number, merge_method="squash"
-                )
-            else:
-                pull_number = existing_prs.items[0].number
-                result = api.pulls.update(pull_number=pull_number, title=title, body=body)
-                api.pulls.merge(owner=constants.GITHUB_OWNER, repo=repo, pull_number=pull_number, merge_method="squash")
-        else:
-            self._logger.warning("PR is not created: Nothing to commit.")
-        return result
+            return "https://github.example.com/foo/bar/pull/1234"
+        upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
+        release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
+        source_file_content = copy.deepcopy(release_file_content)
+        self._pin_nvrs(nvrs, release_file_content)
+        if source_file_content == release_file_content:
+            self._logger.warning("PR is not created: upstream already updated, nothing to change.")
+            return "Nothing to change"
+        for b in upstream_repo.get_branches():
+            if b.name == branch:
+                upstream_repo.get_git_ref(f"heads/{branch}").delete()
+        upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
+        output = io.BytesIO()
+        yaml.dump(release_file_content, output)
+        output.seek(0)
+        fork_file = upstream_repo.get_contents("releases.yml", ref=branch)
+        upstream_repo.update_file("releases.yml", body, output.read(), fork_file.sha, branch=branch)
+        # create pr
+        try:
+            pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
+            pr.merge()
+        except GithubException as e:
+            self._logger.warning(f"Failed to create pr: {e}")
+        return pr.html_url
 
     async def _notify_microshift_alerts(self, version_release: str):
         doozer_log_file = Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / "debug.log"
