@@ -968,7 +968,7 @@ class KonfluxRebaser:
             gomod_deps_path.joinpath('cachito.env').touch(exist_ok=True)
 
             # The value we will set REMOTE_SOURCES_DIR to.
-            remote_source_dir_env = '/tmp/cachito-emulation'
+            remote_source_dir_env = '/tmp/art/cachito-emulation'
             pkg_managers = metadata.config.content.source.pkg_managers.primitive()
 
             if "npm" in pkg_managers:
@@ -1037,7 +1037,7 @@ class KonfluxRebaser:
         if network_mode != "hermetic":
             konflux_lines += [
                 "USER 0",
-                "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
+                "RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             ]
@@ -1090,7 +1090,8 @@ class KonfluxRebaser:
             lines = [
                 "\n# Start Konflux-specific steps",
                 "USER 0",
-                "RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                "RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true",
+                "RUN rm -rf /tmp/art",
                 f"{user_to_set if user_to_set else ''}",
                 "# End Konflux-specific steps\n\n",
             ]

@@ -1,7 +1,7 @@
 import json
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Set
 
 import click
@@ -14,7 +14,7 @@ from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import chunk
+from elliottlib.util import chunk, fix_summary_suffix
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -81,12 +81,6 @@ class FindBugsSweep(FindBugsMode):
     help='Attaches bugs found to their correct default advisories, e.g. operator-related bugs go to '
     '"extras" instead of the default "image", bugs filtered into "none" are not attached at all.',
 )
-@click.option(
-    '--brew-event',
-    type=click.INT,
-    required=False,
-    help='Only in sweep mode: SWEEP bugs that have changed to the desired status before the Brew event',
-)
 @click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
 @click.option("--advance-release", is_flag=True, help="If the release contains an advance advisory")
 @click.option(
@@ -108,7 +102,6 @@ async def find_bugs_sweep_cli(
     report,
     output,
     into_default_advisories,
-    brew_event,
     cve_only,
     advance_release,
     permissive,
@@ -149,39 +142,28 @@ async def find_bugs_sweep_cli(
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
 
+    if runtime.build_system == 'konflux':
+        if count_advisory_attach_flags > 0 or advisory_id:
+            raise click.BadParameter(
+                "Options not supported with --build-system=konflux: --use-default-advisory, --into-default-advisories, --add"
+            )
+
     runtime.initialize(mode="both")
-    major_version, _ = runtime.get_major_minor()
+    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
 
-    bugs: type_bug_list = []
-    errors = []
-    for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-        try:
-            bugs.extend(
-                await find_and_attach_bugs(
-                    runtime,
-                    advisory_id,
-                    default_advisory_type,
-                    major_version,
-                    find_bugs_obj,
-                    output,
-                    brew_event,
-                    noop=noop,
-                    permissive=permissive,
-                    count_advisory_attach_flags=count_advisory_attach_flags,
-                    bug_tracker=b,
-                    operator_bundle_advisory=operator_bundle_advisory,
-                )
-            )
-        except Exception as e:
-            errors.append(e)
-            logger.error(traceback.format_exc())
-            logger.error(f'exception with {b.type} bug tracker: {e}')
-
-    if errors:
-        raise ElliottFatalError(f"Error finding or attaching bugs: {errors}. See logs for more information.")
+    bugs: type_bug_list = await find_and_attach_bugs(
+        runtime,
+        advisory_id,
+        default_advisory_type,
+        find_bugs_obj,
+        noop=noop,
+        permissive=permissive,
+        bug_tracker=runtime.get_bug_tracker('jira'),
+        operator_bundle_advisory=operator_bundle_advisory,
+    )
 
     if not bugs:
         logger.info('No bugs found')
@@ -197,12 +179,12 @@ async def find_bugs_sweep_cli(
     sys.exit(0)
 
 
-async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracker):
+async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
     if bugs:
-        sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime, cli_brew_event=brew_event)
+        sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
-            utc_ts = datetime.utcfromtimestamp(sweep_cutoff_timestamp)
+            utc_ts = datetime.fromtimestamp(sweep_cutoff_timestamp, tz=timezone.utc)
             logger.info(
                 f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
                 f"cutoff time {utc_ts}..."
@@ -267,40 +249,41 @@ async def find_and_attach_bugs(
     runtime: Runtime,
     advisory_id,
     default_advisory_type,
-    major_version,
     find_bugs_obj,
-    output,
-    brew_event,
     noop,
     permissive,
-    count_advisory_attach_flags,
     bug_tracker,
     operator_bundle_advisory,
 ):
-    if output == 'text':
-        statuses = sorted(find_bugs_obj.status)
-        tr = bug_tracker.target_release()
-        green_prefix(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
+    statuses = sorted(find_bugs_obj.status)
+    tr = bug_tracker.target_release()
+    logger.info(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
-    bugs = await get_bugs_sweep(runtime, find_bugs_obj, brew_event, bug_tracker)
+    bugs = await get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
     if not bugs:
         logger.info(f"No qualified {bug_tracker.type} bugs found")
         return []
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
+    major_version, minor_version = runtime.get_major_minor()
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs,
         advisory_ids,
         included_bug_ids,
+        noop,
         permissive=permissive,
         major_version=major_version,
+        minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
 
-    if count_advisory_attach_flags < 1:
+    if runtime.build_system == 'konflux':
+        return bugs
+
+    if not any([advisory_id, default_advisory_type, advisory_ids]):
         return bugs
     # `--add ADVISORY_NUMBER` should respect the user's wish
     # and attach all available bugs to whatever advisory is specified.
@@ -347,9 +330,11 @@ def categorize_bugs_by_type(
     bugs: List[Bug],
     advisory_id_map: Dict[str, int],
     permitted_bug_ids,
+    noop,
+    major_version: int,
+    minor_version: int,
     operator_bundle_advisory: str = "metadata",
     permissive=False,
-    major_version: int = 4,
 ):
     """Categorize bugs into different types of advisories
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
@@ -408,11 +393,18 @@ def categorize_bugs_by_type(
 
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        # get summary of tracker-bug and update it if needed
+        summary_suffix = f"[openshift-{major_version}.{minor_version}]"
+        if not b.summary.endswith(summary_suffix):
+            new_s = fix_summary_suffix(b.summary, summary_suffix)
+            try:
+                b.update_summary(new_s, noop=noop)
+            except Exception as e:
+                logger.warning("Failed to fix summary: %s", str(e))
 
     if not advisory_id_map:
-        logger.info(
-            "Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
-            "validate trackers."
+        logger.warning(
+            "Skipping categorizing Tracker Bugs; advisories with attached builds must be given for this operation."
         )
         return bugs_by_type, issues
 
@@ -461,7 +453,7 @@ def categorize_bugs_by_type(
         still_not_found = not_found
         if permitted_bug_ids:
             logger.info(
-                'The following bugs will be attached because they are '
+                'The following bugs will be included because they are '
                 f'explicitly included in the assembly config: {permitted_bug_ids}'
             )
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
@@ -557,16 +549,15 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
             )
 
 
-async def get_sweep_cutoff_timestamp(runtime, cli_brew_event):
+async def get_sweep_cutoff_timestamp(runtime):
     sweep_cutoff_timestamp = 0
-    if cli_brew_event:
-        logger.info(f"Using command line specified cutoff event {runtime.assembly_basis_event}...")
-        sweep_cutoff_timestamp = runtime.build_retrying_koji_client().getEvent(cli_brew_event)["ts"]
-    elif runtime.assembly_basis_event:
+    if runtime.build_system == 'brew' and runtime.assembly_basis_event:
         logger.info(f"Determining approximate cutoff timestamp from basis event {runtime.assembly_basis_event}...")
         brew_api = runtime.build_retrying_koji_client()
         sweep_cutoff_timestamp = await bzutil.approximate_cutoff_timestamp(
             runtime.assembly_basis_event, brew_api, runtime.rpm_metas() + runtime.image_metas()
         )
+    elif runtime.build_system == 'konflux':
+        sweep_cutoff_timestamp = runtime.assembly_basis_event.timestamp()
 
     return sweep_cutoff_timestamp

@@ -1,10 +1,15 @@
+import asyncio
 import unittest
-from unittest import mock
+from unittest import IsolatedAsyncioTestCase, mock
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
-from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
+from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds, find_builds_konflux
 from flexmock import flexmock
+
+
+async def _async_return_val(val):
+    return val
 
 
 class TestFindBuildsCli(unittest.TestCase):
@@ -47,6 +52,30 @@ class TestFindBuildsCli(unittest.TestCase):
         actual = _find_shipped_builds(build_ids, mock.MagicMock())
         self.assertEqual(expected, actual)
         get_builds_tags.assert_called_once_with(build_ids, mock.ANY)
+
+
+class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
+        runtime = flexmock(konflux_db=flexmock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = flexmock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.should_receive("branch_el_target").and_return("el8")
+        image_meta_1.should_receive("get_latest_build").with_args(el_target="el8").and_return(
+            _async_return_val(flexmock(nvr="image1-1.0.0-1.el8"))
+        )
+
+        image_meta_2 = flexmock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.should_receive("branch_el_target").and_return("el9")
+        image_meta_2.should_receive("get_latest_build").with_args(el_target="el9").and_return(
+            _async_return_val(flexmock(nvr="image2-2.0.0-1.el9"))
+        )
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+        actual_records = await find_builds_konflux(runtime, payload=True)
+        self.assertEqual(len(actual_records), 1)
+        self.assertEqual(actual_records[0].nvr, "image1-1.0.0-1.el8")
 
 
 if __name__ == "__main__":

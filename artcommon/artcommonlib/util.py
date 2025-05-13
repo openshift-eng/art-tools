@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -9,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 import aiohttp
 import requests
 from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -130,17 +132,16 @@ def split_git_url(url) -> (str, str, str):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def download_file_from_github(repository, branch, path, token: str, destination):
+async def download_file_from_github(repository, branch, path, token: str, destination, session):
     server, org, repo_name = split_git_url(repository)
     url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
     headers = {"Authorization": f'token {token}'}
 
     LOGGER.info('Downloading %s...', url)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            with open(str(destination), "wb") as f:
-                f.write((await resp.text()).encode())
+    async with session.get(url, headers=headers) as resp:
+        resp.raise_for_status()
+        with open(str(destination), "wb") as f:
+            f.write((await resp.text()).encode())
 
 
 def merge_objects(a, b):
@@ -445,3 +446,14 @@ def detect_package_managers(metadata, dest_dir: Path):
         if any(dest_dir.joinpath(file).is_file() for file in files):
             pkg_managers.append(pkg_manager)
     return pkg_managers
+
+
+@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
+async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, registry_password: str):
+    """
+    Retrieve the SLSA attestation: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
+    """
+    cmd = f"cosign download attestation {pull_spec} --registry-username {registry_username} --registry-password {registry_password}"
+    _, out, _ = await cmd_gather_async(cmd)
+
+    return out.strip()

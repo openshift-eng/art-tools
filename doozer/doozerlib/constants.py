@@ -27,7 +27,7 @@ BREW_BUILD_TIMEOUT = 100 * 60 * 60  # how long we wait before canceling a task
 # is specified for CA cert, so that 'sslverify=true' can be used in yum repos.
 # To achieve the same in Konflux, we need to 'ADD tls-ca-bundle.pem /tmp/tls-ca-bundle.pem' in every Dockerfile stage
 # and set 'sslcacert=/tmp/Current-IT-Root-CAs.pem'
-KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp"
+KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp/art"
 KONFLUX_REPO_CA_BUNDLE_FILENAME = "Current-IT-Root-CAs.pem"
 KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
 WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"

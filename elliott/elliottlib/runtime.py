@@ -384,20 +384,6 @@ class Runtime(GroupRuntime):
             if '@' in self.shipment_path:
                 shipment_path, commitish = self.shipment_path.split('@')
 
-            # TODO: find a better solution
-            if 'gitlab.cee.redhat.com' in shipment_path:
-                gitlab_auth_token = os.environ.get('GITLAB_TOKEN')
-                if not gitlab_auth_token:
-                    self._logger.info("GITLAB_TOKEN not found to be set")
-                else:
-                    try:
-                        parsed_url = urlparse(shipment_path)
-                        scheme = parsed_url.scheme
-                        rest_of_the_url = shipment_path[len(scheme + "://") :]
-                        shipment_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
-                    except Exception as e:
-                        self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
-
             try:
                 self.shipment_gitdata = gitdata.GitData(
                     data_path=shipment_path, clone_dir=self.working_dir, commitish=commitish, logger=self._logger

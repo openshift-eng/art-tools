@@ -7,7 +7,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, cast
+from typing import Dict, List, Optional, Union, cast
 
 from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
@@ -156,9 +156,7 @@ class KonfluxImageBuilder:
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
-            additional_tags = [
-                f"{metadata.image_name_short}-{version}-{release}",
-            ]
+            additional_tags = [f"{metadata.image_name_short}-{version}-{release}"]
 
             # Wait for parent members to be built
             parent_members = await self._wait_for_parent_members(metadata)
@@ -207,6 +205,24 @@ class KonfluxImageBuilder:
 
                 succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+
+                # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
+                if outcome is KonfluxBuildOutcome.SUCCESS:
+                    image_pullspec = next(
+                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
+                    )
+                    # Get SLA attestation from konflux. The command will error out if it cannot find it.
+                    try:
+                        await artlib_util.get_konflux_slsa_attestation(
+                            pull_spec=image_pullspec,
+                            registry_username=self._config.image_repo_creds["username"],
+                            registry_password=self._config.image_repo_creds["password"],
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                        )
+                        outcome = KonfluxBuildOutcome.FAILURE
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
@@ -595,7 +611,6 @@ class KonfluxImageBuilder:
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )
-
         if pipelinerun.status:
             if pipelinerun.status.startTime:
                 build_record_params['start_time'] = datetime.strptime(

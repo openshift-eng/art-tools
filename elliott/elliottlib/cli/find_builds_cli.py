@@ -13,6 +13,7 @@ from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -162,6 +163,21 @@ async def find_builds_cli(
         builds = [line.strip() for line in builds_file.readlines()]
 
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
+
+    if runtime.build_system == 'konflux':
+        if any(
+            [builds, builds_file, advisory_id, default_advisory_type, clean, no_cdn_repos, include_shipped, member_only]
+        ):
+            raise click.BadParameter(
+                'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
+            )
+        if kind != 'image':
+            raise click.BadParameter('Konflux only supports --kind image.')
+        records = await find_builds_konflux(runtime, payload)
+        for nvr in sorted([r.nvr for r in records]):
+            print(nvr)
+        return
+
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
@@ -662,3 +678,24 @@ def _filter_out_attached_builds(
         if not in_same_version:
             unattached_builds.append(b)
     return unattached_builds, attached_to_advisories
+
+
+async def find_builds_konflux(runtime, payload):
+    """
+    Find konflux builds for group/assembly
+    """
+
+    runtime.konflux_db.bind(KonfluxBuildRecord)
+
+    image_metas: List[ImageMetadata] = []
+    for image in runtime.image_metas():
+        if image.base_only or not image.is_release:
+            continue
+        if (payload and not image.is_payload) or (not payload and image.is_payload):
+            continue
+        image_metas.append(image)
+
+    LOGGER.info("Fetching NVRs from DB...")
+    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+    records: List[Dict] = list(await asyncio.gather(*tasks))
+    return records

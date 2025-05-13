@@ -9,9 +9,11 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import cast
 
+import aiohttp
 import artcommonlib.util
 import click
 import dateutil.parser
+import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.exectools import cmd_gather_async
@@ -38,7 +40,13 @@ DEFAULT_THRESHOLD_HOURS = 6
 
 class ConfigScanSources:
     def __init__(
-        self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool, rebase_priv: bool = False, dry_run: bool = False
+        self,
+        runtime: Runtime,
+        ci_kubeconfig: str,
+        session: aiohttp.ClientSession,
+        as_yaml: bool,
+        rebase_priv: bool = False,
+        dry_run: bool = False,
     ):
         if runtime.konflux_db is None:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
@@ -50,6 +58,7 @@ class ConfigScanSources:
 
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
+        self.session = session
         self.ci_kubeconfig = ci_kubeconfig
         self.as_yaml = as_yaml
         self.rebase_priv = rebase_priv
@@ -73,6 +82,8 @@ class ConfigScanSources:
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
+        self.art_images_username = os.environ['KONFLUX_ART_IMAGES_USERNAME']
+        self.art_images_password = os.environ['KONFLUX_ART_IMAGES_PASSWORD']
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -394,6 +405,9 @@ class ConfigScanSources:
         # Check for changes in image arches
         await self.scan_arch_changes(image_meta)
 
+        # Check for changes in the network mode
+        await self.scan_network_mode_changes(image_meta)
+
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -411,9 +425,6 @@ class ConfigScanSources:
 
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
-
-        # Check for changes in the network mode
-        # await self.scan_network_mode_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -455,25 +466,26 @@ class ConfigScanSources:
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
-        # Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
-        # To see if the latest build is actually hermetic
-        cmd = f"cosign download attestation {build_record.image_pullspec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
-        rc, attestation, error = await exectools.cmd_gather_async(cmd)
-        if rc != 0:
-            raise IOError(
-                f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}",
-            )
+        # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
+        attestation = await artcommonlib.util.get_konflux_slsa_attestation(
+            pull_spec=build_record.image_pullspec,
+            registry_username=self.art_images_username,
+            registry_password=self.art_images_password,
+        )
 
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation.strip())["payload"]).decode("utf-8"))
+            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
         except Exception as e:
             raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
+
+        # Inspect the SLSA attestation to see if the build is hermetic
         is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+        is_hermetic = True if is_hermetic.lower() == "true" else False
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
         # Rebuild if there is a mismatch
-        if str(network_mode == "hermetic").lower() != is_hermetic.lower():
+        if (network_mode == "hermetic") != is_hermetic:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
@@ -497,8 +509,7 @@ class ConfigScanSources:
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
-            engine=Engine.KONFLUX.value,
-            extra_patterns={'commitish': upstream_commit_hash},
+            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -533,8 +544,7 @@ class ConfigScanSources:
 
         # Check whether a build attempt with this commit has failed before.
         failed_commit_build_record = await image_meta.get_latest_build(
-            extra_patterns={'commitish': upstream_commit_hash},
-            outcome=KonfluxBuildOutcome.FAILURE,
+            extra_patterns={'commitish': upstream_commit_hash}, outcome=KonfluxBuildOutcome.FAILURE
         )
 
         # If not, this is a net-new upstream commit. Build it.
@@ -579,6 +589,7 @@ class ConfigScanSources:
                 path='.oit/config_digest',
                 token=self.github_token,
                 destination=config_digest,
+                session=self.session,
             )
 
             # Read and return the content of the temporary file
@@ -621,6 +632,10 @@ class ConfigScanSources:
             # IOError is raised by fetch_cgit_file() when config_digest could not be found
             self.logger.warning('config_digest not found for %s: skipping config check', image_meta.distgit_key)
             return
+
+        except pycares.AresError as e:
+            self.logger.error(e)
+            raise
 
         except Exception as e:
             # Something else went wrong: request a build
@@ -820,8 +835,7 @@ class ConfigScanSources:
         ]
         if rebuild_hints:
             self.add_image_meta_change(
-                image_meta,
-                RebuildHint(RebuildHintCode.PACKAGE_CHANGE, ";\n".join(rebuild_hints)),
+                image_meta, RebuildHint(RebuildHintCode.PACKAGE_CHANGE, ";\n".join(rebuild_hints))
             )
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
@@ -910,9 +924,7 @@ class ConfigScanSources:
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
             upstream_commit_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target,
-                extra_patterns={'commitish': upstream_commit_hash},
-                engine=Engine.BREW.value,
+                el_target=el_target, extra_patterns={'commitish': upstream_commit_hash}, engine=Engine.BREW.value
             )
 
             if not upstream_commit_build_record:
@@ -995,9 +1007,7 @@ class ConfigScanSources:
                     }
                 )
 
-        results = dict(
-            images=image_results,
-        )
+        results = dict(images=image_results)
 
         self.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
 
@@ -1067,4 +1077,12 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
     else:
         runtime.initialize(mode='both', clone_distgits=False)
 
-    await ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
+    async with aiohttp.ClientSession() as session:
+        await ConfigScanSources(
+            runtime=runtime,
+            ci_kubeconfig=ci_kubeconfig,
+            as_yaml=as_yaml,
+            rebase_priv=rebase_priv,
+            dry_run=dry_run,
+            session=session,
+        ).run()
