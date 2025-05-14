@@ -515,6 +515,9 @@ class Ocp4Pipeline:
                     filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
                 ).keys(),
             )
+            self.runtime.logger.warning(
+                'Following images failed to rebase and won\'t be built: %s', ', '.join(failed_images)
+            )
 
             # Notify about rebase failures
             if self.assembly == 'stream':
