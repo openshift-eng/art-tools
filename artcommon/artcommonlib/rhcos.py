@@ -99,7 +99,12 @@ def get_build_id_from_rhcos_pullspec(pullspec):
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
-    if not (build_id := labels.get('org.opencontainers.image.version', None)):
+    # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
+    # brew build name looks like rhcos-x86_64-4.19.9.6.202505081313-0 we need build_id 4.19.9.6.202505081313-0
+    if manifest_tag := labels.get('coreos.build.manifest-list-tag'):
+        list_tag = manifest_tag.split('-')
+        build_id = f"{list_tag[0]}.{list_tag[1]}.{list_tag[2]}-0"
+    elif not (build_id := labels.get('org.opencontainers.image.version', None)):
         build_id = labels.version
 
     if not build_id:
