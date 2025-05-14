@@ -18,6 +18,7 @@ import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -236,7 +237,7 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 
 def default_imagestream_base_name_generic(version: str, build_system) -> str:
-    if build_system == 'brew':
+    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -252,7 +253,7 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
     if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    elif build_system == 'brew':
+    elif version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
         return f"{version}-art-assembly-{assembly_name}"
     else:  # konflux
         return f"{version}-konflux-art-assembly-{assembly_name}"

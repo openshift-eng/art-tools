@@ -8,6 +8,7 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
@@ -83,7 +84,9 @@ class BuildSyncPipeline:
         # Imagestream name for Brew builds is 4.y-art-latest
         # For konflux, it is 4.y-konflux-art-latest
         self.is_base_name = (
-            f'{self.version}-art-latest' if build_system == 'brew' else f'{self.version}-konflux-art-latest'
+            f'{self.version}-art-latest'
+            if build_system == 'brew' or self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            else f'{self.version}-konflux-art-latest'
         )
 
     async def comment_on_assembly_pr(self, text_body):
