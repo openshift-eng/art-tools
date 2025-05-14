@@ -693,7 +693,11 @@ class Ocp4Pipeline:
 
         else:
             # Trigger ocp4 build sync only for streams that are not being updated with konflux builds
-            if self.version.stream not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            if self.version.stream in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                self.runtime.logger.info(
+                    f'Skipping build-sync job for streams updated by konflux builds {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}'
+                )
+            else:
                 jenkins.start_build_sync(
                     build_version=self.version.stream,
                     assembly=self.assembly,
