@@ -13,6 +13,7 @@ from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url
+from doozerlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from ghapi.all import GhApi
 from opentelemetry import trace
 
@@ -83,7 +84,9 @@ class BuildSyncPipeline:
         # Imagestream name for Brew builds is 4.y-art-latest
         # For konflux, it is 4.y-konflux-art-latest
         self.is_base_name = (
-            f'{self.version}-art-latest' if build_system == 'brew' else f'{self.version}-konflux-art-latest'
+            f'{self.version}-art-latest'
+            if build_system == 'brew' or self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            else f'{self.version}-konflux-art-latest'
         )
 
     async def comment_on_assembly_pr(self, text_body):
@@ -617,6 +620,13 @@ async def build_sync(
     build_system: str,
 ):
     jenkins.init_jenkins()
+
+    # TODO: remove this after we completely migrate to konflux for all versions
+    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS and build_system == 'brew':
+        runtime.logger.info(f'Skipping brew build-sync for {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}')
+        jenkins.update_title(' [SKIPPED]')
+        return
+
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,

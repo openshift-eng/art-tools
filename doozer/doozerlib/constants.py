@@ -56,3 +56,6 @@ REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+
+# Sync konflux builds to default (formerly Brew) imagestreams for versions in this list
+KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = ["4.20"]

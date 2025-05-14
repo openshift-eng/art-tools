@@ -34,6 +34,7 @@ from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import BuildRecordInspector, ImageInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.rhcos import RHCOSBuildInspector
@@ -236,7 +237,7 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 
 def default_imagestream_base_name_generic(version: str, build_system) -> str:
-    if build_system == 'brew':
+    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -252,7 +253,7 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
     if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    elif build_system == 'brew':
+    elif version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
         return f"{version}-art-assembly-{assembly_name}"
     else:  # konflux
         return f"{version}-konflux-art-assembly-{assembly_name}"
