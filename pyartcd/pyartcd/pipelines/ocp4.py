@@ -6,6 +6,7 @@ import traceback
 import click
 import yaml
 from artcommonlib import exectools, redis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
 from pyartcd import constants, jenkins, locks, oc, plashets, util
 from pyartcd import record as record_util
@@ -691,12 +692,14 @@ class Ocp4Pipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
 
         else:
-            jenkins.start_build_sync(
-                build_version=self.version.stream,
-                assembly=self.assembly,
-                doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref,
-            )
+            # Trigger ocp4 build sync only for streams that are not being updated with konflux builds
+            if self.version.stream not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                jenkins.start_build_sync(
+                    build_version=self.version.stream,
+                    assembly=self.assembly,
+                    doozer_data_path=self.data_path,
+                    doozer_data_gitref=self.data_gitref,
+                )
 
         if operator_nvrs:
             jenkins.start_olm_bundle(

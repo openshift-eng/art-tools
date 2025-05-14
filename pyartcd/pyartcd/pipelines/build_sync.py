@@ -13,7 +13,6 @@ from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url
-from doozerlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from ghapi.all import GhApi
 from opentelemetry import trace
 
@@ -620,13 +619,6 @@ async def build_sync(
     build_system: str,
 ):
     jenkins.init_jenkins()
-
-    # TODO: remove this after we completely migrate to konflux for all versions
-    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS and build_system == 'brew':
-        runtime.logger.info(f'Skipping brew build-sync for {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}')
-        jenkins.update_title(' [SKIPPED]')
-        return
-
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
