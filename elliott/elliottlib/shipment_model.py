@@ -57,6 +57,7 @@ class ReleaseNotes(StrictBaseModel):
     model_config = ConfigDict(frozen=True)
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
+    live_id: int = None
     synopsis: str
     topic: str
     description: str
@@ -88,7 +89,6 @@ class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
-    liveID: int = None
     releaseName: Optional[str] = None
     advisoryName: Optional[str] = None
     advisoryInternalUrl: Optional[str] = None
