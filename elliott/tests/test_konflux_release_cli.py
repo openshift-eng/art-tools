@@ -222,6 +222,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             'metadata': {
                 'name': 'ose-4-18-stage-timestamp',
                 'namespace': self.konflux_config['namespace'],
+                'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
             },
             'spec': {
                 'releasePlan': shipment_config.shipment.environments.stage.releasePlan,

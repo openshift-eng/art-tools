@@ -30,6 +30,7 @@ LOGGER = logutil.get_logger(__name__)
 class ReleaseConfig:
     snapshot: str
     release_plan: str
+    application: str
     data: str = None
 
 
@@ -105,7 +106,7 @@ class CreateReleaseCli:
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
-        release_config = self.get_release_config(config.shipment, self.release_env)
+        release_config = self.get_release_config(config.shipment, self.release_env, meta.application)
         LOGGER.info(
             f"Constructed release config with snapshot={release_config.snapshot}"
             f" releasePlan={release_config.release_plan}"
@@ -143,13 +144,14 @@ class CreateReleaseCli:
         return await self.konflux_client._create(release_obj)
 
     @staticmethod
-    def get_release_config(shipment: Shipment, env: str) -> ReleaseConfig:
+    def get_release_config(shipment: Shipment, env: str, application: str) -> ReleaseConfig:
         """
         Construct a konflux release config based on env and raw config
         """
         rc = ReleaseConfig(
             snapshot=shipment.snapshot.name,
             release_plan=getattr(shipment.environments, env).releasePlan,
+            application=application,
         )
         if shipment.data:
             # Do not set exclude_unset=True when dumping, since Konflux
@@ -185,6 +187,7 @@ class CreateReleaseCli:
             "metadata": {
                 "name": release_name,
                 "namespace": self.konflux_config['namespace'],
+                "labels": {"appstudio.openshift.io/application": release_config.application},
             },
             "spec": {
                 "releasePlan": release_plan,
