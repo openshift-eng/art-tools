@@ -8,6 +8,7 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
