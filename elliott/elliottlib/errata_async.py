@@ -31,6 +31,12 @@ class AsyncErrataAPI:
             "Accept": "application/json",
         }
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+
     async def close(self):
         await self._session.close()
 
