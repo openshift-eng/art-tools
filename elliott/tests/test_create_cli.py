@@ -89,3 +89,33 @@ class TestGetAdvisoryBoilerplate(unittest.TestCase):
 
         # Assert
         self.assertEqual(result["synopsis"], "Group advisory rhsa synopsis")
+
+    @mock.patch("elliottlib.util.get_common_advisory_template")
+    def test_get_group_advisory_legacy_rhsa(self, mock_get_common_advisory_template):
+        # Arrange
+        et_data = yaml.safe_load(GROUP_ADVISORY_TEMPLATE_LEGACY)
+        mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
+        art_advisory_key = "image"
+        errata_type = "rhsa"
+        runtime = MagicMock()
+
+        # Act
+        result = get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type)
+
+        # Assert
+        self.assertEqual(result["synopsis"], "Group advisory rhba synopsis")
+
+    @mock.patch("elliottlib.util.get_common_advisory_template")
+    def test_get_group_advisory_legacy_rhba(self, mock_get_common_advisory_template):
+        # Arrange
+        et_data = yaml.safe_load(GROUP_ADVISORY_TEMPLATE_LEGACY)
+        mock_get_common_advisory_template.return_value = yaml.safe_load(COMMON_ADVISORY_TEMPLATE)
+        art_advisory_key = "image"
+        errata_type = "rhba"
+        runtime = MagicMock()
+
+        # Act
+        result = get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type)
+
+        # Assert
+        self.assertEqual(result["synopsis"], "Group advisory rhba synopsis")
