@@ -363,7 +363,6 @@ class KonfluxClient:
 
     async def _new_pipelinerun_for_image_build(
         self,
-        metadata: ImageMetadata,
         generate_name: str,
         namespace: Optional[str],
         application_name: str,
@@ -381,6 +380,7 @@ class KonfluxClient:
         sast: Optional[bool] = False,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        annotations: Optional[dict[str, str]] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -409,7 +409,8 @@ class KonfluxClient:
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
-        obj["metadata"]["annotations"]["art-network-mode"] = metadata.get_konflux_network_mode()
+        if annotations:
+            obj["metadata"]["annotations"].update(annotations)
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
@@ -526,7 +527,6 @@ class KonfluxClient:
 
     async def start_pipeline_run_for_image_build(
         self,
-        metadata: ImageMetadata,
         generate_name: str,
         namespace: Optional[str],
         application_name: str,
@@ -545,11 +545,11 @@ class KonfluxClient:
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        annotations: Optional[dict[str, str]] = None,
     ):
         """
         Start a PipelineRun for building an image.
 
-        :param metadata: Image Metadata
         :param generate_name: The generateName for the PipelineRun.
         :param namespace: The namespace for the PipelineRun.
         :param application_name: The application name.
@@ -581,7 +581,6 @@ class KonfluxClient:
         ]
 
         pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
-            metadata=metadata,
             generate_name=generate_name,
             namespace=namespace,
             application_name=application_name,
@@ -599,6 +598,7 @@ class KonfluxClient:
             pipelinerun_template_url=pipelinerun_template_url,
             prefetch=prefetch,
             sast=sast,
+            annotations=annotations,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
