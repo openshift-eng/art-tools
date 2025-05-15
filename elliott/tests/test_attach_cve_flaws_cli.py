@@ -23,6 +23,7 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             update=Mock(),
             topic='some topic',
         )
+        versions = {'minor': '4', 'patch': '42'}
 
         flaw_bugs = [
             Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo'),
@@ -33,6 +34,7 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             boilerplate,
             advisory,
             flaw_bugs,
+            versions,
         )
 
         advisory.update.assert_any_call(
