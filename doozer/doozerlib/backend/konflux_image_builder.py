@@ -431,7 +431,6 @@ class KonfluxImageBuilder:
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
-            metadata=metadata,
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,
@@ -448,6 +447,7 @@ class KonfluxImageBuilder:
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
             sast=sast,
+            annotations={"art-network-mode": metadata.get_konflux_network_mode()},
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
