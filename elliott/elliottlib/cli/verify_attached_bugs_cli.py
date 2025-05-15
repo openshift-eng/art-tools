@@ -271,12 +271,16 @@ class BugValidator:
         if "advance" in advisory_id_map and is_advisory_editable(advisory_id_map["advance"]):
             advance_release = True
         operator_bundle_advisory = "advance" if advance_release else "metadata"
+        major_version, minor_version = self.runtime.get_major_minor()
         bugs_by_type, issues = categorize_bugs_by_type(
             non_flaw_bugs,
             advisory_id_map,
             permitted_bug_ids=permitted_bug_ids,
             permissive=True,
             operator_bundle_advisory=operator_bundle_advisory,
+            noop=True,
+            major_version=major_version,
+            minor_version=minor_version,
         )
         for i in issues:
             self._complain(i)
