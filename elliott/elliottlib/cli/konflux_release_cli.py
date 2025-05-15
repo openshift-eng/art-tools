@@ -106,7 +106,7 @@ class CreateReleaseCli:
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
-        release_config = self.get_release_config(config.shipment, self.release_env, meta.application)
+        release_config = self.get_release_config(config.shipment, self.release_env)
         LOGGER.info(
             f"Constructed release config with snapshot={release_config.snapshot}"
             f" releasePlan={release_config.release_plan}"
@@ -144,14 +144,14 @@ class CreateReleaseCli:
         return await self.konflux_client._create(release_obj)
 
     @staticmethod
-    def get_release_config(shipment: Shipment, env: str, application: str) -> ReleaseConfig:
+    def get_release_config(shipment: Shipment, env: str) -> ReleaseConfig:
         """
         Construct a konflux release config based on env and raw config
         """
         rc = ReleaseConfig(
             snapshot=shipment.snapshot.name,
             release_plan=getattr(shipment.environments, env).releasePlan,
-            application=application,
+            application=shipment.metadata.application,
         )
         if shipment.data:
             # Do not set exclude_unset=True when dumping, since Konflux
