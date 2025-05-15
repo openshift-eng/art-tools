@@ -15,7 +15,7 @@ import koji
 import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import color_print, green_print, yellow_print
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
 from future import standard_library
@@ -783,7 +783,7 @@ def images_build_image(
     if pre_step:
         for img, status in pre_step['images'].items():
             if status is not True:  # anything other than true is fail
-                img_obj = runtime.image_map[img]
+                img_obj = runtime.image_map.get(img, Model())
                 failed.append(img)
                 if img_obj.required:
                     required.append(img)
