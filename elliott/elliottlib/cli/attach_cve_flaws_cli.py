@@ -242,7 +242,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
         advisory.update(
             errata_type='RHSA',
             security_reviewer=cve_boilerplate['security_reviewer'],
-            synopsis=cve_boilerplate['synopsis'],
+            synopsis=cve_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch),
             topic=cve_boilerplate['topic'].format(IMPACT="Low", MINOR=minor, PATCH=patch),
             # solution=cve_boilerplate['solution'],
             security_impact='Low',
