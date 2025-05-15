@@ -167,7 +167,14 @@ def _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, bug_track
         runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
     )
 
-    advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
+    assembly = runtime.get_major_minor_patch()
+    versions = {
+        'major': assembly[0],
+        'minor': assembly[1],
+        'patch': assembly[2],
+    }
+
+    advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs, versions)
     if not noop and updated:
         LOGGER.info("Updating advisory details %s", advisory_id)
         advisory.commit()
@@ -218,7 +225,7 @@ async def associate_builds_with_cves(
     )
 
 
-def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
+def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs, versions):
     """Given an advisory object, get updated advisory to RHSA
 
     :param cve_boilerplate: cve template for rhsa
@@ -226,6 +233,8 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
     :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
     :returns: updated advisory object and a boolean indicating if advisory was updated
     """
+    minor = versions['minor']
+    patch = versions['patch']
     updated = False
     if not is_security_advisory(advisory):
         LOGGER.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
@@ -234,7 +243,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
             errata_type='RHSA',
             security_reviewer=cve_boilerplate['security_reviewer'],
             synopsis=cve_boilerplate['synopsis'],
-            topic=cve_boilerplate['topic'].format(IMPACT="Low"),
+            topic=cve_boilerplate['topic'].format(IMPACT="Low", MINOR=minor, PATCH=patch),
             # solution=cve_boilerplate['solution'],
             security_impact='Low',
         )
@@ -250,7 +259,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
         formatted_cve_list = '\n'.join(
             [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
         )
-        formatted_description = cve_boilerplate['description'].format(CVES=formatted_cve_list)
+        formatted_description = cve_boilerplate['description'].format(CVES=formatted_cve_list, MINOR=minor, PATCH=patch)
         advisory.update(description=formatted_description)
 
     highest_impact = get_highest_security_impact(flaw_bugs)
@@ -265,7 +274,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
             )
 
     if highest_impact not in advisory.topic:
-        topic = cve_boilerplate['topic'].format(IMPACT=highest_impact)
+        topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=minor, PATCH=patch)
         LOGGER.info('Topic updated to include impact of {}'.format(highest_impact))
         advisory.update(topic=topic)
 
