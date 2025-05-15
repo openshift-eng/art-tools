@@ -11,19 +11,21 @@ from typing import Optional
 import click
 import koji
 from artcommonlib.exectools import cmd_gather, cmd_gather_async, limit_concurrency
+from tenacity import AsyncRetrying, RetryError, retry_if_result, stop_after_attempt
 
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
 
 
 class ScanFipsCli:
-    def __init__(self, runtime: Runtime, nvrs: Optional[list], all_images: bool, clean: Optional[bool]):
+    def __init__(self, runtime: Runtime, nvrs: Optional[list], all_images: bool, clean: Optional[bool], retry: int):
         self.runtime = runtime
         self.nvrs = nvrs if nvrs else []
         self.all_images = all_images
         self.clean = clean
         self.could_not_clean = []
         self.is_root = False
+        self.retries = retry
 
         # Initialize runtime and brewhub session
         self.runtime.initialize(clone_distgits=False)
@@ -67,7 +69,15 @@ class ScanFipsCli:
         cmd = self.make_command(f"check-payload -V {self.runtime.group.split('-')[-1]} scan image --spec {pull_spec}")
 
         self.runtime.logger.info(f"Running check-payload command: {cmd}")
-        rc_scan, out_scan, _ = await cmd_gather_async(cmd, check=False)
+        rc_scan = -1
+        out_scan = ""
+        retry = AsyncRetrying(
+            stop=stop_after_attempt(self.retries + 1), retry=retry_if_result(lambda result: result[0] != 0)
+        )
+        try:
+            rc_scan, out_scan, _ = await retry(cmd_gather_async, cmd, check=False)
+        except RetryError:
+            self.runtime.logger.info(f"All retry attempts exhaused for command: {cmd}")
 
         await self.clean_image(nvr, pull_spec)
 
@@ -183,13 +193,11 @@ class ScanFipsCli:
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
 @click.option("--all-images", is_flag=True, default=False, help="Scan all latest images in our tags")
 @click.option("--clean", is_flag=True, default=False, help="Clean images after scanning")
+@click.option("--retry", default=0, help="Specify how many times to retry the FIPS scan for failing NVRs.")
 @pass_runtime
 @click_coroutine
-async def scan_fips(runtime: Runtime, nvrs: str, all_images: bool, clean: bool):
+async def scan_fips(runtime: Runtime, nvrs: str, all_images: bool, clean: bool, retry: int):
     fips_pipeline = ScanFipsCli(
-        runtime=runtime,
-        nvrs=nvrs.split(",") if nvrs else None,
-        all_images=all_images,
-        clean=clean,
+        runtime=runtime, nvrs=nvrs.split(",") if nvrs else None, all_images=all_images, clean=clean, retry=retry
     )
     await fips_pipeline.run()
