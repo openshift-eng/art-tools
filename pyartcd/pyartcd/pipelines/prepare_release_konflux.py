@@ -68,8 +68,6 @@ class PrepareReleaseKonfluxPipeline:
         build_repo_vars = self._build_repo_vars(build_repo_url)
         self.build_repo_pull_url, self.build_data_gitref, self.build_data_push_url = build_repo_vars
         self.shipment_repo_pull_url, self.shipment_repo_push_url = self._shipment_repo_vars(shipment_repo_url)
-        shipment_repo_vars = self._shipment_repo_vars(shipment_repo_url)
-        self.shipment_repo_pull_url, self.shipment_repo_push_url = shipment_repo_vars
         self.build_data_repo = GitRepository(self._build_repo_dir, self.dry_run)
         self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
 
