@@ -17,6 +17,7 @@ from artcommonlib.util import get_assembly_release_date, get_ocp_version_from_gr
 from doozerlib.util import isolate_nightly_name_components
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.util import get_advisory_boilerplate
 from errata_tool import Erratum
 from ghapi.all import GhApi
 from github import Github, GithubException
@@ -145,7 +146,9 @@ class BuildMicroShiftPipeline:
         advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
-        boilerplate = et_data["boilerplates"]["microshift"]
+        boilerplate = get_advisory_boilerplate(
+            runtime=self.runtime, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
+        )
         errata_api = AsyncErrataAPI()
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
