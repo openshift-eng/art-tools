@@ -62,10 +62,10 @@ class ReleaseNotes(StrictBaseModel):
     topic: str
     description: str
     solution: str
+    issues: Optional[Issues]
 
     # Konflux pipeline expects certain keys like issues, cves to always be set, even if empty
     # therefore allow these to have default empty values
-    issues: Optional[Issues] = {}
     cves: Optional[List[CveAssociation]] = []
 
     references: Optional[List[str]] = None
