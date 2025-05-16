@@ -47,6 +47,7 @@ class PrepareReleaseKonfluxPipeline:
         shipment_repo_url: Optional[str],
         github_token: Optional[str],
         gitlab_token: Optional[str],
+        job_url: Optional[str],
     ) -> None:
         self.runtime = runtime
         self.assembly = assembly
@@ -61,7 +62,7 @@ class PrepareReleaseKonfluxPipeline:
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
         self._shipment_repo_dir = self.working_dir / "shipment-data-push"
-        self.job_url = os.getenv('BUILD_URL')
+        self.job_url = job_url
         self.dry_run = self.runtime.dry_run
         self.product = 'ocp'  # assume that product is ocp for now
 
@@ -353,7 +354,7 @@ class PrepareReleaseKonfluxPipeline:
 
         for advisory_key, shipment_config in shipments.items():
             filename = f"{self.assembly}.{advisory_key}.{timestamp}.yaml"
-            filepath = target_dir / filename
+            filepath = relative_target_dir / filename
             _LOGGER.info("Updating shipment file: %s", filename)
             out = StringIO()
             yaml.dump(shipment_config.model_dump(exclude_unset=True, exclude_none=True), out)
@@ -559,6 +560,8 @@ class PrepareReleaseKonfluxPipeline:
 async def prepare_release(
     runtime: Runtime, group: str, assembly: str, build_repo_url: Optional[str], shipment_repo_url: Optional[str]
 ):
+    job_url = os.environ.get('BUILD_URL')
+
     github_token = os.environ.get('GITHUB_TOKEN')
     if not github_token:
         raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
@@ -585,6 +588,7 @@ async def prepare_release(
             shipment_repo_url=shipment_repo_url,
             github_token=github_token,
             gitlab_token=gitlab_token,
+            job_url=job_url,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")
