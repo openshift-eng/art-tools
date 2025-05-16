@@ -17,6 +17,7 @@ from artcommonlib.util import get_assembly_release_date, get_ocp_version_from_gr
 from doozerlib.util import isolate_nightly_name_components
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.util import get_advisory_boilerplate
 from errata_tool import Erratum
 from ghapi.all import GhApi
 from github import Github, GithubException
@@ -120,14 +121,18 @@ class BuildMicroShiftPipeline:
             await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
+        return yaml.load(self.get_file_from_branch(group, "erratatool.yml", data_path))
+
+    def get_file_from_branch(self, branch, filename, data_path=None):
+        if data_path is None:
+            data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         try:
             user, repo = self.extract_git_repo(data_path)
             upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
-            et_content = upstream_repo.get_contents("erratatool.yml", ref=group)
-            et_data = yaml.load(et_content.decoded_content)
+            et_content = upstream_repo.get_contents(filename, ref=branch)
         except GithubException as e:
-            raise ValueError(f"Can't load errata config from {data_path}: {e}")
-        return et_data
+            raise ValueError(f"Can't load file contents from {data_path}: {e}")
+        return et_content.decoded_content
 
     def extract_git_repo(self, data_path: str):
         """
@@ -142,25 +147,40 @@ class BuildMicroShiftPipeline:
 
     async def create_microshift_advisory(self) -> int:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
-        advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
+        release_version = VersionInfo.parse(release_name)
+        advisory_type = "RHEA" if release_version.patch == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
-        boilerplate = et_data["boilerplates"]["microshift"]
+        boilerplate = get_advisory_boilerplate(
+            runtime=self, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
+        )
         errata_api = AsyncErrataAPI()
+
+        # Format the advisory boilerplate
+        synopsis = boilerplate['synopsis'].format(MINOR=release_version.minor, PATCH=release_version.patch)
+        advisory_topic = boilerplate['topic'].format(MINOR=release_version.minor, PATCH=release_version.patch)
+        advisory_description = boilerplate['description'].format(
+            MINOR=release_version.minor, PATCH=release_version.patch
+        )
+        advisory_solution = boilerplate['solution'].format(MINOR=release_version.minor, PATCH=release_version.patch)
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
-            self._logger.info("[DRY-RUN] Would have created microshift advisory 0")
+            self._logger.info("[DRY-RUN] Would have created microshift %s advisory 0", advisory_type)
+            self._logger.info("[DRY-RUN] Synopsis: %s", synopsis)
+            self._logger.info("[DRY-RUN] Topic: %s", advisory_topic)
+            self._logger.info("[DRY-RUN] Description: %s", advisory_description)
+            self._logger.info("[DRY-RUN] Solution: %s", advisory_solution)
             return 0
         try:
             created_advisory = await errata_api.create_advisory(
                 product=et_data['product'],
                 release=boilerplate.get('release', et_data['release']),
                 errata_type=advisory_type,
-                advisory_synopsis=boilerplate['synopsis'],
-                advisory_topic=boilerplate['topic'],
-                advisory_description=boilerplate['description'],
-                advisory_solution=boilerplate['solution'],
+                advisory_synopsis=synopsis,
+                advisory_topic=advisory_topic,
+                advisory_description=advisory_description,
+                advisory_solution=advisory_solution,
                 advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
                 advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
                 advisory_manager_email=self.runtime.config['advisory']['manager'],
