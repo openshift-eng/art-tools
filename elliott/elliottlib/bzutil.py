@@ -401,24 +401,28 @@ class JIRABug(Bug):
     def whiteboard_component(self):
         """Get whiteboard component value of a bug.
 
-        An OCP cve tracker has a label "pscomponent:<component_name>"
+        An OCP cve tracker uses custom field "Downstream Component Name"
+        or a label "pscomponent:<component_name>"
         to indicate which component the bug belongs to.
 
         Note ART has the ability to overwrite this field for ART's build pipeline
-        with label "art:pscomponent:<component_name>.
+        with label "art:pscomponent:<component_name>".
 
         :returns: a string if a value is found, otherwise None
         """
+        # If label "art:pscomponent:<component_name>" is set,
+        # return the component name from the label
+        p = re.compile(r'art:pscomponent:\s*(\S+)')
+        pscomponent = next((m.group(1) for label in self.bug.fields.labels if (m := p.match(label))), None)
+        if pscomponent:
+            return pscomponent
+        # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
         if self.is_type_vulnerability():
             return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
-        markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
-        for label in self.bug.fields.labels:
-            for marker in markers:
-                tmp = re.search(marker, label)
-                if tmp and len(tmp.groups()) == 1:
-                    component_name = tmp.groups()[0]
-                    return component_name
-        return None
+        # If label "pscomponent:<component_name>" is set,
+        # return the component name from the label.
+        p = re.compile(r'pscomponent:\s*(\S+)')
+        return next((m.group(1) for label in self.bug.fields.labels if (m := p.match(label))), None)
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']
