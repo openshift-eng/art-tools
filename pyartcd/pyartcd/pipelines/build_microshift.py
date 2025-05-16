@@ -121,14 +121,18 @@ class BuildMicroShiftPipeline:
             await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
+        return yaml.load(self.get_file_from_branch(group, "erratatool.yml", data_path))
+    
+    def get_file_from_branch(self, branch, filename, data_path = None):
+        if data_path is None:
+            data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         try:
             user, repo = self.extract_git_repo(data_path)
             upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
-            et_content = upstream_repo.get_contents("erratatool.yml", ref=group)
-            et_data = yaml.load(et_content.decoded_content)
+            et_content = upstream_repo.get_contents(filename, ref=branch)
         except GithubException as e:
-            raise ValueError(f"Can't load errata config from {data_path}: {e}")
-        return et_data
+            raise ValueError(f"Can't load file contents from {data_path}: {e}")
+        return et_content.decoded_content
 
     def extract_git_repo(self, data_path: str):
         """
@@ -147,7 +151,7 @@ class BuildMicroShiftPipeline:
         release_date = get_assembly_release_date(self.assembly, self.group)
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
         boilerplate = get_advisory_boilerplate(
-            runtime=self.runtime, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
+            runtime=self, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
         )
         errata_api = AsyncErrataAPI()
 
