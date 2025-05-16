@@ -4,12 +4,10 @@ import os
 import shutil
 from datetime import datetime, timezone
 from functools import cached_property
-from io import StringIO
 from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
-import aiofiles
 import click
 import gitlab
 from artcommonlib import exectools
@@ -67,17 +65,18 @@ class PrepareReleaseKonfluxPipeline:
         self.product = 'ocp'  # assume that product is ocp for now
 
         # Have clear pull and push targets for both the build and shipment repos
-        self.build_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_repo_vars(
-            build_repo_url
-        )
+        build_repo_vars = self._build_repo_vars(build_repo_url)
+        self.build_repo_pull_url, self.build_data_gitref, self.build_data_push_url = build_repo_vars
         self.shipment_repo_pull_url, self.shipment_repo_push_url = self._shipment_repo_vars(shipment_repo_url)
-
+        shipment_repo_vars = self._shipment_repo_vars(shipment_repo_url)
+        self.shipment_repo_pull_url, self.shipment_repo_push_url = shipment_repo_vars
         self.build_data_repo = GitRepository(self._build_repo_dir, self.dry_run)
         self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
 
         # these will be initialized later
         self.release_name = None
         self.releases_config = None
+        self.group_config = None
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -134,12 +133,29 @@ class PrepareReleaseKonfluxPipeline:
         gl.auth()
         return gl
 
-    async def run(self):
-        self.working_dir.mkdir(parents=True, exist_ok=True)
-        shutil.rmtree(self._build_repo_dir, ignore_errors=True)
-        shutil.rmtree(self._shipment_repo_dir, ignore_errors=True)
-        shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
+    @property
+    def release_name(self):
+        return get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
 
+    @property
+    def assembly_group_config(self):
+        return self.releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
+
+    @property
+    def shipment_config(self):
+        shipment_key = next(k for k in self.assembly_group_config.keys() if k.startswith("shipment"))
+        return self.assembly_group_config.get(shipment_key, [])
+
+    def setup_working_dir(self):
+        self.working_dir.mkdir(parents=True, exist_ok=True)
+        if self._build_repo_dir.exists():
+            shutil.rmtree(self._build_repo_dir, ignore_errors=True)
+        if self._shipment_repo_dir.exists():
+            shutil.rmtree(self._shipment_repo_dir, ignore_errors=True)
+        if self.elliott_working_dir.exists():
+            shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
+
+    async def setup_repos(self):
         await self.build_data_repo.setup(
             remote_url=self.build_data_push_url,
             upstream_remote_url=self.build_repo_pull_url,
@@ -151,57 +167,47 @@ class PrepareReleaseKonfluxPipeline:
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
-        content = await self.build_data_repo.read_file("group.yml")
-        group_config = yaml.load(content)
-        content = await self.build_data_repo.read_file("releases.yml")
-        self.releases_config = yaml.load(content)
+        self.releases_config = yaml.load(await self.build_data_repo.read_file("releases.yml"))
+        self.group_config = yaml.load(await self.build_data_repo.read_file("group.yml"))
+
+    async def validate_assembly(self):
+        # validate assembly and init release vars
         if self.releases_config.get("releases", {}).get(self.assembly) is None:
             raise ValueError(f"Assembly not found: {self.assembly}")
-
         assembly_type = get_assembly_type(self.releases_config, self.assembly)
         if assembly_type == AssemblyTypes.STREAM:
             raise ValueError("Preparing a release from a stream assembly is no longer supported.")
 
-        release_config = self.releases_config.get("releases", {}).get(self.assembly, {})
-        if not release_config:
-            raise ValueError(
-                f"Assembly {self.assembly} is not explicitly defined in releases.yml for group {self.group}."
-            )
-
-        self.release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
-
-        global_group_config = assembly_group_config(
-            Model(self.releases_config), self.assembly, Model(group_config)
+        # validate product from group config
+        merged_group_config = assembly_group_config(
+            Model(self.releases_config), self.assembly, Model(self.group_config)
         ).primitive()
-
-        # earlier we assumed the value of the product
-        # assert here
-        group_product = global_group_config.get("product", self.product)
+        group_product = merged_group_config.get("product", self.product)
         if group_product != self.product:
             raise ValueError(
                 f"Product mismatch: {group_product} != {self.product}. This pipeline only supports {self.product}."
             )
 
+    async def run(self):
+        self.setup_working_dir()
+        await self.setup_repos()
+        await self.validate_assembly()
         await self.prepare_shipment()
 
     async def prepare_shipment(self):
-        group_config = (
-            self.releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
-        )
-        shipment_key = next(k for k in group_config.keys() if k.startswith("shipment"))
-        shipment_config = group_config.get(shipment_key, []).copy()
-        shipment_url = shipment_config.get("url", "")
+        shipment_config = self.shipment_config.copy()
+        shipment_url = shipment_config.get("url")
         # if shipment MR isn't valid, complain and exit early
         if shipment_url:
             self.validate_shipment_mr(shipment_url)
 
-        shipment_advisories = shipment_config.get("advisories", [])
+        shipment_advisories = shipment_config.get("advisories")
         if not shipment_advisories:
             raise ValueError(
                 "Operation not supported: shipment config should specify which advisories to create and prepare"
             )
 
-        group_advisories = set(group_config.get("advisories", {}).keys())
+        group_advisories = set(self.assembly_group_config.get("advisories", {}).keys())
         shipment_advisory_kinds = {advisory.get("kind") for advisory in shipment_advisories}
         common = shipment_advisory_kinds & group_advisories
         if common:
@@ -244,6 +250,9 @@ class PrepareReleaseKonfluxPipeline:
                 _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
 
             generated_shipments[kind] = shipment
+
+        # close errata API connection now that we have the liveIDs
+        self._errata_api.close()
 
         if not shipment_url or shipment_url == "N/A":
             shipment_mr_url = await self.create_shipment_mr(generated_shipments, env)
@@ -356,9 +365,8 @@ class PrepareReleaseKonfluxPipeline:
             filename = f"{self.assembly}.{advisory_key}.{timestamp}.yaml"
             filepath = relative_target_dir / filename
             _LOGGER.info("Updating shipment file: %s", filename)
-            out = StringIO()
-            yaml.dump(shipment_config.model_dump(exclude_unset=True, exclude_none=True), out)
-            await self.shipment_data_repo.write_file(filepath, out.getvalue())
+            yaml_data = yaml.dump(shipment_config.model_dump(exclude_unset=True, exclude_none=True))
+            await self.shipment_data_repo.write_file(filepath, yaml_data)
         await self.shipment_data_repo.log_diff()
         return await self.shipment_data_repo.commit_push(commit_message)
 
@@ -466,9 +474,7 @@ class PrepareReleaseKonfluxPipeline:
         else:
             await self.build_data_repo.create_branch(branch)
 
-        out = StringIO()
-        yaml.dump(self.releases_config, out)
-        await self.build_data_repo.write_file("releases.yml", out.getvalue())
+        await self.build_data_repo.write_file("releases.yml", yaml.dump(self.releases_config))
         await self.build_data_repo.log_diff()
 
         commit_message = f"Update shipment for assembly {self.assembly}"
