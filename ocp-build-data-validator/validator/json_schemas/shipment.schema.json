@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-05-14 18:32 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-05-16 14:39 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
       "additionalProperties": false,
@@ -194,8 +194,7 @@
             {
               "type": "null"
             }
-          ],
-          "default": {}
+          ]
         },
         "cves": {
           "anyOf": [
@@ -233,7 +232,8 @@
         "synopsis",
         "topic",
         "description",
-        "solution"
+        "solution",
+        "issues"
       ],
       "title": "ReleaseNotes",
       "type": "object"
