@@ -222,6 +222,7 @@ async def find_builds_cli(
 
     if as_json:
         _json_dump(as_json, builds, kind, tag_pv_map)
+        return
     canonical_nvrs = [b.nvr for b in builds]
 
     # if we want to attach found builds to an advisory -> filter out already attached builds
