@@ -268,14 +268,14 @@ async def find_and_attach_bugs(
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
     bugs_by_type, _ = categorize_bugs_by_type(
-        bugs,
-        advisory_ids,
-        included_bug_ids,
-        noop,
-        permissive=permissive,
+        bugs=bugs,
+        advisory_id_map=advisory_ids,
+        permitted_bug_ids=included_bug_ids,
+        noop=noop,
         major_version=major_version,
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
+        permissive=permissive,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')

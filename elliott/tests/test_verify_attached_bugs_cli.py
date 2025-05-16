@@ -221,6 +221,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
+        flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
         flexmock(JIRABugTracker).should_receive("get_config").and_return(
             {'project': 'OCPBUGS', 'target_release': ['4.6.z']}
         )
