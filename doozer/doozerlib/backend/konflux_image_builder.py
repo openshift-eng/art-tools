@@ -138,8 +138,8 @@ class KonfluxImageBuilder:
                 await build_repo.ensure_source()
 
             # Parse Dockerfile
-            uuid_tag, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
-            nvr = f"{metadata.distgit_key}-{version}-{release}"
+            uuid_tag, component_name, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
+            nvr = f"{component_name}-{version}-{release}"
 
             # Sanity check to make sure a successful NVR build doesn't already exist in DB
             where = {"engine": Engine.KONFLUX.value}
@@ -250,26 +250,34 @@ class KonfluxImageBuilder:
         return pipelinerun_name, pipelinerun
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
-        """Parse the Dockerfile and return the UUID tag, version, and release.
+        """Parse the Dockerfile and return the UUID tag, component name, version, and release.
 
         :param distgit_key: The distgit key of the image.
         :param df_path: The path to the Dockerfile.
-        :return: A tuple containing the UUID tag, version, and release.
+        :return: A tuple containing the UUID tag, component name, version, and release.
         :raises ValueError: If the Dockerfile is missing the required environment variables or labels.
         """
         df = DockerfileParser(str(df_path))
+
         uuid_tag = df.envs.get("__doozer_uuid_tag")
         if not uuid_tag:
             raise ValueError(
                 f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?"
             )
+
+        component_name = df.labels['com.redhat.component']
+        if not component_name:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'com.redhat.component' label.")
+
         version = df.labels.get("version")
         if not version:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
         release = df.labels.get("release")
+
         if not release:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
-        return uuid_tag, version, release
+
+        return uuid_tag, component_name, version, release
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built

@@ -557,17 +557,18 @@ class KonfluxClient:
         :param git_url: The git URL.
         :param commit_sha: The commit SHA.
         :param target_branch: The target branch.
-        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param output_image: The output image.
+        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param building_arches: The architectures to build.
+        :param prefetch: The param values for Konflux prefetch dependencies task
+        :param sast: To enable the SAST task in PLR
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
-        :param image_metadata: Image metadata
+        :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
-        :param prefetch: The param values for Konflux prefetch dependencies task
-        :param sast: To enable the SAST task in PLR
+        :param annotations: Optional PLR annotations
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
