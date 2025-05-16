@@ -30,6 +30,7 @@ LOGGER = logutil.get_logger(__name__)
 class ReleaseConfig:
     snapshot: str
     release_plan: str
+    application: str
     data: str = None
 
 
@@ -150,6 +151,7 @@ class CreateReleaseCli:
         rc = ReleaseConfig(
             snapshot=shipment.snapshot.name,
             release_plan=getattr(shipment.environments, env).releasePlan,
+            application=shipment.metadata.application,
         )
         if shipment.data:
             # Do not set exclude_unset=True when dumping, since Konflux
@@ -185,6 +187,7 @@ class CreateReleaseCli:
             "metadata": {
                 "name": release_name,
                 "namespace": self.konflux_config['namespace'],
+                "labels": {"appstudio.openshift.io/application": release_config.application},
             },
             "spec": {
                 "releasePlan": release_plan,
