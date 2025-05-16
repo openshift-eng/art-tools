@@ -234,7 +234,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         'topic': shipment_config.shipment.data.releaseNotes.topic,
                         'description': shipment_config.shipment.data.releaseNotes.description,
                         'solution': shipment_config.shipment.data.releaseNotes.solution,
-                        'issues': {},
                         'cves': [],
                     },
                 },
