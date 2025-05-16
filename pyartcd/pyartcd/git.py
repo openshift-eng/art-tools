@@ -61,7 +61,7 @@ class GitRepository:
             await f.write(content)
         return path
 
-    async def log_diff(self, ref: str = "HEAD") -> str:
+    async def log_diff(self, ref: str = "HEAD"):
         """Log diff of the current working tree against the specified reference."""
         env = os.environ.copy()
         await exectools.cmd_assert_async(["git", "-C", str(self._directory), "--no-pager", "diff", ref], env=env)
