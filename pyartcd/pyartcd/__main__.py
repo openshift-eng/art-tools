@@ -22,6 +22,7 @@ from pyartcd.pipelines import (
     olm_bundle_konflux,
     operator_sdk_sync,
     prepare_release,
+    prepare_release_konflux,
     promote,
     quay_doomsday_backup,
     rebuild,
