@@ -22,6 +22,7 @@ from errata_tool import ErrataException
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.util import (
@@ -245,10 +246,11 @@ async def find_builds_cli(
         LOGGER.info("Fetching advisory")
         erratum = errata.Advisory(errata_id=advisory_id)
 
-        # store nvrs that are already attached to the advisory
-        advisory_build_nvrs = []
-        for build_list in erratum.errata_builds.values():  # one per product version
-            advisory_build_nvrs.extend(build_list)
+        # fetch nvrs that are already attached to the advisory
+        # use errata api directly because errata_tool does not init/return all attached builds correctly
+        async with AsyncErrataAPI() as errata_api:
+            advisory_build_nvrs = await errata_api.get_builds_flattened(advisory_id)
+        builds = [b for b in builds if b.nvr not in advisory_build_nvrs]
 
         if not builds:
             green_print("No new builds found for attaching to advisory")
