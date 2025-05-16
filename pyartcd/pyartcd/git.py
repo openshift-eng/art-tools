@@ -5,6 +5,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import Union
 
+import aiofiles
 from artcommonlib import exectools
 
 LOGGER = getLogger(__name__)
@@ -46,16 +47,53 @@ class GitRepository:
         elif 'upstream' in remotes:
             await exectools.cmd_assert_async(["git", "-C", repo_dir, "remote", "remove", "upstream"], env=env)
 
-    async def fetch_switch_branch(self, branch, upstream_ref=None):
+    async def read_file(self, relative_filepath: Union[str, Path]) -> str:
+        """Read a file from the git repository."""
+        path = self._directory / relative_filepath
+        async with aiofiles.open(path, "r") as f:
+            content = await f.read()
+        return content
+
+    async def write_file(self, relative_filepath: Union[str, Path], content: str) -> Path:
+        """Write content to a file in the git repository."""
+        path = self._directory / relative_filepath
+        async with aiofiles.open(path, "w") as f:
+            await f.write(content)
+        return path
+
+    async def log_diff(self, ref: str = "HEAD") -> str:
+        """Log diff of the current working tree against the specified reference."""
+        env = os.environ.copy()
+        await exectools.cmd_assert_async(["git", "-C", str(self._directory), "--no-pager", "diff", ref], env=env)
+
+    async def create_branch(self, branch: str):
+        """Create a new branch in the git repository."""
+        env = os.environ.copy()
+        repo_dir = str(self._directory)
+        await exectools.cmd_assert_async(["git", "-C", repo_dir, "checkout", "-b", branch], env=env)
+
+    async def does_branch_exist_on_remote(self, branch: str, remote: str) -> bool:
+        """Check if a branch exists on the remote repository."""
+        env = os.environ.copy()
+        repo_dir = str(self._directory)
+        # assume that the remote is already set up
+        cmd = ["git", "-C", repo_dir, "ls-remote", "--heads", remote, branch]
+        _, out, _ = await exectools.cmd_gather_async(cmd, env=env)
+        return branch in out
+
+    async def fetch_switch_branch(self, branch, upstream_ref=None, remote=None):
         """Fetch `upstream_ref` from the remote repo, create the `branch` and start it at `upstream_ref`.
         If `branch` already exists, then reset it to `upstream_ref`.
         """
         env = os.environ.copy()
         repo_dir = str(self._directory)
-        # Fetch remote
-        _, out, _ = await exectools.cmd_gather_async(["git", "-C", repo_dir, "remote"], env=env)
-        remotes = set(out.strip().split())
-        fetch_remote = "upstream" if "upstream" in remotes else "origin"
+        if remote:
+            fetch_remote = remote
+        else:
+            # Fetch remote
+            _, out, _ = await exectools.cmd_gather_async(["git", "-C", repo_dir, "remote"], env=env)
+            remotes = set(out.strip().split())
+            fetch_remote = "upstream" if "upstream" in remotes else "origin"
         await exectools.cmd_assert_async(
             ["git", "-C", repo_dir, "fetch", "--depth=1", "--", fetch_remote, upstream_ref or branch], env=env
         )
@@ -68,7 +106,7 @@ class GitRepository:
         # Clean workdir
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "clean", "-fdx"], env=env)
 
-    async def commit_push(self, commit_message: str):
+    async def commit_push(self, commit_message: str) -> bool:
         """Create a commit that includes all file changes in the working tree and push the commit to the remote repository.
         If there are no changes in thw working tree, do nothing.
         """

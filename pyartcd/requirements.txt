@@ -31,3 +31,4 @@ mysql-connector-python>=9.1.0 # not directly required, pinned by Snyk to avoid a
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 async_lru
 packageurl-python
+python-gitlab
