@@ -113,11 +113,17 @@ class BuildRhcosPipeline:
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
         group_file = asyncio.run(load_group_config(group=f"openshift-{self.version}", assembly="stream"))
-        return (
-            f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
-            if group_file['vars']['MINOR'] > 12 and group_file['vars']['MAJOR'] == 4
-            else self.version
-        )
+        if "layered_rhcos" in group_file['rhcos'].keys():  # for layered rhcos job
+            if self.job == 'build-node-image':  # for build node job release value is 4.x-9.x
+                return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
+            else:  # for build job release value is rhel-9.x
+                return f"rhel-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
+        else:
+            return (
+                f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
+                if group_file['vars']['MINOR'] > 12 and group_file['vars']['MAJOR'] == 4
+                else self.version
+            )
 
     def start_build(self):
         """Start a new build for the given version"""
