@@ -72,7 +72,6 @@ class PrepareReleaseKonfluxPipeline:
         self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
 
         # these will be initialized later
-        self.release_name = None
         self.releases_config = None
         self.group_config = None
 
