@@ -23,6 +23,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import deep_merge
 from async_lru import alru_cache
 
 from doozerlib.build_info import KonfluxBuildRecordInspector
@@ -388,6 +389,8 @@ class ConfigScanSources:
     @skip_check_if_changing
     async def scan_image(self, image_meta: ImageMetadata):
         self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
+        if image_meta.config.konflux is not Missing:
+            image_meta.config = Model(deep_merge(image_meta.config.primitive(), image_meta.config.konflux.primitive()))
 
         # Check if the component has ever been built
         latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)

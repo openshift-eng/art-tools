@@ -744,9 +744,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
         # Get enabled repos
         enabled_repos = {r.name for r in group_repos.values() if r.enabled}
-        if meta.config.konflux.enabled_repos is not Missing:
-            enabled_repos |= set(meta.config.konflux.enabled_repos)
-        elif meta.config.enabled_repos is not Missing:
+        if meta.config.enabled_repos is not Missing:
             enabled_repos |= set(meta.config.enabled_repos)
 
         # If there are no enabled repos, nothing to do here
