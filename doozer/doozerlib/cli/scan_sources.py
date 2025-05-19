@@ -646,7 +646,18 @@ class ConfigScanSources:
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
                     self.runtime, pullspec_for_tag, arch, build_id
                 ).find_non_latest_rpms()
-                if non_latest_rpms:
+                non_latest_rpms_filtered = []
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    # exclude rpm if non_latest_rpms in rhel image rpm list
+                    exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+                    for installed_rpm, latest_rpm, repo in non_latest_rpms:
+                        if any(excluded in installed_rpm for excluded in exclude_rpms):
+                            self.runtime.logger.info(f"Exclude {installed_rpm} because its in the exclude list")
+                        else:
+                            non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
+                else:
+                    non_latest_rpms_filtered = non_latest_rpms
+                if non_latest_rpms_filtered:
                     status['outdated'] = True
                     status['changed'] = True
                     status['rhelupdate'] = any(
@@ -654,11 +665,11 @@ class ConfigScanSources:
                             repo_name in repo
                             for repo_name in ['rhel-96-baseos', 'rhel-96-appstream', 'rhel-9-fast-datapath-rpms']
                         )
-                        for _, _, repo in non_latest_rpms
+                        for _, _, repo in non_latest_rpms_filtered
                     )
                     status['reason'] = ";\n".join(
                         f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
-                        for installed_rpm, latest_rpm, repo in non_latest_rpms
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
                     )
                     statuses.append(status)
         return statuses
