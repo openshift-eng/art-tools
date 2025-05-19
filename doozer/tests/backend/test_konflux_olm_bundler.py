@@ -304,27 +304,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 },
             )
 
-    @patch("aiofiles.open")
-    async def test_create_container_yaml(self, mock_open):
-        path = Path("/path/to/container.yaml")
-        mock_file = mock_open.return_value.__aenter__.return_value
-
-        await self.rebaser._create_container_yaml(path)
-
-        mock_open.assert_called_once_with(path, "w")
-        mock_file.writelines.assert_called_once()
-        written_lines = mock_file.writelines.call_args[0][0]
-        self.assertIn('# metadata containers are not functional and do not need to be multiarch\n', written_lines)
-        self.assertIn('\n', written_lines)
-        yaml_content = yaml.safe_load(written_lines[2])
-        self.assertEqual(
-            yaml_content,
-            {
-                'platforms': {'only': ['x86_64']},
-                'operator_manifests': {'manifests_dir': 'manifests'},
-            },
-        )
-
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
     @patch("pathlib.Path.mkdir")
@@ -332,12 +311,10 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._replace_image_references")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_dockerfile")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_container_yaml")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_oit_files")
     async def test_rebase_dir(
         self,
         mock_create_oit_files,
-        mock_create_container_yaml,
         mock_create_dockerfile,
         mock_replace_image_references,
         mock_dockerfile_parser,
@@ -424,7 +401,6 @@ spec:
             },
             input_release,
         )
-        mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
         mock_create_oit_files.assert_called_once_with(
             'test-package',
             'test-operator.v1.0.0',
@@ -635,6 +611,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             skip_checks=self.skip_checks,
             hermetic=True,
             pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
+            artifact_type="operatorbundle",
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
 

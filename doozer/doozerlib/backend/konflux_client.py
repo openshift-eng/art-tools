@@ -381,6 +381,7 @@ class KonfluxClient:
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
+        artifact_type: Optional[str] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -471,6 +472,9 @@ class KonfluxClient:
                     )
                 case "sast-snyk-check":
                     has_sast_task = True
+                case "ecosystem-cert-preflight-checks":
+                    if artifact_type:
+                        _modify_param(task["params"], "artifact-type", artifact_type)
 
         if not sast:
             tasks = []
@@ -546,6 +550,7 @@ class KonfluxClient:
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
+        artifact_type: Optional[str] = None,
     ):
         """
         Start a PipelineRun for building an image.
@@ -569,6 +574,7 @@ class KonfluxClient:
         :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :param annotations: Optional PLR annotations
+        :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -600,6 +606,7 @@ class KonfluxClient:
             prefetch=prefetch,
             sast=sast,
             annotations=annotations,
+            artifact_type=artifact_type,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)

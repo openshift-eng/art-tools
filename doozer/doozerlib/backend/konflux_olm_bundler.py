@@ -215,10 +215,6 @@ class KonfluxOlmBundleRebaser:
             self._create_dockerfile, metadata, operator_dir, bundle_dir, operator_framework_tags, input_release
         )
 
-        # Write container.yaml for Brew/OSBS
-        filename = bundle_dir / 'container.yaml'
-        await self._create_container_yaml(filename)
-
         # Write .oit files. Those files are used by Doozer for additional information about the bundle
         await self._create_oit_files(package_name, csv_name, bundle_dir, operator_nvr, all_found_operands)
 
@@ -395,24 +391,6 @@ class KonfluxOlmBundleRebaser:
             **operator_framework_tags,
         }
         bundle_df.labels['release'] = input_release
-
-    async def _create_container_yaml(self, path: Path):
-        """Use container.yaml to disable unnecessary multiarch.
-        This is only required for Brew/OSBS builds, as Konflux doesn't support container.yaml.
-        """
-        async with aiofiles.open(path, 'w') as writer:
-            await writer.writelines(
-                [
-                    '# metadata containers are not functional and do not need to be multiarch\n',
-                    '\n',
-                    yaml.dump(
-                        {
-                            'platforms': {'only': ['x86_64']},
-                            'operator_manifests': {'manifests_dir': 'manifests'},
-                        }
-                    ),
-                ]
-            )
 
 
 class KonfluxOlmBundleBuildError(Exception):
@@ -653,6 +631,7 @@ class KonfluxOlmBundleBuilder:
             skip_checks=skip_checks,
             hermetic=True,
             pipelinerun_template_url=self.pipelinerun_template_url,
+            artifact_type="operatorbundle",
         )
         url = konflux_client.build_pipeline_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
