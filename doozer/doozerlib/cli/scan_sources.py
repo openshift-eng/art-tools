@@ -652,7 +652,9 @@ class ConfigScanSources:
                     exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
                     for installed_rpm, latest_rpm, repo in non_latest_rpms:
                         if any(excluded in installed_rpm for excluded in exclude_rpms):
-                            self.runtime.logger.info(f"Exclude {installed_rpm} because its in the exclude list")
+                            self.runtime.logger.info(
+                                f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                            )
                         else:
                             non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
                 else:
