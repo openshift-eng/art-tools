@@ -480,7 +480,7 @@ class KonfluxImageBuilder:
             # Check if the SBOM is valid
             # The SBOM should be a JSON object with a "components" key that is a non-empty list
             if not (
-                "components" in content and isinstance(content["components"], list) and len(content["components"]) > 0
+                "packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0
             ):
                 logger.warning("cosign command returned invalid SBOM: %s", content)
                 raise ChildProcessError("cosign command returned invalid SBOM")
@@ -509,15 +509,17 @@ class KonfluxImageBuilder:
 
             sbom_contents = await _get_sbom_with_retry(cmd)
             source_rpms = set()
-            for x in sbom_contents["components"]:
-                # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
+            for x in sbom_contents["packages"]:
+                # konflux generates sbom in cyclonedx schema: https://spdx.dev/
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
                 # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
                 # so filter them out
-                if x.get("purl", '').startswith("pkg:"):
+                purl_string = next((ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), "")
+
+                if purl_string.startswith("pkg:"):
                     try:
-                        purl = PackageURL.from_string(x["purl"])
+                        purl = PackageURL.from_string(purl_string)
                         # right now, we only care about rpms
                         if purl.type == "rpm":
                             # get the source rpm
