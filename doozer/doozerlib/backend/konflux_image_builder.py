@@ -334,6 +334,23 @@ class KonfluxImageBuilder:
 
         return cachi2_enabled
 
+    @staticmethod
+    def is_lockfile_generation_enabled(metadata: ImageMetadata, logger) -> bool:
+        logger = logger or LOGGER
+        lockfile_enabled = False
+
+        cachi2_enabled = KonfluxImageBuilder._is_cachi2_enabled(metadata, logger)
+        if cachi2_enabled:
+            lockfile_config_override = metadata.config.konflux.cachi2.lockfile.enabled
+            if lockfile_config_override not in [Missing, None]:
+                lockfile_enabled = lockfile_config_override
+            else:
+                lockfile_group_override = metadata.runtime.group_config.konflux.cachi2.lockfile.enabled
+                if lockfile_group_override not in [Missing, None]:
+                    lockfile_enabled = lockfile_group_override
+
+        return lockfile_enabled
+
     def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in

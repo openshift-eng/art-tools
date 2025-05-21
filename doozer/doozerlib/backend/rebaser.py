@@ -21,6 +21,8 @@ from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
 from dockerfile_parse import DockerfileParser
+from doozer.doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozer.doozerlib.dnf import DnfManager, RPMLockfileGenerator
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
@@ -646,6 +648,8 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
+            asyncio.run(self._write_rpms_lock_file(metadata, dest_dir))
+
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
                 metadata, source, df_path, version, release, downstream_parents, force_yum_updates, uuid_tag, dest_dir
@@ -654,6 +658,72 @@ class KonfluxRebaser:
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
             return version, release
+
+    async def _write_rpms_lock_file(self, metadata: ImageMetadata, dest_dir: Path, group: str, retries=2):
+        # lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
+        lockfile_enabled = True
+        if lockfile_enabled:
+            rpms_install = metadata.config.konflux.cachi2.lockfile.packages.get('install', {})
+            if len(rpms_install) == 0:
+                async def get_rpms_from_args(args: Dict) -> Dict[str, Set[str]]:
+                    build = await self._runtime.konflux_db.get_latest_build(**args)
+                    if not build:
+                        raise ValueError(f'Could not find latest build for {args}')
+
+                    image_repo_creds = {
+                        "username": os.environ.get("KONFLUX_ART_IMAGES_USERNAME"),
+                        "password": os.environ.get("KONFLUX_ART_IMAGES_PASSWORD")
+                    }
+
+                    _, rpms = await KonfluxImageBuilder.get_installed_packages(
+                        build.image_pullspec,
+                        build.arches,
+                        image_repo_creds,
+                        logger=self._logger
+                    )
+
+                    return rpms
+
+                rpms = await get_rpms_from_args({'name': metadata.distgit_key, 'group': group})
+                if len(rpms) > 0:
+                    # Identify the parent installed RPMs and calculate the difference (XOR) between the lists:
+                    parents = metadata.get_parent_members()
+                    if len(parents) > 0:
+                        parent = next(iter(parents.items()))
+                        parent_rpms = await get_rpms_from_args({'name': parent[0], 'group': group})
+
+                        diff = {
+                            arch: list(set(rpms.get(arch, [])) - set(parent_rpms.get(arch, [])))
+                            for arch in rpms
+                        }
+
+                        rpms_install = diff
+                    else:
+                        self._logger.warning(f'Unable to fetch rpm list for base image of {metadata.image_name}')
+                        rpms_install = rpms
+                else:
+                    raise ValueError(f'Could not fetch the installed rpms list for {metadata.image_name}')
+
+                if all(not s for s in rpms_install.values()):
+                    self._logger.warning(f'empty rpm list to install for {metadata.image_name}, probably all required rpms are present in base iamge')
+                    return
+            else:
+                self._logger.info(f'generating lockfile using package definition from file for {metadata.distgit_key}')
+
+            dnf_manager = DnfManager(
+                installroot_base="/tmp/test-root",
+                repodir=str(dest_dir.joinpath('.oit')),
+                arches=metadata.get_arches()
+            )
+
+            arches_data = await dnf_manager.install_packages_for_arches(
+                install_packages=rpms_install
+            )
+
+            generator = RPMLockfileGenerator(str(dest_dir.joinpath('rpms.lock.yaml')),)
+            generator.generate(arches_data)
+        else:
+            self._logger.info(f'skipping lockfile generation for {metadata.image_name}')
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]
