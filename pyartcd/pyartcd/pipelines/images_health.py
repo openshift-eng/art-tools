@@ -39,7 +39,7 @@ class ImagesHealthPipeline:
         if any([self.send_to_release_channel, self.send_to_forum_ocp_art]):
             await asyncio.gather(*[self._send_notifications(engine) for engine in ['brew', 'konflux']])
 
-    async def send_for_engine(self, engine):
+    def send_for_engine(self, engine):
         if engine == "konflux":
             return self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
         if engine == "brew":
