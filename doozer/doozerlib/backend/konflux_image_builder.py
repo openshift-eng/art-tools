@@ -479,9 +479,7 @@ class KonfluxImageBuilder:
 
             # Check if the SBOM is valid
             # The SBOM should be a JSON object with a "components" key that is a non-empty list
-            if not (
-                "packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0
-            ):
+            if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
                 logger.warning("cosign command returned invalid SBOM: %s", content)
                 raise ChildProcessError("cosign command returned invalid SBOM")
 
@@ -515,7 +513,9 @@ class KonfluxImageBuilder:
                 # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
                 # so filter them out
-                purl_string = next((ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), "")
+                purl_string = next(
+                    (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
+                )
 
                 if purl_string.startswith("pkg:"):
                     try:
