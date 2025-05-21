@@ -6,6 +6,7 @@ import urllib.parse
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from sqlalchemy.testing.plugin.plugin_base import engines
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
@@ -25,21 +26,21 @@ class ImagesHealthPipeline:
         self.logger = logging.getLogger(__name__)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
-    def generate_art_dash_history_link(self, dg_name):
-        base_url = f"{ART_BUILD_HISTORY_URL}/search"
+    def generate_art_dash_history_link(self, dg_name, engine):
+        base_url = f"{ART_BUILD_HISTORY_URL}/"
 
         # Validating essential parameters
         if not dg_name or not self.runtime or not self.runtime.group_config or not self.runtime.group_config.name:
             raise ValueError("Missing essential parameters for generating Art-Dash link")
 
         formatted_dg_name = dg_name.split("/")[-1]
-
+        engine = engine
         params = {
             "group": self.runtime.group_config.name,
             "name": f'^{formatted_dg_name}$',
-            "engine": "brew",
+            "engine": engine,
             "assembly": "stream",
-            "outcome": "both",
+            "outcome": "completed",
             "art-job-url": "",
             "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}',
         }
@@ -118,7 +119,7 @@ class ImagesHealthPipeline:
                 return  # skipping notifications when only latest attempt failed
 
             # Add concern
-            msg += f'. {self.url_text(self.generate_art_dash_history_link(key), "Details")}'
+            msg += f'. {self.url_text(self.generate_art_dash_history_link(key, engine), "Details")}'
             self.add_concern(key, engine, msg)
 
         else:
