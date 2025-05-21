@@ -13,7 +13,7 @@ from doozerlib.backend.konflux_client import (
     KIND_SNAPSHOT,
     KonfluxClient,
 )
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_UI_HOST
 from kubernetes.dynamic import exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
@@ -31,6 +31,7 @@ class ReleaseConfig:
     snapshot: str
     release_plan: str
     application: str
+    release_name: str
     data: str = None
 
 
@@ -106,7 +107,9 @@ class CreateReleaseCli:
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
-        release_config = self.get_release_config(config.shipment, self.release_env)
+        major, minor = self.runtime.get_major_minor()
+        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
+        release_config = self.get_release_config(config.shipment, self.release_env, release_name)
         LOGGER.info(
             f"Constructed release config with snapshot={release_config.snapshot}"
             f" releasePlan={release_config.release_plan}"
@@ -141,10 +144,14 @@ class CreateReleaseCli:
             )
 
         release_obj = await self.new_release(release_config)
-        return await self.konflux_client._create(release_obj)
+        created_release = await self.konflux_client._create(release_obj)
+        LOGGER.info(
+            f"Successfully created Release {KONFLUX_UI_HOST}/ns/{self.konflux_config['namespace']}/applications/{release_config.application}/releases/{release_config.release_name}"
+        )
+        return created_release
 
     @staticmethod
-    def get_release_config(shipment: Shipment, env: str) -> ReleaseConfig:
+    def get_release_config(shipment: Shipment, env: str, release_name: str) -> ReleaseConfig:
         """
         Construct a konflux release config based on env and raw config
         """
@@ -152,6 +159,7 @@ class CreateReleaseCli:
             snapshot=shipment.snapshot.name,
             release_plan=getattr(shipment.environments, env).releasePlan,
             application=shipment.metadata.application,
+            release_name=release_name,
         )
         if shipment.data:
             # Do not set exclude_unset=True when dumping, since Konflux
@@ -161,9 +169,6 @@ class CreateReleaseCli:
         return rc
 
     async def new_release(self, release_config: ReleaseConfig) -> dict:
-        major, minor = self.runtime.get_major_minor()
-        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
-
         release_plan = release_config.release_plan
         snapshot = release_config.snapshot
 
@@ -185,7 +190,7 @@ class CreateReleaseCli:
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             "metadata": {
-                "name": release_name,
+                "name": release_config.release_name,
                 "namespace": self.konflux_config['namespace'],
                 "labels": {"appstudio.openshift.io/application": release_config.application},
             },
