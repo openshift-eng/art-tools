@@ -3,6 +3,7 @@ import json
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -38,6 +39,13 @@ class ImagesHealthPipeline:
         if any([self.send_to_release_channel, self.send_to_forum_ocp_art]):
             await asyncio.gather(*[self._send_notifications(engine) for engine in ['brew', 'konflux']])
 
+    async def send_for_engine(self, engine):
+        if engine == "konflux":
+            return self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+        if engine == "brew":
+            return self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+        raise ValueError(f'Engine {self.engine} not recognized')
+
     async def _send_notifications(self, engine):
         slack_client = self.runtime.new_slack_client()
         engine_report = self.report.get(engine, None)
@@ -65,7 +73,7 @@ class ImagesHealthPipeline:
             await slack_client.say(report, thread_ts=response['ts'])
 
         # For now, only notify public channels about Brew failures
-        if self.send_to_forum_ocp_art and engine == 'brew':
+        if self.send_to_forum_ocp_art and self.send_for_engine(engine):
             slack_client.bind_channel('#forum-ocp-art')
             response = await slack_client.say(msg)
             await slack_client.say(report, thread_ts=response['ts'])
