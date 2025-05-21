@@ -507,7 +507,7 @@ class KonfluxImageBuilder:
                 ]
 
             sbom_contents = await _get_sbom_with_retry(cmd)
-            source_rpms = set()
+            source_packages, source_rpms = set(), set()
             for x in sbom_contents["packages"]:
                 # konflux generates sbom in cyclonedx schema: https://spdx.dev/
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
