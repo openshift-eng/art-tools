@@ -50,7 +50,7 @@ class KonfluxImageBuilderConfig:
     kubeconfig: Optional[str] = None
     context: Optional[str] = None
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
-    image_repo_creds: Optional[Dict[str, str]] = None
+    registry_auth_file: Optional[str] = None
     skip_checks: bool = False
     dry_run: bool = False
 
@@ -79,16 +79,6 @@ class KonfluxImageBuilder:
             context=config.context,
             dry_run=config.dry_run,
         )
-
-        if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
-            for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
-                if secret not in os.environ:
-                    raise EnvironmentError(f"Missing required environment variable {secret}")
-
-            self._config.image_repo_creds = {
-                "username": os.environ["KONFLUX_ART_IMAGES_USERNAME"],
-                "password": os.environ["KONFLUX_ART_IMAGES_PASSWORD"],
-            }
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
@@ -215,8 +205,7 @@ class KonfluxImageBuilder:
                     try:
                         await artlib_util.get_konflux_slsa_attestation(
                             pull_spec=image_pullspec,
-                            registry_username=self._config.image_repo_creds["username"],
-                            registry_password=self._config.image_repo_creds["password"],
+                            registry_auth_file=self._config.registry_auth_file,
                         )
                     except Exception as e:
                         logger.error(
@@ -462,17 +451,17 @@ class KonfluxImageBuilder:
         return pipelinerun
 
     @staticmethod
-    async def get_installed_packages(image_pullspec: str, arches: list[str], image_repo_creds: dict, logger) -> list:
+    async def get_installed_packages(image_pullspec: str, arches: list[str], registry_auth_file: str) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
 
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-        async def _get_sbom_with_retry(cmd):
-            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
+        async def _get_sbom_with_retry(cmd, env):
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd, env=env)
             if rc != 0:
-                logger.warning("cosign command failed to download SBOM: %s", stdout)
+                LOGGER.warning("cosign command failed to download SBOM: %s", stdout)
                 raise ChildProcessError("cosign command failed to download SBOM")
 
             content = json.loads(stdout)
@@ -480,7 +469,7 @@ class KonfluxImageBuilder:
             # Check if the SBOM is valid
             # The SBOM should be a JSON object with a "components" key that is a non-empty list
             if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
-                logger.warning("cosign command returned invalid SBOM: %s", content)
+                LOGGER.warning("cosign command returned invalid SBOM: %s", content)
                 raise ChildProcessError("cosign command returned invalid SBOM")
 
             return content
@@ -497,15 +486,11 @@ class KonfluxImageBuilder:
                 f"linux/{go_arch}",
             ]
 
-            if image_repo_creds:
-                cmd += [
-                    "--registry-username",
-                    image_repo_creds.get("username"),
-                    "--registry-password",
-                    image_repo_creds.get("password"),
-                ]
+            env = os.environ.copy()
+            if registry_auth_file:
+                env["REGISTRY_AUTH_FILE"] = registry_auth_file
 
-            sbom_contents = await _get_sbom_with_retry(cmd)
+            sbom_contents = await _get_sbom_with_retry(cmd, env=env)
             source_rpms = set()
             for x in sbom_contents["packages"]:
                 # konflux generates sbom in cyclonedx schema: https://spdx.dev/
@@ -527,10 +512,10 @@ class KonfluxImageBuilder:
                             if source_rpm:
                                 source_rpms.add(source_rpm.removesuffix(".src.rpm"))
                     except Exception as e:
-                        logger.warning(f"Failed to parse purl: {x['purl']} {e}")
+                        LOGGER.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
             if not source_rpms:
-                logger.warning("No rpms found in sbom for arch %s. Please investigate", arch)
+                LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
             return source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
@@ -612,7 +597,7 @@ class KonfluxImageBuilder:
                 )
 
             installed_packages = await self.get_installed_packages(
-                image_pullspec, building_arches, self._config.image_repo_creds, logger=logger
+                image_pullspec, building_arches, self._config.registry_auth_file
             )
 
             build_record_params.update(

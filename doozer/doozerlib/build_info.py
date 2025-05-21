@@ -701,8 +701,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         if not self._inspectors:
             info = util.oc_image_info_show_multiarch__caching(
                 pullspec=self.get_build_pullspec(),
-                registry_username=os.environ['KONFLUX_ART_IMAGES_USERNAME'],
-                registry_password=os.environ['KONFLUX_ART_IMAGES_PASSWORD'],
+                registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
             )
             if isinstance(info, dict):
                 # The pullspec points to a single arch image
