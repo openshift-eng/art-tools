@@ -11,6 +11,7 @@ from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
+    KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
@@ -259,7 +260,8 @@ class KonfluxFbcRebaser:
         name = metadata.distgit_key + "-fbc"
         nvr = f"{name}-{version}-{release}"
         record = {
-            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            'status': -1,
             "name": metadata.distgit_key,
             "message": "Unknown failure",
             "fbc_nvr": nvr,
@@ -310,6 +312,15 @@ class KonfluxFbcRebaser:
             if self._record_logger:
                 self._record_logger.add_record("rebase_fbc_konflux", **record)
 
+    async def _get_referenced_images(self, konflux_db: KonfluxDb, bundle_build: KonfluxBundleBuildRecord):
+        assert bundle_build.operator_nvr, "operator_nvr is empty; doozer bug?"
+        nvrs = {bundle_build.operator_nvr}
+        if bundle_build.operand_nvrs:
+            nvrs |= set(bundle_build.operand_nvrs)
+        assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
+        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs))
+        return ref_builds
+
     async def _rebase_dir(
         self,
         metadata: ImageMetadata,
@@ -344,6 +355,15 @@ class KonfluxFbcRebaser:
         if not olm_csv_metadata:
             raise IOError(f"CSV metadata not found in bundle {olm_bundle_name}")
         olm_skip_range = olm_csv_metadata["value"]["annotations"].get("olm.skipRange", None)
+
+        # Load referenced images
+        konflux_db: KonfluxDb = metadata.runtime.konflux_db
+        konflux_db.bind(KonfluxBuildRecord)
+        ref_builds = await self._get_referenced_images(konflux_db, bundle_build)
+        ref_pullspecs = [
+            b.image_pullspec.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL)
+            for b in ref_builds
+        ]
 
         # Load current catalog
         catalog_file_path = build_repo.local_dir.joinpath("catalog", olm_package, "catalog.yaml")
@@ -436,7 +456,8 @@ class KonfluxFbcRebaser:
 
         # Add ImageDigestMirrorSet .tekton/images-mirror-set.yaml to the build repo to make Enterprise Contract happy
         image_digest_mirror_set = self._generate_image_digest_mirror_set(
-            categorized_catalog_blobs[olm_package]["olm.bundle"].values()
+            categorized_catalog_blobs[olm_package]["olm.bundle"].values(),
+            ref_pullspecs,
         )
         dot_tekton_dir = build_repo.local_dir.joinpath(".tekton")
         images_mirror_set_file_path = dot_tekton_dir.joinpath("images-mirror-set.yaml")
@@ -473,13 +494,15 @@ class KonfluxFbcRebaser:
         # The following label is used internally by ART's shipment pipeline
         dfp.labels['com.redhat.art.nvr'] = f'{metadata.distgit_key}-fbc-{version}-{release}'
 
-    def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict]):
-        source_repos = {
-            related_image["image"].split('@', 1)[0]
+    def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
+        mirrored_repos = {
+            p_split[1]: p_split[0]
             for bundle_blob in olm_bundle_blobs
             for related_image in bundle_blob.get("relatedImages", [])
+            if (p_split := related_image["image"].split('@', 1))
         }
-        if not source_repos:
+        source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
+        if not mirrored_repos:
             return None
         image_digest_mirror_set = {
             "apiVersion": "config.openshift.io/v1",
@@ -491,12 +514,12 @@ class KonfluxFbcRebaser:
             "spec": {
                 "imageDigestMirrors": [
                     {
-                        "source": source,
+                        "source": dest,
                         "mirrors": [
-                            constants.KONFLUX_DEFAULT_IMAGE_REPO,
+                            mirrored_repos[sha],
                         ],
                     }
-                    for source in source_repos
+                    for sha, dest in source_repos.items()
                 ],
             },
         }
@@ -609,7 +632,8 @@ class KonfluxFbcBuilder:
         logger.info("Building FBC for %s", metadata.distgit_key)
 
         record = {
-            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            'status': -1,
             "name": metadata.distgit_key,
             "message": "Unknown failure",
             "task_id": "n/a",
