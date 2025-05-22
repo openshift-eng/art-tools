@@ -55,6 +55,10 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+        # In case of a network outage,  the client may hang indefinitely without raising any exception.
+        # This is a workaround to set a timeout for the requests.
+        # https://github.com/kubernetes-client/python/blob/master/examples/watch/timeout-settings.md
+        self.request_timeout = 60 * 5  # 5 minutes
 
     def verify_connection(self):
         try:
@@ -130,7 +134,9 @@ class KonfluxClient:
         api = await self._get_api(api_version, kind)
         resource = None
         try:
-            resource = await exectools.to_thread(api.get, name=name, namespace=namespace or self.default_namespace)
+            resource = await exectools.to_thread(
+                api.get, name=name, namespace=namespace or self.default_namespace, _request_timeout=self.request_timeout
+            )
         except exceptions.NotFoundError:
             if strict:
                 raise
@@ -164,7 +170,9 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have created {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(self.dyn_client, manifest)
         self._logger.info(f"Creating {api_version}/{kind} {namespace}/{name or '<dynamic>'}...")
-        new = await exectools.to_thread(api.create, namespace=namespace, body=manifest, **kwargs)
+        new = await exectools.to_thread(
+            api.create, namespace=namespace, body=manifest, _request_timeout=self.request_timeout, **kwargs
+        )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
         self._logger.info(f"Created {api_version}/{kind} {namespace}/{name}")
@@ -187,6 +195,7 @@ class KonfluxClient:
             body=manifest,
             namespace=namespace,
             content_type="application/merge-patch+json",
+            _request_timeout=self.request_timeout,
         )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
@@ -205,7 +214,9 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have replaced {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(self.dyn_client, manifest)
         self._logger.info(f"Replacing {api_version}/{kind} {namespace}/{name}")
-        new = await exectools.to_thread(api.replace, body=manifest, namespace=namespace)
+        new = await exectools.to_thread(
+            api.replace, body=manifest, namespace=namespace, _request_timeout=self.request_timeout
+        )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
         self._logger.info(f"Replaced {api_version}/{kind} {namespace}/{name}")
@@ -224,7 +235,7 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have deleted {api_version}/{kind} {namespace}/{name}")
             return
         self._logger.info(f"Deleting {api_version}/{kind} {namespace}/{name}")
-        await exectools.to_thread(api.delete, name=name, namespace=namespace)
+        await exectools.to_thread(api.delete, name=name, namespace=namespace, _request_timeout=self.request_timeout)
         self._logger.info(f"Deleted {api_version}/{kind} {namespace}/{name}")
 
     async def _create_or_patch(self, manifest: dict):
@@ -704,6 +715,7 @@ class KonfluxClient:
                         # an event, it also ensures we will come back and check
                         # the object with an explicit get at least once per period.
                         timeout_seconds=5 * 60,
+                        _request_timeout=self.request_timeout,
                     ):
                         assert isinstance(event, Dict)
                         cancel_pipelinerun = (
@@ -721,7 +733,9 @@ class KonfluxClient:
 
                         pod_desc = []
                         pods = pod_resource.get(
-                            namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}"
+                            namespace=namespace,
+                            label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
+                            _request_timeout=self.request_timeout,
                         )
                         current_time = datetime.datetime.now()
                         for pod_instance in pods.items:
@@ -777,7 +791,9 @@ class KonfluxClient:
                         if succeeded_status not in ["Unknown", "Not Found"]:
                             time.sleep(5)  # allow final pods to update their status if they can
                             pods_instances = pod_resource.get(
-                                namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}"
+                                namespace=namespace,
+                                label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
+                                _request_timeout=self.request_timeout,
                             )
                             # We will convert ResourceInstances to Dicts so that they can be manipulated with
                             # extra information.
@@ -807,6 +823,7 @@ class KonfluxClient:
                                                     name=pod_name,
                                                     namespace=namespace,
                                                     container=container_name,
+                                                    _request_timeout=self.request_timeout,
                                                 )
                                                 # stuff log information into the container_status, so that it can be
                                                 # included in the bigquery database.
