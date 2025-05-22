@@ -39,13 +39,13 @@ class PrepareReleaseKonfluxPipeline:
         self,
         slack_client: SlackClient,
         runtime: Runtime,
-        group: Optional[str],
-        assembly: Optional[str],
-        build_repo_url: Optional[str],
-        shipment_repo_url: Optional[str],
-        github_token: Optional[str],
-        gitlab_token: Optional[str],
-        job_url: Optional[str],
+        group: str,
+        assembly: str,
+        github_token: str,
+        gitlab_token: str,
+        build_repo_url: Optional[str] = None,
+        shipment_repo_url: Optional[str] = None,
+        job_url: Optional[str] = None,
     ) -> None:
         self.runtime = runtime
         self.assembly = assembly
@@ -565,13 +565,13 @@ class PrepareReleaseKonfluxPipeline:
 async def prepare_release(
     runtime: Runtime, group: str, assembly: str, build_repo_url: Optional[str], shipment_repo_url: Optional[str]
 ):
-    job_url = os.environ.get('BUILD_URL')
+    job_url = os.getenv('BUILD_URL')
 
-    github_token = os.environ.get('GITHUB_TOKEN')
+    github_token = os.getenv('GITHUB_TOKEN')
     if not github_token:
         raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
 
-    gitlab_token = os.environ.get("GITLAB_TOKEN")
+    gitlab_token = os.getenv("GITLAB_TOKEN")
     if not gitlab_token:
         raise ValueError("GITLAB_TOKEN environment variable is required to create a merge request")
 
@@ -589,10 +589,10 @@ async def prepare_release(
             runtime=runtime,
             group=group,
             assembly=assembly,
-            build_repo_url=build_repo_url,
-            shipment_repo_url=shipment_repo_url,
             github_token=github_token,
             gitlab_token=gitlab_token,
+            build_repo_url=build_repo_url,
+            shipment_repo_url=shipment_repo_url,
             job_url=job_url,
         )
         await pipeline.run()
