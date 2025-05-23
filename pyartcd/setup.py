@@ -20,7 +20,7 @@ setup(
     description="Python based pipeline library for managing and automating Red Hat OpenShift Container Platform releases",
     url="https://github.com/openshift-eng/art-tools/tree/main/pyartcd",
     license="Apache License, Version 2.0",
-    packages=find_packages(exclude=["tests", "tests.*"]),
+    packages=find_packages(exclude=["tests.*"]),
     include_package_data=True,
     install_requires=INSTALL_REQUIRES,
     entry_points={
@@ -28,7 +28,7 @@ setup(
             'artcd = pyartcd.__main__:main',
         ],
     },
-    test_suite='tests',
+    test_suite='tests_pyartcd',
     dependency_links=[],
     python_requires='>=3.8',
     classifiers=[

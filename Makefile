@@ -21,11 +21,7 @@ pylint:
 	uv run -m pylint --errors-only .
 
 unit:
-	uv run -m pytest --verbose --color=yes artcommon/tests/
-	uv run -m pytest --verbose --color=yes doozer/tests_doozer/
-	uv run -m pytest --verbose --color=yes elliott/tests_elliott/
-	uv run -m pytest --verbose --color=yes pyartcd/tests_pyartcd/
-	uv run -m pytest --verbose --color=yes ocp-build-data-validator/tests_validator/
+	uv run -m pytest --verbose --color=yes .
 
 functional-elliott:
 	uv run -m pytest --verbose --color=yes elliott/tests_functional_elliott/
