@@ -405,7 +405,7 @@ spec:
             'test-package',
             'test-operator.v1.0.0',
             bundle_dir,
-            'test-distgit-key-1.0-1',
+            'test-component-1.0-1',
             {
                 'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             },
@@ -500,7 +500,10 @@ spec:
 
         with self.assertRaises(ValueError) as context:
             await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
-        self.assertIn("Label 'version' or 'release' is not set in the operator's Dockerfile", str(context.exception))
+        self.assertIn(
+            "Label 'com.redhat.component', 'version', or 'release' is not set in the operator's Dockerfile",
+            str(context.exception),
+        )
 
     @patch("pathlib.Path.iterdir", return_value=iter([]))
     async def test_rebase_dir_no_files_in_bundle_dir(self, _):

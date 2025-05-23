@@ -149,13 +149,14 @@ class KonfluxOlmBundleRebaser:
 
         # Read the operator's Dockerfile
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
+        operator_component_name = operator_df.labels.get('com.redhat.component')
         operator_version = operator_df.labels.get('version')
         operator_release = operator_df.labels.get('release')
-        if not operator_version or not operator_release:
+        if not operator_component_name or not operator_version or not operator_release:
             raise ValueError(
-                f"[{metadata.distgit_key}] Label 'version' or 'release' is not set in the operator's Dockerfile"
+                f"[{metadata.distgit_key}] Label 'com.redhat.component', 'version', or 'release' is not set in the operator's Dockerfile"
             )
-        operator_nvr = f"{metadata.distgit_key}-{operator_version}-{operator_release}"
+        operator_nvr = f"{operator_component_name}-{operator_version}-{operator_release}"
 
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
