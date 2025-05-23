@@ -4,7 +4,7 @@ import unittest
 
 from doozerlib import brew
 
-from tests_functional import DoozerRunnerTestCase
+from tests_functional_doozer import DoozerRunnerTestCase
 
 
 class TestKojiWrapper(DoozerRunnerTestCase):
