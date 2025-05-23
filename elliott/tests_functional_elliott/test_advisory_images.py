@@ -1,7 +1,7 @@
 import subprocess
 import unittest
 
-from functional_tests import constants
+from tests_functional_elliott import constants
 
 # this test may break for EOL releases - apparently the CDN repos for
 # some images may become undefined after the fact.

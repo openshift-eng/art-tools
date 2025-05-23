@@ -4,7 +4,7 @@ import unittest
 
 import yaml
 
-from tests_functional import DoozerRunnerTestCase
+from tests_functional_doozer import DoozerRunnerTestCase
 
 
 class TestScanSources(DoozerRunnerTestCase):

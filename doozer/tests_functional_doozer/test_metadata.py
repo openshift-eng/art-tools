@@ -5,7 +5,7 @@ import unittest
 from doozerlib import metadata
 from mock import MagicMock
 
-from tests_functional import DoozerRunnerTestCase
+from tests_functional_doozer import DoozerRunnerTestCase
 
 
 class TestMetadata(DoozerRunnerTestCase):

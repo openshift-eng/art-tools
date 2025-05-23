@@ -4,7 +4,7 @@ import unittest
 
 from artcommonlib import exectools
 
-from tests_functional import DoozerRunnerTestCase
+from tests_functional_doozer import DoozerRunnerTestCase
 
 
 class TestSanity(DoozerRunnerTestCase):

@@ -4,7 +4,7 @@ import unittest
 
 from dockerfile_parse import DockerfileParser
 
-from tests_functional import DoozerRunnerTestCase
+from tests_functional_doozer import DoozerRunnerTestCase
 
 
 class TestGoLangRebase(DoozerRunnerTestCase):
