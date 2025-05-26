@@ -83,7 +83,7 @@ class ConfigScanSources:
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
-        self.registry_auth_file = os.getenv("KONFLUX_REGISTRY_AUTH_FILE")
+        self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time

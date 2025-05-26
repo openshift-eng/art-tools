@@ -451,9 +451,10 @@ class KonfluxImageBuilder:
         return pipelinerun
 
     @staticmethod
-    async def get_installed_packages(image_pullspec: str, arches: list[str], registry_auth_file: str) -> list:
+    async def get_installed_packages(
+        image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
+    ) -> list:
         """
-        Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
 
@@ -488,20 +489,23 @@ class KonfluxImageBuilder:
 
             env = os.environ.copy()
             if registry_auth_file:
+                LOGGER.debug("Using registry auth file: %s", registry_auth_file)
                 env["REGISTRY_AUTH_FILE"] = registry_auth_file
 
             sbom_contents = await _get_sbom_with_retry(cmd, env=env)
             source_rpms = set()
+
+            # we request konflux to generate sbom in spdx schema: https://spdx.dev/
+            # https://github.com/openshift-eng/art-tools/blob/fb172e73df248b1dbc09c3666b5229b4db705427/doozer/doozerlib/backend/konflux_client.py#L473
             for x in sbom_contents["packages"]:
-                # konflux generates sbom in cyclonedx schema: https://spdx.dev/
-                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
-                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
-                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
-                # so filter them out
                 purl_string = next(
                     (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
                 )
 
+                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
+                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
+                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
+                # so filter them out
                 if purl_string.startswith("pkg:"):
                     try:
                         purl = PackageURL.from_string(purl_string)
