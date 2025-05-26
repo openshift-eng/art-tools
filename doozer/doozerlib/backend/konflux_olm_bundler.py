@@ -60,10 +60,9 @@ class KonfluxOlmBundleRebaser:
         :param operator_build_record: The build record of the operator to rebase. If not provided, the latest build record will be used.
         :param input_release: The release string for the new bundle. None to let the build backend generate it.
         """
-        assert operator_build.engine == Engine.KONFLUX, "Operator build must be from Konflux"
         assert input_release, "input_release must be provided"
-
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
         source = None
         if metadata.has_source():
             logger.info("Resolving source...")
@@ -75,11 +74,21 @@ class KonfluxOlmBundleRebaser:
             raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
 
         logger.info("Cloning operator build source...")
+        if operator_build.engine is Engine.KONFLUX:
+            operator_build_repo_url = operator_build.rebase_repo_url
+            operator_build_repo_refspec = operator_build.rebase_commitish
+        elif operator_build.engine is Engine.BREW:
+            operator_build_repo_url = metadata.distgit_remote_url()
+            operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
+        else:
+            raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
         operator_dir = self.base_dir.joinpath(metadata.qualified_key)
-        operator_build_repo = BuildRepo(url=source.url, branch=None, local_dir=operator_dir, logger=self._logger)
+        operator_build_repo = BuildRepo(
+            url=operator_build_repo_url, branch=None, local_dir=operator_dir, logger=self._logger
+        )
         await operator_build_repo.ensure_source(upcycle=self.upcycle)
-        await operator_build_repo.fetch(operator_build.rebase_commitish, strict=True)
-        await operator_build_repo.switch(operator_build.rebase_commitish, detach=True)
+        await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
+        await operator_build_repo.switch('FETCH_HEAD', detach=True)
         logger.info(f"operator build source cloned to {operator_dir}")
 
         logger.info("Cloning bundle repository...")
@@ -100,14 +109,21 @@ class KonfluxOlmBundleRebaser:
         logger.info("Cleaning bundle build directory...")
         await bundle_build_repo.delete_all_files()
         logger.info("Rebasing bundle content...")
-        await self._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+        await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
         # commit and push the changes
         logger.info("Committing and pushing bundle content...")
         await bundle_build_repo.commit(f"Update bundle manifests for {operator_build.nvr}", allow_empty=True)
         if not self.dry_run:
             await bundle_build_repo.push()
 
-    async def _rebase_dir(self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path, input_release: str):
+    async def _rebase_dir(
+        self,
+        metadata: ImageMetadata,
+        operator_dir: Path,
+        bundle_dir: Path,
+        operator_build: KonfluxBuildRecord,
+        input_release: str,
+    ):
         """Rebase an operator directory with Konflux."""
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
@@ -167,7 +183,9 @@ class KonfluxOlmBundleRebaser:
             # Read the file content and replace image references
             async with aiofiles.open(src, 'r') as f:
                 content = await f.read()
-            content, found_images = await self._replace_image_references(str(csv_config['registry']), content)
+            content, found_images = await self._replace_image_references(
+                str(csv_config['registry']), content, operator_build.engine
+            )
             for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
                 logger.info(f"Replaced image reference {old_pullspec} ({operand_nvr}) by {new_pullspec}")
             all_found_operands.update(found_images)
@@ -261,7 +279,7 @@ class KonfluxOlmBundleRebaser:
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
         return re.compile(pattern)
 
-    async def _replace_image_references(self, old_registry: str, content: str):
+    async def _replace_image_references(self, old_registry: str, content: str, engine: Engine):
         """
         Replace image references in the content by their corresponding SHA.
         Returns the content with the replacements and a map of found images in format of {image_name: (old_pullspec, new_pullspec, nvr)}
@@ -280,16 +298,28 @@ class KonfluxOlmBundleRebaser:
             references[pullspec] = (namespace, image_short_name, image_tag)
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
-            build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(
-                asyncio.create_task(
-                    util.oc_image_info_for_arch_async__caching(
-                        build_pullspec,
-                        registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
-                        registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+            if engine is Engine.KONFLUX:
+                build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
+                image_info_tasks.append(
+                    asyncio.create_task(
+                        util.oc_image_info_for_arch_async__caching(
+                            build_pullspec,
+                            registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                            registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                        )
                     )
                 )
-            )
+            elif engine is Engine.BREW:
+                build_pullspec = (
+                    f"{constants.REGISTRY_PROXY_BASE_URL}/rh-osbs/{namespace}-{image_short_name}:{image_tag}"
+                )
+                image_info_tasks.append(
+                    asyncio.create_task(
+                        util.oc_image_info_for_arch_async__caching(
+                            build_pullspec,
+                        )
+                    )
+                )
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content

@@ -99,7 +99,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.rebaser._group_config.operator_image_ref_mode = 'manifest-list'
         self.rebaser._group_config.get.return_value = 'namespace'
 
-        new_content, found_images = await self.rebaser._replace_image_references(old_registry, content)
+        new_content, found_images = await self.rebaser._replace_image_references(old_registry, content, Engine.KONFLUX)
 
         expected_new_content = """
         apiVersion: v1
@@ -379,7 +379,7 @@ spec:
         ]
         mock_iterdir.side_effect = lambda: iter(bundle_files)
 
-        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
 
         mock_mkdir.assert_any_call(parents=True, exist_ok=True)
         mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", 'r')
@@ -420,7 +420,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No update-csv config found in the operator's metadata", str(context.exception))
 
     async def test_rebase_dir_no_manifests_dir(self):
@@ -438,7 +438,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No manifests-dir defined in the operator's update-csv", str(context.exception))
 
     async def test_rebase_dir_no_bundle_dir(self):
@@ -456,7 +456,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No bundle-dir defined in the operator's update-csv", str(context.exception))
 
     async def test_rebase_dir_no_valid_subscription_label(self):
@@ -474,7 +474,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No valid-subscription-label defined in the operator's update-csv", str(context.exception))
 
     @patch("pathlib.Path.iterdir", return_value=iter(["some_file"]))
@@ -499,7 +499,7 @@ spec:
         mock_dockerfile_parser.return_value = mock_operator_df
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("Label 'version' or 'release' is not set in the operator's Dockerfile", str(context.exception))
 
     @patch("pathlib.Path.iterdir", return_value=iter([]))
@@ -519,7 +519,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(FileNotFoundError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
             self.assertIn("No files found in bundle directory", str(context.exception))
 
 
