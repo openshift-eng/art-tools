@@ -476,7 +476,8 @@ class ConfigScanSources:
 
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+            attestation_json = json.loads(attestation.strip())
+            payload_json = json.loads(base64.b64decode(attestation_json["payload"]).decode("utf-8"))
         except Exception as e:
             raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
 
