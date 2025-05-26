@@ -204,7 +204,7 @@ class KonfluxImageBuilder:
                     # Get SLA attestation from konflux. The command will error out if it cannot find it.
                     try:
                         await artlib_util.get_konflux_slsa_attestation(
-                            pull_spec=image_pullspec,
+                            pullspec=image_pullspec,
                             registry_auth_file=self._config.registry_auth_file,
                         )
                     except Exception as e:
