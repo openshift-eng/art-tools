@@ -428,15 +428,19 @@ class KonfluxFbcRebaser:
                 logger.info("Setting default channel to %s", default_channel_name)
                 package_blob["defaultChannel"] = default_channel_name
 
-        # Replace image references in relatedImages to use the prod registry
+        # Replace bundle pullspecs to use the prod registry
+        new_image_name = image_name.replace('openshift/', 'openshift4/')
+        digest = bundle_build.image_pullspec.split('@', 1)[-1]
+        bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{new_image_name}@{digest}"
+        olm_bundle_blob["image"] = bundle_prod_pullspec
         related_images = olm_bundle_blob.get("relatedImages", [])
         if related_images:
             target_entry = next((it for it in related_images if it['name'] == ""), None)
             if target_entry:
-                new_image_name = image_name.replace('openshift/', 'openshift4/')
-                new_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{new_image_name}@sha256:{bundle_build.image_tag}"
-                logger.info("Replacing image reference %s with %s", target_entry['image'], new_pullspec)
-                target_entry['image'] = new_pullspec
+                logger.info("Replacing image reference %s with %s", target_entry['image'], bundle_prod_pullspec)
+                target_entry['image'] = bundle_prod_pullspec
+
+        # Replace image references in olm.bundle entries to use the prod registry
 
         # Add the new bundle blob to the catalog
         if olm_bundle_name not in categorized_catalog_blobs[olm_package]["olm.bundle"]:
