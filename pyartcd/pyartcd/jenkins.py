@@ -38,6 +38,7 @@ class Jobs(Enum):
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
+    BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
 
 
 def get_jenkins_url():
@@ -488,6 +489,25 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
         job=Jobs.RHCOS_SYNC,
         params={
             'RELEASE_TAG': release_tag_or_pullspec,
+            'DRY_RUN': dry_run,
+        },
+        **kwargs,
+    )
+
+
+def start_build_plashets(
+    version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+) -> Optional[str]:
+    return start_build(
+        job=Jobs.BUILD_PLASHETS,
+        params={
+            'VERSION': version,
+            'RELEASE': release,
+            'ASSEMBLY': assembly,
+            'REPOS': ','.join(repos) if repos else '',
+            'DATA_PATH': data_path,
+            'DATA_GITREF': data_gitref,
+            'COPY_LINKS': copy_links,
             'DRY_RUN': dry_run,
         },
         **kwargs,
