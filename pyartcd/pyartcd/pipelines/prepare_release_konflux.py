@@ -249,6 +249,40 @@ class PrepareReleaseKonfluxPipeline:
                 f"Shipment config should not specify advisories that are already defined in assembly.group.advisories: {common}"
             )
 
+        shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
+        env = shipment_config.get("env", "prod")
+        if env not in ["prod", "stage"]:
+            raise ValueError("Shipment config `env` should be either `prod` or `stage`")
+
+    def validate_shipment_config(self, shipment_config: dict):
+        """Validate the given shipment configuration for an assembly.
+        This includes
+        - validating shipment MR if it exists
+        - validating shipment advisories and kinds
+        - making sure no overlap with assembly group advisories
+        - validating shipment env
+        :raises ValueError: If the shipment configuration is invalid.
+        """
+
+        shipment_url = shipment_config.get("url")
+        if shipment_url:
+            self.validate_shipment_mr(shipment_url)
+
+        shipment_advisories = shipment_config.get("advisories")
+        if not shipment_advisories:
+            raise ValueError("Shipment config should specify which advisories to create and prepare")
+
+        if not all(advisory.get("kind") for advisory in shipment_advisories):
+            raise ValueError("Shipment config should specify `kind` for each advisory")
+
+        group_advisories = set(self.assembly_group_config.get("advisories", {}).keys())
+        shipment_advisory_kinds = {advisory.get("kind") for advisory in shipment_advisories}
+        common = shipment_advisory_kinds & group_advisories
+        if common:
+            raise ValueError(
+                f"Shipment config should not specify advisories that are already defined in assembly.group.advisories: {common}"
+            )
+
         env = shipment_config.get("env", "prod")
         if env not in ["prod", "stage"]:
             raise ValueError("Shipment config `env` should be either `prod` or `stage`")
