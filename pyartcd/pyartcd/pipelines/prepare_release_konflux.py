@@ -199,74 +199,28 @@ class PrepareReleaseKonfluxPipeline:
     async def prepare_shipment(self):
         """Prepare the shipment for the assembly.
         This includes:
-        - Validating the shipment MR if it exists
+        - Validating the shipment config
         - Initializing shipment advisories
         - Finding builds for the advisories
         - Creating or updating the shipment MR
         - Creating or updating the build data PR with the shipment config
         """
 
-        shipment_config = self.shipment_config.copy()
-        shipment_url = shipment_config.get("url")
-        # if shipment MR isn't valid, complain and exit early
-        if shipment_url:
-            self.validate_shipment_mr(shipment_url)
+        self.validate_shipment_config(self.shipment_config)
 
-        shipment_advisories = shipment_config.get("advisories")
-        if not shipment_advisories:
-            raise ValueError(
-                "Operation not supported: shipment config should specify which advisories to create and prepare"
-            )
-
-        group_advisories = set(self.assembly_group_config.get("advisories", {}).keys())
-        shipment_advisory_kinds = {advisory.get("kind") for advisory in shipment_advisories}
-        common = shipment_advisory_kinds & group_advisories
-        if common:
-            raise ValueError(
-                f"shipment config should not specify advisories that are already defined in assembly.group.advisories: {common}"
-            )
-
+        shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
         env = shipment_config.get("env", "prod")
-        if env not in ["prod", "stage"]:
-            raise ValueError("shipment config `env` should be either `prod` or `stage`")
-
         generated_shipments: Dict[str, ShipmentConfig] = {}
-        for shipment_advisory_config in shipment_advisories:
+        for shipment_advisory_config in shipment_config.get("advisories"):
             kind = shipment_advisory_config.get("kind")
-            if not kind:
-                raise ValueError("shipment config should specify `kind` for an advisory")
-            shipment: ShipmentConfig = await self.init_shipment(kind)
-
-            # a liveID is required for prod, but not for stage
-            # so if it is missing, we need to reserve one
-            live_id = shipment_advisory_config.get("live_id")
-            if env == "prod" and not live_id:
-                _LOGGER.info("Requesting liveID for %s advisory", kind)
-                if self.dry_run:
-                    _LOGGER.info("[DRY-RUN] Would've reserved liveID for %s advisory", kind)
-                    live_id = "DRY_RUN_LIVE_ID"
-                else:
-                    live_id = await self._errata_api.reserve_live_id()
-                if not live_id:
-                    raise ValueError(f"Failed to get liveID for {kind} advisory")
-                shipment_advisory_config["live_id"] = live_id
-            if live_id:
-                shipment.shipment.data.releaseNotes.live_id = live_id
-
-            # find builds for the advisory
-            if kind in ("image", "extras"):
-                snapshot_spec = await self.find_builds(kind)
-                shipment.shipment.snapshot.spec = snapshot_spec
-            else:
-                _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
-
-            generated_shipments[kind] = shipment
+            generated_shipments[kind] = await self.generate_shipment(shipment_advisory_config, env)
 
         # close errata API connection now that we have the liveIDs
         # since it's a cached_property, check if it got initialized
         if "_errata_api" in self.__dict__:
             await self._errata_api.close()
 
+        shipment_url = shipment_config.get("url")
         if not shipment_url or shipment_url == "N/A":
             shipment_mr_url = await self.create_shipment_mr(generated_shipments, env)
             shipment_config["url"] = shipment_mr_url
@@ -278,6 +232,39 @@ class PrepareReleaseKonfluxPipeline:
                 await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
 
         await self.create_update_build_data_pr(shipment_config)
+
+    def validate_shipment_config(self, shipment_config: dict):
+        """Validate the given shipment configuration for an assembly.
+        This includes
+        - validating shipment MR if it exists
+        - validating shipment advisories and kinds
+        - making sure no overlap with assembly group advisories
+        - validating shipment env
+        :raises ValueError: If the shipment configuration is invalid.
+        """
+
+        shipment_url = shipment_config.get("url")
+        if shipment_url:
+            self.validate_shipment_mr(shipment_url)
+
+        shipment_advisories = shipment_config.get("advisories")
+        if not shipment_advisories:
+            raise ValueError("Shipment config should specify which advisories to create and prepare")
+
+        if not all(advisory.get("kind") for advisory in shipment_advisories):
+            raise ValueError("Shipment config should specify `kind` for each advisory")
+
+        group_advisories = set(self.assembly_group_config.get("advisories", {}).keys())
+        shipment_advisory_kinds = {advisory.get("kind") for advisory in shipment_advisories}
+        common = shipment_advisory_kinds & group_advisories
+        if common:
+            raise ValueError(
+                f"Shipment config should not specify advisories that are already defined in assembly.group.advisories: {common}"
+            )
+
+        env = shipment_config.get("env", "prod")
+        if env not in ["prod", "stage"]:
+            raise ValueError("Shipment config `env` should be either `prod` or `stage`")
 
     def validate_shipment_mr(self, shipment_url: str):
         """Validate the shipment MR
@@ -314,6 +301,35 @@ class PrepareReleaseKonfluxPipeline:
             raise ValueError(f"MR target branch {mr.target_branch} is not main. This is not supported.")
 
         _LOGGER.info("Shipment MR is valid: %s", shipment_url)
+
+    async def generate_shipment(self, shipment_advisory_config: dict, env: str) -> ShipmentConfig:
+        kind = shipment_advisory_config.get("kind")
+        shipment: ShipmentConfig = await self.init_shipment(kind)
+
+        # a liveID is required for prod, but not for stage
+        # so if it is missing, we need to reserve one
+        live_id = shipment_advisory_config.get("live_id")
+        if env == "prod" and not live_id:
+            _LOGGER.info("Requesting liveID for %s advisory", kind)
+            if self.dry_run:
+                _LOGGER.info("[DRY-RUN] Would've reserved liveID for %s advisory", kind)
+                live_id = "DRY_RUN_LIVE_ID"
+            else:
+                live_id = await self._errata_api.reserve_live_id()
+            if not live_id:
+                raise ValueError(f"Failed to get liveID for {kind} advisory")
+            shipment_advisory_config["live_id"] = live_id
+        if live_id:
+            shipment.shipment.data.releaseNotes.live_id = live_id
+
+        # find builds for the advisory
+        if kind in ("image", "extras"):
+            snapshot_spec = await self.find_builds(kind)
+            shipment.shipment.snapshot.spec = snapshot_spec
+        else:
+            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
+
+        return shipment
 
     async def init_shipment(self, kind: str) -> ShipmentConfig:
         """Initialize a shipment for the given kind.

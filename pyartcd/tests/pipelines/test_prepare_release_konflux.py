@@ -241,6 +241,129 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_assembly()
         self.assertIn("Product mismatch: another-product != ocp.", str(context.exception))
 
+    async def test_validate_shipment_config_no_advisories(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            github_token=self.github_token,
+            gitlab_token=self.gitlab_token,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    # No advisories
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config should specify which advisories to create and prepare", str(context.exception))
+
+    async def test_validate_shipment_config_no_kind(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            github_token=self.github_token,
+            gitlab_token=self.gitlab_token,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    "advisories": [{"live_id": 123}],  # No 'kind' specified
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config should specify `kind` for each advisory", str(context.exception))
+
+    async def test_validate_shipment_config_overlap(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            github_token=self.github_token,
+            gitlab_token=self.gitlab_token,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    "advisories": [{"kind": "image"}],  # overlap with group advisories
+                                },
+                                "advisories": {"image": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn(
+            "Shipment config should not specify advisories that are already defined in assembly.group.advisories",
+            str(context.exception),
+        )
+
+    async def test_validate_shipment_config_invalid_env(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            github_token=self.github_token,
+            gitlab_token=self.gitlab_token,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "production",  # Invalid env
+                                    "advisories": [{"kind": "image"}],
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
+
     @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
