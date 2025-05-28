@@ -2,12 +2,11 @@ import asyncio
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 
 import click
 import requests
-import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
@@ -17,6 +16,8 @@ from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from requests.adapters import HTTPAdapter
+from ruamel.yaml import YAML
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
@@ -169,10 +170,21 @@ async def gen_assembly_from_releases(
         gen_microshift=gen_microshift,
     ).run()
 
-    print(yaml.dump(assembly_def))
+    # ruamel.yaml configuration
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    yaml.indent(mapping=2, sequence=4, offset=2)
+
+    def represent_datetime(dumper, data):
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data.isoformat(), style='"')
+
+    yaml.representer.add_representer(datetime, represent_datetime)
+
+    print(yaml.dump(assembly_def, sys.stdout))
     if output_file:
         with open(output_file, 'w') as file:
-            yaml.safe_dump(assembly_def, file)
+            yaml.dump(assembly_def, file)
 
 
 class GenAssemblyCli:
@@ -339,7 +351,13 @@ class GenAssemblyCli:
         # get rhcos version eg. 417.94.202410250757-0
         self.rhcos_version = release_info["displayVersions"]["machine-os"]["Version"]
 
+        # Only look at payload tags that were included in the invocation
+        payload_names = [meta.config.payload_name for meta in self.runtime.image_metas() if meta.config.payload_name]
+        payload_names.extend(rhcos_tag_names)
+
         for component_tag in release_info.references.spec.tags:
+            if component_tag['name'] not in payload_names:
+                continue
             payload_tag_name = component_tag.name  # e.g. "aws-ebs-csi-driver"
             payload_tag_pullspec = component_tag['from'].name  # quay pullspec
             image_info = await util.oc_image_info_for_arch_async(
@@ -360,13 +378,11 @@ class GenAssemblyCli:
             # brew build which created it.
             image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
             image_labels = image_info['config']['config']['Labels']
+            package_name = image_labels['com.redhat.component']
             if self.runtime.build_system == 'brew':
-                package_name = image_labels['com.redhat.component']
                 build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
                 build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
             else:
-                image_envs = image_info['config']['config']['Env']
-                package_name = next((env.split('=')[1] for env in image_envs if env.startswith('__doozer_key=')))
                 build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
                 build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
                     nvr=build_nvr,
