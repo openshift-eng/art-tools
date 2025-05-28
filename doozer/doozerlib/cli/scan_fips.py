@@ -90,11 +90,10 @@ class ScanFipsCli:
 
     def get_all_latest_builds(self):
         # Setup brew tags
-        brew_tags = (
-            self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars)
-            .data.get('brew_tag_product_version_mapping', {})
-            .keys()
-        )
+        et_data = self.runtime.get_errata_config()
+        brew_tags = [
+            tag.format(**self.runtime.group_config.vars) for tag in et_data.get('brew_tag_product_version_mapping', {})
+        ]
         self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
 
         builds = []
