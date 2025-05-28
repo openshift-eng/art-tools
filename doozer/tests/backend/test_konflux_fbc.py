@@ -260,7 +260,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
-        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=True)
+        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
         mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
@@ -294,7 +294,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
-        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=True)
+        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
         mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
