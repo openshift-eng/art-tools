@@ -75,7 +75,7 @@ class KonfluxOlmBundleRebaser:
 
         logger.info("Cloning operator build source...")
         if operator_build.engine is Engine.KONFLUX:
-            operator_build_repo_url = operator_build.rebase_repo_url
+            operator_build_repo_url = source.url
             operator_build_repo_refspec = operator_build.rebase_commitish
         elif operator_build.engine is Engine.BREW:
             operator_build_repo_url = metadata.distgit_remote_url()
