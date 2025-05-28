@@ -16,8 +16,7 @@ from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from requests.adapters import HTTPAdapter
-from ruamel.yaml import YAML
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+import yaml
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
@@ -170,21 +169,9 @@ async def gen_assembly_from_releases(
         gen_microshift=gen_microshift,
     ).run()
 
-    # ruamel.yaml configuration
-    yaml = YAML()
-    yaml.default_flow_style = False
-    yaml.preserve_quotes = True
-    yaml.indent(mapping=2, sequence=4, offset=2)
-
-    def represent_datetime(dumper, data):
-        return dumper.represent_scalar('tag:yaml.org,2002:str', data.isoformat(), style='"')
-
-    yaml.representer.add_representer(datetime, represent_datetime)
-
-    print(yaml.dump(assembly_def, sys.stdout))
     if output_file:
         with open(output_file, 'w') as file:
-            yaml.dump(assembly_def, file)
+            yaml.safe_dump(assembly_def, file)
 
 
 class GenAssemblyCli:
