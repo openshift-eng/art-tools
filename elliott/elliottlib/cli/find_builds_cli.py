@@ -427,14 +427,21 @@ def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
     return nvrps
 
 
-def _json_dump(as_json, unshipped_builds, kind, tag_pv_map=None):
-    builds = sorted([b.nvr for b in unshipped_builds])
+def _json_dump(as_json: str, builds: list, kind: str, tag_pv_map: dict = None):
+    """Dumps builds as JSON to a file or stdout
+    :param as_json: file name to dump JSON to, or '-' for stdout
+    :param builds: list of Brew build objects
+    :param kind: kind of builds, either 'rpm' or 'image'
+    :param tag_pv_map: mapping of Brew tags to Errata product versions
+    """
+
+    builds = sorted([b.nvr for b in builds])
     json_data = dict(builds=builds, kind=kind)
 
     if tag_pv_map:
         tags = []
         reversed_tag_pv_map = {y: x for x, y in tag_pv_map.items()}
-        for b in sorted(unshipped_builds):
+        for b in sorted(builds):
             tags.append(reversed_tag_pv_map[b.product_version])
         json_data['base_tag'] = tags
 
@@ -706,5 +713,7 @@ async def find_builds_konflux(runtime, payload):
 
     LOGGER.info("Fetching NVRs from DB...")
     tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
-    records: List[Dict] = list(await asyncio.gather(*tasks))
+    records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
+    if len(records) != len(image_metas):
+        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
     return records
