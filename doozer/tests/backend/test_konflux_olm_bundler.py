@@ -118,7 +118,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             (
                 'registry.example.com/namespace/image:tag',
                 'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
-                'test-component-1.0-1',
+                'test-brew-component-1.0-1',
             ),
         )
 

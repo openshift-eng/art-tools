@@ -329,9 +329,8 @@ class KonfluxOlmBundleRebaser:
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']
             image_release = image_labels['release']
-            image_envs = image_info['config']['config']['Env']
-            image_dgk = next((env.split('=')[1] for env in image_envs if env.startswith('__doozer_key=')))
-            image_nvr = f"{image_dgk}-{image_version}-{image_release}"
+            image_component_name = image_labels['com.redhat.component']
+            image_nvr = f"{image_component_name}-{image_version}-{image_release}"
             namespace, image_short_name, image_tag = references[pullspec]
             image_sha = (
                 image_info['listDigest']
