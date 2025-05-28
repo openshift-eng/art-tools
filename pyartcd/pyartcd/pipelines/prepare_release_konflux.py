@@ -199,9 +199,8 @@ class PrepareReleaseKonfluxPipeline:
     async def prepare_shipment(self):
         """Prepare the shipment for the assembly.
         This includes:
-        - Validating the shipment config
-        - Initializing shipment advisories
-        - Finding builds for the advisories
+        - Validating the shipment advisory config
+        - Generating shipment files for each advisory kind
         - Creating or updating the shipment MR
         - Creating or updating the build data PR with the shipment config
         """
@@ -215,23 +214,11 @@ class PrepareReleaseKonfluxPipeline:
             kind = shipment_advisory_config.get("kind")
             generated_shipments[kind] = await self.generate_shipment(shipment_advisory_config, env)
 
-        # close errata API connection now that we have the liveIDs
-        # since it's a cached_property, check if it got initialized
+        await self.create_update_shipment_mr(shipment_config, generated_shipments, env)
+        await self.create_update_build_data_pr(shipment_config)
+
         if "_errata_api" in self.__dict__:
             await self._errata_api.close()
-
-        shipment_url = shipment_config.get("url")
-        if not shipment_url or shipment_url == "N/A":
-            shipment_mr_url = await self.create_shipment_mr(generated_shipments, env)
-            shipment_config["url"] = shipment_mr_url
-            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_mr_url}")
-        else:
-            _LOGGER.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
-            updated = await self.update_shipment_mr(generated_shipments, env, shipment_url)
-            if updated:
-                await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
-
-        await self.create_update_build_data_pr(shipment_config)
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -385,6 +372,26 @@ class PrepareReleaseKonfluxPipeline:
             out = json.loads(stdout)
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
+
+    async def create_update_shipment_mr(
+        self, shipment_config: dict, generated_shipments: Dict[str, ShipmentConfig], env: str
+    ):
+        """Create or update the shipment MR with the given shipment config files.
+        :param shipment_config: The shipment configuration to create or update the MR with
+        :param generated_shipments: The generated shipment configurations for each advisory kind
+        :param env: The environment for which the shipment is being prepared (prod or stage)
+        """
+
+        shipment_url = shipment_config.get("url")
+        if not shipment_url or shipment_url == "N/A":
+            shipment_mr_url = await self.create_shipment_mr(generated_shipments, env)
+            shipment_config["url"] = shipment_mr_url
+            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_mr_url}")
+        else:
+            _LOGGER.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
+            updated = await self.update_shipment_mr(generated_shipments, env, shipment_url)
+            if updated:
+                await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
 
     async def create_shipment_mr(self, shipment_configs: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
