@@ -555,15 +555,12 @@ def oc_image_info(
     :param registry_config: The path to the registry config file.
     """
 
-    def run_oc(auth_file: Optional[str]):
-        cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
-        cmd.extend(options)
-        if auth_file:
-            cmd.extend([f'--registry-config={auth_file}'])
-        out, _ = exectools.cmd_assert(cmd, retries=3)
-        return json.loads(out)
-
-    return run_oc(auth_file=registry_config)
+    cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
+    cmd.extend(options)
+    if registry_config:
+        cmd.extend([f'--registry-config={registry_config}'])
+    out, _ = exectools.cmd_assert(cmd, retries=3)
+    return json.loads(out)
 
 
 def oc_image_info_for_arch(pullspec: str, go_arch: str = 'amd64') -> Dict:
@@ -613,6 +610,7 @@ def oc_image_info_show_multiarch__caching(
     return oc_image_info_show_multiarch(pullspec, registry_config)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 async def oc_image_info_async(
     pullspec: str,
     *options,
@@ -631,17 +629,13 @@ async def oc_image_info_async(
     :return: The parsed JSON output of `oc image info`.
     """
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def run_oc(auth_file: Optional[str]):
-        opts = ['-o', 'json']
-        if auth_file:
-            opts.extend([f'--registry-config={auth_file}'])
-        opts.extend(options)
-        cmd = ['oc', 'image', 'info'] + opts + [pullspec]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        return json.loads(out)
-
-    return await run_oc(auth_file=registry_config)
+    opts = ['-o', 'json']
+    if registry_config:
+        opts.extend([f'--registry-config={registry_config}'])
+    opts.extend(options)
+    cmd = ['oc', 'image', 'info'] + opts + [pullspec]
+    _, out, _ = await exectools.cmd_gather_async(cmd)
+    return json.loads(out)
 
 
 async def oc_image_info_for_arch_async(
