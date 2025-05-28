@@ -175,8 +175,11 @@ async def find_builds_cli(
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
         records = await find_builds_konflux(runtime, payload)
+        if as_json:
+            _json_dump(as_json, records, kind)
+            return
         for nvr in sorted([r.nvr for r in records]):
-            print(nvr)
+            click.echo(nvr)
         return
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
@@ -217,7 +220,9 @@ async def find_builds_cli(
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}', nvrp[3], session=requests.Session()),
     )
 
-    _json_dump(as_json, builds, kind, tag_pv_map)
+    if as_json:
+        _json_dump(as_json, builds, kind, tag_pv_map)
+        return
     canonical_nvrs = [b.nvr for b in builds]
 
     # if we want to attach found builds to an advisory -> filter out already attached builds
@@ -422,20 +427,22 @@ def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
     return nvrps
 
 
-def _json_dump(as_json, unshipped_builds, kind, tag_pv_map):
-    if as_json:
-        builds = []
+def _json_dump(as_json, unshipped_builds, kind, tag_pv_map=None):
+    builds = sorted([b.nvr for b in unshipped_builds])
+    json_data = dict(builds=builds, kind=kind)
+
+    if tag_pv_map:
         tags = []
         reversed_tag_pv_map = {y: x for x, y in tag_pv_map.items()}
         for b in sorted(unshipped_builds):
-            builds.append(b.nvr)
             tags.append(reversed_tag_pv_map[b.product_version])
-        json_data = dict(builds=builds, base_tag=tags, kind=kind)
-        if as_json == '-':
-            click.echo(json.dumps(json_data, indent=4, sort_keys=True))
-        else:
-            with open(as_json, 'w') as json_file:
-                json.dump(json_data, json_file, indent=4, sort_keys=True)
+        json_data['base_tag'] = tags
+
+    if as_json == '-':
+        click.echo(json.dumps(json_data, indent=4, sort_keys=True))
+    else:
+        with open(as_json, 'w') as json_file:
+            json.dump(json_data, json_file, indent=4, sort_keys=True)
 
 
 def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:

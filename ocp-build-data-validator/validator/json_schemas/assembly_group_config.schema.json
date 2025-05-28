@@ -144,6 +144,44 @@
     "upgrades": {
       "type": "string"
     },
+    "shipment_advisory": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "live_id": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "shipment": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string",
+          "enum": ["stage", "prod"]
+        },
+        "advisories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/properties/shipment_advisory"
+          }
+        }
+      }
+    },
+    "shipment!": {
+      "$ref": "#/properties/shipment"
+    },
+    "shipment?": {
+      "$ref": "#/properties/shipment"
+    },
+    "shipment-": {},
     "upgrades!": {
       "$ref": "#/properties/upgrades"
     },

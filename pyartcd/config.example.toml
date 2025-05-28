@@ -7,6 +7,10 @@ package_owner = "jdelft@redhat.com"
 ocp_build_data_url = "https://github.com/openshift-eng/ocp-build-data.git"
 ocp_build_data_repo_push_url = "git@github.com:openshift-eng/ocp-build-data.git"
 
+[shipment_config]
+shipment_data_url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"
+shipment_data_push_url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"
+
 [email]
 smtp_server = "smtp.corp.redhat.com"
 from = "aos-art-automation@redhat.com"

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest import TestCase
 
 import yaml
@@ -191,6 +192,48 @@ releases:
             pass
         except Exception as e:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
+
+    def test_assembly_basis_time_invalid_1(self):
+        releases_yml = """
+releases:
+  foo:
+    assembly:
+      basis:
+        time: 2021-01-01T00:00:00Z
+    type: standard
+"""
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        with self.assertRaises(ValueError) as cm:
+            assembly_basis_event(self.releases_config, 'foo')
+        self.assertIn("Invalid time format for assembly", str(cm.exception))
+
+    def test_assembly_basis_time_invalid_2(self):
+        releases_yml = """
+releases:
+  foo:
+    assembly:
+      basis:
+        time: not_a_valid_datetime
+    type: standard
+"""
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        with self.assertRaises(ValueError) as cm:
+            assembly_basis_event(self.releases_config, 'foo')
+        self.assertIn("Invalid isoformat string", str(cm.exception))
+
+    def test_assembly_basis_time_valid(self):
+        releases_yml = """
+releases:
+  foo:
+    assembly:
+      basis:
+        time: "2021-01-01T00:00:00Z"
+    type: standard
+"""
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        self.assertEqual(
+            assembly_basis_event(self.releases_config, 'foo'), datetime(2021, 1, 1, 0, 0, tzinfo=timezone.utc)
+        )
 
     def test_assembly_group_config(self):
         group_config = Model(
