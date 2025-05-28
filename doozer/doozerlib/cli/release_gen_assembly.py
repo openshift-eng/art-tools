@@ -11,13 +11,12 @@ from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
@@ -175,13 +174,14 @@ async def gen_assembly_from_releases(
     yaml.default_flow_style = False
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.width = 4096
 
     def represent_datetime(dumper, data):
         return dumper.represent_scalar('tag:yaml.org,2002:str', data.isoformat(), style='"')
 
     yaml.representer.add_representer(datetime, represent_datetime)
 
-    print(yaml.dump(assembly_def, sys.stdout))
+    yaml.dump(assembly_def, sys.stdout)
     if output_file:
         with open(output_file, 'w') as file:
             yaml.dump(assembly_def, file)
