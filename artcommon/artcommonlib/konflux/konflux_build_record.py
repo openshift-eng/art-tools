@@ -211,6 +211,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         rebase_repo_url: str = '',
         rebase_commitish: str = '',
         embargoed: bool = False,
+        hermetic: bool = False,
         start_time: datetime = None,
         end_time: datetime = None,
         artifact_type: ArtifactType = ArtifactType.IMAGE,
@@ -255,6 +256,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.installed_packages = installed_packages
         self.parent_images = parent_images
         self.embargoed = embargoed
+        self.hermetic = hermetic
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.init_uuids(record_id, build_id, nvr)
 

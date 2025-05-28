@@ -328,13 +328,9 @@ class KonfluxDb:
             )
 
             results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
-
-            try:
-                return self.from_result_row(next(results))
-
-            except (StopIteration, Exception):
-                # No builds found in current window, shift to the earlier one
-                continue
+            if results.total_rows == 0:
+                continue  # No builds found in this window, try the next one
+            return self.from_result_row(next(results))
 
         # If we got here, no builds have been found in the whole 36 months period
         if strict:
