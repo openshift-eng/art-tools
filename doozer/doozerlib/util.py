@@ -540,36 +540,10 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
-def get_registry_basic_auth(pullspec: str, registry_password: str, registry_username: str = None) -> str:
-    # A password is always needed for basic auth
-    if not registry_username:
-        raise ValueError('registry_password must be provided if auth is needed.')
-
-    # Build the basic auth string
-    if registry_username:
-        auth = base64.b64encode(f'{registry_username}:{registry_password}'.encode()).decode()
-    else:
-        auth = registry_password
-
-    # Build the registry config file content
-    registry = '/'.join(pullspec.split('/')[:-1])
-    return json.dumps(
-        {
-            'auths': {
-                registry: {
-                    'auth': auth,
-                }
-            }
-        }
-    )
-
-
 def oc_image_info(
     pullspec: str,
     *options,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
@@ -579,27 +553,14 @@ def oc_image_info(
     :param pullspec: e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-vsphere-problem-detector-rhel9:v4.19.0-202501230108.p0.gcbd8539.assembly.stream.el9
     :param options: list of extra args to use with oc, e.g. '--show-multiarch', '--filter-by-os=linux/amd64'
     :param registry_config: The path to the registry config file.
-    :param registry_username: The username to authenticate with the registry.
-    :param registry_password: The password to authenticate with the registry.
     """
 
-    def run_oc(auth_file: Optional[str]):
-        cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
-        cmd.extend(options)
-        if auth_file:
-            cmd.extend([f'--registry-config={auth_file}'])
-        out, _ = exectools.cmd_assert(cmd, retries=3)
-        return json.loads(out)
-
-    # If neither a username nor a password were provided, assume an auth file is being used or no auth at all
-    if not registry_username and not registry_password:
-        return run_oc(auth_file=registry_config)
-
-    # Store the basic auth info in a temporary temp file to be used with --registry-config
-    with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(get_registry_basic_auth(pullspec, registry_password, registry_username))
-        registry_config_file.flush()
-        return run_oc(auth_file=registry_config_file.name)
+    cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
+    cmd.extend(options)
+    if registry_config:
+        cmd.extend([f'--registry-config={registry_config}'])
+    out, _ = exectools.cmd_assert(cmd, retries=3)
+    return json.loads(out)
 
 
 def oc_image_info_for_arch(pullspec: str, go_arch: str = 'amd64') -> Dict:
@@ -623,8 +584,6 @@ def oc_image_info_for_arch__caching(pullspec: str, go_arch: str = 'amd64') -> Di
 def oc_image_info_show_multiarch(
     pullspec: str,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
@@ -635,8 +594,6 @@ def oc_image_info_show_multiarch(
         pullspec,
         '--show-multiarch',
         registry_config=registry_config,
-        registry_username=registry_username,
-        registry_password=registry_password,
     )
 
 
@@ -644,66 +601,47 @@ def oc_image_info_show_multiarch(
 def oc_image_info_show_multiarch__caching(
     pullspec: str,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
     For single arch images, it will return a dict representing the supported arch manifest.
     For multi arch images, it will return a list of dictionaries, each of these representing a single arch
     """
-    return oc_image_info_show_multiarch(pullspec, registry_config, registry_username, registry_password)
+    return oc_image_info_show_multiarch(pullspec, registry_config)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 async def oc_image_info_async(
     pullspec: str,
     *options,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
     pullspec.
-    This function will authenticate with the registry using the provided registry_config or username and password.
+    This function will authenticate with the registry using the provided registry_config.
 
     Use oc_image_info_async__caching if you think the image won't change during the course of doozer
     execution.
 
     :param pullspec: The image pullspec to query.
     :param registry_config: The path to the registry config file.
-    :param registry_username: The username to authenticate with the registry.
-    :param registry_password: The password to authenticate with the registry.
     :return: The parsed JSON output of `oc image info`.
     """
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def run_oc(auth_file: Optional[str]):
-        opts = ['-o', 'json']
-        if auth_file:
-            opts.extend([f'--registry-config={auth_file}'])
-        opts.extend(options)
-        cmd = ['oc', 'image', 'info'] + opts + [pullspec]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        return json.loads(out)
-
-    # If neither a username nor a password were provided, assume an auth file is being used or no auth at all
-    if not registry_username and not registry_password:
-        return await run_oc(auth_file=registry_config)
-
-    # Store the basic auth info in a temporary temp file to be used with --registry-config
-    with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(get_registry_basic_auth(pullspec, registry_password, registry_username))
-        registry_config_file.flush()
-        return await run_oc(auth_file=registry_config_file.name)
+    opts = ['-o', 'json']
+    if registry_config:
+        opts.extend([f'--registry-config={registry_config}'])
+    opts.extend(options)
+    cmd = ['oc', 'image', 'info'] + opts + [pullspec]
+    _, out, _ = await exectools.cmd_gather_async(cmd)
+    return json.loads(out)
 
 
 async def oc_image_info_for_arch_async(
     pullspec: str,
     go_arch: str = 'amd64',
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Dict:
     """
     Runs oc image info with --filter-by-os because images can be multi-arch manifest lists
@@ -714,8 +652,6 @@ async def oc_image_info_for_arch_async(
         pullspec,
         f'--filter-by-os={go_arch}',
         registry_config=registry_config,
-        registry_username=registry_username,
-        registry_password=registry_password,
     )
 
 
@@ -724,12 +660,10 @@ async def oc_image_info_for_arch_async__caching(
     pullspec: str,
     go_arch: str = 'amd64',
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Dict:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This will authenticate with the registry using the provided username and password.
+    pullspec. This will authenticate with the registry using the provided config.
 
     This function will cache that output per pullspec, so do not use it
     if you expect the image to change during the course of doozer's execution.
@@ -737,18 +671,14 @@ async def oc_image_info_for_arch_async__caching(
     :param pullspec: The image pullspec to query.
     :param go_arch: The Go architecture to filter by.
     :param registry_config: The path to the registry config file.
-    :param registry_username: The username to authenticate with the registry.
-    :param registry_password: The password to authenticate with the registry.
     :return: The parsed JSON output of `oc image info`.
     """
-    return await oc_image_info_for_arch_async(pullspec, go_arch, registry_config, registry_username, registry_password)
+    return await oc_image_info_for_arch_async(pullspec, go_arch, registry_config)
 
 
 async def oc_image_info_show_multiarch_async(
     pullspec: str,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
@@ -759,8 +689,6 @@ async def oc_image_info_show_multiarch_async(
         pullspec,
         '--show-multiarch',
         registry_config=registry_config,
-        registry_username=registry_username,
-        registry_password=registry_password,
     )
 
 
@@ -768,8 +696,6 @@ async def oc_image_info_show_multiarch_async(
 async def oc_image_info_show_multiarch_async__caching(
     pullspec: str,
     registry_config: Optional[str] = None,
-    registry_username: Optional[str] = None,
-    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
@@ -779,8 +705,6 @@ async def oc_image_info_show_multiarch_async__caching(
     return await oc_image_info_show_multiarch_async(
         pullspec=pullspec,
         registry_config=registry_config,
-        registry_username=registry_username,
-        registry_password=registry_password,
     )
 
 

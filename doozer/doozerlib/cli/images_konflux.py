@@ -1,13 +1,12 @@
 import asyncio
 import logging
+import os
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    ArtifactType,
-    Engine,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
@@ -173,6 +172,7 @@ class KonfluxBuildCli:
         konflux_context: Optional[str],
         konflux_namespace: str,
         image_repo: str,
+        registry_auth_file: str,
         skip_checks: bool,
         dry_run: bool,
         plr_template: str,
@@ -182,6 +182,7 @@ class KonfluxBuildCli:
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
         self.image_repo = image_repo
+        self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
         self.dry_run = dry_run
         self.plr_template = plr_template
@@ -200,6 +201,7 @@ class KonfluxBuildCli:
             context=self.konflux_context,
             namespace=self.konflux_namespace,
             image_repo=self.image_repo,
+            registry_auth_file=self.registry_auth_file,
             skip_checks=self.skip_checks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
@@ -263,6 +265,7 @@ async def images_konflux_build(
         konflux_context=konflux_context,
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
+        registry_auth_file=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
         skip_checks=skip_checks,
         dry_run=dry_run,
         plr_template=plr_template,
