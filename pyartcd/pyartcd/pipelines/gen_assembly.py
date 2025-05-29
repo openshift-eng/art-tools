@@ -10,6 +10,7 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
@@ -140,7 +141,7 @@ class GenAssemblyPipeline:
             self._logger.info("Generated assembly definition:\n%s", out.getvalue())
 
             # For Konflux, stop here at the moment
-            if self.build_system == 'konflux':
+            if self.build_system == 'konflux' and self._ocp_version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
                 return
 
             # Create a PR
