@@ -141,7 +141,7 @@ class GenAssemblyPipeline:
             self._logger.info("Generated assembly definition:\n%s", out.getvalue())
 
             # For Konflux, stop here at the moment
-            if self.build_system == 'konflux' and self._ocp_version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            if self.build_system == 'konflux' and self.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
                 return
 
             # Create a PR
