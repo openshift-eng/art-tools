@@ -311,7 +311,10 @@ class GenAssemblyCli:
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
             rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
-            if self.runtime.build_system == 'konflux' and self.runtime.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            if (
+                self.runtime.build_system == 'konflux'
+                and self.runtime.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            ):
                 release_suffix = f'konflux-release{rc_suffix}'
             else:
                 release_suffix = f'release{rc_suffix}'
