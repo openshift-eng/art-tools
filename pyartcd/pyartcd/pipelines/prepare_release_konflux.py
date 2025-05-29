@@ -293,8 +293,28 @@ class PrepareReleaseKonfluxPipeline:
         kind = shipment_advisory_config.get("kind")
         shipment: ShipmentConfig = await self.init_shipment(kind)
 
+        # generate live ID
+        shipment.shipment.data.releaseNotes.live_id = await self.reserve_live_id(shipment_advisory_config, env)
+
+        # find builds for the advisory
+        if kind in ("image", "extras"):
+            snapshot_spec = await self.find_builds(kind)
+            shipment.shipment.snapshot.spec = snapshot_spec
+        else:
+            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
+
+        return shipment
+
+    async def reserve_live_id(self, shipment_advisory_config: dict, env: str) -> Optional[str]:
+        """Reserve a live ID for the shipment advisory.
+        :param shipment_advisory_config: The shipment advisory configuration to reserve a live ID for
+        :param env: The environment for which the live ID is being reserved (prod or stage)
+        :return: The reserved live ID or None if it could not be reserved
+        """
+
         # a liveID is required for prod, but not for stage
         # so if it is missing, we need to reserve one
+        kind = shipment_advisory_config.get("kind")
         live_id = shipment_advisory_config.get("live_id")
         if env == "prod" and not live_id:
             _LOGGER.info("Requesting liveID for %s advisory", kind)
@@ -306,17 +326,7 @@ class PrepareReleaseKonfluxPipeline:
             if not live_id:
                 raise ValueError(f"Failed to get liveID for {kind} advisory")
             shipment_advisory_config["live_id"] = live_id
-        if live_id:
-            shipment.shipment.data.releaseNotes.live_id = live_id
-
-        # find builds for the advisory
-        if kind in ("image", "extras"):
-            snapshot_spec = await self.find_builds(kind)
-            shipment.shipment.snapshot.spec = snapshot_spec
-        else:
-            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
-
-        return shipment
+        return live_id
 
     async def init_shipment(self, kind: str) -> ShipmentConfig:
         """Initialize a shipment for the given kind.
