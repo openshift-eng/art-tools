@@ -849,7 +849,12 @@ class GenAssemblyCli:
             or self.runtime.group.removeprefix('openshift-') in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
             else 'time'
         )
-        basis_event_value = self.basis_event if self.runtime.build_system == 'brew' else self.assembly_basis_time
+        basis_event_value = (
+            self.basis_event
+            if self.runtime.build_system == 'brew'
+            or self.runtime.group.removeprefix('openshift-') in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            else self.assembly_basis_time
+        )
 
         return {
             'releases': {
