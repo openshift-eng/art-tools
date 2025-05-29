@@ -310,7 +310,11 @@ class GenAssemblyCli:
                 self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
             rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
-            release_suffix = f'{"konflux-" if self.runtime.build_system == "konflux" and self.runtime.group.removeprefix("openshift-") not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS else ""}release{rc_suffix}'
+
+            if self.runtime.build_system == 'konflux' and self.runtime.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                release_suffix = f'konflux-release{rc_suffix}'
+            else:
+                release_suffix = f'release{rc_suffix}'
             nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
