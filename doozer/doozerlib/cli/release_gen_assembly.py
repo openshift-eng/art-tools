@@ -358,8 +358,8 @@ class GenAssemblyCli:
         # get rhcos version eg. 417.94.202410250757-0
         self.rhcos_version = release_info["displayVersions"]["machine-os"]["Version"]
 
-        # Only look at payload tags that were included in the invocation
-        payload_names = [meta.config.payload_name for meta in self.runtime.image_metas() if meta.config.payload_name]
+        # Only look at payload tags that were included in the invocation to speed up testing
+        payload_names = [meta.get_payload_tag_info()[0] for meta in self.runtime.image_metas() if meta.is_payload]
         payload_names.extend(rhcos_tag_names)
 
         for component_tag in release_info.references.spec.tags:
