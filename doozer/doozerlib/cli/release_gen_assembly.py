@@ -843,7 +843,12 @@ class GenAssemblyCli:
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
 
-        basis_event_key = 'brew_event' if self.runtime.build_system == 'brew' else 'time'
+        basis_event_key = (
+            'brew_event'
+            if self.runtime.build_system == 'brew'
+            or self.runtime.group.removeprefix('openshift-') in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            else 'time'
+        )
         basis_event_value = self.basis_event if self.runtime.build_system == 'brew' else self.assembly_basis_time
 
         return {
