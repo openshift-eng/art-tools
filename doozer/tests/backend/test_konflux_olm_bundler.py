@@ -308,7 +308,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     @patch("aiofiles.open")
     @patch("pathlib.Path.mkdir")
     @patch("glob.glob")
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._replace_image_references")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_dockerfile")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_oit_files")
@@ -317,7 +316,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_create_oit_files,
         mock_create_dockerfile,
         mock_replace_image_references,
-        mock_dockerfile_parser,
         mock_glob,
         mock_mkdir,
         mock_open,
@@ -336,14 +334,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         operator_dir = Path("/path/to/operator/dir")
         bundle_dir = Path("/path/to/bundle/dir")
         input_release = "1.0-1"
-
-        mock_operator_df = MagicMock()
-        mock_operator_df.labels = {
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
-        }
-        mock_dockerfile_parser.return_value = mock_operator_df
 
         mock_glob.return_value = ["/path/to/operator/dir/manifests/package.yaml"]
         mock_file = mock_open.return_value.__aenter__.return_value
@@ -379,7 +369,8 @@ spec:
         ]
         mock_iterdir.side_effect = lambda: iter(bundle_files)
 
-        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
+        operator_nvr = "test-component-1.0-1"
+        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(nvr=operator_nvr), input_release)
 
         mock_mkdir.assert_any_call(parents=True, exist_ok=True)
         mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", 'r')
@@ -405,7 +396,7 @@ spec:
             'test-package',
             'test-operator.v1.0.0',
             bundle_dir,
-            'test-component-1.0-1',
+            operator_nvr,
             {
                 'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             },
@@ -476,34 +467,6 @@ spec:
         with self.assertRaises(ValueError) as context:
             await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No valid-subscription-label defined in the operator's update-csv", str(context.exception))
-
-    @patch("pathlib.Path.iterdir", return_value=iter(["some_file"]))
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_rebase_dir_no_dockerfile_labels(self, mock_dockerfile_parser, _):
-        metadata = MagicMock()
-        metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'bundle-dir': 'bundle',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
-            },
-        }
-        metadata.distgit_key = "test-distgit-key"
-        operator_dir = Path("/path/to/operator/dir")
-        bundle_dir = Path("/path/to/bundle/dir")
-        input_release = "1.0-1"
-
-        mock_operator_df = MagicMock()
-        mock_operator_df.labels = {}
-        mock_dockerfile_parser.return_value = mock_operator_df
-
-        with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
-        self.assertIn(
-            "Label 'com.redhat.component', 'version', or 'release' is not set in the operator's Dockerfile",
-            str(context.exception),
-        )
 
     @patch("pathlib.Path.iterdir", return_value=iter([]))
     async def test_rebase_dir_no_files_in_bundle_dir(self, _):
