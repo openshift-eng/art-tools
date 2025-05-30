@@ -462,10 +462,11 @@ class KonfluxImageBuilder:
         return pipelinerun
 
     @staticmethod
-    async def get_installed_packages(image_pullspec: str, arches: list[str], image_repo_creds: dict, logger) -> list:
+    async def get_installed_packages(image_pullspec: str, arches: list[str], image_repo_creds: dict, logger):
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
-        :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
+        :return: Returns list of installed packaes for an image pullspec and a Hash with rpms installed
+            per arch, assumes that the sbom exists in registry
         """
 
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
@@ -506,7 +507,7 @@ class KonfluxImageBuilder:
                 ]
 
             sbom_contents = await _get_sbom_with_retry(cmd)
-            source_rpms = set()
+            source_packages, source_rpms = set(), set()
             for x in sbom_contents["packages"]:
                 # konflux generates sbom in cyclonedx schema: https://spdx.dev/
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
@@ -523,24 +524,39 @@ class KonfluxImageBuilder:
                         # right now, we only care about rpms
                         if purl.type == "rpm":
                             # get the source rpm
-                            source_rpm = purl.qualifiers.get("upstream", None)
-                            if source_rpm:
-                                source_rpms.add(source_rpm.removesuffix(".src.rpm"))
+                            source_package = purl.qualifiers.get("upstream", None)
+                            if source_package:
+                                source_packages.add(source_package.removesuffix(".src.rpm"))
+
+                            if not (purl.name and purl.version):
+                                logger.warning("Missing name or version in rpm purl: %s", purl)
+                                continue
+                            rpm = f"{purl.name}-{purl.version}"
+                            source_rpms.add(rpm)
                     except Exception as e:
                         logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
-            if not source_rpms:
-                logger.warning("No rpms found in sbom for arch %s. Please investigate", arch)
-            return source_rpms
+            if not (source_packages and source_rpms):
+                logger.warning("No packages or rpms found in sbom for arch %s. Please investigate", arch)
+            return source_packages, source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
-        for arch, result in zip(arches, results):
+        packages = [pkg for pkg, _ in results]
+        rpms = [rpm for _, rpm in results]
+
+        for arch, result in zip(arches, packages):
             if not result:
-                raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
+                raise ChildProcessError(f"Could not get packages from SBOM for arch {arch}")
         installed_packages = set()
-        for srpms in results:
+        for srpms in packages:
             installed_packages.update(srpms)
-        return sorted(installed_packages)
+
+        arch_rpms = {arch: rpm for arch, rpm in zip(arches, rpms)}
+        empty_arches = [arch for arch, rpm in arch_rpms.items() if not rpm]
+        if empty_arches:
+            raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
+
+        return sorted(installed_packages), arch_rpms
 
     async def update_konflux_db(
         self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
@@ -611,7 +627,7 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            installed_packages = await self.get_installed_packages(
+            installed_packages, _ = await self.get_installed_packages(
                 image_pullspec, building_arches, self._config.image_repo_creds, logger=logger
             )
 
