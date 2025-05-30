@@ -112,9 +112,6 @@ class Ocp4Pipeline:
         self._slack_client = runtime.new_slack_client()
         self._mail_client = self.runtime.new_mail_client()
 
-        if self.runtime.dry_run:
-            jenkins.update_title(" [dry-run]")
-
     async def _check_assembly(self):
         """
         If assembly != 'stream' and assemblies not enabled for <version>, raise an error
@@ -156,7 +153,10 @@ class Ocp4Pipeline:
         self.version.release = util.default_release_suffix()
 
         self.runtime.logger.info('Initializing build:\n%s', str(self.version))
-        jenkins.update_title(f' - {self.version.stream}-{self.version.release} ')
+        
+        title_update = " [dry-run]" if self.runtime.dry_run else ""
+        title_update += f' - {self.version.stream}-{self.version.release} '
+        jenkins.update_title(title_update)
 
     async def _initialize_build_plan(self):
         """
