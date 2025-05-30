@@ -470,11 +470,16 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
-        attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-            pull_spec=build_record.image_pullspec,
-            registry_username=self.art_images_username,
-            registry_password=self.art_images_password,
-        )
+        try:
+            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
+                pull_spec=build_record.image_pullspec,
+                registry_username=self.art_images_username,
+                registry_password=self.art_images_password,
+            )
+
+        except ChildProcessError as e:
+            self.logger.warning('Failed to download SLSA attestation: %s', e)
+            return
 
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
