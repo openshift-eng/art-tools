@@ -190,7 +190,11 @@ class KonfluxImageBuilder:
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
                 await self.update_konflux_db(
-                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
+                    metadata=metadata,
+                    build_repo=build_repo,
+                    pipelinerun=pipelinerun,
+                    outcome=KonfluxBuildOutcome.PENDING,
+                    building_arches=building_arches,
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -206,6 +210,7 @@ class KonfluxImageBuilder:
                 succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
+                is_hermetic = False
                 # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
                 if outcome is KonfluxBuildOutcome.SUCCESS:
                     image_pullspec = next(
@@ -213,8 +218,8 @@ class KonfluxImageBuilder:
                     )
                     # Get SLA attestation from konflux. The command will error out if it cannot find it.
                     try:
-                        await artlib_util.get_konflux_slsa_attestation(
-                            pull_spec=image_pullspec,
+                        is_hermetic = await artlib_util.is_build_hermetic(
+                            image_pullspec=image_pullspec,
                             registry_username=self._config.image_repo_creds["username"],
                             registry_password=self._config.image_repo_creds["password"],
                         )
@@ -227,7 +232,15 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
+                    await self.update_konflux_db(
+                        metadata=metadata,
+                        build_repo=build_repo,
+                        pipelinerun=pipelinerun,
+                        outcome=outcome,
+                        building_arches=building_arches,
+                        pod_list=pod_list,
+                        is_hermetic=is_hermetic,
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -543,7 +556,14 @@ class KonfluxImageBuilder:
         return sorted(installed_packages)
 
     async def update_konflux_db(
-        self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
+        self,
+        metadata,
+        build_repo,
+        pipelinerun,
+        outcome,
+        building_arches,
+        pod_list: Optional[List[Dict]] = None,
+        is_hermetic: Optional[bool] = False,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -592,6 +612,7 @@ class KonfluxImageBuilder:
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
+            'hermetic': is_hermetic,
             'pipeline_commit': 'n/a',  # TODO: populate this
         }
 

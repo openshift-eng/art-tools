@@ -1,6 +1,7 @@
 import asyncio
+import base64
+import json
 import logging
-import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -457,3 +458,22 @@ async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, r
     _, out, _ = await cmd_gather_async(cmd)
 
     return out.strip()
+
+
+async def is_build_hermetic(image_pullspec: str, registry_username: str, registry_password: str):
+    # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
+    attestation = await get_konflux_slsa_attestation(
+        pull_spec=image_pullspec,
+        registry_username=registry_username,
+        registry_password=registry_password,
+    )
+
+    try:
+        # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
+        payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+    except Exception as e:
+        raise IOError(f"Failed to parse SLSA attestation for {image_pullspec}: {e}")
+
+    # Inspect the SLSA attestation to see if the build is hermetic
+    is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+    return True if is_hermetic.lower() == "true" else False
