@@ -15,7 +15,7 @@ from artcommonlib import exectools
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
 
 JIRA_PROJECT = "OCPBUGS"
