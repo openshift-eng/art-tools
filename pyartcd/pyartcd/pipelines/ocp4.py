@@ -134,6 +134,23 @@ class Ocp4Pipeline:
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
 
+    async def _check_layered_rhcos(self):
+        """
+        Check if the current version is a layered RHCOS version.
+        """
+
+        cmd = self._doozer_base_command + [
+            'config:read-group',
+            'rhcos.layered_rhcos',
+            '--default=False',
+        ]
+        _, out, _ = await exectools.cmd_gather_async(cmd)
+        layered_rhcos = out.strip() == 'True'
+        self.runtime.logger.info(
+            'Layered RHCOS %s enabled for %s', 'NOT' if not layered_rhcos else '', self.version.stream
+        )
+        return layered_rhcos
+
     async def _initialize_version(self):
         """
         Initialize the "version" data structure
@@ -479,10 +496,9 @@ class Ocp4Pipeline:
             # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
             # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
             # will find consistent RPMs.
-            if self.version.major == 4 and self.version.minor <= 19:
-                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build")
-            else:
-                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build-node-image")
+            layered_rhcos = await self._check_layered_rhcos()
+            job_name = 'build-node-image' if layered_rhcos else 'build'
+            jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
 
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
