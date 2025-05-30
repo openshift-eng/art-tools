@@ -9,7 +9,7 @@ from urllib.error import URLError
 import koji
 from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
@@ -183,6 +183,20 @@ class RHCOSBuildFinder:
         with request.urlopen(url) as req:
             return json.loads(req.read().decode())
 
+    def rhel_build_meta(self, build_id: str):
+        """
+        For layered node image, get it's rhel image rpm list
+        :param build_id: the rhel image build id eg. 9.6.20250527-0
+        :return: rpm list for rhel build
+        """
+        if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+            url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
+            logger.info(f"Send request to {url}")
+            with request.urlopen(url) as req:
+                return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
+        else:
+            return []
+
     def latest_container(self, container_conf: dict = None) -> Tuple[Optional[str], Optional[str]]:
         """
         :param container_conf: a payload tag conf Model from group.yml (with build_metadata_key)
@@ -249,6 +263,7 @@ class RHCOSBuildInspector:
             self._os_commitmeta = finder.rhcos_build_meta(
                 self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
             )
+            self.rhel_build_meta = finder.rhel_build_meta(self.build_id)
         except Exception:
             # Fall back to trying to find a custom build
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
@@ -270,7 +285,7 @@ class RHCOSBuildInspector:
         """
         return self._build_meta
 
-    def get_os_metadata_rpm_list(self) -> List[List]:
+    def get_os_metadata_rpm_list(self, exclude_rhel: Optional[bool] = False) -> List[List]:
         """
         :return: Returns the raw RPM entries from the OS metadata. Example entry: ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
         Also include entries from the build meta.json extensions manifest. We don't have epoch for
@@ -301,6 +316,14 @@ class RHCOSBuildInspector:
             release, arch = ra.rsplit('.', 1)
             entries.append([name, epoch, version, release, arch])
 
+        if exclude_rhel:
+            # for node image exclude rpms in rhel layer
+            filtered_entries = []
+            for item in entries:
+                if item not in self.rhel_build_meta:
+                    logger.info(f"RPM {item} exist in node image but not rhel image")
+                    filtered_entries.append(item)
+            entries = filtered_entries
         return entries
 
     def get_rpm_nvrs(self) -> List[str]:
@@ -422,7 +445,7 @@ class RHCOSBuildInspector:
 
         raise IOError(f'Unable to determine RHEL version base for rhcos {self.build_id}')
 
-    async def find_non_latest_rpms(self) -> List[Tuple[str, str, str]]:
+    async def find_non_latest_rpms(self, exclude_rhel: Optional[bool] = False) -> List[Tuple[str, str, str]]:
         """
         If the packages installed in this image overlap packages in the build repo,
         return NVRs of the latest candidate builds that are not also installed in this image.
@@ -461,7 +484,7 @@ class RHCOSBuildInspector:
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
             }
-            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
+            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list(exclude_rhel)
         ]
 
         logger.info("Determining outdated rpms...")
