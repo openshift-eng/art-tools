@@ -504,7 +504,7 @@ class Ocp4Pipeline:
 
             if self.runtime.dry_run:
                 self.runtime.logger.info(
-                    'Would have triggered job: rhcos for %s, job_name=%s', job_name, self.version.stream, job_name
+                    'Would have triggered job: rhcos for %s, job_name=%s', self.version.stream, job_name
                 )
             else:
                 jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
