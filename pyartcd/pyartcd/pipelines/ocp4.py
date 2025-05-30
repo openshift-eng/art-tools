@@ -490,7 +490,10 @@ class Ocp4Pipeline:
             # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
             # Set block_until_building=False since it can take a very long time for the job to start
             # it is enough for it to be queued
-            jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
+            if self.runtime.dry_run:
+                self.runtime.logger.info('Would have triggered job: sync-for-ci for %s', self.version.stream)
+            else:
+                jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
 
             # Also trigger rhcos builds for the release in order to absorb any changes from plashets or RHEL which may
             # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
@@ -498,7 +501,13 @@ class Ocp4Pipeline:
             # will find consistent RPMs.
             layered_rhcos = await self._check_layered_rhcos()
             job_name = 'build-node-image' if layered_rhcos else 'build'
-            jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
+
+            if self.runtime.dry_run:
+                self.runtime.logger.info(
+                    'Would have triggered job: rhcos for %s, job_name=%s', job_name, self.version.stream, job_name
+                )
+            else:
+                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
 
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
