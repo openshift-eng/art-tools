@@ -15,6 +15,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
@@ -58,6 +59,7 @@ class PrepareReleaseKonfluxPipeline:
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
         self.application = KonfluxImageBuilder.get_application_name(self.group)
         self.working_dir = self.runtime.working_dir.absolute()
+        self.doozer_working_dir = self.working_dir / "doozer-working"
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
         self._shipment_repo_dir = self.working_dir / "shipment-data-push"
@@ -75,10 +77,20 @@ class PrepareReleaseKonfluxPipeline:
         # these will be initialized later
         self.releases_config = None
         self.group_config = None
+        self.extras_nvrs = None
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
             group_param += f'@{self.build_data_gitref}'
+
+        self._doozer_base_command = [
+            'doozer',
+            group_param,
+            f'--assembly={self.assembly}',
+            '--build-system=konflux',
+            f'--working-dir={self.doozer_working_dir}',
+            f'--data-path={self.build_repo_pull_url}',
+        ]
 
         self._elliott_base_command = [
             'elliott',
@@ -210,8 +222,20 @@ class PrepareReleaseKonfluxPipeline:
         shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
         env = shipment_config.get("env", "prod")
         generated_shipments: Dict[str, ShipmentConfig] = {}
+
+        # it is important to first generate shipments of "image" and "extras"
+        # because other kinds depend on them
         for shipment_advisory_config in shipment_config.get("advisories"):
             kind = shipment_advisory_config.get("kind")
+            if kind not in ("image", "extras"):
+                continue
+            generated_shipments[kind] = await self.generate_shipment(shipment_advisory_config, env)
+
+        # then generate the rest of the shipments
+        for shipment_advisory_config in shipment_config.get("advisories"):
+            kind = shipment_advisory_config.get("kind")
+            if kind not in generated_shipments:
+                continue
             generated_shipments[kind] = await self.generate_shipment(shipment_advisory_config, env)
 
         await self.create_update_shipment_mr(shipment_config, generated_shipments, env)
@@ -324,6 +348,12 @@ class PrepareReleaseKonfluxPipeline:
         _LOGGER.info("Shipment MR is valid: %s", shipment_url)
 
     async def generate_shipment(self, shipment_advisory_config: dict, env: str) -> ShipmentConfig:
+        """Generate shipment for the given advisory configuration.
+        :param shipment_advisory_config: The shipment advisory configuration to generate the shipment for
+        :param env: The environment for which the shipment is being prepared (prod or stage)
+        :return: A ShipmentConfig object containing the generated shipment
+        """
+
         kind = shipment_advisory_config.get("kind")
         shipment: ShipmentConfig = await self.init_shipment(kind)
 
@@ -332,8 +362,14 @@ class PrepareReleaseKonfluxPipeline:
 
         # find builds for the advisory
         if kind in ("image", "extras"):
-            snapshot_spec = await self.find_builds(kind)
-            shipment.shipment.snapshot.spec = snapshot_spec
+            build_spec = await self.find_builds(kind)
+            shipment.shipment.snapshot.spec = build_spec
+            if kind == "extras":
+                self.extras_nvrs = build_spec.nvrs or []
+        elif kind == "metadata":
+            if self.extras_nvrs is None:
+                raise ValueError("extras_nvrs is not set. Cannot find bundle builds.")
+            shipment.shipment.snapshot.spec = await self.find_or_build_bundle_builds(self.extras_nvrs)
         else:
             _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
 
@@ -416,6 +452,29 @@ class PrepareReleaseKonfluxPipeline:
             out = json.loads(stdout)
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
+
+    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> Spec:
+        async def get_olm_operators() -> list[str]:
+            cmd = self._doozer_base_command + ["olm-bundle:list-olm-operators"]
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+            if stderr:
+                _LOGGER.info("stderr:\n %s", stderr)
+            if stdout:
+                _LOGGER.info("stdout:\n %s", stdout)
+            if rc != 0:
+                raise RuntimeError(f"cmd failed with exit code {rc}: {cmd}")
+            return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+        olm_operators = await get_olm_operators()
+        olm_operator_nvrs = []
+        for nvr in operator_nvrs:
+            parsed_nvr = parse_nvr(nvr)
+            if parsed_nvr.name in olm_operators:
+                olm_operator_nvrs.append(nvr)
+
+        cmd = self._doozer_base_command + ["beta:images:konflux:bundle", "--"] + olm_operator_nvrs
+        if self.dry_run:
+            cmd.append("--dry-run")
 
     async def create_update_shipment_mr(
         self, shipment_config: dict, generated_shipments: Dict[str, ShipmentConfig], env: str
