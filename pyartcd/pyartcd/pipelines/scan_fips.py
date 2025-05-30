@@ -27,11 +27,12 @@ PACKAGES_WITHOUT_TICKET_MSG_HEADER = "Report of missing/incomplete Jira tickets:
 
 
 class ScanFips:
-    def __init__(self, runtime: Runtime, data_path: str, all_images: bool, nvrs: Optional[list]):
+    def __init__(self, runtime: Runtime, data_path: str, all_images: bool, nvrs: Optional[list], retry: int):
         self.runtime = runtime
         self.data_path = data_path
         self.nvrs = nvrs
         self.all_images = all_images
+        self.retry = retry
 
         #  Call JIRAClient.from_url() directly because Runtime.new_jira_client() does not work currently
         self.jira_client = JIRAClient.from_url(server_url=JIRA_DOMAIN, token_auth=os.environ["JIRA_TOKEN"])
@@ -161,6 +162,9 @@ class ScanFips:
             if self.all_images:
                 cmd.append("--all-images")
 
+            if self.retry:
+                cmd.extend(["--retry", f"{self.retry}"])
+
             _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
 
             if result:
@@ -197,13 +201,15 @@ class ScanFips:
 @click.option("--data-path", required=True, help="OCP build data url")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
 @click.option("--all-images", is_flag=True, default=False, help="Scan all latest images in our tags")
+@click.option("--retry", default=0, help="Specify how many times to retry the FIPS scan for failing NVRs.")
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, data_path: str, all_images: bool, nvrs: str):
+async def scan_osh(runtime: Runtime, data_path: str, all_images: bool, nvrs: str, retry: int):
     pipeline = ScanFips(
         runtime=runtime,
         data_path=data_path,
         all_images=all_images,
         nvrs=nvrs.split(",") if nvrs else None,
+        retry=retry,
     )
     await pipeline.run()
