@@ -153,7 +153,7 @@ class Ocp4Pipeline:
         self.version.release = util.default_release_suffix()
 
         self.runtime.logger.info('Initializing build:\n%s', str(self.version))
-        
+
         title_update = " [dry-run]" if self.runtime.dry_run else ""
         title_update += f' - {self.version.stream}-{self.version.release} '
         jenkins.update_title(title_update)
