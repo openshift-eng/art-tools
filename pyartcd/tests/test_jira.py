@@ -4,7 +4,7 @@ from pyartcd.jira_client import JIRAClient
 
 
 class TestJIRAClient(TestCase):
-    @mock.patch("pyartcd.jira.JIRA")
+    @mock.patch("pyartcd.jira_client.JIRA")
     def test_from_url(self, MockJIRA):
         url = "https://jira.example.com"
         token_auth = "fake_token"
