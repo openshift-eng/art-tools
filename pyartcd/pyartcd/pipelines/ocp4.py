@@ -14,7 +14,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
-from pyartcd.util import mass_rebuild_score
+from pyartcd.util import has_layered_rhcos, mass_rebuild_score
 
 
 class BuildPlan:
@@ -153,7 +153,10 @@ class Ocp4Pipeline:
         self.version.release = util.default_release_suffix()
 
         self.runtime.logger.info('Initializing build:\n%s', str(self.version))
-        jenkins.update_title(f' - {self.version.stream}-{self.version.release} ')
+
+        title_update = " [dry-run]" if self.runtime.dry_run else ""
+        title_update += f' - {self.version.stream}-{self.version.release} '
+        jenkins.update_title(title_update)
 
     async def _initialize_build_plan(self):
         """
@@ -473,16 +476,24 @@ class Ocp4Pipeline:
             # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
             # Set block_until_building=False since it can take a very long time for the job to start
             # it is enough for it to be queued
-            jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
+            if self.runtime.dry_run:
+                self.runtime.logger.info('Would have triggered job: sync-for-ci for %s', self.version.stream)
+            else:
+                jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
 
             # Also trigger rhcos builds for the release in order to absorb any changes from plashets or RHEL which may
             # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
             # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
             # will find consistent RPMs.
-            if self.version.major == 4 and self.version.minor <= 19:
-                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build")
+            layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
+            job_name = 'build-node-image' if layered_rhcos else 'build'
+
+            if self.runtime.dry_run:
+                self.runtime.logger.info(
+                    'Would have triggered job: rhcos for %s, job_name=%s', self.version.stream, job_name
+                )
             else:
-                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build-node-image")
+                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
 
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
