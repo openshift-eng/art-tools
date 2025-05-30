@@ -294,7 +294,6 @@ def assembly_basis_event(
     if target_assembly.basis.brew_event:
         return int(target_assembly.basis.brew_event)  # Integer for Brew event
     elif target_assembly.basis.time:
-        # datetime UTC for Konflux
         time_str = target_assembly.basis.time
         if not isinstance(time_str, str):
             raise ValueError(f"Invalid time format for assembly {assembly}: {time_str}")
