@@ -14,7 +14,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
-from pyartcd.util import mass_rebuild_score
+from pyartcd.util import has_layered_rhcos, mass_rebuild_score
 
 
 class BuildPlan:
@@ -112,6 +112,9 @@ class Ocp4Pipeline:
         self._slack_client = runtime.new_slack_client()
         self._mail_client = self.runtime.new_mail_client()
 
+        if self.runtime.dry_run:
+            jenkins.update_title(" [dry-run]")
+
     async def _check_assembly(self):
         """
         If assembly != 'stream' and assemblies not enabled for <version>, raise an error
@@ -133,23 +136,6 @@ class Ocp4Pipeline:
 
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
-
-    async def _check_layered_rhcos(self):
-        """
-        Check if the current version is a layered RHCOS version.
-        """
-
-        cmd = self._doozer_base_command + [
-            'config:read-group',
-            'rhcos.layered_rhcos',
-            '--default=False',
-        ]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        layered_rhcos = out.strip() == 'True'
-        self.runtime.logger.info(
-            'Layered RHCOS %s enabled for %s', 'NOT' if not layered_rhcos else '', self.version.stream
-        )
-        return layered_rhcos
 
     async def _initialize_version(self):
         """
@@ -499,7 +485,7 @@ class Ocp4Pipeline:
             # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
             # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
             # will find consistent RPMs.
-            layered_rhcos = await self._check_layered_rhcos()
+            layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
             job_name = 'build-node-image' if layered_rhcos else 'build'
 
             if self.runtime.dry_run:

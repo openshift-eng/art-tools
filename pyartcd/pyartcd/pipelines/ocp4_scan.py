@@ -5,10 +5,11 @@ import click
 import yaml
 from artcommonlib import exectools
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.util import get_changes, has_layered_rhcos
 
 
 class Ocp4ScanPipeline:
@@ -83,7 +84,7 @@ class Ocp4ScanPipeline:
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
             self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
-            layered_rhcos = await self._check_layered_rhcos()
+            layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
             job_name = 'build-node-image' if layered_rhcos else 'build'
             jenkins.start_rhcos(build_version=self.version, new_build=True, job_name=job_name)
 
@@ -131,7 +132,7 @@ class Ocp4ScanPipeline:
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
         yaml_data = yaml.safe_load(out)
-        changes = util.get_changes(yaml_data)
+        changes = get_changes(yaml_data)
         if changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(changes))
         else:
@@ -187,23 +188,6 @@ class Ocp4ScanPipeline:
         except ChildProcessError as e:
             self.rhcos_inconsistent = True
             self.inconsistent_rhcos_rpms = e
-
-    async def _check_layered_rhcos(self):
-        """
-        Check if the current version is a layered RHCOS version.
-        """
-
-        cmd = self._doozer_base_command + [
-            'config:read-group',
-            'rhcos.layered_rhcos',
-            '--default=False',
-        ]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        layered_rhcos = out.strip() == 'True'
-        self.runtime.logger.info(
-            'Layered RHCOS %s enabled for %s', 'NOT' if not layered_rhcos else '', self.version.stream
-        )
-        return layered_rhcos
 
 
 @cli.command('ocp4-scan')
