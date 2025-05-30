@@ -2286,7 +2286,12 @@ class PayloadGenerator:
         if major_minor != runtime.get_minor_version():
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
-        release_suffix = f"{'konflux-' if runtime.build_system == 'konflux' else ''}release"
+        # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
+        if runtime.build_system == 'brew' or major_minor in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            release_suffix = 'release'
+        else:
+            release_suffix = 'konflux-release'
+
         rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
         retries: int = 3
