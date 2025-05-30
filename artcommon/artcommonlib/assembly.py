@@ -1,6 +1,6 @@
 import copy
 import typing
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from artcommonlib.model import ListModel, Missing, Model
@@ -294,7 +294,14 @@ def assembly_basis_event(
     if target_assembly.basis.brew_event:
         return int(target_assembly.basis.brew_event)  # Integer for Brew event
     elif target_assembly.basis.time:
-        return target_assembly.basis.time  # Datetime for Konflux
+        # datetime UTC for Konflux
+        time_str = target_assembly.basis.time
+        if not isinstance(time_str, str):
+            raise ValueError(f"Invalid time format for assembly {assembly}: {time_str}")
+        dt = datetime.fromisoformat(time_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     return assembly_basis_event(releases_config, target_assembly.basis.assembly, strict=strict)
 
 

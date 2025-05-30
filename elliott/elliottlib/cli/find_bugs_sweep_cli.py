@@ -41,7 +41,7 @@ class FindBugsMode:
 
 
 class FindBugsSweep(FindBugsMode):
-    def __init__(self, cve_only: bool):
+    def __init__(self, cve_only: bool = False):
         super().__init__(status={'MODIFIED', 'ON_QA', 'VERIFIED'}, cve_only=cve_only)
 
 
@@ -136,23 +136,19 @@ async def find_bugs_sweep_cli(
         $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
 
     """
-    operator_bundle_advisory = "advance" if advance_release else "metadata"
-
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
 
     if runtime.build_system == 'konflux':
-        if count_advisory_attach_flags > 0 or advisory_id:
-            raise click.BadParameter(
-                "Options not supported with --build-system=konflux: --use-default-advisory, --into-default-advisories, --add"
-            )
+        raise click.BadParameter("Use find-bugs command instead of find-bugs:sweep for --build-system konflux")
 
     runtime.initialize(mode="both")
-    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
+
+    bug_tracker = runtime.get_bug_tracker('jira')
 
     bugs: type_bug_list = await find_and_attach_bugs(
         runtime,
@@ -161,8 +157,8 @@ async def find_bugs_sweep_cli(
         find_bugs_obj,
         noop=noop,
         permissive=permissive,
-        bug_tracker=runtime.get_bug_tracker('jira'),
-        operator_bundle_advisory=operator_bundle_advisory,
+        bug_tracker=bug_tracker,
+        advance_release=advance_release,
     )
 
     if not bugs:
@@ -179,7 +175,14 @@ async def find_bugs_sweep_cli(
     sys.exit(0)
 
 
-async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
+async def get_bugs_sweep(
+    runtime: Runtime,
+    find_bugs_obj: FindBugsMode,
+    bug_tracker: BugTracker,
+    filter_attached: bool = True,
+) -> List[Bug]:
+    """Find bugs based on the given find_bugs_obj and bug tracker for the given assembly."""
+
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
     if bugs:
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
@@ -203,14 +206,15 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
             logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}")
             bugs = qualified_bugs
 
-        # filter bugs that have been swept into other advisories
-        logger.info("Filtering bugs that haven't been attached to any advisories...")
-        attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
-        if attached_bugs:
-            attached_bug_ids = {b.id for b in attached_bugs}
-            logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
-            bugs = [b for b in bugs if b.id not in attached_bug_ids]
-            logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
+        if filter_attached:
+            # filter bugs that have been swept into other advisories
+            logger.info("Filtering bugs that haven't been attached to any advisories...")
+            attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
+            if attached_bugs:
+                attached_bug_ids = {b.id for b in attached_bugs}
+                logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
+                bugs = [b for b in bugs if b.id not in attached_bug_ids]
+                logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
 
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
@@ -247,14 +251,18 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
 
 async def find_and_attach_bugs(
     runtime: Runtime,
-    advisory_id,
-    default_advisory_type,
-    find_bugs_obj,
-    noop,
-    permissive,
-    bug_tracker,
-    operator_bundle_advisory,
-):
+    advisory_id: int,
+    default_advisory_type: str,
+    find_bugs_obj: FindBugsMode,
+    noop: bool,
+    permissive: bool,
+    bug_tracker: BugTracker,
+    advance_release: bool,
+) -> List[Bug]:
+    """Find bugs based on the given find_bugs_obj and bug tracker for the given assembly.
+    Attach them to the ErrataTool advisory/advisories if specified.
+    """
+
     statuses = sorted(find_bugs_obj.status)
     tr = bug_tracker.target_release()
     logger.info(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
@@ -266,22 +274,24 @@ async def find_and_attach_bugs(
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    major_version, minor_version = runtime.get_major_minor()
+    major_version, _ = runtime.get_major_minor()
+
+    builds_by_advisory_kind = {}
+    for kind, advisory_id in advisory_ids.items():
+        if not advisory_id:
+            continue
+        builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(advisory_id)
+
     bugs_by_type, _ = categorize_bugs_by_type(
-        bugs=bugs,
-        advisory_id_map=advisory_ids,
-        permitted_bug_ids=included_bug_ids,
-        noop=noop,
-        major_version=major_version,
-        minor_version=minor_version,
-        operator_bundle_advisory=operator_bundle_advisory,
+        bugs,
+        advisory_ids,
+        included_bug_ids,
         permissive=permissive,
+        major_version=major_version,
+        advance_release=advance_release,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
-
-    if runtime.build_system == 'konflux':
-        return bugs
 
     if not any([advisory_id, default_advisory_type, advisory_ids]):
         return bugs
@@ -328,19 +338,18 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 def categorize_bugs_by_type(
     bugs: List[Bug],
-    advisory_id_map: Dict[str, int],
-    permitted_bug_ids,
-    noop,
-    major_version: int,
-    minor_version: int,
-    operator_bundle_advisory: str = "metadata",
-    permissive=False,
+    builds_by_advisory_kind: Dict[str, List[str]],
+    permitted_bug_ids=None,
+    major_version: int = 4,
+    permissive: bool = False,
+    advance_release: bool = False,
 ):
     """Categorize bugs into different types of advisories
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
     """
     issues = []
 
+    operator_bundle_advisory = "advance" if advance_release else "metadata"
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -393,18 +402,10 @@ def categorize_bugs_by_type(
 
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
-        # get summary of tracker-bug and update it if needed
-        summary_suffix = f"[openshift-{major_version}.{minor_version}]"
-        if not b.summary.endswith(summary_suffix):
-            new_s = fix_summary_suffix(b.summary, summary_suffix)
-            try:
-                b.update_summary(new_s, noop=noop)
-            except Exception as e:
-                logger.warning("Failed to fix summary: %s", str(e))
 
-    if not advisory_id_map:
+    if not builds_by_advisory_kind:
         logger.warning(
-            "Skipping categorizing Tracker Bugs; advisories with attached builds must be given for this operation."
+            "Skipping categorizing tracker bugs: builds attached to advisories must be given for this operation."
         )
         return bugs_by_type, issues
 
@@ -413,10 +414,7 @@ def categorize_bugs_by_type(
     for kind in bugs_by_type.keys():
         if len(found) == len(tracker_bugs):
             break
-        advisory = advisory_id_map.get(kind)
-        if not advisory:
-            continue
-        attached_builds = errata.get_advisory_nvrs(advisory)
+        attached_builds = builds_by_advisory_kind[kind]
         packages = set(attached_builds.keys())
         exception_packages = []
         if kind == 'image':
@@ -430,7 +428,7 @@ def categorize_bugs_by_type(
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(
-                    f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached"
+                    f"skip categorizing microshift tracker bug {bug.id} to {kind} advisory because it has no builds attached"
                 )
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):

@@ -6,9 +6,14 @@
   "type": "object",
   "properties": {
     "brew_event": {
-      "description": "A Brew event that ties the release to a particular moment. Images and rpms will be assembled relative to This basis event.",
+      "description": "A Brew event that ties the release to a particular moment. Images and rpms will be assembled relative to this basis event.",
       "type": "integer",
       "minimum": 0
+    },
+    "time": {
+      "description": "A datetime value in ISO 8601 format that ties the release to a particular moment. Similar to brew_event. Images and rpms will be assembled relative to this moment.",
+      "type": "string",
+      "format": "date-time"
     },
     "assembly": {
       "description": "The parent assembly to inherit from",
