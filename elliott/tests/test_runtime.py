@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from elliott.elliottlib.runtime import Runtime
+from elliottlib.runtime import Runtime
 
 
 class TestGetMajorMinorPatch(unittest.TestCase):

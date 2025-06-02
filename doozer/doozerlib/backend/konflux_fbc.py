@@ -282,8 +282,9 @@ class KonfluxFbcRebaser:
             logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
             build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
             await build_repo.ensure_source(
-                upcycle=self.upcycle, strict=True
-            )  # FIXME: Currently rebasing against an empty FBC repo is not supported
+                upcycle=self.upcycle,
+                strict=False,
+            )
 
             # Update the FBC repo
             await self._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
@@ -366,14 +367,16 @@ class KonfluxFbcRebaser:
         ]
 
         # Load current catalog
-        catalog_file_path = build_repo.local_dir.joinpath("catalog", olm_package, "catalog.yaml")
-        logger.info("Loading catalog from %s", catalog_file_path)
-        if not catalog_file_path.is_file():
-            raise FileNotFoundError(
-                f"Catalog file {catalog_file_path} not found. The FBC repo is not properly initialized."
-            )
-        with catalog_file_path.open() as f:
-            catalog_blobs = list(yaml.load_all(f))
+        catalog_dir = build_repo.local_dir.joinpath("catalog", olm_package)
+        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+        if catalog_file_path.is_file():
+            logger.info("Catalog file %s already exists, loading it", catalog_file_path)
+            with catalog_file_path.open() as f:
+                catalog_blobs = list(yaml.load_all(f))
+        else:
+            logger.info("Catalog file %s does not exist, bootstrap a new one", catalog_file_path)
+            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name or "stable")
+
         categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
             raise IOError(f"Package {olm_package} not found in catalog. The FBC repo is not properly initialized.")
@@ -428,7 +431,7 @@ class KonfluxFbcRebaser:
                 logger.info("Setting default channel to %s", default_channel_name)
                 package_blob["defaultChannel"] = default_channel_name
 
-        # Replace bundle pullspecs to use the prod registry
+        # Replace pullspecs to use the prod registry
         new_image_name = image_name.replace('openshift/', 'openshift4/')
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
         bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{new_image_name}@{digest}"
@@ -440,10 +443,8 @@ class KonfluxFbcRebaser:
                 logger.info("Replacing image reference %s with %s", target_entry['image'], bundle_prod_pullspec)
                 target_entry['image'] = bundle_prod_pullspec
 
-        # Replace image references in olm.bundle entries to use the prod registry
-
         # Add the new bundle blob to the catalog
-        if olm_bundle_name not in categorized_catalog_blobs[olm_package]["olm.bundle"]:
+        if olm_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
             logger.info("Adding bundle %s to package %s", olm_bundle_name, olm_package)
             categorized_catalog_blobs[olm_package]["olm.bundle"][olm_bundle_name] = olm_bundle_blob
             catalog_blobs.append(olm_bundle_blob)
@@ -455,6 +456,7 @@ class KonfluxFbcRebaser:
 
         # Write the updated catalog back to the file
         logger.info("Writing updated catalog to %s", catalog_file_path)
+        catalog_dir.mkdir(parents=True, exist_ok=True)
         with catalog_file_path.open("w") as f:
             yaml.dump_all(catalog_blobs, f)
 
@@ -476,9 +478,19 @@ class KonfluxFbcRebaser:
 
         # Update Dockerfile
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
-        logger.info("Updating Dockerfile %s", dockerfile_path)
         if not dockerfile_path.is_file():
-            raise FileNotFoundError(f"Dockerfile {dockerfile_path} not found")
+            logger.info("Dockerfile %s does not exist, creating a new one", dockerfile_path)
+            group_config = metadata.runtime.group_config
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+            base_image_format = (
+                BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+            )
+            base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
+            await opm.generate_dockerfile(
+                build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image
+            )
+
+        logger.info("Updating Dockerfile %s", dockerfile_path)
         dfp = DockerfileParser(str(dockerfile_path))
         metadata_envs: Dict[str, str] = {
             '__doozer_group': self.group,
@@ -497,6 +509,32 @@ class KonfluxFbcRebaser:
 
         # The following label is used internally by ART's shipment pipeline
         dfp.labels['com.redhat.art.nvr'] = f'{metadata.distgit_key}-fbc-{version}-{release}'
+
+    def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
+        """Bootstrap a new catalog for the given package name.
+        :param package_name: The name of the package to bootstrap.
+        :return: A dictionary representing the catalog.
+        """
+        # Following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/v4.13/catalog-template.json
+        package_blob = {
+            "defaultChannel": default_channel,
+            "icon": {
+                "base64data": "PHN2ZyBpZD0iZjc0ZTM5ZDEtODA2Yy00M2E0LTgyZGQtZjM3ZjM1NWQ4YWYzIiBkYXRhLW5hbWU9Ikljb24iIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDM2IDM2Ij4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLmE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCB7CiAgICAgICAgZmlsbDogI2UwMDsKICAgICAgfQogICAgPC9zdHlsZT4KICA8L2RlZnM+CiAgPGc+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNMjUsMTcuMzhIMjMuMjNhNS4yNyw1LjI3LDAsMCwwLTEuMDktMi42NGwxLjI1LTEuMjVhLjYyLjYyLDAsMSwwLS44OC0uODhsLTEuMjUsMS4yNWE1LjI3LDUuMjcsMCwwLDAtMi42NC0xLjA5VjExYS42Mi42MiwwLDEsMC0xLjI0LDB2MS43N2E1LjI3LDUuMjcsMCwwLDAtMi42NCwxLjA5bC0xLjI1LTEuMjVhLjYyLjYyLDAsMCwwLS44OC44OGwxLjI1LDEuMjVhNS4yNyw1LjI3LDAsMCwwLTEuMDksMi42NEgxMWEuNjIuNjIsMCwwLDAsMCwxLjI0aDEuNzdhNS4yNyw1LjI3LDAsMCwwLDEuMDksMi42NGwtMS4yNSwxLjI1YS42MS42MSwwLDAsMCwwLC44OC42My42MywwLDAsMCwuODgsMGwxLjI1LTEuMjVhNS4yNyw1LjI3LDAsMCwwLDIuNjQsMS4wOVYyNWEuNjIuNjIsMCwwLDAsMS4yNCwwVjIzLjIzYTUuMjcsNS4yNywwLDAsMCwyLjY0LTEuMDlsMS4yNSwxLjI1YS42My42MywwLDAsMCwuODgsMCwuNjEuNjEsMCwwLDAsMC0uODhsLTEuMjUtMS4yNWE1LjI3LDUuMjcsMCwwLDAsMS4wOS0yLjY0SDI1YS42Mi42MiwwLDAsMCwwLTEuMjRabS03LDQuNjhBNC4wNiw0LjA2LDAsMSwxLDIyLjA2LDE4LDQuMDYsNC4wNiwwLDAsMSwxOCwyMi4wNloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0yNy45LDI4LjUyYS42Mi42MiwwLDAsMS0uNDQtLjE4LjYxLjYxLDAsMCwxLDAtLjg4LDEzLjQyLDEzLjQyLDAsMCwwLDIuNjMtMTUuMTkuNjEuNjEsMCwwLDEsLjMtLjgzLjYyLjYyLDAsMCwxLC44My4yOSwxNC42NywxNC42NywwLDAsMS0yLjg4LDE2LjYxQS42Mi42MiwwLDAsMSwyNy45LDI4LjUyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI3LjksOC43M2EuNjMuNjMsMCwwLDEtLjQ0LS4xOUExMy40LDEzLjQsMCwwLDAsMTIuMjcsNS45MWEuNjEuNjEsMCwwLDEtLjgzLS4zLjYyLjYyLDAsMCwxLC4yOS0uODNBMTQuNjcsMTQuNjcsMCwwLDEsMjguMzQsNy42NmEuNjMuNjMsMCwwLDEtLjQ0LDEuMDdaIi8+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNNS4zNSwyNC42MmEuNjMuNjMsMCwwLDEtLjU3LS4zNUExNC42NywxNC42NywwLDAsMSw3LjY2LDcuNjZhLjYyLjYyLDAsMCwxLC44OC44OEExMy40MiwxMy40MiwwLDAsMCw1LjkxLDIzLjczYS42MS42MSwwLDAsMS0uMy44M0EuNDguNDgsMCwwLDEsNS4zNSwyNC42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0xOCwzMi42MkExNC42NCwxNC42NCwwLDAsMSw3LjY2LDI4LjM0YS42My42MywwLDAsMSwwLS44OC42MS42MSwwLDAsMSwuODgsMCwxMy40MiwxMy40MiwwLDAsMCwxNS4xOSwyLjYzLjYxLjYxLDAsMCwxLC44My4zLjYyLjYyLDAsMCwxLS4yOS44M0ExNC42NywxNC42NywwLDAsMSwxOCwzMi42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0zMCwyOS42MkgyN2EuNjIuNjIsMCwwLDEtLjYyLS42MlYyNmEuNjIuNjIsMCwwLDEsMS4yNCwwdjIuMzhIMzBhLjYyLjYyLDAsMCwxLDAsMS4yNFoiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik03LDMwLjYyQS42Mi42MiwwLDAsMSw2LjM4LDMwVjI3QS42Mi42MiwwLDAsMSw3LDI2LjM4aDNhLjYyLjYyLDAsMCwxLDAsMS4yNEg3LjYyVjMwQS42Mi42MiwwLDAsMSw3LDMwLjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI5LDkuNjJIMjZhLjYyLjYyLDAsMCwxLDAtMS4yNGgyLjM4VjZhLjYyLjYyLDAsMCwxLDEuMjQsMFY5QS42Mi42MiwwLDAsMSwyOSw5LjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTksMTAuNjJBLjYyLjYyLDAsMCwxLDguMzgsMTBWNy42Mkg2QS42Mi42MiwwLDAsMSw2LDYuMzhIOUEuNjIuNjIsMCwwLDEsOS42Miw3djNBLjYyLjYyLDAsMCwxLDksMTAuNjJaIi8+CiAgPC9nPgo8L3N2Zz4K",
+                "mediatype": "image/svg+xml",
+            },
+            "name": package_name,
+            "schema": "olm.package",
+        }
+        channel_blob = {
+            "entries": [],
+            "name": default_channel,
+            "package": package_name,
+            "schema": "olm.channel",
+        }
+        return [
+            package_blob,
+            channel_blob,
+        ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
         mirrored_repos = {

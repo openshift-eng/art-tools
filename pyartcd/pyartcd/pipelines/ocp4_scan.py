@@ -5,10 +5,11 @@ import click
 import yaml
 from artcommonlib import exectools
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.util import get_changes, has_layered_rhcos
 
 
 class Ocp4ScanPipeline:
@@ -24,6 +25,14 @@ class Ocp4ScanPipeline:
         self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.skipped = True  # True by default; if not locked, run() will set it to False
+
+        self._doozer_base_command = [
+            'doozer',
+            '--assembly=stream',
+            f'--working-dir={self._doozer_working}',
+            f'--data-path={self.data_path}',
+            f'--group=openshift-{self.version}',
+        ]
 
     async def run(self):
         # If we get here, lock could be acquired
@@ -75,9 +84,9 @@ class Ocp4ScanPipeline:
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
             self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
-            jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build")
-            if int(self.version.split(".")[1]) == 19:
-                jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build-node-image")
+            layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
+            job_name = 'build-node-image' if layered_rhcos else 'build'
+            jenkins.start_rhcos(build_version=self.version, new_build=True, job_name=job_name)
 
         elif self.rhcos_changed:
             self.logger.info('Detected at least one updated RHCOS')
@@ -110,11 +119,12 @@ class Ocp4ScanPipeline:
         """
 
         # Run doozer scan-sources
-        cmd = (
-            f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} '
-            f'--group=openshift-{self.version} '
-            f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
-        )
+        cmd = self._doozer_base_command + [
+            'config:scan-sources',
+            '--yaml',
+            f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
+            '--rebase-priv',
+        ]
         if self.runtime.dry_run:
             cmd += ' --dry-run'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
@@ -122,7 +132,7 @@ class Ocp4ScanPipeline:
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
         yaml_data = yaml.safe_load(out)
-        changes = util.get_changes(yaml_data)
+        changes = get_changes(yaml_data)
         if changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(changes))
         else:
@@ -166,11 +176,11 @@ class Ocp4ScanPipeline:
         Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
         """
 
-        cmd = (
-            f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} '
-            f'--group openshift-{self.version} '
-            f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
-        )
+        cmd = self._doozer_base_command + [
+            'inspect:stream',
+            'INCONSISTENT_RHCOS_RPMS',
+            '--strict',
+        ]
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
             self.logger.info(out)

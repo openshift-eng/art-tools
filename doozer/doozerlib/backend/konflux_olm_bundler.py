@@ -147,17 +147,6 @@ class KonfluxOlmBundleRebaser:
                 f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}"
             )
 
-        # Read the operator's Dockerfile
-        operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
-        operator_component_name = operator_df.labels.get('com.redhat.component')
-        operator_version = operator_df.labels.get('version')
-        operator_release = operator_df.labels.get('release')
-        if not operator_component_name or not operator_version or not operator_release:
-            raise ValueError(
-                f"[{metadata.distgit_key}] Label 'com.redhat.component', 'version', or 'release' is not set in the operator's Dockerfile"
-            )
-        operator_nvr = f"{operator_component_name}-{operator_version}-{operator_release}"
-
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
         file_path = glob.glob(f'{operator_manifests_dir}/*package.yaml')[0]
@@ -235,7 +224,7 @@ class KonfluxOlmBundleRebaser:
         )
 
         # Write .oit files. Those files are used by Doozer for additional information about the bundle
-        await self._create_oit_files(package_name, csv_name, bundle_dir, operator_nvr, all_found_operands)
+        await self._create_oit_files(package_name, csv_name, bundle_dir, operator_build.nvr, all_found_operands)
 
     async def _create_oit_files(
         self,

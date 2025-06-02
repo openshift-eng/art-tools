@@ -542,11 +542,14 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, True)
         self.ocp4._slack_client.say.assert_awaited_once()
 
+    @patch("pyartcd.pipelines.ocp4.has_layered_rhcos", return_value=False)
     @patch("pyartcd.locks.LockManager.from_lock", return_value=AsyncMock)
     @patch("pyartcd.plashets.build_plashets", return_value=AsyncMock)
     @patch("pyartcd.jenkins.start_sync_for_ci")
     @patch("pyartcd.jenkins.start_rhcos")
-    async def test_build_compose(self, mocked_rhcos, mocked_sync_for_ci, mocked_build_plashets, mocked_lm):
+    async def test_build_compose(
+        self, mocked_rhcos, mocked_sync_for_ci, mocked_build_plashets, mocked_lm, mock_layered_rhcos
+    ):
         mocked_cm = AsyncMock()
         mocked_cm.__aenter__ = AsyncMock()
         mocked_cm.__aexit__ = AsyncMock()
@@ -583,6 +586,24 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         await self.ocp4._build_compose()
         mocked_build_plashets.assert_awaited_once()
         mocked_sync_for_ci.assert_called_once_with(version='4.13', block_until_building=False)
+        mock_layered_rhcos.assert_called_once()
+        mocked_rhcos.assert_called_once_with(build_version='4.13', new_build=False, job_name='build')
+        self.assertEqual(self.ocp4.rpm_mirror.local_plashet_path, '')
+        self.assertEqual(self.ocp4.rpm_mirror.plashet_dir_name, '')
+
+        # Build permitted, assembly = 'stream'
+        mocked_build_plashets.reset_mock()
+        mocked_rhcos.reset_mock()
+        mocked_sync_for_ci.reset_mock()
+        self.ocp4._is_compose_build_permitted = AsyncMock(return_value=True)
+        self.ocp4.assembly = 'stream'
+        mock_layered_rhcos.reset_mock()
+        mock_layered_rhcos.return_value = True
+        await self.ocp4._build_compose()
+        mocked_build_plashets.assert_awaited_once()
+        mocked_sync_for_ci.assert_called_once_with(version='4.13', block_until_building=False)
+        mock_layered_rhcos.assert_called_once()
+        mocked_rhcos.assert_called_once_with(build_version='4.13', new_build=False, job_name='build-node-image')
         self.assertEqual(self.ocp4.rpm_mirror.local_plashet_path, '')
         self.assertEqual(self.ocp4.rpm_mirror.plashet_dir_name, '')
 

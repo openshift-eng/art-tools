@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import MagicMock
 
@@ -8,8 +9,12 @@ from doozerlib.backend.rebaser import KonfluxRebaser
 
 
 class TestRebaser(TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+
     def test_split_dockerfile_into_stages_1(self):
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
             FROM base
             LABEL foo="bar baz"
@@ -29,7 +34,7 @@ class TestRebaser(TestCase):
         self.assertEqual(actual, expected)
 
     def test_split_dockerfile_into_stages_2(self):
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
             FROM base
             LABEL foo="bar baz"
@@ -51,7 +56,7 @@ class TestRebaser(TestCase):
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = Missing
 
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
 FROM base1
 LABEL foo="bar baz"
@@ -112,7 +117,7 @@ USER 2000
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
 FROM base1
 LABEL foo="bar baz"
@@ -173,7 +178,7 @@ USER 3000
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
 FROM base1
 LABEL foo="bar baz"
@@ -207,7 +212,7 @@ RUN commands
 USER 3000
 """
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
-        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
         dfp.content.strip()
         self.assertEqual(expected.strip(), dfp.content.strip())
 
@@ -220,7 +225,7 @@ USER 3000
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
-        dfp = DockerfileParser()
+        dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
 FROM base1
 LABEL foo="bar baz"
@@ -264,6 +269,6 @@ USER 3000
 # End Konflux-specific steps
 """
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
-        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
 
         self.assertEqual(dfp.content.strip(), expected.strip())

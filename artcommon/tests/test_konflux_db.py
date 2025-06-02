@@ -382,7 +382,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
             MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
             MagicMock(
-                total_rows=0,
+                total_rows=1,
                 __next__=MagicMock(
                     return_value=Row(
                         ('ironic', '1.0.0', '2', "ironic-1.0.0-2"), {'name': 0, 'version': 1, 'release': 2, 'nvr': 3}
@@ -417,6 +417,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('rebase_repo_url', 'STRING', 'REQUIRED'),
             SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
             SchemaField('embargoed', 'BOOLEAN', 'REQUIRED'),
+            SchemaField('hermetic', 'BOOLEAN', 'REQUIRED'),
             SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
             SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
             SchemaField('artifact_type', 'STRING', 'REQUIRED'),
