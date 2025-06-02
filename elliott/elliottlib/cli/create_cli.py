@@ -144,7 +144,12 @@ async def create_cli(
     )
 
     errata_api = AsyncErrataAPI()
-    _, minor, patch = runtime.get_major_minor_patch()
+
+    if runtime.assembly_type is AssemblyTypes.STANDARD:
+        _, minor, patch = runtime.get_major_minor_patch()
+    else:
+        _, minor = runtime.get_major_minor()
+        patch = "z"
 
     # Format the advisory boilerplate
     synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
