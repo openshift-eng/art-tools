@@ -19,7 +19,7 @@ from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, K
 
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.plashets import plashet_config_for_major_minor
+from pyartcd.plashets import PlashetBuilder
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     default_release_suffix,
@@ -217,7 +217,8 @@ class BuildMicroShiftBootcPipeline:
     async def _build_plashet_for_bootc(self):
         microshift_plashet_name = "rhel-9-server-microshift-rpms"
         major, minor = self._ocp_version
-        microshift_plashet_config = plashet_config_for_major_minor(major, minor)[microshift_plashet_name]
+        plashet_builder = PlashetBuilder(self._ocp_version)
+        microshift_plashet_config = plashet_builder.plashet_config_for_major_minor()[microshift_plashet_name]
 
         async def _rebuild_needed():
             ocp_artifacts_url = next(r["url"] for r in constants.PLASHET_REMOTES if r["host"] == "ocp-artifacts")
