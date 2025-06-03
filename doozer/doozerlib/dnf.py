@@ -1,14 +1,16 @@
 import asyncio
-from dataclasses import asdict, dataclass
+import hashlib
 import logging
-from typing import Any, Dict, List, Set
-import dnf
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Set
 
+import dnf
 import hawkey
 import yaml
-from pathlib import Path
+
 
 def strip_suffix(s: str, suffix: str) -> str:
     """
@@ -31,6 +33,7 @@ class PackageItem:
     """
     Data class to represent a resolved package and its metadata.
     """
+
     url: str
     repoid: str
     size: int
@@ -77,6 +80,7 @@ class RPMLockfileGenerator:
     """
     Class responsible for generating a YAML-based RPM lockfile from package data.
     """
+
     def __init__(self, output_path: str):
         self.output_path = Path(output_path)
 
@@ -118,6 +122,7 @@ class DnfManager:
     """
     Manages DNF operations across multiple architectures using isolated installroots.
     """
+
     def __init__(self, repodir: str, installroot_base: str, arches: list[str]):
         """
         Initialize a multi-arch DNF manager.
@@ -134,6 +139,13 @@ class DnfManager:
 
         # Create DNF base instances in parallel for each architecture
         self._create_bases_parallel()
+
+    def _hash_file(self, path):
+        with open(path, "rb") as f:
+            h = hashlib.sha256()
+            while chunk := f.read(65536):
+                h.update(chunk)
+            return h.hexdigest()
 
     def _create_base(self, arch: str) -> dnf.Base:
         """
@@ -239,11 +251,7 @@ class DnfManager:
             sources = set()
             module_metadata = []
 
-            modular_packages = {
-                nevra
-                for module in mb.get_modules("*")[0]
-                for nevra in module.getArtifacts()
-            }
+            modular_packages = {nevra for module in mb.get_modules("*")[0] for nevra in module.getArtifacts()}
             modular_repos = set()
 
             for pkg in base.transaction.install_set:
@@ -264,12 +272,14 @@ class DnfManager:
                 modulemd_path = repo.get_metadata_path("modules")
                 if not modulemd_path:
                     raise RuntimeError(f"[{arch}] Modular package from repo without metadata")
-                module_metadata.append({
-                    "url": repo.remote_location(f"repodata/{os.path.basename(modulemd_path)}"),
-                    "repoid": repo.id,
-                    "size": os.stat(modulemd_path).st_size,
-                    "checksum": f"sha256:{utils.hash_file(modulemd_path)}",
-                })
+                module_metadata.append(
+                    {
+                        "url": repo.remote_location(f"repodata/{os.path.basename(modulemd_path)}"),
+                        "repoid": repo.id,
+                        "size": os.stat(modulemd_path).st_size,
+                        "checksum": f"sha256:{self._hash_file(modulemd_path)}",
+                    }
+                )
 
             return arch, {
                 "packages": sorted([p.as_dict() for p in packages], key=lambda x: x["name"]),

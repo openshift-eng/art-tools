@@ -1,17 +1,18 @@
 import asyncio
-from unittest import TestCase
-from unittest.mock import Mock, patch, MagicMock
-from doozerlib.dnf import DnfManager
-import unittest
 import tempfile
-import os
-import yaml
+import unittest
 from pathlib import Path
-from doozerlib.dnf import RPMLockfileGenerator  # adjust import if needed
+from unittest import TestCase
+from unittest.mock import MagicMock, Mock, patch
+
+import yaml
+from doozerlib.dnf import (
+    DnfManager,
+    RPMLockfileGenerator,  # adjust import if needed
+)
 
 
 class TestRPMLockfileGenerator(unittest.TestCase):
-
     def test_generate_writes_correct_yaml_structure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "rpm-lock.yaml"
@@ -69,39 +70,33 @@ class TestRPMLockfileGenerator(unittest.TestCase):
             nested_path = Path(tmpdir) / "nested" / "path" / "rpm-lock.yaml"
             generator = RPMLockfileGenerator(str(nested_path))
 
-            generator.generate({
-                "x86_64": {
-                    "packages": [],
-                    "source": [],
-                    "module_metadata": [],
+            generator.generate(
+                {
+                    "x86_64": {
+                        "packages": [],
+                        "source": [],
+                        "module_metadata": [],
+                    }
                 }
-            })
+            )
 
             self.assertTrue(nested_path.exists(), "Nested path was not created or file missing")
 
-class TestDnfManager(TestCase):
 
+class TestDnfManager(TestCase):
     @patch("doozerlib.dnf.dnf.Base")
     def test_create_bases_on_init(self, mock_dnf_base):
         mock_base_instance = MagicMock()
         mock_dnf_base.return_value = mock_base_instance
 
-        manager = DnfManager(
-            repodir="/fake/repos",
-            installroot_base="/fake/root",
-            arches=["x86_64", "aarch64"]
-        )
+        manager = DnfManager(repodir="/fake/repos", installroot_base="/fake/root", arches=["x86_64", "aarch64"])
 
         self.assertIn("x86_64", manager._bases)
         self.assertIn("aarch64", manager._bases)
         self.assertIs(manager.get_base("x86_64"), mock_base_instance)
 
     def test_get_base_invalid_arch(self):
-        manager = DnfManager(
-            repodir="/fake/repos",
-            installroot_base="/fake/root",
-            arches=[]
-        )
+        manager = DnfManager(repodir="/fake/repos", installroot_base="/fake/root", arches=[])
 
         with self.assertRaises(KeyError):
             manager.get_base("nonexistent")
@@ -122,11 +117,7 @@ class TestDnfManager(TestCase):
         module_base_mock.get_modules.return_value = [[]]
         mock_module_base_cls.return_value = module_base_mock
 
-        manager = DnfManager(
-            repodir="/fake/repos",
-            installroot_base="/fake/root",
-            arches=["x86_64"]
-        )
+        manager = DnfManager(repodir="/fake/repos", installroot_base="/fake/root", arches=["x86_64"])
 
         async def run_test():
             result = await manager.install_packages_for_arches(
@@ -134,7 +125,7 @@ class TestDnfManager(TestCase):
                 module_enable={"x86_64": set()},
                 module_disable={"x86_64": set()},
                 allow_erasing=False,
-                no_sources=True
+                no_sources=True,
             )
 
             self.assertIn("x86_64", result)
@@ -169,9 +160,7 @@ class TestDnfManager(TestCase):
 
         manager = DnfManager("/tmp/repos", "/tmp/root", ["x86_64"])
 
-        result = asyncio.run(manager.install_packages_for_arches(
-            {"x86_64": ["bash"]}
-        ))
+        result = asyncio.run(manager.install_packages_for_arches({"x86_64": ["bash"]}))
 
         pkg_info = result["x86_64"]["packages"][0]
 
