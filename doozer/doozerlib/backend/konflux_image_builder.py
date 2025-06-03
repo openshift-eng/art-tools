@@ -644,14 +644,16 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            installed_packages, _ = await self.get_installed_packages(
+            installed_packages, installed_rpms = await self.get_installed_packages(
                 image_pullspec, building_arches, self._config.image_repo_creds, logger=logger
             )
 
+            installed_rpms_record_list = [{"key": arch, "values": list(rpms)} for arch, rpms in installed_rpms.items()]
             build_record_params.update(
                 {
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
                     'installed_packages': installed_packages,
+                    'installed_rpms': json.dumps(installed_rpms_record_list),
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )

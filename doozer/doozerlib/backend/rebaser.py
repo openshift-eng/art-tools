@@ -648,7 +648,7 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
-            asyncio.run(self._write_rpms_lock_file(metadata, dest_dir))
+            asyncio.run(self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir))
 
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
@@ -659,30 +659,37 @@ class KonfluxRebaser:
 
             return version, release
 
-    async def _write_rpms_lock_file(self, metadata: ImageMetadata, dest_dir: Path, group: str, retries=2):
-        # lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
-        lockfile_enabled = True
+    async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path, retries=2):
+        """
+        Generate and write an RPM lockfile for the given image based on installed RPMs.
+
+        This method fetches RPM installation data either from the image's configuration
+        or from historical build metadata. If applicable, it computes the difference between
+        the current image's RPMs and its parent's RPMs to avoid redundantly listing base packages.
+
+        If lockfile generation is enabled and a non-empty RPM install set is obtained,
+        the method uses DNF to resolve the package set per architecture and writes
+        the result to a 'rpms.lock.yaml' file in the destination directory.
+
+        Args:
+            metadata (ImageMetadata): Metadata for the image to process.
+            group (str): Group name used to fetch build history.
+            dest_dir (Path): Filesystem path where the lockfile will be written.
+            retries (int, optional): Number of retries for dependent operations. Defaults to 2.
+        """
+
+        lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
         if lockfile_enabled:
             rpms_install = metadata.config.konflux.cachi2.lockfile.packages.get('install', {})
             if len(rpms_install) == 0:
                 async def get_rpms_from_args(args: Dict) -> Dict[str, Set[str]]:
                     build = await self._runtime.konflux_db.get_latest_build(**args)
-                    if not build:
-                        raise ValueError(f'Could not find latest build for {args}')
 
-                    image_repo_creds = {
-                        "username": os.environ.get("KONFLUX_ART_IMAGES_USERNAME"),
-                        "password": os.environ.get("KONFLUX_ART_IMAGES_PASSWORD")
-                    }
-
-                    _, rpms = await KonfluxImageBuilder.get_installed_packages(
-                        build.image_pullspec,
-                        build.arches,
-                        image_repo_creds,
-                        logger=self._logger
-                    )
-
-                    return rpms
+                    if build and build.installed_rpms:
+                        installed_rpms = json.loads(build.installed_rpms)
+                        return {entry['key']: entry['values'] for entry in installed_rpms}
+                    else:
+                        return {}
 
                 rpms = await get_rpms_from_args({'name': metadata.distgit_key, 'group': group})
                 if len(rpms) > 0:
@@ -699,16 +706,16 @@ class KonfluxRebaser:
 
                         rpms_install = diff
                     else:
-                        self._logger.warning(f'Unable to fetch rpm list for base image of {metadata.image_name}')
+                        self._logger.warning(f'Unable to fetch rpm list for base image of {metadata.distgit_key}')
                         rpms_install = rpms
                 else:
-                    raise ValueError(f'Could not fetch the installed rpms list for {metadata.image_name}')
+                    self._logger.warning(f'Unable to fetch rpm list for image {metadata.distgit_key}')
 
                 if all(not s for s in rpms_install.values()):
-                    self._logger.warning(f'empty rpm list to install for {metadata.image_name}, probably all required rpms are present in base iamge')
+                    self._logger.warning(f'empty rpm list to install for {metadata.distgit_key}, probably all required rpms are present in base image')
                     return
             else:
-                self._logger.info(f'generating lockfile using package definition from file for {metadata.distgit_key}')
+                self._logger.info(f'generating lockfile for {metadata.distgit_key}')
 
             dnf_manager = DnfManager(
                 installroot_base="/tmp/test-root",
@@ -716,8 +723,9 @@ class KonfluxRebaser:
                 arches=metadata.get_arches()
             )
 
+            rpms_install = {arch: list(pkgs) for arch, pkgs in rpms_install.items()}
             arches_data = await dnf_manager.install_packages_for_arches(
-                install_packages=rpms_install
+                install_packages=rpms_install, no_sources=True
             )
 
             generator = RPMLockfileGenerator(str(dest_dir.joinpath('rpms.lock.yaml')),)

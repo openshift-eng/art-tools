@@ -232,7 +232,6 @@ class DnfManager:
                 base.install_specs(install_packages.get(arch, []))
             except dnf.exceptions.MarkingErrors as exc:
                 logging.error(exc.value)
-                raise RuntimeError(f"[{arch}] DNF install error: {exc}")
 
             base.resolve(allow_erasing=allow_erasing)
 
