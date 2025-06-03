@@ -14,12 +14,12 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, oc
+from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
+from pyartcd.plashets import plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     default_release_suffix,
@@ -27,7 +27,6 @@ from pyartcd.util import (
     get_microshift_builds,
     get_release_name_for_assembly,
     isolate_el_version_in_release,
-    load_group_config,
     load_releases_config,
 )
 
@@ -269,16 +268,15 @@ class BuildMicroShiftBootcPipeline:
             self._logger.info("Skipping plashet sync for %s", microshift_plashet_name)
             return
 
-        plashets_built = await build_plashets(
-            stream=f"{major}.{minor}",
+        jenkins.start_build_plashets(
+            version=f"{major}.{minor}",
             release=default_release_suffix(),
             assembly=self.assembly,
             repos=[microshift_plashet_name],
-            doozer_working=self._doozer_env_vars["DOOZER_WORKING_DIR"],
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
             dry_run=self.runtime.dry_run,
+            block_until_complete=True,
         )
-        self._logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
     async def _rebase_and_build_bootc(self):
         bootc_image_name = "microshift-bootc"

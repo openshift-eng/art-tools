@@ -1,20 +1,18 @@
 import json
 import os.path
 import shutil
-import traceback
 
 import click
 import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
-from pyartcd import constants, jenkins, locks, oc, plashets, util
+from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.s3 import sync_repo_to_s3_mirror
-from pyartcd.util import has_layered_rhcos, mass_rebuild_score
+from pyartcd.util import mass_rebuild_score
 
 
 class BuildPlan:
@@ -44,16 +42,6 @@ class Version:
         return json.dumps(self.__dict__, indent=4)
 
 
-class RpmMirror:
-    def __init__(self):
-        self.url = ''
-        self.local_plashet_path = ''
-        self.plashet_dir_name = ''
-
-    def __str__(self):
-        return json.dumps(self.__dict__, indent=4)
-
-
 class Ocp4Pipeline:
     def __init__(
         self,
@@ -69,7 +57,6 @@ class Ocp4Pipeline:
         skip_plashets: bool,
         mail_list_failure: str,
         comment_on_pr: bool,
-        copy_links: bool = False,
         lock_identifier: str = None,
     ):
         self.runtime = runtime
@@ -85,11 +72,8 @@ class Ocp4Pipeline:
         self.mass_rebuild = False
         self.version = Version()
         self.version.stream = version
-        self.rpm_mirror = RpmMirror()  # will be filled in later by build-compose stage
-        self.rpm_mirror.url = f'{constants.MIRROR_BASE_URL}/enterprise/enterprise/{self.version.stream}'
         self.all_image_build_failed = False
         self.comment_on_pr = comment_on_pr
-        self.copy_links = copy_links
 
         self.data_path = data_path
         self.data_gitref = data_gitref
@@ -432,69 +416,6 @@ class Ocp4Pipeline:
 
         return False
 
-    async def _build_compose(self):
-        """
-        If any RPMs have changed, create multiple yum repos (one for each arch) based on -candidate tags
-        Those repos can be signed (release state) or unsigned (pre-release state)"
-        """
-
-        # Check if compose build is permitted
-        if not await self._is_compose_build_permitted():
-            self.runtime.logger.info("Skipping compose build as it's not permitted")
-            return
-
-        # Build compose
-        try:
-            plashets_built = await plashets.build_plashets(
-                stream=self.version.stream,
-                release=self.version.release,
-                assembly=self.assembly,
-                doozer_working=self.runtime.doozer_working,
-                data_path=self.data_path,
-                data_gitref=self.data_gitref,
-                dry_run=self.runtime.dry_run,
-                copy_links=self.copy_links,
-            )
-            self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
-
-            # public rhel7 ose plashet, if present, needs mirroring to /enterprise/ for CI
-            if plashets_built.get('rhel-server-ose-rpms', None):
-                self.rpm_mirror.plashet_dir_name = plashets_built['rhel-server-ose-rpms']['plashetDirName']
-                self.rpm_mirror.local_plashet_path = plashets_built['rhel-server-ose-rpms']['localPlashetPath']
-                self.runtime.logger.info('rhel7 plashet to mirror: %s', str(self.rpm_mirror))
-
-        except ChildProcessError as e:
-            error_msg = f'Failed building compose: {e}'
-            self.runtime.logger.error(error_msg)
-            self.runtime.logger.error(traceback.format_exc())
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say("Failed building compose")
-            raise
-
-        if self.assembly == 'stream':
-            # Since plashets may have been rebuilt, fire off sync for CI. This will transfer RPMs out to
-            # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
-            # Set block_until_building=False since it can take a very long time for the job to start
-            # it is enough for it to be queued
-            if self.runtime.dry_run:
-                self.runtime.logger.info('Would have triggered job: sync-for-ci for %s', self.version.stream)
-            else:
-                jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
-
-            # Also trigger rhcos builds for the release in order to absorb any changes from plashets or RHEL which may
-            # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
-            # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
-            # will find consistent RPMs.
-            layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
-            job_name = 'build-node-image' if layered_rhcos else 'build'
-
-            if self.runtime.dry_run:
-                self.runtime.logger.info(
-                    'Would have triggered job: rhcos for %s, job_name=%s', self.version.stream, job_name
-                )
-            else:
-                jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name=job_name)
-
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
 
@@ -728,54 +649,6 @@ class Ocp4Pipeline:
                 doozer_data_gitref=self.data_gitref,
             )
 
-    async def _mirror_rpms(self):
-        if self.assembly != 'stream':
-            self.runtime.logger.info('No need to mirror rpms for non-stream assembly')
-            return
-
-        if not self.rpm_mirror.local_plashet_path:
-            self.runtime.logger.info('No updated RPMs to mirror.')
-            return
-
-        s3_base_dir = f'/enterprise/enterprise-{self.version.stream}'
-
-        # Sync plashets to mirror
-        try:
-            await locks.run_with_lock(
-                coro=sync_repo_to_s3_mirror(
-                    local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=f'{s3_base_dir}/latest/',
-                    dry_run=self.runtime.dry_run,
-                ),
-                lock=Lock.MIRRORING_RPMS,
-                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier,
-            )
-
-            await locks.run_with_lock(
-                coro=sync_repo_to_s3_mirror(
-                    local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=f'/enterprise/all/{self.version.stream}/latest/',
-                    dry_run=self.runtime.dry_run,
-                ),
-                lock=Lock.MIRRORING_RPMS,
-                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier,
-            )
-            self.runtime.logger.info(
-                'Finished mirroring OCP %s to openshift mirrors', f'{self.version.stream}-{self.version.release}'
-            )
-
-        except ChildProcessError as e:
-            error_msg = (f'Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3: {e}',)
-            self.runtime.logger.error(error_msg)
-            self.runtime.logger.error(traceback.format_exc())
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(
-                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3"
-            )
-            raise
-
     async def _sweep(self):
         if self.all_image_build_failed:
             self.runtime.logger.warning('All image builds failed: skipping sweep')
@@ -883,14 +756,17 @@ class Ocp4Pipeline:
 
         # Rebase and build RPMs
         await self._rebase_and_build_rpms()
+
+        # Build plashets
         if not self.skip_plashets:
-            lock = Lock.PLASHET
-            lock_name = lock.value.format(assembly=self.assembly, version=self.version.stream)
-            await locks.run_with_lock(
-                coro=self._build_compose(),
-                lock=lock,
-                lock_name=lock_name,
-                lock_id=self.lock_identifier,
+            jenkins.start_build_plashets(
+                version=self.version.stream,
+                release=self.version.release,
+                assembly=self.assembly,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref,
+                dry_run=self.runtime.dry_run,
+                block_until_complete=True,
             )
 
         else:
@@ -910,9 +786,6 @@ class Ocp4Pipeline:
 
         # Sync images
         await self._sync_images()
-
-        # Mirror RPMs
-        await self._mirror_rpms()
 
         # Find MODIFIED bugs for the target-releases, and set them to ON_QA
         await self._sweep()
@@ -982,7 +855,6 @@ class Ocp4Pipeline:
     help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
 )
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
-@click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -999,7 +871,6 @@ async def ocp4(
     mail_list_failure: str,
     ignore_locks: bool,
     comment_on_pr: bool,
-    copy_links: bool,
 ):
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -1019,7 +890,6 @@ async def ocp4(
         mail_list_failure=mail_list_failure,
         lock_identifier=lock_identifier,
         comment_on_pr=comment_on_pr,
-        copy_links=copy_links,
     )
 
     if ignore_locks:
