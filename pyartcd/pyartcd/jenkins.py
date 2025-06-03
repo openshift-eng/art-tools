@@ -301,6 +301,8 @@ def start_ocp4_konflux(
     # Limit arches when requested
     if limit_arches:
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
+    # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
+    params['SKIP_PLASHETS'] = False
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
