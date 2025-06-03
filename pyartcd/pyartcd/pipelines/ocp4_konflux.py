@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import click
 import yaml
 from artcommonlib import exectools, redis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.util import extract_version_fields
 
@@ -66,6 +67,7 @@ class KonfluxOcp4Pipeline:
         arches: Tuple[str, ...] = None,
         plr_template: str = None,
         lock_identifier: str = None,
+        skip_plashets: bool = False,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -78,6 +80,7 @@ class KonfluxOcp4Pipeline:
         self.skip_bundle_build = skip_bundle_build
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
+        self.skip_plashets = skip_plashets
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -401,6 +404,17 @@ class KonfluxOcp4Pipeline:
         version = f"v{self.version}.0"
         input_release = util.default_release_suffix()
 
+        if not self.skip_plashets and self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            jenkins.start_build_plashets(
+                version=self.version,
+                release=input_release,
+                assembly=self.assembly,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref,
+                dry_run=self.runtime.dry_run,
+                block_until_complete=True,
+            )
+
         if self.skip_rebase:
             LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
         else:
@@ -459,6 +473,12 @@ class KonfluxOcp4Pipeline:
     default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
+@click.option(
+    '--skip-plashets',
+    is_flag=True,
+    default=False,
+    help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -475,6 +495,7 @@ async def ocp4(
     skip_bundle_build: bool,
     arches: Tuple[str, ...],
     plr_template: str,
+    skip_plashets,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -497,6 +518,7 @@ async def ocp4(
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
+        skip_plashets=skip_plashets,
     )
 
     if ignore_locks:

@@ -758,7 +758,7 @@ class Ocp4Pipeline:
         await self._rebase_and_build_rpms()
 
         # Build plashets
-        if not self.skip_plashets:
+        if not self.skip_plashets and self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
             jenkins.start_build_plashets(
                 version=self.version.stream,
                 release=self.version.release,
