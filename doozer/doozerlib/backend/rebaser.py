@@ -9,7 +9,7 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import bashlex
 import bashlex.errors
@@ -30,6 +30,8 @@ from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
+
+from doozerlib.dnf import DnfManager, RPMLockfileGenerator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -646,6 +648,8 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
+            asyncio.run(self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir))
+
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
                 metadata, source, df_path, version, release, downstream_parents, force_yum_updates, uuid_tag, dest_dir
@@ -654,6 +658,128 @@ class KonfluxRebaser:
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
             return version, release
+
+    async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path, retries: int = 2):
+        """
+        Generate and write an RPM lockfile for the given image, resolving per-architecture
+        install packages by comparing current and parent image RPMs.
+
+        This method fetches RPMs from image config or build metadata, computes differences
+        from parent images (if any), resolves dependencies via DNF, and writes a lockfile.
+
+        Args:
+            metadata (ImageMetadata): Metadata for the image to process.
+            group (str): Group name used to fetch build history.
+            dest_dir (Path): Destination path for the generated lockfile.
+            retries (int, optional): Retry attempts for DB interactions. Defaults to 2.
+        """
+        # lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
+        lockfile_enabled = True
+        if not lockfile_enabled:
+            self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
+            return
+
+        rpms_install = metadata.config.konflux.cachi2.lockfile.packages.get('install', {})
+
+        if len(rpms_install) == 0:
+            rpms = await self._fetch_rpms_from_metadata(metadata.distgit_key, group)
+
+            if rpms:
+                parents = metadata.get_parent_members()
+                if parents:
+                    parent_name = next(iter(parents.keys()))
+                    parent_rpms = await self._fetch_rpms_from_metadata(parent_name, group)
+                    rpms_install = self._compute_rpm_diff(rpms, parent_rpms)
+                    self._logger.info(f'Diffed RPMs for {metadata.distgit_key}: {rpms_install}')
+                else:
+                    self._logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
+                    rpms_install = rpms
+            else:
+                self._logger.warning(f'Could not determine RPMs for image {metadata.distgit_key}')
+
+            if all(not pkgs for pkgs in rpms_install.values()):
+                self._logger.warning(
+                    f'Empty RPM list to install for {metadata.distgit_key}; all required RPMs may be inherited'
+                )
+                return
+        else:
+            self._logger.info(f'Using pre-defined install RPMs for {metadata.distgit_key}')
+
+        # Ensure correct type: Dict[str, List[str]]
+        rpms_install = {arch: list(pkgs) for arch, pkgs in rpms_install.items()}
+        await self._generate_lockfile(metadata, dest_dir, rpms_install)
+
+    async def _fetch_rpms_from_metadata(self, name: str, group: str) -> Dict[str, List[str]]:
+        """
+        Fetches the installed RPMs for a given image name and group from the Konflux DB.
+
+        This method attempts to retrieve the most recent build and parse its installed RPMs
+        from a JSON-encoded string into a structured dictionary.
+
+        Args:
+            name (str): The distgit name of the image (e.g., "openshift-enterprise-base").
+            group (str): The group name used to locate builds in the Konflux DB.
+
+        Returns:
+            Dict[str, List[str]]: A dictionary mapping architecture names to a list of installed RPMs.
+                                Returns an empty dict if the build or RPM data is unavailable or invalid.
+        """
+        try:
+            build = await self._runtime.konflux_db.get_latest_build(name=name, group=group)
+            if build and build.installed_rpms:
+                try:
+                    installed_rpms = json.loads(build.installed_rpms)
+                    return {entry["key"]: list(entry["values"]) for entry in installed_rpms}
+                except (TypeError, json.JSONDecodeError) as e:
+                    self._logger.error(f"Invalid RPM JSON for {name}/{group}: {e}")
+        except Exception as e:
+            self._logger.error(f"Failed to fetch RPMs for {name}/{group}: {e}")
+        return {}
+
+    def _compute_rpm_diff(self, rpms: Dict[str, List[str]], parent_rpms: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        """
+        Computes the difference between the current image RPMs and its parent's RPMs.
+
+        This function subtracts the parent's RPM list from the current image's RPM list,
+        per architecture, to determine which RPMs are unique to the image and should
+        be explicitly included in the lockfile.
+
+        Args:
+            rpms (Dict[str, List[str]]): RPMs installed in the current image, keyed by architecture.
+            parent_rpms (Dict[str, List[str]]): RPMs from the parent image, keyed by architecture.
+
+        Returns:
+            Dict[str, List[str]]: A dictionary mapping each architecture to the list of RPMs
+                                that are unique to the current image.
+        """
+        return {arch: sorted(set(rpms.get(arch, [])) - set(parent_rpms.get(arch, []))) for arch in rpms}
+
+    async def _generate_lockfile(
+        self, metadata: ImageMetadata, dest_dir: Path, rpms_install: Dict[str, List[str]]
+    ) -> None:
+        """
+        Resolves the given list of RPMs per architecture using DNF and generates a lockfile.
+
+        This method uses the DnfManager to simulate package installation and dependency resolution,
+        then writes a YAML-formatted lockfile capturing the final package set for each architecture.
+
+        Args:
+            metadata (ImageMetadata): Metadata object for the image.
+            dest_dir (Path): Directory where the lockfile should be written.
+            rpms_install (Dict[str, List[str]]): RPMs to install, per architecture.
+
+        Returns:
+            None
+        """
+
+        dnf_manager = DnfManager(
+            installroot_base="/tmp/test-root", repodir=str(dest_dir.joinpath(".oit")), arches=metadata.get_arches()
+        )
+        arches_data = await dnf_manager.install_packages_for_arches(install_packages=rpms_install, no_sources=True)
+
+        generator = RPMLockfileGenerator(str(dest_dir.joinpath("rpms.lock.yaml")))
+        generator.generate(arches_data)
+        self._logger.info(f'Successfully wrote lockfile for {metadata.distgit_key}')
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]
