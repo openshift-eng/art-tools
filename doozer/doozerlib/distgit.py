@@ -32,6 +32,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
+    add_golang_version_patch,
     convert_remote_git_to_https,
     deep_merge,
     isolate_el_version_in_brew_tag,
@@ -2835,6 +2836,8 @@ class ImageDistGitRepo(DistGitRepo):
             # to the required distgit location.
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
+
+        add_golang_version_patch(dest_dir=dg_path, logger=self.logger)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dg_path.iterdir():

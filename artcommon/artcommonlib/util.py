@@ -457,3 +457,35 @@ async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, r
     _, out, _ = await cmd_gather_async(cmd)
 
     return out.strip()
+
+
+def add_golang_version_patch(dest_dir, logger):
+    """
+    For go versions 1.22+, it needs to include patch version. Eg it should be "1.22.0" instead of "1.22".
+    """
+    gomod_path = dest_dir.joinpath('go.mod')
+    if gomod_path.exists():
+        # Read the gomod contents
+        new_lines = []
+        with open(gomod_path, "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                stripped_line = line.strip()
+                match = re.match(r"(^go \d\.\d+$)", stripped_line)
+                if match:
+                    go_version_string = match.group(1)  # eg. 'go 1.23'
+                    go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
+                    if go_version_number >= 1.22:
+                        # Append a .0 to the go mod version, if it exists, for versions >= 1.22
+                        # Replace the line 'go 1.22' with 'go 1.22.0' for example
+                        logger.info(
+                            f"Missing patch in golang version: {stripped_line}. Appending .0 since go version is >= 1.22"
+                        )
+                        stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
+                        new_lines.append(f"{stripped_line}\n")
+                        continue
+
+                # If there is no match or if the go version is not >= 1.22, use the same go version
+                new_lines.append(line)
+        with open(gomod_path, "w") as file:
+            file.writelines(new_lines)

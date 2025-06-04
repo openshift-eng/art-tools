@@ -19,7 +19,7 @@ from artcommonlib import exectools, release_util
 from artcommonlib.brew import BuildStates
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
-from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
+from artcommonlib.util import add_golang_version_patch, deep_merge, detect_package_managers, is_cachito_enabled
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -463,32 +463,7 @@ class KonfluxRebaser:
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
 
-        append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
-        if append_gomod_patch and append_gomod_patch is not Missing:
-            gomod_path = dest_dir.joinpath('go.mod')
-            if gomod_path.exists():
-                # Read the gomod contents
-                new_lines = []
-                with open(gomod_path, "r") as file:
-                    lines = file.readlines()
-                    for line in lines:
-                        stripped_line = line.strip()
-                        match = re.match(r"(^go \d\.\d+$)", stripped_line)
-                        if match:
-                            # Append a .0 to the go mod version, if it exists
-                            # Replace the line 'go 1.22' with 'go 1.22.0' for example
-                            self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
-                            go_version_string = match.group(1)  # eg. 'go 1.23'
-                            go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
-                            if go_version_number >= 1.22:
-                                stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
-                                new_lines.append(f"{stripped_line}\n")
-                                continue
-
-                        # If there is no match or if the go version is not >= 1.22, use the same go version
-                        new_lines.append(line)
-                with open(gomod_path, "w") as file:
-                    file.writelines(new_lines)
+        add_golang_version_patch(dest_dir=dest_dir, logger=self._logger)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
