@@ -157,6 +157,31 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.ocp4._check_assembly()
 
+    @patch("artcommonlib.exectools.cmd_gather_async", return_value=(0, 'rhaos-4.12-rhel-8', ''))
+    @patch("pyartcd.jenkins.update_title")
+    async def test_initialize_version(self, *_):
+        # Mock datetime.now()
+        class MockedDatetime(datetime):
+            @classmethod
+            def now(cls, *args, **kwargs):
+                return datetime(2100, month=12, day=31, hour=11, minute=12)
+
+        ocp4.util.datetime = MockedDatetime
+
+        # Initial values
+        self.assertEqual(self.ocp4.version.stream, '4.14')
+        self.assertEqual(self.ocp4.version.branch, '')
+        self.assertEqual(self.ocp4.version.release, '')
+        self.assertEqual(self.ocp4.version.major, 0)
+        self.assertEqual(self.ocp4.version.minor, 0)
+
+        # After version initialization
+        await self.ocp4._initialize_version()
+        self.assertEqual(self.ocp4.version.branch, 'rhaos-4.12-rhel-8')
+        self.assertEqual(self.ocp4.version.release, '210012311112.p?')
+        self.assertEqual(self.ocp4.version.major, 4)
+        self.assertEqual(self.ocp4.version.minor, 14)
+
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
     async def test_initialize_build_plan_default(self, *_):
         # Default ocp4 pipeline
@@ -256,10 +281,10 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_rpms(self, cmd_assert_mock: AsyncMock, *_):
-        self.ocp4.release = '2100123111.p?'
+        await self.ocp4._initialize_version()
 
         # no RPMs
-        self.ocp4.build_plan.build_rpms = []
+        self.assertFalse(self.ocp4.build_plan.build_rpms)
         await self.ocp4._rebase_and_build_rpms()
         cmd_assert_mock.assert_not_awaited()
 
@@ -310,7 +335,6 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
 
     @patch("shutil.rmtree")
     @patch("builtins.open")
-    @patch("pyartcd.jenkins.init_jenkins")
     @patch("pyartcd.jenkins.update_title")
     @patch("pyartcd.jenkins.update_description")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
@@ -323,9 +347,10 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, *_
     ):
         parse_record_log_mock.return_value = {}
+        await self.ocp4._initialize_version()
 
         # no images
-        self.ocp4.build_plan.images = []
+        self.assertFalse(self.ocp4.build_plan.build_images)
         await self.ocp4._rebase_and_build_images()
         cmd_assert_mock.assert_not_awaited()
 
@@ -539,7 +564,7 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
             comment_on_pr=False,
         )
 
-        pipeline.release = '2099010109.p?'
+        pipeline.version.release = '2099010109.p?'
 
         # No images to build
         pipeline.build_plan.build_images = False
