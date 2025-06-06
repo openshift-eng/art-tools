@@ -756,6 +756,9 @@ class KonfluxRebaser:
         # Set the image name
         dfp.labels["name"] = metadata.config.name
 
+        # The vendor should always be Red Hat, Inc.
+        dfp.labels["vendor"] = "Red Hat, Inc."
+
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()
 
