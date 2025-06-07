@@ -115,7 +115,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             }
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
     async def test_run_without_explicit_assembly_definition(
@@ -143,7 +143,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -174,7 +174,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -208,7 +208,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
@@ -314,7 +314,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -351,7 +351,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -393,7 +393,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -443,7 +443,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -491,7 +491,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.jenkins.start_cincinnati_prs")
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
@@ -686,7 +686,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.send_image_list_email.assert_awaited_once_with("4.10.99", 2, ANY)
         sign_artifacts.assert_awaited_once_with("4.10.99", "ocp", ANY, [])
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream_tag", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
@@ -833,7 +833,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
         tag_release.assert_not_awaited()
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", return_value=0)
     async def test_build_release_image_from_reference_release(self, cmd_gather_async: AsyncMock, _):
         runtime = MagicMock(
@@ -945,7 +945,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", return_value=0)
     async def test_build_release_image_from_image_stream(self, cmd_gather_async: AsyncMock, _):
         runtime = MagicMock(
@@ -1025,7 +1025,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.PromotePipeline.get_image_stream_tag",
@@ -1323,7 +1323,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         self.assertEqual(actual["image"], "quay.io/openshift-release-dev/ocp-release:4.10.99-multi")
         self.assertEqual(actual["digest"], "fake:deadbeef-dest-multi")
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.PromotePipeline.get_image_stream_tag",
@@ -1578,7 +1578,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         self.assertEqual(actual["image"], "quay.io/openshift-release-dev/ocp-release:4.10.99-multi")
         self.assertEqual(actual["digest"], "fake:deadbeef-dest-multi")
 
-    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     def test_build_create_symlink(self, _):
         runtime = MagicMock(
             config={
