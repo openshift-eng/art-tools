@@ -7,7 +7,7 @@ from pyartcd import jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
-from pyartcd.plashets import build_plashets
+from pyartcd.plashets import PlashetBuilder
 from pyartcd.runtime import Runtime
 from pyartcd.util import get_freeze_automation, is_manual_build
 
@@ -66,17 +66,17 @@ class BuildPlashetsPipeline:
 
     async def build(self):
         try:
-            plashets_built = await build_plashets(
-                stream=self.version,
+            plashet_builder = PlashetBuilder(
+                version=self.version,
                 release=self.release,
                 assembly=self.assembly,
-                repos=self.repos,
                 doozer_working=self.runtime.doozer_working,
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
             )
+            plashets_built = await plashet_builder.build_plashets(self.repos)
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
         except ChildProcessError as e:
