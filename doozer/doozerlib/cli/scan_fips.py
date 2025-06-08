@@ -11,6 +11,7 @@ from typing import Optional
 import click
 import koji
 from artcommonlib.exectools import cmd_gather, cmd_gather_async, limit_concurrency
+from tenacity import AsyncRetrying, RetryError, retry_if_result, stop_after_attempt
 
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
@@ -63,15 +64,28 @@ class ScanFipsCli:
 
     @limit_concurrency(os.cpu_count())
     async def run_get_problem_nvrs(self, build: tuple):
+        def should_retry_scan(scan_result: tuple[int, str, str]):
+            rc_scan, out_scan, _ = scan_result
+            return rc_scan != 0 and "Successful run" not in out_scan
+
         nvr, pull_spec = build
         cmd = self.make_command(f"check-payload -V {self.runtime.group.split('-')[-1]} scan image --spec {pull_spec}")
 
         self.runtime.logger.info(f"Running check-payload command: {cmd}")
-        rc_scan, out_scan, _ = await cmd_gather_async(cmd, check=False)
 
-        await self.clean_image(nvr, pull_spec)
+        retry = AsyncRetrying(
+            stop=stop_after_attempt(3),
+            retry=retry_if_result(should_retry_scan),
+        )
 
-        return None if rc_scan == 0 and "Successful run" in out_scan else build
+        try:
+            await retry(cmd_gather_async, cmd, check=False)
+            return None
+        except RetryError:
+            self.runtime.logger.info(f"All retry attempts exhaused for command: {cmd}")
+            return build
+        finally:
+            await self.clean_image(nvr, pull_spec)
 
     def make_command(self, cmd: str):
         return "sudo " + cmd if not self.is_root else cmd
@@ -90,11 +104,10 @@ class ScanFipsCli:
 
     def get_all_latest_builds(self):
         # Setup brew tags
-        brew_tags = (
-            self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars)
-            .data.get('brew_tag_product_version_mapping', {})
-            .keys()
-        )
+        et_data = self.runtime.get_errata_config()
+        brew_tags = [
+            tag.format(**self.runtime.group_config.vars) for tag in et_data.get('brew_tag_product_version_mapping', {})
+        ]
         self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
 
         builds = []

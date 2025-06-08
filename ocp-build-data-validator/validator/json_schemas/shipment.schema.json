@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-04-28 23:11 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-05-16 14:39 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
       "additionalProperties": false,
@@ -22,7 +22,7 @@
     },
     "Data": {
       "additionalProperties": false,
-      "description": " Represents spec.data field when constructing a Konflux release ",
+      "description": "Represents spec.data field when constructing a Konflux release",
       "properties": {
         "releaseNotes": {
           "$ref": "#/$defs/ReleaseNotes"
@@ -36,7 +36,7 @@
     },
     "Environments": {
       "additionalProperties": false,
-      "description": " Environments to release the shipment to ",
+      "description": "Environments to release the shipment to",
       "properties": {
         "stage": {
           "allOf": [
@@ -112,7 +112,7 @@
     },
     "Metadata": {
       "additionalProperties": false,
-      "description": " Defines shipment metadata for a product release ",
+      "description": "Defines shipment metadata for a product release",
       "properties": {
         "product": {
           "title": "Product",
@@ -154,7 +154,7 @@
     },
     "ReleaseNotes": {
       "additionalProperties": false,
-      "description": " Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release ",
+      "description": "Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release",
       "properties": {
         "type": {
           "enum": [
@@ -164,6 +164,11 @@
           ],
           "title": "Type",
           "type": "string"
+        },
+        "live_id": {
+          "default": null,
+          "title": "Live Id",
+          "type": "integer"
         },
         "synopsis": {
           "title": "Synopsis",
@@ -189,8 +194,7 @@
             {
               "type": "null"
             }
-          ],
-          "default": {}
+          ]
         },
         "cves": {
           "anyOf": [
@@ -228,14 +232,15 @@
         "synopsis",
         "topic",
         "description",
-        "solution"
+        "solution",
+        "issues"
       ],
       "title": "ReleaseNotes",
       "type": "object"
     },
     "Shipment": {
       "additionalProperties": false,
-      "description": " Config to ship a Konflux release for a product ",
+      "description": "Config to ship a Konflux release for a product",
       "properties": {
         "metadata": {
           "$ref": "#/$defs/Metadata"
@@ -268,16 +273,11 @@
     },
     "ShipmentEnv": {
       "additionalProperties": false,
-      "description": " Environment specific configuration for a release ",
+      "description": "Environment specific configuration for a release",
       "properties": {
         "releasePlan": {
           "title": "Releaseplan",
           "type": "string"
-        },
-        "liveID": {
-          "default": null,
-          "title": "Liveid",
-          "type": "integer"
         },
         "releaseName": {
           "anyOf": [
@@ -324,7 +324,7 @@
     },
     "Snapshot": {
       "additionalProperties": false,
-      "description": " Konflux Snapshot definition for release i.e. builds to release ",
+      "description": "Konflux Snapshot definition for release i.e. builds to release",
       "properties": {
         "name": {
           "title": "Name",
@@ -343,7 +343,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": " Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot ",
+      "description": "Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot",
       "properties": {
         "nvrs": {
           "items": {
@@ -361,7 +361,7 @@
     }
   },
   "additionalProperties": false,
-  "description": " Represents a Shipment Metadata Config file in a product's shipment-data repo ",
+  "description": "Represents a Shipment Metadata Config file in a product's shipment-data repo",
   "properties": {
     "shipment": {
       "$ref": "#/$defs/Shipment"

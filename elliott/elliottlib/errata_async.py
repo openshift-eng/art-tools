@@ -31,6 +31,12 @@ class AsyncErrataAPI:
             "Accept": "application/json",
         }
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+
     async def close(self):
         await self._session.close()
 
@@ -67,6 +73,11 @@ class AsyncErrataAPI:
     async def get_advisory(self, advisory: Union[int, str]) -> Dict:
         path = f"/api/v1/erratum/{quote(str(advisory))}"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)
+
+    async def reserve_live_id(self) -> str:
+        path = "/api/v1/advisory/reserve_live_id"
+        result = await self._make_request(aiohttp.hdrs.METH_POST, path)
+        return result.get("live_id")
 
     async def get_builds(self, advisory: Union[int, str]):
         # As of May 25, 2023, /api/v1/erratum/{id}/builds_list doesn't return all builds.

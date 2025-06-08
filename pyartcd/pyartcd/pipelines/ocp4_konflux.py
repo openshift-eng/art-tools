@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import click
 import yaml
 from artcommonlib import exectools, redis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.util import extract_version_fields
 
@@ -53,19 +54,20 @@ class EnumEncoder(json.JSONEncoder):
 class KonfluxOcp4Pipeline:
     def __init__(
         self,
-        runtime: Runtime,
-        assembly: str,
-        data_path: Optional[str],
-        image_build_strategy: Optional[str],
-        image_list: Optional[str],
-        version: str,
-        data_gitref: Optional[str],
-        kubeconfig: Optional[str],
-        skip_rebase: bool,
-        skip_bundle_build: bool,
-        arches: Tuple[str, ...],
-        plr_template: str,
-        lock_identifier: str,
+        runtime: Runtime = None,
+        assembly: str = None,
+        data_path: Optional[str] = None,
+        image_build_strategy: Optional[str] = None,
+        image_list: Optional[str] = None,
+        version: str = None,
+        data_gitref: Optional[str] = None,
+        kubeconfig: Optional[str] = None,
+        skip_rebase: bool = None,
+        skip_bundle_build: bool = None,
+        arches: Tuple[str, ...] = None,
+        plr_template: str = None,
+        lock_identifier: str = None,
+        skip_plashets: bool = False,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -78,6 +80,7 @@ class KonfluxOcp4Pipeline:
         self.skip_bundle_build = skip_bundle_build
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
+        self.skip_plashets = skip_plashets
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -109,6 +112,28 @@ class KonfluxOcp4Pipeline:
             image_param = f'--exclude={",".join(self.build_plan.images_excluded)}'
         return image_param
 
+    async def update_rebase_fail_counters(self, failed_images):
+        redis_branch = f'count:rebase-failure:konflux:{self.version}'
+
+        # Reset fail counters for images that were rebased successfully
+        match self.build_plan.build_strategy:
+            case BuildStrategy.ALL:
+                successful_images = []  # TODO
+            case BuildStrategy.EXCEPT:
+                successful_images = []  # TODO
+            case BuildStrategy.ONLY:
+                successful_images = [image for image in self.image_list if image not in failed_images]
+        await asyncio.gather(*[redis.delete_key(f'{redis_branch}:{image}') for image in successful_images])
+
+        # Increment fail counters for failing images
+        async def _update(image):
+            redis_key = f'{redis_branch}:{image}'
+            fail_count = await redis.get_value(redis_key)
+            fail_count = int(fail_count) if fail_count else 0
+            await redis.set_value(key=redis_key, value=fail_count + 1)
+
+        await asyncio.gather(*[_update(image) for image in failed_images])
+
     async def rebase(self, version: str, input_release: str):
         cmd = self._doozer_base_command.copy()
         if self.arches:
@@ -138,12 +163,9 @@ class KonfluxOcp4Pipeline:
             if not failed_images:
                 raise  # Something else went wrong
 
-            # Some images failed to rebase: log them, and send an alert on Slack
-            message = f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}'
-            LOGGER.warning(message)
-            if self.assembly == 'stream':
-                self.slack_client.bind_channel(f'openshift-{self.version}')
-                await self.slack_client.say(f':alert: {message}')
+            # Some images failed to rebase: log them, and track them in Redis
+            LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
+            await self.update_rebase_fail_counters(failed_images)
 
             # Exclude images that failed to rebase from the build step
             if self.build_plan.build_strategy == BuildStrategy.ALL:
@@ -382,6 +404,17 @@ class KonfluxOcp4Pipeline:
         version = f"v{self.version}.0"
         input_release = util.default_release_suffix()
 
+        if not self.skip_plashets and self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            jenkins.start_build_plashets(
+                version=self.version,
+                release=input_release,
+                assembly=self.assembly,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref,
+                dry_run=self.runtime.dry_run,
+                block_until_complete=True,
+            )
+
         if self.skip_rebase:
             LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
         else:
@@ -440,6 +473,12 @@ class KonfluxOcp4Pipeline:
     default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
+@click.option(
+    '--skip-plashets',
+    is_flag=True,
+    default=False,
+    help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -456,6 +495,7 @@ async def ocp4(
     skip_bundle_build: bool,
     arches: Tuple[str, ...],
     plr_template: str,
+    skip_plashets,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -478,6 +518,7 @@ async def ocp4(
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
+        skip_plashets=skip_plashets,
     )
 
     if ignore_locks:

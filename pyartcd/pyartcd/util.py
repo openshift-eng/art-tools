@@ -273,6 +273,22 @@ async def get_freeze_automation(
     return out.strip()
 
 
+async def has_layered_rhcos(doozer_base_command: list) -> bool:
+    """
+    Check if the current version uses layered RHCOS
+    """
+
+    cmd = doozer_base_command + [
+        'config:read-group',
+        'rhcos.layered_rhcos',
+        '--default=False',
+    ]
+    _, out, _ = await exectools.cmd_gather_async(cmd)
+    layered_rhcos = out.strip() == 'True'
+    logger.info('Layered RHCOS %s enabled', 'NOT' if not layered_rhcos else '')
+    return layered_rhcos
+
+
 def is_manual_build() -> bool:
     """
     Builds that are triggered manually by a Jenkins user carry a BUILD_USER_EMAIL environment variable.

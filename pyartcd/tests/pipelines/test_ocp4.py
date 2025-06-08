@@ -1,4 +1,3 @@
-import asyncio
 import os
 import unittest
 from datetime import datetime
@@ -158,31 +157,6 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.ocp4._check_assembly()
 
-    @patch("artcommonlib.exectools.cmd_gather_async", return_value=(0, 'rhaos-4.12-rhel-8', ''))
-    @patch("pyartcd.jenkins.update_title")
-    async def test_initialize_version(self, *_):
-        # Mock datetime.now()
-        class MockedDatetime(datetime):
-            @classmethod
-            def now(cls, *args, **kwargs):
-                return datetime(2100, month=12, day=31, hour=11, minute=12)
-
-        ocp4.util.datetime = MockedDatetime
-
-        # Initial values
-        self.assertEqual(self.ocp4.version.stream, '4.14')
-        self.assertEqual(self.ocp4.version.branch, '')
-        self.assertEqual(self.ocp4.version.release, '')
-        self.assertEqual(self.ocp4.version.major, 0)
-        self.assertEqual(self.ocp4.version.minor, 0)
-
-        # After version initialization
-        await self.ocp4._initialize_version()
-        self.assertEqual(self.ocp4.version.branch, 'rhaos-4.12-rhel-8')
-        self.assertEqual(self.ocp4.version.release, '210012311112.p?')
-        self.assertEqual(self.ocp4.version.major, 4)
-        self.assertEqual(self.ocp4.version.minor, 14)
-
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
     async def test_initialize_build_plan_default(self, *_):
         # Default ocp4 pipeline
@@ -282,10 +256,10 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_rpms(self, cmd_assert_mock: AsyncMock, *_):
-        await self.ocp4._initialize_version()
+        self.ocp4.release = '2100123111.p?'
 
         # no RPMs
-        self.assertFalse(self.ocp4.build_plan.build_rpms)
+        self.ocp4.build_plan.build_rpms = []
         await self.ocp4._rebase_and_build_rpms()
         cmd_assert_mock.assert_not_awaited()
 
@@ -336,6 +310,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
 
     @patch("shutil.rmtree")
     @patch("builtins.open")
+    @patch("pyartcd.jenkins.init_jenkins")
     @patch("pyartcd.jenkins.update_title")
     @patch("pyartcd.jenkins.update_description")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
@@ -348,10 +323,9 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, *_
     ):
         parse_record_log_mock.return_value = {}
-        await self.ocp4._initialize_version()
 
         # no images
-        self.assertFalse(self.ocp4.build_plan.build_images)
+        self.ocp4.build_plan.images = []
         await self.ocp4._rebase_and_build_images()
         cmd_assert_mock.assert_not_awaited()
 
@@ -542,68 +516,6 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, True)
         self.ocp4._slack_client.say.assert_awaited_once()
 
-    @patch("pyartcd.locks.LockManager.from_lock", return_value=AsyncMock)
-    @patch("pyartcd.plashets.build_plashets", return_value=AsyncMock)
-    @patch("pyartcd.jenkins.start_sync_for_ci")
-    @patch("pyartcd.jenkins.start_rhcos")
-    async def test_build_compose(self, mocked_rhcos, mocked_sync_for_ci, mocked_build_plashets, mocked_lm):
-        mocked_cm = AsyncMock()
-        mocked_cm.__aenter__ = AsyncMock()
-        mocked_cm.__aexit__ = AsyncMock()
-
-        mocked_lm.return_value = AsyncMock()
-        mocked_lm.return_value.lock.return_value = mocked_cm
-
-        mocked_build_plashets.return_value = {}
-
-        # Build not permitted
-        self.ocp4._is_compose_build_permitted = AsyncMock(return_value=False)
-        await self.ocp4._build_compose()
-        mocked_build_plashets.assert_not_awaited()
-        mocked_rhcos.assert_not_called()
-        mocked_sync_for_ci.assert_not_called()
-
-        # Build permitted, assembly != 'stream'
-        mocked_build_plashets.reset_mock()
-        mocked_rhcos.reset_mock()
-        mocked_sync_for_ci.reset_mock()
-        self.ocp4._is_compose_build_permitted = AsyncMock(return_value=True)
-        self.ocp4.assembly = 'test'
-        await self.ocp4._build_compose()
-        mocked_build_plashets.assert_awaited_once()
-        mocked_rhcos.assert_not_called()
-        mocked_sync_for_ci.assert_not_called()
-
-        # Build permitted, assembly = 'stream'
-        mocked_build_plashets.reset_mock()
-        mocked_rhcos.reset_mock()
-        mocked_sync_for_ci.reset_mock()
-        self.ocp4._is_compose_build_permitted = AsyncMock(return_value=True)
-        self.ocp4.assembly = 'stream'
-        await self.ocp4._build_compose()
-        mocked_build_plashets.assert_awaited_once()
-        mocked_sync_for_ci.assert_called_once_with(version='4.13', block_until_building=False)
-        self.assertEqual(self.ocp4.rpm_mirror.local_plashet_path, '')
-        self.assertEqual(self.ocp4.rpm_mirror.plashet_dir_name, '')
-
-        # rhel7 plashet built
-        mocked_build_plashets.reset_mock()
-        mocked_build_plashets.return_value = {
-            "rhel-8-server-ose-rpms": {
-                "plashetDirName": "2023053008",
-                "localPlashetPath": "plashet-working/plashets/4.7/stream/el8/2023-05/2023053008",
-            },
-            "rhel-server-ose-rpms": {
-                "plashetDirName": "2023053008",
-                "localPlashetPath": "plashet-working/plashets/4.7/stream/el7/2023-05/2023053008",
-            },
-        }
-        await self.ocp4._build_compose()
-        self.assertEqual(
-            self.ocp4.rpm_mirror.local_plashet_path, 'plashet-working/plashets/4.7/stream/el7/2023-05/2023053008'
-        )
-        self.assertEqual(self.ocp4.rpm_mirror.plashet_dir_name, '2023053008')
-
 
 class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._build_images")
@@ -627,7 +539,7 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
             comment_on_pr=False,
         )
 
-        pipeline.version.release = '2099010109.p?'
+        pipeline.release = '2099010109.p?'
 
         # No images to build
         pipeline.build_plan.build_images = False
@@ -807,57 +719,6 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
             doozer_data_gitref='',
         )
-
-
-class TestMirrorRpms(unittest.IsolatedAsyncioTestCase):
-    @patch("pyartcd.locks.LockManager.from_lock", return_value=AsyncMock)
-    @patch("pyartcd.pipelines.ocp4.sync_repo_to_s3_mirror")
-    async def test_sync_to_mirror(self, sync_mock: AsyncMock, mocked_lm):
-        pipeline = ocp4.Ocp4Pipeline(
-            runtime=MagicMock(dry_run=False),
-            assembly='test',
-            version='4.13',
-            data_path=constants.OCP_BUILD_DATA_URL,
-            data_gitref='',
-            build_rpms='all',
-            rpm_list='',
-            build_images='all',
-            image_list='',
-            skip_plashets=False,
-            mail_list_failure='',
-            comment_on_pr=False,
-        )
-
-        # Mock lock manager
-        mocked_cm = AsyncMock()
-        mocked_cm.__aenter__ = AsyncMock()
-        mocked_cm.__aexit__ = AsyncMock()
-
-        mocked_lm.return_value = AsyncMock()
-        mocked_lm.return_value.lock.return_value = mocked_cm
-
-        # Assembly != stream: do not mirror
-        await pipeline._mirror_rpms()
-        sync_mock.assert_not_awaited()
-
-        # No updated RPMs to mirror.
-        self.assertEqual(pipeline.rpm_mirror.local_plashet_path, '')
-        await pipeline._mirror_rpms()
-        sync_mock.assert_not_awaited()
-
-        # Mirror RPMs
-        pipeline.assembly = 'stream'
-        pipeline.rpm_mirror.local_plashet_path = '/some/path'
-        await pipeline._mirror_rpms()
-        sync_mock.assert_any_await(local_dir='/some/path', s3_path='/enterprise/enterprise-4.13/latest/', dry_run=False)
-        sync_mock.assert_any_await(local_dir='/some/path', s3_path='/enterprise/all/4.13/latest/', dry_run=False)
-
-        # Dry run
-        sync_mock.reset_mock()
-        pipeline.runtime.dry_run = True
-        await pipeline._mirror_rpms()
-        sync_mock.assert_any_await(local_dir='/some/path', s3_path='/enterprise/enterprise-4.13/latest/', dry_run=True)
-        sync_mock.assert_any_await(local_dir='/some/path', s3_path='/enterprise/all/4.13/latest/', dry_run=True)
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):

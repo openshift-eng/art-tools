@@ -8,7 +8,7 @@ from typing import Awaitable, Dict, List, Optional, Tuple, Union, cast
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import to_nevra
 
@@ -742,17 +742,20 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         group_repos = self.runtime.repos
         non_latest_rpms_for_arch = {}
 
-        for arch in self._build_record.arches:
-            enabled_repos = sorted(
-                {r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", []))
-            )
-            if not enabled_repos:  # no enabled repos
-                logger.warning(
-                    "Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.",
-                    meta.distgit_key,
-                )
-                return {}
+        # Get enabled repos
+        enabled_repos = {r.name for r in group_repos.values() if r.enabled}
+        if meta.config.enabled_repos is not Missing:
+            enabled_repos |= set(meta.config.enabled_repos)
 
+        # If there are no enabled repos, nothing to do here
+        if not enabled_repos:
+            logger.warning(
+                "Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.",
+                meta.distgit_key,
+            )
+            return {}
+
+        for arch in self._build_record.arches:
             repodatas = await asyncio.gather(
                 *(group_repos[repo_name].get_repodata(arch) for repo_name in enabled_repos)
             )

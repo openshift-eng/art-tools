@@ -138,8 +138,8 @@ class KonfluxImageBuilder:
                 await build_repo.ensure_source()
 
             # Parse Dockerfile
-            uuid_tag, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
-            nvr = f"{metadata.distgit_key}-{version}-{release}"
+            uuid_tag, component_name, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
+            nvr = f"{component_name}-{version}-{release}"
 
             # Sanity check to make sure a successful NVR build doesn't already exist in DB
             where = {"engine": Engine.KONFLUX.value}
@@ -250,26 +250,34 @@ class KonfluxImageBuilder:
         return pipelinerun_name, pipelinerun
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
-        """Parse the Dockerfile and return the UUID tag, version, and release.
+        """Parse the Dockerfile and return the UUID tag, component name, version, and release.
 
         :param distgit_key: The distgit key of the image.
         :param df_path: The path to the Dockerfile.
-        :return: A tuple containing the UUID tag, version, and release.
+        :return: A tuple containing the UUID tag, component name, version, and release.
         :raises ValueError: If the Dockerfile is missing the required environment variables or labels.
         """
         df = DockerfileParser(str(df_path))
+
         uuid_tag = df.envs.get("__doozer_uuid_tag")
         if not uuid_tag:
             raise ValueError(
                 f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?"
             )
+
+        component_name = df.labels['com.redhat.component']
+        if not component_name:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'com.redhat.component' label.")
+
         version = df.labels.get("version")
         if not version:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
         release = df.labels.get("release")
+
         if not release:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
-        return uuid_tag, version, release
+
+        return uuid_tag, component_name, version, release
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
@@ -431,7 +439,6 @@ class KonfluxImageBuilder:
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
-            metadata=metadata,
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,
@@ -448,6 +455,7 @@ class KonfluxImageBuilder:
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
             sast=sast,
+            annotations={"art-network-mode": metadata.get_konflux_network_mode()},
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
@@ -471,9 +479,7 @@ class KonfluxImageBuilder:
 
             # Check if the SBOM is valid
             # The SBOM should be a JSON object with a "components" key that is a non-empty list
-            if not (
-                "components" in content and isinstance(content["components"], list) and len(content["components"]) > 0
-            ):
+            if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
                 logger.warning("cosign command returned invalid SBOM: %s", content)
                 raise ChildProcessError("cosign command returned invalid SBOM")
 
@@ -501,15 +507,19 @@ class KonfluxImageBuilder:
 
             sbom_contents = await _get_sbom_with_retry(cmd)
             source_rpms = set()
-            for x in sbom_contents["components"]:
-                # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
+            for x in sbom_contents["packages"]:
+                # konflux generates sbom in cyclonedx schema: https://spdx.dev/
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
                 # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
                 # so filter them out
-                if x.get("purl", '').startswith("pkg:"):
+                purl_string = next(
+                    (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
+                )
+
+                if purl_string.startswith("pkg:"):
                     try:
-                        purl = PackageURL.from_string(x["purl"])
+                        purl = PackageURL.from_string(purl_string)
                         # right now, we only care about rpms
                         if purl.type == "rpm":
                             # get the source rpm
@@ -549,9 +559,10 @@ class KonfluxImageBuilder:
         source_repo = df.labels['io.openshift.build.source-location']
         commitish = df.labels['io.openshift.build.commit.id']
 
+        component_name = df.labels['com.redhat.component']
         version = df.labels['version']
         release = df.labels['release']
-        nvr = "-".join([metadata.distgit_key, version, release])
+        nvr = "-".join([component_name, version, release])
 
         pipelinerun_name = pipelinerun['metadata']['name']
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid

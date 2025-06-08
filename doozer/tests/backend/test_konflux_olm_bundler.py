@@ -99,7 +99,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.rebaser._group_config.operator_image_ref_mode = 'manifest-list'
         self.rebaser._group_config.get.return_value = 'namespace'
 
-        new_content, found_images = await self.rebaser._replace_image_references(old_registry, content)
+        new_content, found_images = await self.rebaser._replace_image_references(old_registry, content, Engine.KONFLUX)
 
         expected_new_content = """
         apiVersion: v1
@@ -118,7 +118,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             (
                 'registry.example.com/namespace/image:tag',
                 'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
-                'test-component-1.0-1',
+                'test-brew-component-1.0-1',
             ),
         )
 
@@ -304,43 +304,18 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 },
             )
 
-    @patch("aiofiles.open")
-    async def test_create_container_yaml(self, mock_open):
-        path = Path("/path/to/container.yaml")
-        mock_file = mock_open.return_value.__aenter__.return_value
-
-        await self.rebaser._create_container_yaml(path)
-
-        mock_open.assert_called_once_with(path, "w")
-        mock_file.writelines.assert_called_once()
-        written_lines = mock_file.writelines.call_args[0][0]
-        self.assertIn('# metadata containers are not functional and do not need to be multiarch\n', written_lines)
-        self.assertIn('\n', written_lines)
-        yaml_content = yaml.safe_load(written_lines[2])
-        self.assertEqual(
-            yaml_content,
-            {
-                'platforms': {'only': ['x86_64']},
-                'operator_manifests': {'manifests_dir': 'manifests'},
-            },
-        )
-
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
     @patch("pathlib.Path.mkdir")
     @patch("glob.glob")
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._replace_image_references")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_dockerfile")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_container_yaml")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_oit_files")
     async def test_rebase_dir(
         self,
         mock_create_oit_files,
-        mock_create_container_yaml,
         mock_create_dockerfile,
         mock_replace_image_references,
-        mock_dockerfile_parser,
         mock_glob,
         mock_mkdir,
         mock_open,
@@ -359,14 +334,6 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         operator_dir = Path("/path/to/operator/dir")
         bundle_dir = Path("/path/to/bundle/dir")
         input_release = "1.0-1"
-
-        mock_operator_df = MagicMock()
-        mock_operator_df.labels = {
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
-        }
-        mock_dockerfile_parser.return_value = mock_operator_df
 
         mock_glob.return_value = ["/path/to/operator/dir/manifests/package.yaml"]
         mock_file = mock_open.return_value.__aenter__.return_value
@@ -402,7 +369,8 @@ spec:
         ]
         mock_iterdir.side_effect = lambda: iter(bundle_files)
 
-        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+        operator_nvr = "test-component-1.0-1"
+        await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(nvr=operator_nvr), input_release)
 
         mock_mkdir.assert_any_call(parents=True, exist_ok=True)
         mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", 'r')
@@ -424,12 +392,11 @@ spec:
             },
             input_release,
         )
-        mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
         mock_create_oit_files.assert_called_once_with(
             'test-package',
             'test-operator.v1.0.0',
             bundle_dir,
-            'test-distgit-key-1.0-1',
+            operator_nvr,
             {
                 'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             },
@@ -444,7 +411,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No update-csv config found in the operator's metadata", str(context.exception))
 
     async def test_rebase_dir_no_manifests_dir(self):
@@ -462,7 +429,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No manifests-dir defined in the operator's update-csv", str(context.exception))
 
     async def test_rebase_dir_no_bundle_dir(self):
@@ -480,7 +447,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No bundle-dir defined in the operator's update-csv", str(context.exception))
 
     async def test_rebase_dir_no_valid_subscription_label(self):
@@ -498,33 +465,8 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
         self.assertIn("No valid-subscription-label defined in the operator's update-csv", str(context.exception))
-
-    @patch("pathlib.Path.iterdir", return_value=iter(["some_file"]))
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_rebase_dir_no_dockerfile_labels(self, mock_dockerfile_parser, _):
-        metadata = MagicMock()
-        metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'bundle-dir': 'bundle',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
-            },
-        }
-        metadata.distgit_key = "test-distgit-key"
-        operator_dir = Path("/path/to/operator/dir")
-        bundle_dir = Path("/path/to/bundle/dir")
-        input_release = "1.0-1"
-
-        mock_operator_df = MagicMock()
-        mock_operator_df.labels = {}
-        mock_dockerfile_parser.return_value = mock_operator_df
-
-        with self.assertRaises(ValueError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
-        self.assertIn("Label 'version' or 'release' is not set in the operator's Dockerfile", str(context.exception))
 
     @patch("pathlib.Path.iterdir", return_value=iter([]))
     async def test_rebase_dir_no_files_in_bundle_dir(self, _):
@@ -543,7 +485,7 @@ spec:
         input_release = "1.0-1"
 
         with self.assertRaises(FileNotFoundError) as context:
-            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
+            await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(), input_release)
             self.assertIn("No files found in bundle directory", str(context.exception))
 
 
@@ -635,6 +577,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             skip_checks=self.skip_checks,
             hermetic=True,
             pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
+            artifact_type="operatorbundle",
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
 
@@ -715,7 +658,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
+        self.assertEqual(build_record.nvr, "test-component-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")
@@ -796,7 +739,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
+        self.assertEqual(build_record.nvr, "test-component-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")

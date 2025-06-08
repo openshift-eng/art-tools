@@ -18,6 +18,7 @@ from elliottlib.shipment_model import (
     Snapshot,
     Spec,
 )
+from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -76,19 +77,22 @@ class InitShipmentCli:
 
             if self.advisory_key:
                 et_data = self.runtime.get_errata_config()
-                if "boilerplates" not in et_data:
-                    raise ValueError("`boilerplates` is required in erratatool.yml")
-                if self.advisory_key not in et_data["boilerplates"]:
-                    raise ValueError(f"Boilerplate {self.advisory_key} not found in erratatool.yml")
-                boilerplate = et_data["boilerplates"][self.advisory_key]
+                _, minor, patch = self.runtime.get_major_minor_patch()
+                advisory_boilerplate = get_advisory_boilerplate(
+                    runtime=self.runtime, et_data=et_data, art_advisory_key=self.advisory_key, errata_type="RHBA"
+                )
+                synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
+                advisory_topic = advisory_boilerplate['topic'].format(MINOR=minor, PATCH=patch)
+                advisory_description = advisory_boilerplate['description'].format(MINOR=minor, PATCH=patch)
+                advisory_solution = advisory_boilerplate['solution'].format(MINOR=minor, PATCH=patch)
 
                 data = Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
-                        synopsis=boilerplate["synopsis"],
-                        topic=boilerplate["topic"],
-                        description=boilerplate["description"],
-                        solution=boilerplate["solution"],
+                        synopsis=synopsis,
+                        topic=advisory_topic,
+                        description=advisory_description,
+                        solution=advisory_solution,
                     ),
                 )
 

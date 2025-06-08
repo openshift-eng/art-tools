@@ -34,3 +34,6 @@ REDIS_PORT = '6379'
 
 # Telemetry
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2.redhat.com:4317"
+
+# Sync konflux builds to default (formerly Brew) imagestreams for versions in this list
+KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = ["4.20"]

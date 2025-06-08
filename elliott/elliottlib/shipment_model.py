@@ -52,19 +52,16 @@ class Issues(StrictBaseModel):
 class ReleaseNotes(StrictBaseModel):
     """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
-    # setting attributes after object init can result in weird behavior
-    # when dealing with yaml scalar strings
-    model_config = ConfigDict(frozen=True)
-
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
+    live_id: int = None
     synopsis: str
     topic: str
     description: str
     solution: str
+    issues: Optional[Issues] = None
 
     # Konflux pipeline expects certain keys like issues, cves to always be set, even if empty
     # therefore allow these to have default empty values
-    issues: Optional[Issues] = {}
     cves: Optional[List[CveAssociation]] = []
 
     references: Optional[List[str]] = None
@@ -88,7 +85,6 @@ class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
-    liveID: int = None
     releaseName: Optional[str] = None
     advisoryName: Optional[str] = None
     advisoryInternalUrl: Optional[str] = None

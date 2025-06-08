@@ -1,18 +1,17 @@
 import json
 import os.path
 import shutil
-import traceback
 
 import click
 import yaml
 from artcommonlib import exectools, redis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
-from pyartcd import constants, jenkins, locks, oc, plashets, util
+from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.s3 import sync_repo_to_s3_mirror
 from pyartcd.util import mass_rebuild_score
 
 
@@ -26,28 +25,6 @@ class BuildPlan:
         self.build_images = False  # should we build images
         self.images_included = []  # include list for images to build
         self.images_excluded = []  # exclude list for images to build
-
-    def __str__(self):
-        return json.dumps(self.__dict__, indent=4)
-
-
-class Version:
-    def __init__(self):
-        self.stream = ''  # "X.Y" e.g. "4.0"
-        self.branch = ''  # e.g. "rhaos-4.0-rhel-7"
-        self.release = ''  # e.g. "201901011200.?"
-        self.major = 0  # X in X.Y, e.g. 4
-        self.minor = 0  # Y in X.Y, e.g. 0
-
-    def __str__(self):
-        return json.dumps(self.__dict__, indent=4)
-
-
-class RpmMirror:
-    def __init__(self):
-        self.url = ''
-        self.local_plashet_path = ''
-        self.plashet_dir_name = ''
 
     def __str__(self):
         return json.dumps(self.__dict__, indent=4)
@@ -68,7 +45,6 @@ class Ocp4Pipeline:
         skip_plashets: bool,
         mail_list_failure: str,
         comment_on_pr: bool,
-        copy_links: bool = False,
         lock_identifier: str = None,
     ):
         self.runtime = runtime
@@ -82,13 +58,12 @@ class Ocp4Pipeline:
 
         self.build_plan = BuildPlan()
         self.mass_rebuild = False
-        self.version = Version()
-        self.version.stream = version
-        self.rpm_mirror = RpmMirror()  # will be filled in later by build-compose stage
-        self.rpm_mirror.url = f'{constants.MIRROR_BASE_URL}/enterprise/enterprise/{self.version.stream}'
+
+        self.version = version
+        self.release = util.default_release_suffix()
+
         self.all_image_build_failed = False
         self.comment_on_pr = comment_on_pr
-        self.copy_links = copy_links
 
         self.data_path = data_path
         self.data_gitref = data_gitref
@@ -121,9 +96,7 @@ class Ocp4Pipeline:
         cmd.extend(['config:read-group', '--default=False', 'assemblies.enabled'])
         _, out, err = await exectools.cmd_gather_async(cmd)
         assemblies_enabled = out.strip() == 'True'
-        self.runtime.logger.info(
-            'Assemblies %s enabled for %s', 'NOT' if not assemblies_enabled else '', self.version.stream
-        )
+        self.runtime.logger.info('Assemblies %s enabled for %s', 'NOT' if not assemblies_enabled else '', self.version)
 
         if self.assembly != 'stream' and not assemblies_enabled:
             raise RuntimeError(
@@ -132,27 +105,6 @@ class Ocp4Pipeline:
 
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
-
-    async def _initialize_version(self):
-        """
-        Initialize the "version" data structure
-        """
-
-        # version.branch
-        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
-        cmd = self._doozer_base_command.copy()
-        cmd.extend(['config:read-group', 'branch'])
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        self.version.branch = out.strip()
-
-        # version.major, version.minor
-        self.version.major, self.version.minor = [int(val) for val in self.version.stream.split('.')]
-
-        # version.release
-        self.version.release = util.default_release_suffix()
-
-        self.runtime.logger.info('Initializing build:\n%s', str(self.version))
-        jenkins.update_title(f' - {self.version.stream}-{self.version.release} ')
 
     async def _initialize_build_plan(self):
         """
@@ -230,13 +182,15 @@ class Ocp4Pipeline:
 
         # For assembly = 'stream', we need to check automation freeze state
         return await util.is_build_permitted(
-            version=self.version.stream,
+            version=self.version,
             data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
         )
 
     async def _initialize(self):
+        self.runtime.logger.info('Initializing build:\n%s', str(self.version))
+
         jenkins.init_jenkins()
 
         if not await self._is_build_permitted():
@@ -246,14 +200,17 @@ class Ocp4Pipeline:
             )
 
         await self._check_assembly()
-        await self._initialize_version()
         await self._initialize_build_plan()
+        self._update_title_and_description()
 
-    def _plan_pinned_builds(self):
+    def _update_title_and_description(self):
         """
-        Builds what the operator selected, regardless of source changes.
-        Update build title and description accordingly.
+        Update Jenkins build title and description according to the build content.
         """
+
+        title_update = " [dry-run]" if self.runtime.dry_run else ""
+        title_update += f' - {self.version}-{self.release} '
+        jenkins.update_title(title_update)
 
         jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
         self.runtime.logger.info('Pinned builds (whether source changed or not)')
@@ -354,8 +311,8 @@ class Ocp4Pipeline:
         cmd.extend(
             [
                 'rpms:rebase-and-build',
-                f'--version={self.version.stream}',
-                f'--release={self.version.release}',
+                f'--version={self.version}',
+                f'--release={self.release}',
             ]
         )
 
@@ -406,19 +363,19 @@ class Ocp4Pipeline:
         """
 
         automation_state: str = await util.get_freeze_automation(
-            version=self.version.stream,
+            version=self.version,
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
         )
-        self.runtime.logger.info('Automation freeze for %s: %s', self.version.stream, automation_state)
+        self.runtime.logger.info('Automation freeze for %s: %s', self.version, automation_state)
 
         if automation_state not in ['scheduled', 'yes', 'True']:
             return True
 
         if automation_state == 'scheduled' and self.build_plan.build_rpms and util.is_manual_build():
             # Send a Slack notification since we're running compose build during automation freeze
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
+            self._slack_client.bind_channel(f'openshift-{self.version}')
             await self._slack_client.say(
                 "*:alert: ocp4 build compose running during automation freeze*\n"
                 "There were RPMs in the build plan that forced build compose during automation freeze.",
@@ -428,52 +385,6 @@ class Ocp4Pipeline:
 
         return False
 
-    async def _build_compose(self):
-        """
-        If any RPMs have changed, create multiple yum repos (one for each arch) based on -candidate tags
-        Those repos can be signed (release state) or unsigned (pre-release state)"
-        """
-
-        # Check if compose build is permitted
-        if not await self._is_compose_build_permitted():
-            self.runtime.logger.info("Skipping compose build as it's not permitted")
-            return
-
-        # Build compose
-        try:
-            plashets_built = await plashets.build_plashets(
-                stream=self.version.stream,
-                release=self.version.release,
-                assembly=self.assembly,
-                doozer_working=self.runtime.doozer_working,
-                data_path=self.data_path,
-                data_gitref=self.data_gitref,
-                dry_run=self.runtime.dry_run,
-                copy_links=self.copy_links,
-            )
-            self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
-
-            # public rhel7 ose plashet, if present, needs mirroring to /enterprise/ for CI
-            if plashets_built.get('rhel-server-ose-rpms', None):
-                self.rpm_mirror.plashet_dir_name = plashets_built['rhel-server-ose-rpms']['plashetDirName']
-                self.rpm_mirror.local_plashet_path = plashets_built['rhel-server-ose-rpms']['localPlashetPath']
-                self.runtime.logger.info('rhel7 plashet to mirror: %s', str(self.rpm_mirror))
-
-        except ChildProcessError as e:
-            error_msg = f'Failed building compose: {e}'
-            self.runtime.logger.error(error_msg)
-            self.runtime.logger.error(traceback.format_exc())
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say("Failed building compose")
-            raise
-
-        if self.assembly == 'stream':
-            # Since plashets may have been rebuilt, fire off sync for CI. This will transfer RPMs out to
-            # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
-            # Set block_until_building=False since it can take a very long time for the job to start
-            # it is enough for it to be queued
-            jenkins.start_sync_for_ci(version=self.version.stream, block_until_building=False)
-
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
 
@@ -482,9 +393,9 @@ class Ocp4Pipeline:
         cmd.extend(
             [
                 'images:rebase',
-                f'--version=v{self.version.stream}',
-                f'--release={self.version.release}',
-                f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
+                f'--version=v{self.version}',
+                f'--release={self.release}',
+                f"--message='Updating Dockerfile version and release v{self.version}-{self.release}'",
                 '--push',
                 f"--message='{os.environ['BUILD_URL']}'",
             ]
@@ -506,12 +417,15 @@ class Ocp4Pipeline:
                     filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
                 ).keys(),
             )
+            self.runtime.logger.warning(
+                'Following images failed to rebase and won\'t be built: %s', ', '.join(failed_images)
+            )
 
             # Notify about rebase failures
             if self.assembly == 'stream':
-                self._slack_client.bind_channel(f'openshift-{self.version.stream}')
+                self._slack_client.bind_channel(f'openshift-{self.version}')
                 await self._slack_client.say(
-                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}",
+                    f":alert: Following images failed to rebase in {self.version}: {','.join(failed_images)}",
                 )
 
             # Remove failed images from build plan
@@ -520,14 +434,14 @@ class Ocp4Pipeline:
                 self.build_plan.build_images = False
 
         util.notify_dockerfile_reconciliations(
-            version=self.version.stream,
+            version=self.version,
             doozer_working=self.runtime.doozer_working,
             mail_client=self._mail_client,
         )
 
         # TODO: if a non-required rebase fails, notify ART and the image owners
         util.notify_bz_info_missing(
-            version=self.version.stream,
+            version=self.version,
             doozer_working=self.runtime.doozer_working,
             mail_client=self._mail_client,
         )
@@ -583,7 +497,7 @@ class Ocp4Pipeline:
         self.runtime.logger.info('Building images')
 
         signing_mode = await util.get_signing_mode(
-            group=f'openshift-{self.version.stream}',
+            group=f'openshift-{self.version}',
             assembly=self.assembly,
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
@@ -639,7 +553,7 @@ class Ocp4Pipeline:
 
         if self.mass_rebuild:
             await self._slack_client.say(
-                f':construction: Starting image builds for {self.version.stream} mass rebuild :construction:'
+                f':construction: Starting image builds for {self.version} mass rebuild :construction:'
             )
 
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
@@ -649,7 +563,7 @@ class Ocp4Pipeline:
         await self._build_images()
 
         if self.mass_rebuild:
-            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version.stream} complete :done_it_is:')
+            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
 
     async def _sync_images(self):
         """
@@ -682,69 +596,27 @@ class Ocp4Pipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
 
         else:
-            jenkins.start_build_sync(
-                build_version=self.version.stream,
-                assembly=self.assembly,
-                doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref,
-            )
+            # Trigger ocp4 build sync only for streams that are not being updated with konflux builds
+            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                self.runtime.logger.info(
+                    f'Skipping build-sync job for streams updated by konflux builds {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}'
+                )
+            else:
+                jenkins.start_build_sync(
+                    build_version=self.version,
+                    assembly=self.assembly,
+                    doozer_data_path=self.data_path,
+                    doozer_data_gitref=self.data_gitref,
+                )
 
         if operator_nvrs:
             jenkins.start_olm_bundle(
-                build_version=self.version.stream,
+                build_version=self.version,
                 assembly=self.assembly,
                 operator_nvrs=operator_nvrs,
                 doozer_data_path=self.data_path,
                 doozer_data_gitref=self.data_gitref,
             )
-
-    async def _mirror_rpms(self):
-        if self.assembly != 'stream':
-            self.runtime.logger.info('No need to mirror rpms for non-stream assembly')
-            return
-
-        if not self.rpm_mirror.local_plashet_path:
-            self.runtime.logger.info('No updated RPMs to mirror.')
-            return
-
-        s3_base_dir = f'/enterprise/enterprise-{self.version.stream}'
-
-        # Sync plashets to mirror
-        try:
-            await locks.run_with_lock(
-                coro=sync_repo_to_s3_mirror(
-                    local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=f'{s3_base_dir}/latest/',
-                    dry_run=self.runtime.dry_run,
-                ),
-                lock=Lock.MIRRORING_RPMS,
-                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier,
-            )
-
-            await locks.run_with_lock(
-                coro=sync_repo_to_s3_mirror(
-                    local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=f'/enterprise/all/{self.version.stream}/latest/',
-                    dry_run=self.runtime.dry_run,
-                ),
-                lock=Lock.MIRRORING_RPMS,
-                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier,
-            )
-            self.runtime.logger.info(
-                'Finished mirroring OCP %s to openshift mirrors', f'{self.version.stream}-{self.version.release}'
-            )
-
-        except ChildProcessError as e:
-            error_msg = (f'Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3: {e}',)
-            self.runtime.logger.error(error_msg)
-            self.runtime.logger.error(traceback.format_exc())
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(
-                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3"
-            )
-            raise
 
     async def _sweep(self):
         if self.all_image_build_failed:
@@ -756,7 +628,7 @@ class Ocp4Pipeline:
 
         cmd = [
             'elliott',
-            f'--group=openshift-{self.version.stream}',
+            f'--group=openshift-{self.version}',
             "find-bugs:qe",
         ]
         if self.runtime.dry_run:
@@ -767,8 +639,8 @@ class Ocp4Pipeline:
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(f'Bug sweep failed for {self.version.stream}. Please investigate')
+            self._slack_client.bind_channel(f'openshift-{self.version}')
+            await self._slack_client.say(f'Bug sweep failed for {self.version}. Please investigate')
 
         await self._golang_bug_sweep()
 
@@ -784,7 +656,7 @@ class Ocp4Pipeline:
             'elliott',
             '--assembly',
             'stream',
-            f'--group=openshift-{self.version.stream}',
+            f'--group=openshift-{self.version}',
             "find-bugs:golang",
             "--analyze",
             "--update-tracker",
@@ -798,8 +670,8 @@ class Ocp4Pipeline:
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(f'Golang bug sweep failed for {self.version.stream}. Please investigate')
+            self._slack_client.bind_channel(f'openshift-{self.version}')
+            await self._slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
 
     def _report_success(self):
         # Update description with build metrics
@@ -808,7 +680,7 @@ class Ocp4Pipeline:
         else:
             with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
                 record_log: dict = record_util.parse_record_log(file)
-        metrics = record_log.get('image_build_metrics', None)
+        metrics = record_log.get('image_build_metrics', {})
 
         if not metrics:
             timing_report = 'No images actually built.'
@@ -823,7 +695,7 @@ class Ocp4Pipeline:
 
     async def _request_mass_rebuild(self):
         queue = locks.Keys.BREW_MASS_REBUILD_QUEUE.value
-        mapping = {self.version.stream: mass_rebuild_score(self.version.stream)}
+        mapping = {self.version: mass_rebuild_score(self.version)}
 
         # add yourself to the queue
         # if queue does not exist, it will be created with the value
@@ -841,36 +713,36 @@ class Ocp4Pipeline:
             lock=Lock.MASS_REBUILD,
             lock_name=Lock.MASS_REBUILD.value,
             lock_id=self.lock_identifier,
-            ocp_version=self.version.stream,
+            ocp_version=self.version,
             version_queue_name=queue,
         )
 
     async def run(self):
         await self._initialize()
 
-        # Plan builds
-        self._plan_pinned_builds()
-
         # Rebase and build RPMs
         await self._rebase_and_build_rpms()
-        if not self.skip_plashets:
-            lock = Lock.PLASHET
-            lock_name = lock.value.format(assembly=self.assembly, version=self.version.stream)
-            await locks.run_with_lock(
-                coro=self._build_compose(),
-                lock=lock,
-                lock_name=lock_name,
-                lock_id=self.lock_identifier,
+
+        # Build plashets
+        if not self.skip_plashets and self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            jenkins.start_build_plashets(
+                version=self.version,
+                release=self.release,
+                assembly=self.assembly,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref,
+                dry_run=self.runtime.dry_run,
+                block_until_complete=True,
             )
 
         else:
-            self.runtime.logger.warning('Skipping plashets creation as SKIP_PLASHETS was set to True')
+            self.runtime.logger.warning('Skipping plashets creation')
 
         # Rebase and build images
         if self.build_plan.build_images:
             if self.mass_rebuild:
                 await self._slack_client.say(
-                    f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:'
+                    f':loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:'
                 )
                 await self._request_mass_rebuild()
             else:
@@ -880,9 +752,6 @@ class Ocp4Pipeline:
 
         # Sync images
         await self._sync_images()
-
-        # Mirror RPMs
-        await self._mirror_rpms()
 
         # Find MODIFIED bugs for the target-releases, and set them to ON_QA
         await self._sweep()
@@ -952,7 +821,6 @@ class Ocp4Pipeline:
     help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
 )
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
-@click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -969,7 +837,6 @@ async def ocp4(
     mail_list_failure: str,
     ignore_locks: bool,
     comment_on_pr: bool,
-    copy_links: bool,
 ):
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -989,7 +856,6 @@ async def ocp4(
         mail_list_failure=mail_list_failure,
         lock_identifier=lock_identifier,
         comment_on_pr=comment_on_pr,
-        copy_links=copy_links,
     )
 
     if ignore_locks:

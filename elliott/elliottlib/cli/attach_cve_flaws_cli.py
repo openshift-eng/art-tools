@@ -14,6 +14,7 @@ from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, u
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
+from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +64,11 @@ async def attach_cve_flaws_cli(
         advisories = [find_default_advisory(runtime, default_advisory_type)]
     else:
         advisories = [advisory_id]
+
+    # Get the advisory kind-id mapping
+    releases_config = runtime.get_releases_config()
+    advisories_by_kind = releases_config['releases'][runtime.assembly]['assembly']['group']['advisories']
+
     exit_code = 0
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
     errata_config = runtime.get_errata_config()
@@ -80,7 +86,7 @@ async def attach_cve_flaws_cli(
 
         try:
             if flaw_bugs:
-                _update_advisory(runtime, advisory, flaw_bugs, flaw_bug_tracker, noop)
+                _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
                 LOGGER.info('Associating CVEs with builds')
                 await associate_builds_with_cves(
@@ -147,11 +153,28 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     return tracker_flaws, first_fix_flaw_bugs
 
 
-def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
+def _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
-    cve_boilerplate = errata_config['boilerplates']['cve']
-    advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
+
+    # Get the name of the advisory (eg. image|rpm|metadata|microshift etc.)
+    art_advisory_key = next((k for k, v in advisories_by_kind.items() if v == advisory_id), None)
+
+    if not art_advisory_key:
+        raise ValueError(f'ART advisory key not found for advisory: {advisory_id} in list {advisories_by_kind.items()}')
+
+    cve_boilerplate = get_advisory_boilerplate(
+        runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
+    )
+
+    assembly = runtime.get_major_minor_patch()
+    versions = {
+        'major': assembly[0],
+        'minor': assembly[1],
+        'patch': assembly[2],
+    }
+
+    advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs, versions)
     if not noop and updated:
         LOGGER.info("Updating advisory details %s", advisory_id)
         advisory.commit()
@@ -202,7 +225,7 @@ async def associate_builds_with_cves(
     )
 
 
-def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
+def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs, versions):
     """Given an advisory object, get updated advisory to RHSA
 
     :param cve_boilerplate: cve template for rhsa
@@ -210,17 +233,20 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
     :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
     :returns: updated advisory object and a boolean indicating if advisory was updated
     """
+    minor = versions['minor']
+    patch = versions['patch']
     updated = False
     if not is_security_advisory(advisory):
         LOGGER.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
         updated = True
+        security_impact = 'Low'
         advisory.update(
             errata_type='RHSA',
             security_reviewer=cve_boilerplate['security_reviewer'],
-            synopsis=cve_boilerplate['synopsis'],
-            topic=cve_boilerplate['topic'].format(IMPACT="Low"),
-            # solution=cve_boilerplate['solution'],
-            security_impact='Low',
+            synopsis=cve_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch),
+            topic=cve_boilerplate['topic'].format(IMPACT=security_impact, MINOR=minor, PATCH=patch),
+            solution=cve_boilerplate['solution'].format(MINOR=minor),
+            security_impact=security_impact,
         )
 
     flaw_bugs = sort_cve_bugs(flaw_bugs)
@@ -234,7 +260,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
         formatted_cve_list = '\n'.join(
             [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
         )
-        formatted_description = cve_boilerplate['description'].format(CVES=formatted_cve_list)
+        formatted_description = cve_boilerplate['description'].format(CVES=formatted_cve_list, MINOR=minor, PATCH=patch)
         advisory.update(description=formatted_description)
 
     highest_impact = get_highest_security_impact(flaw_bugs)
@@ -249,7 +275,7 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
             )
 
     if highest_impact not in advisory.topic:
-        topic = cve_boilerplate['topic'].format(IMPACT=highest_impact)
+        topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=minor, PATCH=patch)
         LOGGER.info('Topic updated to include impact of {}'.format(highest_impact))
         advisory.update(topic=topic)
 

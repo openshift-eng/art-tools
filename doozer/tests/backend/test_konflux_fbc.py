@@ -260,7 +260,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
-        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=True)
+        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
         mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
@@ -294,12 +294,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
-        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=True)
+        build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
         mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_called_once()
 
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.is_file", return_value=True)
@@ -314,9 +315,11 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_is_file,
         mock_mkdir,
         MockDockerfileParser,
+        mock_get_referenced_images,
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        metadata.runtime = MagicMock()
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
         bundle_build = MagicMock(
@@ -326,6 +329,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             image_tag="deadbeef",
             source_repo="https://example.com/foo-operator.git",
             commitish="beefdead",
+            operator_nvr="foo-operator-1.0.0-1",
+            operand_nvrs=[],
         )
         version = "1.0.0"
         release = "1"
@@ -403,6 +408,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         result_catalog_file = StringIO()
         images_mirror_set_file = StringIO()
         mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+        mock_get_referenced_images.return_value = [
+            MagicMock(image_pullspec="example.com/art-images@1"),
+            MagicMock(image_pullspec="example.com/art-images@2"),
+        ]
 
         await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
 
@@ -455,7 +464,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         images_mirror_set_file.seek(0)
         images_mirror_set = yaml.load(images_mirror_set_file)
-        self.assertEqual(len(images_mirror_set["spec"]["imageDigestMirrors"]), 3)
+        self.assertEqual(len(images_mirror_set["spec"]["imageDigestMirrors"]), 2)
 
     def test_generate_image_digest_mirror_set(self):
         olm_bundle_blobs = [
@@ -480,7 +489,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         ]
-        result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs)
+        ref_pullspecs = [
+            "build.example.com/art-images@sha256:9930cd2f6519e619da1811f04e4d3a73c29f519142064a1562e0759e251bf319",
+            "build.example.com/art-images@sha256:bd8dddf22ed4d977127d8c1e89b868ecb4a34645ac09d376cedbcaa03176a846",
+            "build.example.com/art-images@sha256:683e74056df40f38004b2145b8a037dd43b56376061915f37ccb50b5ed19b404",
+            "build.example.com/art-images@sha256:d62745a5780f4224d49fad22be910e426cf3bfc3150b0e4cdc00fa69a6983a9b",
+        ]
+        result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs, ref_pullspecs)
         self.assertEqual(len(result["spec"]["imageDigestMirrors"]), 4)
 
     @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)

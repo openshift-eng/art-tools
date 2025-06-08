@@ -55,6 +55,10 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+        # In case of a network outage,  the client may hang indefinitely without raising any exception.
+        # This is a workaround to set a timeout for the requests.
+        # https://github.com/kubernetes-client/python/blob/master/examples/watch/timeout-settings.md
+        self.request_timeout = 60 * 5  # 5 minutes
 
     def verify_connection(self):
         try:
@@ -130,7 +134,9 @@ class KonfluxClient:
         api = await self._get_api(api_version, kind)
         resource = None
         try:
-            resource = await exectools.to_thread(api.get, name=name, namespace=namespace or self.default_namespace)
+            resource = await exectools.to_thread(
+                api.get, name=name, namespace=namespace or self.default_namespace, _request_timeout=self.request_timeout
+            )
         except exceptions.NotFoundError:
             if strict:
                 raise
@@ -164,7 +170,9 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have created {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(self.dyn_client, manifest)
         self._logger.info(f"Creating {api_version}/{kind} {namespace}/{name or '<dynamic>'}...")
-        new = await exectools.to_thread(api.create, namespace=namespace, body=manifest, **kwargs)
+        new = await exectools.to_thread(
+            api.create, namespace=namespace, body=manifest, _request_timeout=self.request_timeout, **kwargs
+        )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
         self._logger.info(f"Created {api_version}/{kind} {namespace}/{name}")
@@ -187,6 +195,7 @@ class KonfluxClient:
             body=manifest,
             namespace=namespace,
             content_type="application/merge-patch+json",
+            _request_timeout=self.request_timeout,
         )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
@@ -205,7 +214,9 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have replaced {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(self.dyn_client, manifest)
         self._logger.info(f"Replacing {api_version}/{kind} {namespace}/{name}")
-        new = await exectools.to_thread(api.replace, body=manifest, namespace=namespace)
+        new = await exectools.to_thread(
+            api.replace, body=manifest, namespace=namespace, _request_timeout=self.request_timeout
+        )
         new = cast(resource.ResourceInstance, new)
         api_version, kind, name, namespace = self._extract_manifest_metadata(new.to_dict())
         self._logger.info(f"Replaced {api_version}/{kind} {namespace}/{name}")
@@ -224,7 +235,7 @@ class KonfluxClient:
             self._logger.warning(f"[DRY RUN] Would have deleted {api_version}/{kind} {namespace}/{name}")
             return
         self._logger.info(f"Deleting {api_version}/{kind} {namespace}/{name}")
-        await exectools.to_thread(api.delete, name=name, namespace=namespace)
+        await exectools.to_thread(api.delete, name=name, namespace=namespace, _request_timeout=self.request_timeout)
         self._logger.info(f"Deleted {api_version}/{kind} {namespace}/{name}")
 
     async def _create_or_patch(self, manifest: dict):
@@ -363,7 +374,6 @@ class KonfluxClient:
 
     async def _new_pipelinerun_for_image_build(
         self,
-        metadata: ImageMetadata,
         generate_name: str,
         namespace: Optional[str],
         application_name: str,
@@ -381,6 +391,8 @@ class KonfluxClient:
         sast: Optional[bool] = False,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        annotations: Optional[dict[str, str]] = None,
+        artifact_type: Optional[str] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -409,7 +421,8 @@ class KonfluxClient:
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
-        obj["metadata"]["annotations"]["art-network-mode"] = metadata.get_konflux_network_mode()
+        if annotations:
+            obj["metadata"]["annotations"].update(annotations)
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
@@ -457,9 +470,9 @@ class KonfluxClient:
                 case "build-images":
                     has_build_images_task = True
                     task["timeout"] = "12h"
-                    _modify_param(task["params"], "SBOM_TYPE", "cyclonedx")
+                    _modify_param(task["params"], "SBOM_TYPE", "spdx")
                 case "prefetch-dependencies":
-                    _modify_param(task["params"], "sbom-type", "cyclonedx")
+                    _modify_param(task["params"], "sbom-type", "spdx")
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
                 case "clone-repository":
@@ -470,6 +483,9 @@ class KonfluxClient:
                     )
                 case "sast-snyk-check":
                     has_sast_task = True
+                case "ecosystem-cert-preflight-checks":
+                    if artifact_type:
+                        _modify_param(task["params"], "artifact-type", artifact_type)
 
         if not sast:
             tasks = []
@@ -526,7 +542,6 @@ class KonfluxClient:
 
     async def start_pipeline_run_for_image_build(
         self,
-        metadata: ImageMetadata,
         generate_name: str,
         namespace: Optional[str],
         application_name: str,
@@ -545,11 +560,12 @@ class KonfluxClient:
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        annotations: Optional[dict[str, str]] = None,
+        artifact_type: Optional[str] = None,
     ):
         """
         Start a PipelineRun for building an image.
 
-        :param metadata: Image Metadata
         :param generate_name: The generateName for the PipelineRun.
         :param namespace: The namespace for the PipelineRun.
         :param application_name: The application name.
@@ -557,17 +573,19 @@ class KonfluxClient:
         :param git_url: The git URL.
         :param commit_sha: The commit SHA.
         :param target_branch: The target branch.
-        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param output_image: The output image.
+        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param building_arches: The architectures to build.
+        :param prefetch: The param values for Konflux prefetch dependencies task
+        :param sast: To enable the SAST task in PLR
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
-        :param image_metadata: Image metadata
+        :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
-        :param prefetch: The param values for Konflux prefetch dependencies task
-        :param sast: To enable the SAST task in PLR
+        :param annotations: Optional PLR annotations
+        :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -581,7 +599,6 @@ class KonfluxClient:
         ]
 
         pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
-            metadata=metadata,
             generate_name=generate_name,
             namespace=namespace,
             application_name=application_name,
@@ -599,6 +616,8 @@ class KonfluxClient:
             pipelinerun_template_url=pipelinerun_template_url,
             prefetch=prefetch,
             sast=sast,
+            annotations=annotations,
+            artifact_type=artifact_type,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
@@ -696,6 +715,7 @@ class KonfluxClient:
                         # an event, it also ensures we will come back and check
                         # the object with an explicit get at least once per period.
                         timeout_seconds=5 * 60,
+                        _request_timeout=self.request_timeout,
                     ):
                         assert isinstance(event, Dict)
                         cancel_pipelinerun = (
@@ -713,7 +733,9 @@ class KonfluxClient:
 
                         pod_desc = []
                         pods = pod_resource.get(
-                            namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}"
+                            namespace=namespace,
+                            label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
+                            _request_timeout=self.request_timeout,
                         )
                         current_time = datetime.datetime.now()
                         for pod_instance in pods.items:
@@ -769,7 +791,9 @@ class KonfluxClient:
                         if succeeded_status not in ["Unknown", "Not Found"]:
                             time.sleep(5)  # allow final pods to update their status if they can
                             pods_instances = pod_resource.get(
-                                namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}"
+                                namespace=namespace,
+                                label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
+                                _request_timeout=self.request_timeout,
                             )
                             # We will convert ResourceInstances to Dicts so that they can be manipulated with
                             # extra information.
@@ -799,6 +823,7 @@ class KonfluxClient:
                                                     name=pod_name,
                                                     namespace=namespace,
                                                     container=container_name,
+                                                    _request_timeout=self.request_timeout,
                                                 )
                                                 # stuff log information into the container_status, so that it can be
                                                 # included in the bigquery database.
