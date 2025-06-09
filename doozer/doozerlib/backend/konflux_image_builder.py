@@ -334,6 +334,44 @@ class KonfluxImageBuilder:
 
         return cachi2_enabled
 
+    @staticmethod
+    def is_lockfile_generation_enabled(metadata: ImageMetadata, logger) -> bool:
+        """
+        Determines whether lockfile generation is enabled for the given image metadata.
+
+        This function checks if the cachi2 feature is enabled for the provided metadata.
+        If cachi2 is not enabled, lockfile generation is disabled.
+        Otherwise, it checks for lockfile generation overrides in the following order:
+          1. Image metadata configuration (`metadata.config.konflux.cachi2.lockfile.enabled`)
+          2. Group configuration (`metadata.runtime.group_config.konflux.cachi2.lockfile.enabled`)
+        If neither override is set, lockfile generation defaults to enabled.
+
+        Args:
+            metadata (ImageMetadata): The image metadata object containing configuration.
+            logger: Logger instance for logging information. If None, a default logger is used.
+
+        Returns:
+            bool: True if lockfile generation is enabled, False otherwise.
+        """
+        logger = logger or LOGGER
+        lockfile_enabled = True
+
+        cachi2_enabled = KonfluxImageBuilder._is_cachi2_enabled(metadata, logger)
+        if not cachi2_enabled:
+            return False
+
+        lockfile_config_override = metadata.config.konflux.cachi2.lockfile.enabled
+        if lockfile_config_override not in [Missing, None]:
+            lockfile_enabled = lockfile_config_override
+            logger.info(f"Lockfile generation set from metadata config {lockfile_enabled}")
+        else:
+            lockfile_group_override = metadata.runtime.group_config.konflux.cachi2.lockfile.enabled
+            if lockfile_group_override not in [Missing, None]:
+                lockfile_enabled = lockfile_group_override
+                logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
+
+        return lockfile_enabled
+
     def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in

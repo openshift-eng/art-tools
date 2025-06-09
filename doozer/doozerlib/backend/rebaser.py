@@ -9,7 +9,7 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import bashlex
 import bashlex.errors
@@ -23,8 +23,10 @@ from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_en
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from doozerlib.image import ImageMetadata
+from doozerlib.lockfile import RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -83,6 +85,7 @@ class KonfluxRebaser:
         self._source_modifier_factory = source_modifier_factory
         self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
+        self._rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos)
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -646,6 +649,8 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
+            asyncio.run(self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir))
+
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
                 metadata, source, df_path, version, release, downstream_parents, force_yum_updates, uuid_tag, dest_dir
@@ -654,6 +659,59 @@ class KonfluxRebaser:
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
             return version, release
+
+    async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path):
+        """
+        Generates RPM lockfile based on image metadata and repository configuration.
+
+        Fetches RPM package lists from metadata and parent metadata, calculates
+        RPMs to install, and delegates lockfile generation to RPMLockfileGenerator.
+        """
+        lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
+
+        if not lockfile_enabled:
+            self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
+            return
+
+        async def fetch_packages_from_metadata(name: str, group_name: str) -> set[str]:
+            try:
+                build = await self._runtime.konflux_db.get_latest_build(name=name, group=group_name)
+                if build and build.installed_packages:
+                    return set(build.installed_packages)
+                return set()
+            except Exception as e:
+                self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
+                return set()
+
+        rpms_to_install = set(metadata.config.konflux.cachi2.lockfile.packages.get('install', []))
+        parents = metadata.get_parent_members()
+
+        if parents:
+            parent_name = next(iter(parents))
+            rpms, parent_rpms = await asyncio.gather(
+                fetch_packages_from_metadata(metadata.distgit_key, group),
+                fetch_packages_from_metadata(parent_name, group),
+            )
+            rpms_to_install.update(rpms - parent_rpms)
+        else:
+            rpms = await fetch_packages_from_metadata(metadata.distgit_key, group)
+            if rpms:
+                self._logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
+                rpms_to_install.update(rpms)
+
+        if not rpms_to_install:
+            self._logger.warning(
+                f'Empty RPM list to install for {metadata.distgit_key}; all required RPMs may be inherited'
+            )
+            return
+        else:
+            self._logger.info(f'Final install RPMs for {metadata.distgit_key}: {sorted(rpms_to_install)}')
+
+        enabled_repos = set(metadata.config.get("enabled_repos", []))
+
+        await self._rpm_lockfile_generator.generate_lockfile(
+            metadata.get_arches(), enabled_repos, rpms_to_install, dest_dir
+        )
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]

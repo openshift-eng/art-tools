@@ -6,7 +6,7 @@ import lzma
 import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from logging import Logger
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 from urllib import parse
 
 import aiohttp
@@ -30,6 +30,10 @@ class Rpm:
     name: str
     epoch: int
     version: str
+    checksum: str
+    size: int
+    location: str
+    sourcerpm: str
     release: str
     arch: str
 
@@ -54,6 +58,10 @@ class Rpm:
             "name": self.name,
             "epoch": str(self.epoch),
             "version": self.version,
+            "checksum": self.checksum,
+            "size": str(self.size),
+            "location": self.location,
+            "sourcerpm": self.sourcerpm,
             "release": self.release,
             "arch": self.arch,
             "nvr": self.nvr,
@@ -76,6 +84,10 @@ class Rpm:
             version=nvrea_dict["version"],
             release=nvrea_dict["release"],
             arch=nvrea_dict["arch"],
+            checksum="",
+            size=0,
+            location="",
+            sourcerpm="",
         )
 
     @staticmethod
@@ -86,13 +98,34 @@ class Rpm:
         version = metadata.find("common:version", NAMESPACES)
         if version is None:
             raise ValueError("version is not set")
+        checksum = metadata.find("common:checksum", NAMESPACES)
+        if checksum is None or not checksum.text:
+            raise ValueError('checksum is not set')
+        size = metadata.find("common:size", NAMESPACES)
+        if size is None:
+            raise ValueError("size is not set")
+        location = metadata.find("common:location", NAMESPACES)
+        if location is None:
+            raise ValueError("location is not set")
         arch = metadata.find("common:arch", NAMESPACES)
         if arch is None or not arch.text:
             raise ValueError("arch is not set")
+
+        format_elem = metadata.find("common:format", NAMESPACES)
+        sourcerpm = ''
+        if format_elem is not None:
+            sourcerpm_elem = format_elem.find("rpm:sourcerpm", NAMESPACES)
+            if sourcerpm_elem is not None and sourcerpm_elem.text:
+                sourcerpm = sourcerpm_elem.text
+
         return Rpm(
             name=name.text,
             epoch=int(version.attrib["epoch"]),
             version=version.attrib["ver"],
+            checksum=checksum.text,
+            size=int(size.attrib["package"]),
+            location=location.attrib["href"],
+            sourcerpm=sourcerpm,
             release=version.attrib["rel"],
             arch=arch.text,
         )
@@ -141,6 +174,24 @@ class Repodata:
     name: str
     primary_rpms: List[Rpm] = field(default_factory=list)
     modules: List[RpmModule] = field(default_factory=list)
+
+    def get_rpms(self, items: Union[str, Iterable[str]]) -> Tuple[list[Rpm], list[str]]:
+        if isinstance(items, str):
+            items = {items}
+        else:
+            items = set(items)  # ensures consistent behavior and removes duplicates
+
+        found_rpms: list[Rpm] = []
+        not_found: list[str] = []
+
+        for item in items:
+            rpm = next((rpm for rpm in self.primary_rpms if rpm.name == item or rpm.nvr == item), None)
+            if rpm is not None:
+                found_rpms.append(rpm)
+            else:
+                not_found.append(item)
+
+        return found_rpms, sorted(not_found)
 
     @staticmethod
     def from_metadatas(name: str, primary: xml.etree.ElementTree.Element, modules_yaml: List[Dict]):
