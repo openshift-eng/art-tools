@@ -59,7 +59,7 @@ class BuildPlashetsPipeline:
         # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
         # will find consistent RPMs.
         major, minor = self.version.split('.')
-        if major == 4 and minor <= 19:
+        if int(major) == 4 and int(minor) <= 19:
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build")
         else:
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build-node-image")
