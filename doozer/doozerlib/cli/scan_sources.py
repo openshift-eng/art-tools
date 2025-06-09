@@ -605,7 +605,7 @@ class ConfigScanSources:
 
     async def _detect_rhcos_status(self) -> list:
         """
-        gather the existing RHCOS tags and compare them to latest rhcos builds, also check outdate rpms in rhcos
+        gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
         @return a list of status entries like:
             {
                 'name': "4.2-x86_64-priv",
