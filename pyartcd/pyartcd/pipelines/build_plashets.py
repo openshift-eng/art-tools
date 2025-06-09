@@ -9,7 +9,7 @@ from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
 from pyartcd.plashets import build_plashets
 from pyartcd.runtime import Runtime
-from pyartcd.util import get_freeze_automation, is_manual_build
+from pyartcd.util import get_freeze_automation, has_layered_rhcos, is_manual_build
 
 
 class RpmMirror:
@@ -33,6 +33,18 @@ class BuildPlashetsPipeline:
         self.copy_links = copy_links
 
         self.slack_client = runtime.new_slack_client()
+
+        group_param = f'--group=openshift-{version}'
+        if data_gitref:
+            group_param += f'@{data_gitref}'
+
+        self._doozer_base_command = [
+            'doozer',
+            f'--assembly={assembly}',
+            f'--working-dir={self.runtime.doozer_working}',
+            f'--data-path={data_path}',
+            group_param,
+        ]
 
     async def run(self):
         jenkins.init_jenkins()
@@ -58,11 +70,11 @@ class BuildPlashetsPipeline:
         # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
         # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
         # will find consistent RPMs.
-        major, minor = self.version.split('.')
-        if major == 4 and minor <= 19:
-            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build")
-        else:
-            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build-node-image")
+
+        layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
+        job_name = 'build-node-image' if layered_rhcos else 'build'
+        self.runtime.logger.info('Triggering a %s RHCOS build with RHCOS mode: %s', self.version, job_name)
+        jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
     async def build(self):
         try:
