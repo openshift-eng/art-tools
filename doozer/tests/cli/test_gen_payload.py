@@ -130,7 +130,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             collect_assembly_build_ids=MagicMock(return_value={1, 2, 3}),
             detect_mismatched_siblings=None,
             detect_non_latest_rpms=None,
-            detect_inconsistent_images=AsyncMock(),
+            detect_inconsistent_images=Mock(),
             detect_installed_rpms_issues=None,
             detect_extend_payload_entry_issues=AsyncMock(),
             summarize_issue_permits=(True, {}),
