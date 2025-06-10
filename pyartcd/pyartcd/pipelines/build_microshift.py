@@ -61,6 +61,7 @@ class BuildMicroShiftPipeline:
         payloads: Tuple[str, ...],
         no_rebase: bool,
         force: bool,
+        skip_prepare_release: bool,
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
@@ -72,6 +73,7 @@ class BuildMicroShiftPipeline:
         self.payloads = payloads
         self.no_rebase = no_rebase
         self.force = force
+        self.skip_prepare_release = skip_prepare_release
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -113,12 +115,13 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_stream()
         else:
             # Check if microshift advisory is defined in assembly
-            if 'microshift' not in advisories or advisories.get("microshift") <= 0:
+            if 'microshift' not in advisories or advisories.get("microshift") <= 0 and not self.skip_prepare_release:
                 self.advisory_num = await self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
-            await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
+            if not self.skip_prepare_release:
+                await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
         return yaml.load(self.get_file_from_branch(group, "erratatool.yml", data_path))
@@ -637,10 +640,14 @@ class BuildMicroShiftPipeline:
     help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose",
 )
 @click.option("--force", is_flag=True, help="(For named assemblies) Rebuild even if a build already exists")
+@click.option("--skip-prepare-release", is_flag=True,
+    help="(For named assemblies) Skip create advisory and prepare advisory logic"
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift(
-    runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool, force: bool
+    runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool, force: bool,
+    skip_prepare_release
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -653,6 +660,7 @@ async def build_microshift(
             payloads=payloads,
             no_rebase=no_rebase,
             force=force,
+            skip_prepare_release=skip_prepare_release,
             data_path=data_path,
             slack_client=slack_client,
         )
