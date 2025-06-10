@@ -640,14 +640,22 @@ class BuildMicroShiftPipeline:
     help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose",
 )
 @click.option("--force", is_flag=True, help="(For named assemblies) Rebuild even if a build already exists")
-@click.option("--skip-prepare-release", is_flag=True,
-    help="(For named assemblies) Skip create advisory and prepare advisory logic"
+@click.option(
+    "--skip-prepare-release",
+    is_flag=True,
+    help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
 @pass_runtime
 @click_coroutine
 async def build_microshift(
-    runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool, force: bool,
-    skip_prepare_release
+    runtime: Runtime,
+    data_path: str,
+    group: str,
+    assembly: str,
+    payloads: Tuple[str, ...],
+    no_rebase: bool,
+    force: bool,
+    skip_prepare_release,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
