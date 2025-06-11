@@ -629,10 +629,10 @@ async def _fetch_builds_by_kind_rpm(
                 pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
             builds.extend(component_builds.values())
 
-    if builds:
-        LOGGER.info(f"Find builds {builds}")
-    else:
+    LOGGER.info(f"Found {len(builds)} qualified rpm builds")
+    if not builds:
         return []
+
     _ensure_accepted_tags(builds, brew_session, tag_pv_map, raise_exception=False)
     qualified_builds = [b for b in builds if "tag_name" in b and b["tag_name"] in tag_pv_map]
     not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b or b["tag_name"] not in tag_pv_map]
