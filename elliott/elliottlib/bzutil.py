@@ -1451,6 +1451,9 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
         component = t.whiteboard_component
         if component in components_not_yet_fixed:
             first_fix_components.append((component, t.id))
+            logger.info(f'Component {component} for CVE {alias} has a first-fix with {t.id}')
+        else:
+            logger.info(f'Component {component} for CVE {alias} has been fixed before {t.id}')
 
     if first_fix_components:
         logger.info(

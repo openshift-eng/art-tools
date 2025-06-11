@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Set
 
 import click
 from artcommonlib import arch_util
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.rpm_utils import parse_nvr
 from errata_tool import Erratum
 
@@ -167,12 +168,22 @@ def _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, bug_track
         runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
     )
 
-    assembly = runtime.get_major_minor_patch()
-    versions = {
-        'major': assembly[0],
-        'minor': assembly[1],
-        'patch': assembly[2],
-    }
+    try:
+        assembly = runtime.get_major_minor_patch()
+        versions = {
+            'major': assembly[0],
+            'minor': assembly[1],
+            'patch': assembly[2],
+        }
+    except ValueError:
+        if runtime.assembly_type == AssemblyTypes.STANDARD:
+            raise
+        major, minor = runtime.get_major_minor()
+        versions = {
+            'major': major,
+            'minor': minor,
+            'patch': "0",
+        }
 
     advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs, versions)
     if not noop and updated:
