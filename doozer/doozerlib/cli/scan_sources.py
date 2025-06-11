@@ -71,7 +71,7 @@ class ConfigScanSources:
         self.check_builder_images()
 
         # We have our information. Now build and print the output report
-        self.generate_report()
+        await self.generate_report()
 
     def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str):
         reconciled = False
@@ -525,7 +525,7 @@ class ConfigScanSources:
                 RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, f'Ancestor {meta.distgit_key} is changing'),
             )
 
-    def generate_report(self):
+    async def generate_report(self):
         image_results = []
         changing_image_dgks = [meta.distgit_key for meta in self.changing_image_metas]
         for image_meta in self.all_image_metas:
@@ -562,7 +562,7 @@ class ConfigScanSources:
         self.runtime.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
 
         if self.ci_kubeconfig:  # we can determine m-os-c needs updating if we can look at imagestreams
-            results['rhcos'] = self._detect_rhcos_status()
+            results['rhcos'] = await self._detect_rhcos_status()
 
         if self.as_yaml:
             click.echo('---')
@@ -603,9 +603,9 @@ class ConfigScanSources:
             )
             return None
 
-    def _detect_rhcos_status(self) -> list:
+    async def _detect_rhcos_status(self) -> list:
         """
-        gather the existing RHCOS tags and compare them to latest rhcos builds
+        gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
         @return a list of status entries like:
             {
                 'name': "4.2-x86_64-priv",
@@ -628,18 +628,44 @@ class ConfigScanSources:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
 
-                if not latest_rhcos_value:
-                    status['changed'] = False
-                    status['reason'] = "could not find an RHCOS build to sync"
-                elif tagged_rhcos_value == latest_rhcos_value:
-                    status['changed'] = False
-                    status['reason'] = f"latest RHCOS build is still {latest_rhcos_value} -- no change from istag"
-                else:
+                if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
+                    status['updated'] = True
                     status['changed'] = True
                     status['reason'] = (
                         f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
                     )
-                if status['changed']:
+                    statuses.append(status)
+                # check outdate rpms in rhcos
+                pullspec_for_tag = dict()
+                build_id = ""
+                for container_conf in self.runtime.group_config.rhcos.payload_tags:
+                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, arch, private).latest_container(
+                        container_conf
+                    )
+                    pullspec_for_tag[container_conf.name] = pullspec
+                non_latest_rpms = await rhcos.RHCOSBuildInspector(
+                    self.runtime, pullspec_for_tag, arch, build_id
+                ).find_non_latest_rpms(exclude_rhel=True)
+                non_latest_rpms_filtered = []
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    # exclude rpm if non_latest_rpms in rhel image rpm list
+                    exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+                    for installed_rpm, latest_rpm, repo in non_latest_rpms:
+                        if any(excluded in installed_rpm for excluded in exclude_rpms):
+                            self.runtime.logger.info(
+                                f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                            )
+                        else:
+                            non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
+                else:
+                    non_latest_rpms_filtered = non_latest_rpms
+                if non_latest_rpms_filtered:
+                    status['outdated'] = True
+                    status['changed'] = True
+                    status['reason'] = ";\n".join(
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+                    )
                     statuses.append(status)
         return statuses
 

@@ -54,16 +54,6 @@ class BuildPlashetsPipeline:
         # it is enough for it to be queued
         jenkins.start_sync_for_ci(version=self.version, block_until_building=False)
 
-        # Also trigger rhcos builds for the release in order to absorb any changes from plashets or RHEL which may
-        # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
-        # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
-        # will find consistent RPMs.
-        major, minor = self.version.split('.')
-        if int(major) == 4 and int(minor) <= 19:
-            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build")
-        else:
-            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name="build-node-image")
-
     async def build(self):
         try:
             plashets_built = await build_plashets(
