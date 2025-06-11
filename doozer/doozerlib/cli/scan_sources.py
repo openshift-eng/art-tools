@@ -647,7 +647,7 @@ class ConfigScanSources:
                     self.runtime, pullspec_for_tag, arch, build_id
                 ).find_non_latest_rpms(exclude_rhel=True)
                 non_latest_rpms_filtered = []
-                
+
                 # exclude rpm if non_latest_rpms in rhel image rpm list
                 exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
                 for installed_rpm, latest_rpm, repo in non_latest_rpms:
