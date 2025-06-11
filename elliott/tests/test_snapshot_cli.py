@@ -25,7 +25,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.runtime.konflux_db = MagicMock()
 
         self.konflux_client = AsyncMock()
-        self.konflux_client.verify_connection.return_value = True
+        # Patch verify_connection to be a regular Mock, not AsyncMock
+        self.konflux_client.verify_connection = Mock(return_value=True)
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
@@ -145,7 +146,8 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         self.runtime.konflux_db = MagicMock()
 
         self.konflux_client = AsyncMock()
-        self.konflux_client.verify_connection.return_value = True
+        # Patch verify_connection to be a regular Mock, not AsyncMock
+        self.konflux_client.verify_connection = Mock(return_value=True)
 
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -176,7 +178,8 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
                 ],
             },
         }
-        self.konflux_client._get.return_value = Model(snapshot)
+        # Ensure _get is an AsyncMock and returns Model(snapshot)
+        self.konflux_client._get = AsyncMock(return_value=Model(snapshot))
         mock_oc_image_info.return_value = {
             "config": {
                 "config": {
@@ -192,14 +195,14 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         cli = GetSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
-            image_repo_pull_secret=self.image_repo_pull_secret,
+            image_repo_pull_secret='/path/to/pull-secret',
             for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             snapshot='test-snapshot',
             dry_run=self.dry_run,
         )
         actual_nvrs = await cli.run()
-        self.konflux_client._get.assert_called_once_with(API_VERSION, KIND_SNAPSHOT, 'test-snapshot')
+        self.konflux_client._get.assert_awaited_once_with(API_VERSION, KIND_SNAPSHOT, 'test-snapshot')
         mock_oc_image_info.assert_called_once_with(
             "registry/image@sha256:digest1",
             registry_config=self.image_repo_pull_secret,
