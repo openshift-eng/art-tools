@@ -195,7 +195,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         cli = GetSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
-            image_repo_pull_secret={},  # Pass a dict as required by the constructor
+            image_repo_pull_secret='/path/to/pull-secret',
             for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             snapshot='test-snapshot',

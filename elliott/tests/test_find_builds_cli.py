@@ -63,11 +63,11 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
 
         image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
         image_meta_1.branch_el_target.return_value = "el8"
-        image_meta_1.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image1-1.0.0-1.el8"))
+        image_meta_1.get_latest_build = AsyncMock(return_value={"nvr": "image1-1.0.0-1.el8"})
 
         image_meta_2 = MagicMock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
         image_meta_2.branch_el_target.return_value = "el9"
-        image_meta_2.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image2-2.0.0-1.el9"))
+        image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
         actual_records = await find_builds_konflux(runtime, payload=True)
