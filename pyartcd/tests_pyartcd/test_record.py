@@ -1,7 +1,7 @@
 from io import StringIO
 from unittest import TestCase
 
-from pyartcd import record
+from pyartcdlib import record
 
 
 class TestRebuildPipeline(TestCase):

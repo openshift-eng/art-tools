@@ -9,7 +9,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.model import Model
 
-from pyartcd.pipelines.promote import PromotePipeline
+from pyartcdlib.pipelines.promote import PromotePipeline
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):

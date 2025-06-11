@@ -2,7 +2,7 @@ import asyncio
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, MagicMock, patch
 
-from pyartcd.umb_client import AsyncUMBClient, parse_broker_uri, parse_stomp_uri
+from pyartcdlib.umb_client import AsyncUMBClient, parse_broker_uri, parse_stomp_uri
 
 
 class TestModuleFunctions(TestCase):

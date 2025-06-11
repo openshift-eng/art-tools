@@ -25,7 +25,7 @@ from doozerlib.cli import cli, pass_runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import extract_version_fields, get_docker_config_json, what_is_in_master
-from pyartcd import jenkins
+from pyartcdlib import jenkins
 
 transform_rhel_7_base_repos = 'rhel-7/base-repos'
 transform_rhel_8_base_repos = 'rhel-8/base-repos'

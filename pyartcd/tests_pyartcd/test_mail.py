@@ -1,7 +1,7 @@
 import pathlib
 from unittest import TestCase, mock
 
-from pyartcd.mail import MailService
+from pyartcdlib.mail import MailService
 
 
 class TestMailService(TestCase):

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
+from pyartcdlib.pipelines.gen_assembly import GenAssemblyPipeline
 
 
 class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):

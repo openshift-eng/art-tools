@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
 
-from pyartcd.signatory import AsyncSignatory
+from pyartcdlib.signatory import AsyncSignatory
 
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):

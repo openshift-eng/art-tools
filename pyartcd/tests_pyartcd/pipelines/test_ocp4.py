@@ -4,9 +4,9 @@ import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd import constants
-from pyartcd.jenkins import Jobs
-from pyartcd.pipelines import ocp4
+from pyartcdlib import constants
+from pyartcdlib.jenkins import Jobs
+from pyartcdlib.pipelines import ocp4
 
 
 class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
