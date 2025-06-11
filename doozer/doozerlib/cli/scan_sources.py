@@ -647,18 +647,16 @@ class ConfigScanSources:
                     self.runtime, pullspec_for_tag, arch, build_id
                 ).find_non_latest_rpms(exclude_rhel=True)
                 non_latest_rpms_filtered = []
-                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                    # exclude rpm if non_latest_rpms in rhel image rpm list
-                    exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
-                    for installed_rpm, latest_rpm, repo in non_latest_rpms:
-                        if any(excluded in installed_rpm for excluded in exclude_rpms):
-                            self.runtime.logger.info(
-                                f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
-                            )
-                        else:
-                            non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
-                else:
-                    non_latest_rpms_filtered = non_latest_rpms
+                
+                # exclude rpm if non_latest_rpms in rhel image rpm list
+                exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+                for installed_rpm, latest_rpm, repo in non_latest_rpms:
+                    if any(excluded in installed_rpm for excluded in exclude_rpms):
+                        self.runtime.logger.info(
+                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                        )
+                    else:
+                        non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
                 if non_latest_rpms_filtered:
                     status['outdated'] = True
                     status['changed'] = True
