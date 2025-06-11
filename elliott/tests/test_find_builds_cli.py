@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
+from unittest.mock import AsyncMock, MagicMock
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
@@ -60,22 +61,18 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         runtime = flexmock(konflux_db=flexmock())
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
-        image_meta_1 = flexmock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
-        image_meta_1.should_receive("branch_el_target").and_return("el8")
-        image_meta_1.should_receive("get_latest_build").with_args(el_target="el8").and_return(
-            _async_return_val(flexmock(nvr="image1-1.0.0-1.el8"))
-        )
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.branch_el_target.return_value = "el8"
+        image_meta_1.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image1-1.0.0-1.el8"))
 
-        image_meta_2 = flexmock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
-        image_meta_2.should_receive("branch_el_target").and_return("el9")
-        image_meta_2.should_receive("get_latest_build").with_args(el_target="el9").and_return(
-            _async_return_val(flexmock(nvr="image2-2.0.0-1.el9"))
-        )
+        image_meta_2 = MagicMock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image2-2.0.0-1.el9"))
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
         actual_records = await find_builds_konflux(runtime, payload=True)
         self.assertEqual(len(actual_records), 1)
-        self.assertEqual(actual_records[0].nvr, "image1-1.0.0-1.el8")
+        self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
 
 
 if __name__ == "__main__":
