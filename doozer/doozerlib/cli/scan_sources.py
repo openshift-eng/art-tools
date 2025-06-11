@@ -662,11 +662,15 @@ class ConfigScanSources:
                 if non_latest_rpms_filtered:
                     status['outdated'] = True
                     status['changed'] = True
-                    status['reason'] = ";\n".join(
+                    reasons = [
                         f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
-                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
-                    )
-                    statuses.append(status)
+                        for t in non_latest_rpms_filtered
+                        if len(t) == 3
+                        for installed_rpm, latest_rpm, repo in [t]
+                    ]
+                    if reasons:
+                        status['reason'] = ";\n".join(reasons)
+                        statuses.append(status)
         return statuses
 
     def _tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:

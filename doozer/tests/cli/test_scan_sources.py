@@ -1,3 +1,4 @@
+import asyncio
 from unittest import TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,25 +27,32 @@ class TestScanSourcesCli(TestCase):
     @patch("doozerlib.cli.scan_sources.ConfigScanSources._latest_rhcos_build_id", autospec=True)
     @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildInspector", autospec=True)
     @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildFinder.latest_container", autospec=True)
-    async def test_detect_rhcos_status(self, mock_finder, mock_inspector, mock_latest, mock_tagged):
-        mock_tagged.return_value = "id-1"
-        mock_latest.return_value = "id-2"
-        build_inspector = AsyncMock()
-        build_inspector.find_non_latest_rpms.return_value = AsyncMock(return_value=None)
-        mock_inspector.return_value = build_inspector
-        mock_finder.return_value = "4.2", "pullspec"
-        runtime = MagicMock(group_config=Model())
-        runtime.get_minor_version.return_value = "4.2"
-        runtime.get_major_minor_fields.return_value = 4, 2
-        runtime.arches = ['s390x']
+    def test_detect_rhcos_status_sync(self, mock_finder, mock_inspector, mock_latest, mock_tagged):
+        """
+        Synchronous wrapper for test_detect_rhcos_status to avoid coroutine warning.
+        """
 
-        cli = ConfigScanSources(runtime, "dummy", False)
+        async def run_test():
+            mock_tagged.return_value = "id-1"
+            mock_latest.return_value = "id-2"
+            build_inspector = AsyncMock()
+            build_inspector.find_non_latest_rpms.return_value = AsyncMock(return_value=None)
+            mock_inspector.return_value = build_inspector
+            mock_finder.return_value = "4.2", "pullspec"
+            runtime = MagicMock(group_config=Model())
+            runtime.get_minor_version.return_value = "4.2"
+            runtime.get_major_minor_fields.return_value = 4, 2
+            runtime.arches = ['s390x']
 
-        statuses = await cli._detect_rhcos_status()
-        self.assertEqual(2, len(statuses), "expect public and private status reported")
-        self.assertTrue(all(s['updated'] for s in statuses), "expect changed status reported")
-        self.assertTrue(all("id-1" in s['reason'] for s in statuses), "expect previous id in reason")
-        self.assertTrue(all("id-2" in s['reason'] for s in statuses), "expect changed id in reason")
+            cli = ConfigScanSources(runtime, "dummy", False)
+
+            statuses = await cli._detect_rhcos_status()
+            self.assertEqual(2, len(statuses), "expect public and private status reported")
+            self.assertTrue(all(s['updated'] for s in statuses), "expect changed status reported")
+            self.assertTrue(all("id-1" in s['reason'] for s in statuses), "expect previous id in reason")
+            self.assertTrue(all("id-2" in s['reason'] for s in statuses), "expect changed id in reason")
+
+        asyncio.run(run_test())
 
     @patch('doozerlib.rhcos.RHCOSBuildFinder.latest_rhcos_build_id')
     def test_build_find_failure(self, mock_get_build):
