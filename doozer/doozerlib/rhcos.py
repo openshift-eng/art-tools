@@ -45,6 +45,7 @@ class RHCOSBuildFinder:
         self.custom = custom
         self.go_arch = go_arch_for_brew_arch(brew_arch)
         self._primary_container = None
+        self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
 
     def get_primary_container_conf(self):
         """
@@ -152,7 +153,7 @@ class RHCOSBuildFinder:
              ...
          }
         """
-        if self.runtime.group_config.rhcos.get("layered_rhcos", False) and pullspec:
+        if self.layered and pullspec:
             if meta_type == "commitmeta":
                 with tempfile.TemporaryDirectory() as temp_dir:
                     stdout, _ = exectools.cmd_assert(
@@ -189,7 +190,7 @@ class RHCOSBuildFinder:
         :param build_id: the rhel image build id eg. 9.6.20250527-0
         :return: rpm list for rhel build
         """
-        if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+        if self.layered:
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
             with request.urlopen(url) as req:
@@ -202,7 +203,7 @@ class RHCOSBuildFinder:
         :param container_conf: a payload tag conf Model from group.yml (with build_metadata_key)
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
-        if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+        if self.layered:
             primary_conf = self.get_primary_container_conf()
             rhcosdata = util.oc_image_info_for_arch(primary_conf.rhcos_index_tag, self.go_arch)
             build_id = rhcosdata['config']['config']['Labels'][
@@ -230,15 +231,22 @@ class RHCOSBuildInspector:
         self.brew_arch = brew_arch
         self.pullspec_for_tag = pullspec_for_tag
         self.build_id = build_id
+        self.stream_version = None
+        self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
 
-        # Remember the pullspec(s) provided in case it does not match what is in the releases.yaml.
-        # Because of an incident where we needed to repush RHCOS and get a new SHA for 4.10 GA,
-        # trust the exact pullspec in releases.yml instead of what we find in the RHCOS release
-        # browser.
-        major, minor = self.runtime.get_major_minor_fields()
-        if not self.runtime.group_config.rhcos.get(
-            "layered_rhcos", False
-        ):  # in 4.19, the extension don't have rhcos-id
+        if self.layered:
+            # set build_id to the rhel base image build id of the rhel-coreos image
+            self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"], layered_id=False)
+
+            finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
+            self._build_meta = finder.rhcos_build_meta(
+                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
+            )
+            self._os_commitmeta = finder.rhcos_build_meta(
+                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
+            )
+            self.rhel_build_meta = finder.rhel_build_meta(self.build_id)
+        else:
             for tag, pullspec in pullspec_for_tag.items():
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
@@ -252,20 +260,7 @@ class RHCOSBuildInspector:
             # Sadly we don't have any other labels or anything to look at to determine the stream.
             version = self.build_id.split('.')[0]
             self.stream_version = version[0] + '.' + version[1:]  # e.g. 43.82.202102081639.0 -> "4.3"
-        else:
-            self.stream_version = f"{major}.{minor}"
 
-        try:
-            finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
-            self._build_meta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
-            )
-            self._os_commitmeta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
-            )
-            self.rhel_build_meta = finder.rhel_build_meta(self.build_id)
-        except Exception:
-            # Fall back to trying to find a custom build
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
             self._build_meta = finder.rhcos_build_meta(self.build_id, meta_type='meta')
             self._os_commitmeta = finder.rhcos_build_meta(self.build_id, meta_type='commitmeta')
