@@ -17,10 +17,10 @@ from doozerlib.cli.release_gen_payload import PayloadGenerator
 @click.pass_obj
 async def inspect_stream(runtime, code, strict):
     code = AssemblyIssueCode[code]
-    if runtime.assembly != 'stream':
-        print(f'Disregarding non-stream assembly: {runtime.assembly}. This command is only intended for stream')
-        runtime.assembly = 'stream'
-    runtime.initialize(clone_distgits=False)
+    # if runtime.assembly != 'stream':
+    #     print(f'Disregarding non-stream assembly: {runtime.assembly}. This command is only intended for stream')
+    #     runtime.assembly = 'stream'
+    runtime.initialize(config_only=True, clone_distgits=False)
 
     if code == AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS:
         assembly_inspector = AssemblyInspector(runtime)
