@@ -1,4 +1,4 @@
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
@@ -6,7 +6,7 @@ from doozerlib import rhcos
 from doozerlib.cli.scan_sources import ConfigScanSources
 
 
-class TestScanSourcesCli(TestCase):
+class TestScanSourcesCli(IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_assert")
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = (
