@@ -29,6 +29,9 @@ class TestRpmInfo(unittest.TestCase):
         self.assertEqual(rpm_info.size, 123456)
         self.assertEqual(rpm_info.sourcerpm, "bash-5.1.0-1.el9.src.rpm")
         self.assertEqual(rpm_info.url, "http://example.com/Packages/bash.rpm")
+        self.assertEqual(rpm_info.version, "5.1.0")
+        self.assertEqual(rpm_info.epoch, 0)
+        self.assertEqual(rpm_info.release, "1.el9")
 
     def test_from_rpm_nonzero_epoch(self):
         self.mock_rpm.epoch = 2
@@ -44,6 +47,9 @@ class TestRpmInfo(unittest.TestCase):
             size=98765,
             sourcerpm="coreutils-9.0-3.el9.src.rpm",
             url="http://example.com/coreutils.rpm",
+            version="9.0",
+            epoch=1,
+            release="3.el9",
         )
         expected = {
             "name": "coreutils",
@@ -56,10 +62,11 @@ class TestRpmInfo(unittest.TestCase):
         }
         self.assertEqual(rpm_info.to_dict(), expected)
 
+    # this method does not test the functionality of the underlying compare_nvr, but rather a simple equality check
     def test_equality_and_ordering(self):
-        a = RpmInfo("foo", "1:1.0-1", "x", "r", 0, "s", "url")
-        b = RpmInfo("foo", "1:1.0-1", "y", "r", 0, "s", "url")
-        c = RpmInfo("foo", "1:1.0-2", "z", "r", 0, "s", "url")
+        a = RpmInfo("foo", "1:1.0-1", "x", "r", 0, "s", "url", version="1.0-1", epoch=0, release="1.el9")
+        b = RpmInfo("foo", "1:1.0-1", "y", "r", 0, "s", "url", version="1.0-1", epoch=0, release="1.el9")
+        c = RpmInfo("foo", "1:1.0-2", "z", "r", 0, "s", "url", version="1.0-2", epoch=0, release="1.el9")
 
         self.assertEqual(a, b)
         self.assertLess(a, c)
@@ -130,10 +137,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
             'x86_64': [
                 Rpm(
                     name="mypkg",
+                    epoch=0,
                     version="1.0",
                     release="1.el9",
                     arch="x86_64",
-                    epoch=0,
                     checksum="dummychecksum-x86_64-1",
                     size=2345,
                     location="path/to/mypkg-1-x86_64.rpm",
@@ -141,10 +148,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
                 ),
                 Rpm(
                     name="otherpkg",
+                    epoch=1,
                     version="2.1",
                     release="3.el9",
                     arch="x86_64",
-                    epoch=1,
                     checksum="dummychecksum-x86_64-2",
                     size=1500,
                     location="path/to/otherpkg-2-x86_64.rpm",
@@ -152,10 +159,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
                 ),
                 Rpm(
                     name="coolpkg",
+                    epoch=0,
                     version="0.9",
                     release="10.el9",
                     arch="x86_64",
-                    epoch=0,
                     checksum="dummychecksum-x86_64-3",
                     size=4321,
                     location="path/to/coolpkg-0.9-x86_64.rpm",
@@ -165,10 +172,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
             'aarch64': [
                 Rpm(
                     name="mypkg",
+                    epoch=0,
                     version="1.0",
                     release="1.el9",
                     arch="aarch64",
-                    epoch=0,
                     checksum="dummychecksum-aarch64-1",
                     size=2300,
                     location="path/to/mypkg-1-aarch64.rpm",
@@ -176,10 +183,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
                 ),
                 Rpm(
                     name="otherpkg",
+                    epoch=0,
                     version="2.0",
                     release="2.el9",
                     arch="aarch64",
-                    epoch=0,
                     checksum="dummychecksum-aarch64-2",
                     size=1400,
                     location="path/to/otherpkg-2-aarch64.rpm",

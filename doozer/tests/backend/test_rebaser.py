@@ -275,7 +275,7 @@ USER 3000
         self.assertEqual(dfp.content.strip(), expected.strip())
 
     @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
-    @patch("doozerlib.backend.rebaser.KonfluxImageBuilder.is_lockfile_generation_enabled", return_value=True)
+    @patch("doozerlib.image.ImageMetadata.is_lockfile_generation_enabled", return_value=True)
     def test_write_rpms_lock_file_no_parents(self, mock_is_enabled, mock_rpmlockfile_cls):
         mock_rpmlockfile = AsyncMock()
         mock_rpmlockfile_cls.return_value = mock_rpmlockfile
@@ -296,7 +296,7 @@ USER 3000
         mock_rpmlockfile.generate_lockfile.assert_awaited_with(["x86_64"], set(), {"pkg1", "pkg2"}, Path("."))
 
     @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
-    @patch("doozerlib.backend.rebaser.KonfluxImageBuilder.is_lockfile_generation_enabled", return_value=True)
+    @patch("doozerlib.image.ImageMetadata.is_lockfile_generation_enabled", return_value=True)
     def test_write_rpms_lock_file_with_parents(self, mock_is_enabled, mock_rpmlockfile_cls):
         mock_rpmlockfile = AsyncMock()
         mock_rpmlockfile_cls.return_value = mock_rpmlockfile
@@ -323,22 +323,25 @@ USER 3000
 
         mock_rpmlockfile.generate_lockfile.assert_awaited_with(["x86_64"], set(), {"pkg1"}, Path("."))
 
-    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
-    @patch("doozerlib.backend.rebaser.KonfluxImageBuilder.is_lockfile_generation_enabled", return_value=False)
-    def test_write_rpms_lock_file_disabled(self, mock_is_enabled, mock_rpmlockfile_cls):
-        mock_rpmlockfile = AsyncMock()
-        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
-
+    def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()
         metadata.image_name = "foo"
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        logger = MagicMock()
 
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._logger = logger
+        rebaser._rpm_lockfile_generator = MagicMock()
+
         asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
 
-        mock_rpmlockfile.generate_lockfile.assert_not_called()
+        # Assert that generate_lockfile was not called
+        rebaser._rpm_lockfile_generator.generate_lockfile.assert_not_called()
+        logger.info.assert_called_with("Skipping lockfile generation for foo")
 
     @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
-    @patch("doozerlib.backend.rebaser.KonfluxImageBuilder.is_lockfile_generation_enabled", return_value=True)
+    @patch("doozerlib.image.ImageMetadata.is_lockfile_generation_enabled", return_value=True)
     def test_write_rpms_lock_file_empty_rpms(self, mock_is_enabled, mock_rpmlockfile_cls):
         mock_rpmlockfile = AsyncMock()
         mock_rpmlockfile_cls.return_value = mock_rpmlockfile

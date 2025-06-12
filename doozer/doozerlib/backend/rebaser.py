@@ -135,8 +135,8 @@ class KonfluxRebaser:
 
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
-            actual_version, actual_release, _ = await exectools.to_thread(
-                self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo
+            actual_version, actual_release, _ = await self._rebase_dir(
+                metadata, source, build_repo, version, input_release, force_yum_updates, image_repo
             )
 
             # Commit changes
@@ -171,7 +171,7 @@ class KonfluxRebaser:
             # notify child images
             metadata.rebase_event.set()
 
-    def _rebase_dir(
+    async def _rebase_dir(
         self,
         metadata: ImageMetadata,
         source: Optional[SourceResolution],
@@ -246,7 +246,7 @@ class KonfluxRebaser:
                 raise IOError(
                     f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}"
                 )
-            downstream_parents, parent_private_fix = self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
+            downstream_parents, parent_private_fix = await self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
             # If any of the parent images are private, this image is private
             if parent_private_fix:
                 private_fix = True
@@ -273,7 +273,7 @@ class KonfluxRebaser:
         # Given an input release string, make an actual release string
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
-        self._update_build_dir(
+        await self._update_build_dir(
             metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates, image_repo, uuid_tag
         )
         metadata.private_fix = private_fix
@@ -291,7 +291,7 @@ class KonfluxRebaser:
             with open(docker_ignore_path, "a") as file:
                 file.write("\n!/.oit/**\n")
 
-    def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
+    async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
         parents = image_from.get("builder", []).copy()
@@ -306,7 +306,7 @@ class KonfluxRebaser:
         for parent, original_parent in zip(parents, dfp.parent_images):
             if "member" in parent:
                 mapped_images.append(
-                    self._resolve_member_parent(parent["member"], original_parent, image_repo, uuid_tag)
+                    await self._resolve_member_parent(parent["member"], original_parent, image_repo, uuid_tag)
                 )
             elif "image" in parent:
                 mapped_images.append((parent["image"], False))
@@ -319,7 +319,7 @@ class KonfluxRebaser:
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
-    def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
+    async def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
         """Resolve the parent image for the given image metadata."""
         parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
         private_fix = False
@@ -331,11 +331,9 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(
-                    parent_metadata.get_latest_build(
-                        el_target=f'el{parent_metadata.branch_el_target()}',
-                        engine=Engine.KONFLUX,
-                    )
+                build = await parent_metadata.get_latest_build(
+                    el_target=f'el{parent_metadata.branch_el_target()}',
+                    engine=Engine.KONFLUX,
                 )
 
                 if not build:
@@ -628,7 +626,7 @@ class KonfluxRebaser:
             with df_path.open('w', encoding="utf-8") as df:
                 df.write(new_dockerfile_data)
 
-    def _update_build_dir(
+    async def _update_build_dir(
         self,
         metadata: ImageMetadata,
         dest_dir: Path,
@@ -649,7 +647,7 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
-            asyncio.run(self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir))
+            await self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir)
 
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
@@ -660,6 +658,19 @@ class KonfluxRebaser:
 
             return version, release
 
+    async def _fetch_packages_from_metadata(self, name: str, group_name: str) -> set[str]:
+        """
+        Fetch installed RPM packages for a given image and group from konflux_db.
+        """
+        try:
+            build = await self._runtime.konflux_db.get_latest_build(name=name, group=group_name)
+            if build and build.installed_packages:
+                return set(build.installed_packages)
+            return set()
+        except Exception as e:
+            self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
+            return set()
+
     async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path):
         """
         Generates RPM lockfile based on image metadata and repository configuration.
@@ -667,21 +678,10 @@ class KonfluxRebaser:
         Fetches RPM package lists from metadata and parent metadata, calculates
         RPMs to install, and delegates lockfile generation to RPMLockfileGenerator.
         """
-        lockfile_enabled = KonfluxImageBuilder.is_lockfile_generation_enabled(metadata=metadata, logger=self._logger)
-
+        lockfile_enabled = metadata.is_lockfile_generation_enabled()
         if not lockfile_enabled:
             self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
             return
-
-        async def fetch_packages_from_metadata(name: str, group_name: str) -> set[str]:
-            try:
-                build = await self._runtime.konflux_db.get_latest_build(name=name, group=group_name)
-                if build and build.installed_packages:
-                    return set(build.installed_packages)
-                return set()
-            except Exception as e:
-                self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
-                return set()
 
         rpms_to_install = set(metadata.config.konflux.cachi2.lockfile.packages.get('install', []))
         parents = metadata.get_parent_members()
@@ -689,12 +689,12 @@ class KonfluxRebaser:
         if parents:
             parent_name = next(iter(parents))
             rpms, parent_rpms = await asyncio.gather(
-                fetch_packages_from_metadata(metadata.distgit_key, group),
-                fetch_packages_from_metadata(parent_name, group),
+                self._fetch_packages_from_metadata(metadata.distgit_key, group),
+                self._fetch_packages_from_metadata(parent_name, group),
             )
             rpms_to_install.update(rpms - parent_rpms)
         else:
-            rpms = await fetch_packages_from_metadata(metadata.distgit_key, group)
+            rpms = await self._fetch_packages_from_metadata(metadata.distgit_key, group)
             if rpms:
                 self._logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
                 rpms_to_install.update(rpms)

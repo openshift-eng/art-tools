@@ -12,6 +12,7 @@ import yaml
 
 # Removed unused import 'List' from aiohttp_retry
 from artcommonlib import logutil
+from artcommonlib.rpm_utils import compare_nvr
 
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
@@ -42,6 +43,9 @@ class RpmInfo:
     size: int
     sourcerpm: str
     url: str
+    epoch: int
+    version: str
+    release: str
 
     @classmethod
     def from_rpm(cls, rpm: "Rpm", *, repoid: str, baseurl: str) -> "RpmInfo":
@@ -65,6 +69,9 @@ class RpmInfo:
             repoid=repoid,
             size=rpm.size,
             sourcerpm=rpm.sourcerpm,
+            epoch=rpm.epoch or 0,
+            version=rpm.version,
+            release=rpm.release,
             url=f'{baseurl}{rpm.location}',
         )
 
@@ -91,7 +98,17 @@ class RpmInfo:
         return (self.name, self.evr) == (other.name, other.evr)
 
     def __lt__(self, other: "RpmInfo") -> bool:
-        return (self.name, self.evr) < (other.name, other.evr)
+        # compare_nvr returns -1 if self < other, 0 if equal, 1 if self > other
+        if self.name != other.name:
+            return self.name < other.name
+
+        return (
+            compare_nvr(
+                {"name": self.name, "version": self.version, "epoch": str(self.epoch), "release": self.release},
+                {"name": other.name, "version": other.version, "epoch": str(other.epoch), "release": other.release},
+            )
+            == -1
+        )
 
 
 class RpmInfoCollector:
