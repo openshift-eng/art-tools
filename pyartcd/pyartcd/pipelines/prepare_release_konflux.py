@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import click
 import gitlab
 from artcommonlib import exectools
-from artcommonlib.assembly import AssemblyTypes, assembly_group_config, assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler

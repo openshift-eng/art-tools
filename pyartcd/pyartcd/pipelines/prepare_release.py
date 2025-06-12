@@ -17,7 +17,7 @@ import click
 import jinja2
 import semver
 from artcommonlib import exectools, git_helper
-from artcommonlib.assembly import AssemblyTypes, assembly_group_config, assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh, get_assembly_release_date_async, new_roundtrip_yaml_handler
 from doozerlib.cli.release_gen_payload import (
