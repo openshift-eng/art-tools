@@ -194,3 +194,15 @@ async def list_push_all(key: str, values: list) -> None:
     """
     for value in values:
         await list_push(key, value)
+
+
+@handle_connection
+async def get_multiple_values(conn: redis.asyncio.client.Redis, keys: list[str]):
+    """
+    Retrieves values for a list of Redis string keys using a single MGET operation.
+
+    :param conn: An active Redis asyncio client connection.
+    :param keys: List of Redis keys (strings) to retrieve values for.
+    :return: A list of values corresponding to the given keys. If a key does not exist, its value will be None.
+    """
+    return await conn.mget(keys)
