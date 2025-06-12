@@ -1,12 +1,12 @@
-from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib import rhcos
 from doozerlib.cli.scan_sources import ConfigScanSources
 
 
-class TestScanSourcesCli(TestCase):
+class TestScanSourcesCli(IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_assert")
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = (
@@ -24,9 +24,15 @@ class TestScanSourcesCli(TestCase):
 
     @patch("doozerlib.cli.scan_sources.ConfigScanSources._tagged_rhcos_id", autospec=True)
     @patch("doozerlib.cli.scan_sources.ConfigScanSources._latest_rhcos_build_id", autospec=True)
-    def test_detect_rhcos_status(self, mock_latest, mock_tagged):
+    @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildInspector", autospec=True)
+    @patch("doozerlib.cli.scan_sources.rhcos.RHCOSBuildFinder.latest_container", autospec=True)
+    async def test_detect_rhcos_status(self, mock_finder, mock_inspector, mock_latest, mock_tagged):
         mock_tagged.return_value = "id-1"
         mock_latest.return_value = "id-2"
+        build_inspector = AsyncMock()
+        build_inspector.find_non_latest_rpms.return_value = AsyncMock(return_value=None)
+        mock_inspector.return_value = build_inspector
+        mock_finder.return_value = "4.2", "pullspec"
         runtime = MagicMock(group_config=Model())
         runtime.get_minor_version.return_value = "4.2"
         runtime.get_major_minor_fields.return_value = 4, 2
@@ -34,9 +40,9 @@ class TestScanSourcesCli(TestCase):
 
         cli = ConfigScanSources(runtime, "dummy", False)
 
-        statuses = cli._detect_rhcos_status()
+        statuses = await cli._detect_rhcos_status()
         self.assertEqual(2, len(statuses), "expect public and private status reported")
-        self.assertTrue(all(s['changed'] for s in statuses), "expect changed status reported")
+        self.assertTrue(all(s['updated'] for s in statuses), "expect changed status reported")
         self.assertTrue(all("id-1" in s['reason'] for s in statuses), "expect previous id in reason")
         self.assertTrue(all("id-2" in s['reason'] for s in statuses), "expect changed id in reason")
 

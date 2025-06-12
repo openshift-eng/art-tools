@@ -351,7 +351,7 @@ class Nightly:
             commit = tag["annotations"]["io.openshift.build.commit.id"]
             self.pullspec_for_tag[name] = tag["from"]["name"]
             self.commit_for_tag[name] = commit or None
-            if not commit:  # assume RHCOS
+            if "rhel-coreos" in name:
                 self.rhcos_tag_names.add(name)
 
         self.tag_names = set(self.commit_for_tag.keys())

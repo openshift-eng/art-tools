@@ -417,23 +417,25 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
         mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
-        self.assertDictContainsSubset(
-            {
-                "__doozer_group": "test-group",
-                "__doozer_key": "test-distgit-key",
-                "__doozer_version": "1.0.0",
-                "__doozer_release": "1",
-                "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
-            },
-            mock_dfp.envs,
-        )
-        self.assertDictContainsSubset(
-            {
-                "io.openshift.build.source-location": "https://example.com/foo-operator.git",
-                "io.openshift.build.commit.id": "beefdead",
-            },
-            mock_dfp.labels,
-        )
+        # Replace deprecated assertDictContainsSubset with explicit checks
+        expected_envs = {
+            "__doozer_group": "test-group",
+            "__doozer_key": "test-distgit-key",
+            "__doozer_version": "1.0.0",
+            "__doozer_release": "1",
+            "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
+        }
+        for k, v in expected_envs.items():
+            self.assertIn(k, mock_dfp.envs)
+            self.assertEqual(mock_dfp.envs[k], v)
+
+        expected_labels = {
+            "io.openshift.build.source-location": "https://example.com/foo-operator.git",
+            "io.openshift.build.commit.id": "beefdead",
+        }
+        for k, v in expected_labels.items():
+            self.assertIn(k, mock_dfp.labels)
+            self.assertEqual(mock_dfp.labels[k], v)
 
         result_catalog_file.seek(0)
         result_catalog_blobs = list(yaml.load_all(result_catalog_file))

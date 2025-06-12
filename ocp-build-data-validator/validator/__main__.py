@@ -3,7 +3,7 @@ import atexit
 import sys
 from multiprocessing import Pool, cpu_count
 
-from . import cgit, distgit, exceptions, format, github, global_session, schema, support
+from . import cgit, distgit, exceptions, format, github, global_session, releases, schema, support
 
 
 def validate(file, exclude_vpn, schema_only):
@@ -21,11 +21,19 @@ def validate(file, exclude_vpn, schema_only):
         msg = 'Schema mismatch: {}\nReturned error: {}'.format(file, err)
         support.fail_validation(msg, parsed)
 
-    if support.get_artifact_type(file) not in ['image', 'rpm']:
+    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases']:
         print(f'✅ Validated {file}')
         return
 
     if schema_only:
+        print(f'✅ Validated {file}')
+        return
+
+    if support.get_artifact_type(file) == 'releases':
+        err = releases.validate(parsed)
+        if err:
+            msg = "releases.yml validation failed\nReturned error: {}".format(err)
+            support.fail_validation(msg, parsed)
         print(f'✅ Validated {file}')
         return
 

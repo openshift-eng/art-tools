@@ -341,6 +341,7 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
   </data>
 </repomd>
 """
+        resp.__aenter__.return_value.raise_for_status = Mock()
 
         def _fake_fetch_remote_compressed(_, url: Optional[str]):
             primary_xml = """<?xml version="1.0" encoding="UTF-8"?>

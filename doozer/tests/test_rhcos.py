@@ -328,5 +328,5 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
         actual = await rhcos_build.find_non_latest_rpms()
         get_repodata_threadsafe.assert_awaited()
-        get_os_metadata_rpm_list.assert_called_once_with()
+        get_os_metadata_rpm_list.assert_called_once_with(False)
         self.assertEqual(actual, [('bar-0:1.0.0-1.el9.x86_64', 'bar-0:1.1.0-1.el9.x86_64', 'rhel-8-appstream-rpms')])

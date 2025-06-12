@@ -33,7 +33,8 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         self.konflux_client = AsyncMock()
-        self.konflux_client.verify_connection.return_value = True
+        # Patch verify_connection to be a regular Mock, not AsyncMock
+        self.konflux_client.verify_connection = MagicMock(return_value=True)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -167,10 +168,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         self.config_path = "shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml"
         self.release_env = "stage"
-        self.image_repo_pull_secret = "/path/to/pull-secret"
+        self.image_repo_pull_secret = {}  # Use a dict as required by CreateReleaseCli
 
         self.konflux_client = AsyncMock()
-        self.konflux_client.verify_connection.return_value = True
+        # Patch verify_connection to be a regular Mock, not AsyncMock
+        self.konflux_client.verify_connection = MagicMock(return_value=True)
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -246,7 +248,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             config_path=self.config_path,
             release_env=self.release_env,
             konflux_config=self.konflux_config,
-            image_repo_pull_secret=self.image_repo_pull_secret,
+            image_repo_pull_secret={},
             dry_run=self.dry_run,
             force=self.force,
         )
@@ -309,7 +311,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             config_path=self.config_path,
             release_env=self.release_env,
             konflux_config=self.konflux_config,
-            image_repo_pull_secret=self.image_repo_pull_secret,
+            image_repo_pull_secret={},
             dry_run=self.dry_run,
             force=self.force,
         )
@@ -362,7 +364,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             config_path=self.config_path,
             release_env=self.release_env,
             konflux_config=self.konflux_config,
-            image_repo_pull_secret=self.image_repo_pull_secret,
+            image_repo_pull_secret={},
             dry_run=self.dry_run,
             force=self.force,
         )
