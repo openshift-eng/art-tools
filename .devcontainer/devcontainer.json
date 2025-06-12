@@ -40,8 +40,6 @@
 			"extensions": [
 				"usernamehw.errorlens",
 				"ms-python.python",
-				"github.copilot",
-				"github.copilot-chat",
 				"github.vscode-pull-request-github",
 				"maattdd.gitless"
 			]
