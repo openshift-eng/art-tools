@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import click
 import gitlab
 from artcommonlib import exectools
-from artcommonlib.assembly import AssemblyTypes, assembly_group_config
+from artcommonlib.assembly import AssemblyTypes, assembly_group_config, assembly_config_struct
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -141,12 +141,11 @@ class PrepareReleaseKonfluxPipeline:
 
     @property
     def assembly_group_config(self) -> dict:
-        return self.releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
+        return assembly_config_struct(Model(self.releases_config), self.assembly, "group", {})
 
     @property
     def shipment_config(self) -> dict:
-        shipment_key = next(k for k in self.assembly_group_config.keys() if k.startswith("shipment"))
-        return self.assembly_group_config.get(shipment_key, [])
+        return self.assembly_group_config.get("shipment", [])
 
     async def run(self):
         self.setup_working_dir()

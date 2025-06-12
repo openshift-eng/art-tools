@@ -17,7 +17,7 @@ import click
 import jinja2
 import semver
 from artcommonlib import exectools, git_helper
-from artcommonlib.assembly import AssemblyTypes, assembly_group_config
+from artcommonlib.assembly import AssemblyTypes, assembly_group_config, assembly_config_struct
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh, get_assembly_release_date_async, new_roundtrip_yaml_handler
 from doozerlib.cli.release_gen_payload import (
@@ -692,16 +692,10 @@ class PrepareReleasePipeline:
             async with aiofiles.open(repo / "releases.yml", "r") as f:
                 old = await f.read()
             releases_config = yaml.load(old)
-            group_config = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
+            group_config = assembly_config_struct(Model(releases_config), self.assembly, "group", {})
 
-            # Assembly key names are not always exact, they can end in special chars like !,?,-
-            # to indicate special inheritance rules. So respect those
-            # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
-            advisory_key = next(k for k in group_config.keys() if k.startswith("advisories"))
-            release_jira_key = next(k for k in group_config.keys() if k.startswith("release_jira"))
-
-            group_config[advisory_key] = advisories
-            group_config[release_jira_key] = jira_issue_key
+            group_config["advisories"] = advisories
+            group_config["release_jira"] = jira_issue_key
             out = StringIO()
             yaml.dump(releases_config, out)
             async with aiofiles.open(repo / "releases.yml", "w") as f:
