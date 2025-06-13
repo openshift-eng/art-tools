@@ -10,7 +10,7 @@ import koji
 from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -46,6 +46,8 @@ class RHCOSBuildFinder:
         self.go_arch = go_arch_for_brew_arch(brew_arch)
         self._primary_container = None
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
+        if self.layered is Missing:
+            self.layered = False
 
     def get_primary_container_conf(self):
         """
