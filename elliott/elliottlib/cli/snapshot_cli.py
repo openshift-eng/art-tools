@@ -28,20 +28,58 @@ yaml = new_roundtrip_yaml_handler()
 LOGGER = logutil.get_logger(__name__)
 
 
+async def get_build_records_by_nvrs(
+    runtime: Runtime, nvrs: list[str], for_fbc: bool = False, strict: bool = True
+) -> dict[str, KonfluxRecord]:
+    assert runtime.konflux_db is not None, "Konflux DB must be initialized in the runtime"
+
+    where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
+
+    async def _get(nvrs) -> list[KonfluxRecord]:
+        try:
+            records = await runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=strict)
+        except IOError as e:
+            LOGGER.warning(
+                "A snapshot is expected to exclusively contain ART built image builds "
+                "OR FBC builds. To indicate an fbc snapshot use --for-fbc"
+            )
+            raise e
+        return records
+
+    nvr_record_map = {}
+    records = []
+    bundle_nvrs = [n for n in nvrs if "-bundle-container" in n]
+    non_bundle_nvrs = [n for n in nvrs if n not in bundle_nvrs]
+
+    if bundle_nvrs:
+        runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+        bundle_records = await _get(bundle_nvrs)
+        records.extend(bundle_records)
+    if non_bundle_nvrs:
+        if for_fbc:
+            runtime.konflux_db.bind(KonfluxFbcBuildRecord)
+        else:
+            runtime.konflux_db.bind(KonfluxBuildRecord)
+        non_bundle_records = await _get(non_bundle_nvrs)
+        records.extend(non_bundle_records)
+
+    for record in records:
+        nvr_record_map[record.nvr] = record
+    return nvr_record_map
+
+
 class CreateSnapshotCli:
     def __init__(
         self,
         runtime: Runtime,
         konflux_config: dict,
         image_repo_pull_secret: str,
-        for_bundle: bool,
         for_fbc: bool,
         builds: list,
         dry_run: bool,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
-        self.for_bundle = for_bundle
         self.for_fbc = for_fbc
         self.builds = builds
         self.dry_run = dry_run
@@ -58,12 +96,6 @@ class CreateSnapshotCli:
         self.runtime.initialize()
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
-        if self.for_bundle:
-            self.runtime.konflux_db.bind(KonfluxBundleBuildRecord)
-        elif self.for_fbc:
-            self.runtime.konflux_db.bind(KonfluxFbcBuildRecord)
-        else:
-            self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         # Ensure the Snapshot CRD is accessible
         try:
@@ -164,9 +196,8 @@ class CreateSnapshotCli:
             components.add(nvr['name'])
 
         LOGGER.info("Fetching NVRs from DB...")
-        where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
-        records = await self.runtime.konflux_db.get_build_records_by_nvrs(self.builds, where=where, strict=True)
-        return records
+        records = await get_build_records_by_nvrs(self.runtime, self.builds, for_fbc=self.for_fbc, strict=True)
+        return list(records.values())
 
 
 @cli.group("snapshot", short_help="Commands for managing Konflux Snapshots")
@@ -196,7 +227,6 @@ def snapshot_cli():
     metavar='PATH',
     help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
 )
-@click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
 @click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
 @click.argument('builds', metavar='<NVR>', nargs=-1, required=False, default=None)
 @click.option(
@@ -216,7 +246,6 @@ async def new_snapshot_cli(
     konflux_namespace,
     pull_secret,
     builds_file,
-    for_bundle,
     for_fbc,
     builds,
     apply,
@@ -232,9 +261,6 @@ async def new_snapshot_cli(
     """
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
-
-    if bool(for_bundle) and bool(for_fbc):
-        raise click.BadParameter("Use only one of --for-bundle or --for-fbc")
 
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -262,7 +288,6 @@ async def new_snapshot_cli(
         runtime=runtime,
         konflux_config=konflux_config,
         image_repo_pull_secret=pull_secret,
-        for_bundle=for_bundle,
         for_fbc=for_fbc,
         builds=builds,
         dry_run=not apply,
@@ -277,14 +302,12 @@ class GetSnapshotCli:
         runtime: Runtime,
         konflux_config: dict,
         image_repo_pull_secret: dict,
-        for_bundle: bool,
         for_fbc: bool,
         dry_run: bool,
         snapshot: str,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
-        self.for_bundle = for_bundle
         self.for_fbc = for_fbc
         self.dry_run = dry_run
         self.snapshot = snapshot
@@ -300,13 +323,7 @@ class GetSnapshotCli:
     async def run(self):
         self.runtime.initialize()
         if self.runtime.konflux_db is None:
-            raise RuntimeError('Must run Elliott with Konflux DB initialized')
-        if self.for_bundle:
-            self.runtime.konflux_db.bind(KonfluxBundleBuildRecord)
-        elif self.for_fbc:
-            self.runtime.konflux_db.bind(KonfluxFbcBuildRecord)
-        else:
-            self.runtime.konflux_db.bind(KonfluxBuildRecord)
+            raise RuntimeError('Konflux DB is not initialized')
 
         # Ensure the Snapshot CRD is accessible
         try:
@@ -319,27 +336,16 @@ class GetSnapshotCli:
         snapshot_obj = await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
         nvrs = await self.extract_nvrs_from_snapshot(snapshot_obj)
 
+        # validate that the nvrs exist in the DB tables
+        # not existing would indicate inconsistency between nvr construction & DB nvr field
+        # or something more atypical like nvr/image not belonging to ART
         LOGGER.info(f"Validating {len(nvrs)} NVRs from DB...")
-        where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
 
-        if not self.dry_run:
-            # we don't care about the build records
-            # but we do want to validate that the nvrs exist in the DB
-            # not existing would indicate inconsistency bw nvr construction & DB nvr field
-            # or something more atypical like nvr/image not belonging to ART
-            try:
-                await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
-            except IOError as e:
-                LOGGER.warning(
-                    "A snapshot is expected to exclusively contain ART built image builds "
-                    "OR bundle builds OR FBC builds. To indicate fbc/bundle snapshot use "
-                    "--for-fbc/--for-bundle"
-                )
-                raise e
-
-        else:
+        if self.dry_run:
             LOGGER.info("[DRY-RUN] Skipped DB validation")
+            return nvrs
 
+        await get_build_records_by_nvrs(self.runtime, nvrs, for_fbc=self.for_fbc, strict=True)
         return nvrs
 
     async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:
@@ -395,7 +401,6 @@ class GetSnapshotCli:
     metavar='PATH',
     help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.',
 )
-@click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
 @click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
 @click.option('--dry-run', is_flag=True, help='Do not fetch, just print what would happen')
 @click.argument('snapshot', metavar='SNAPSHOT', nargs=1)
@@ -407,7 +412,6 @@ async def get_snapshot_cli(
     konflux_context,
     konflux_namespace,
     pull_secret,
-    for_bundle,
     for_fbc,
     dry_run,
     snapshot,
@@ -418,9 +422,6 @@ async def get_snapshot_cli(
     \b
     $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
-    if bool(for_bundle) and bool(for_fbc):
-        raise click.BadParameter("Use only one of --for-bundle or --for-fbc")
-
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
@@ -437,10 +438,9 @@ async def get_snapshot_cli(
         runtime=runtime,
         konflux_config=konflux_config,
         image_repo_pull_secret=pull_secret,
-        for_bundle=for_bundle,
         for_fbc=for_fbc,
         dry_run=dry_run,
         snapshot=snapshot,
     )
     nvrs = await pipeline.run()
-    print('\n'.join(sorted(nvrs)))
+    click.echo('\n'.join(sorted(nvrs)))
