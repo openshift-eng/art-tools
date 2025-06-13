@@ -221,7 +221,7 @@ async def find_builds_cli(
     )
 
     if as_json:
-        _json_dump(as_json, builds, kind, tag_pv_map)
+        _json_dump(as_json, builds, kind)
         return
     canonical_nvrs = [b.nvr for b in builds]
 
@@ -427,24 +427,14 @@ def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
     return nvrps
 
 
-def _json_dump(as_json: str, builds: list, kind: str, tag_pv_map: dict = None):
+def _json_dump(as_json: str, builds: list, kind: str):
     """Dumps builds as JSON to a file or stdout
     :param as_json: file name to dump JSON to, or '-' for stdout
     :param builds: list of Brew build objects
     :param kind: kind of builds, either 'rpm' or 'image'
-    :param tag_pv_map: mapping of Brew tags to Errata product versions
     """
 
-    builds = sorted([b.nvr for b in builds])
-    json_data = dict(builds=builds, kind=kind)
-
-    if tag_pv_map:
-        tags = []
-        reversed_tag_pv_map = {y: x for x, y in tag_pv_map.items()}
-        for b in sorted(builds):
-            tags.append(reversed_tag_pv_map[b.product_version])
-        json_data['base_tag'] = tags
-
+    json_data = dict(builds=sorted([b.nvr for b in builds]), kind=kind)
     if as_json == '-':
         click.echo(json.dumps(json_data, indent=4, sort_keys=True))
     else:
