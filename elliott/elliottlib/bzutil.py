@@ -694,7 +694,7 @@ class JIRABugTracker(BugTracker):
         client = JIRA(self._server, token_auth=token_auth)
         return client
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
     def _init_fields(self):
         for f in self._client.fields():
             if f['name'] == 'Target Version':
