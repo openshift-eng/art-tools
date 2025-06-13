@@ -10,32 +10,126 @@ from ruamel.yaml import YAML
 
 class TestRpm(TestCase):
     def test_nevra(self):
-        rpm = Rpm(name="foo", epoch=1, version="1.2.3", release="1.el9", arch="x86_64")
+        rpm = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
         self.assertEqual(rpm.nevra, "foo-1:1.2.3-1.el9.x86_64")
 
     def test_nvr(self):
-        rpm = Rpm(name="foo", epoch=1, version="1.2.3", release="1.el9", arch="x86_64")
+        rpm = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
         self.assertEqual(rpm.nvr, "foo-1.2.3-1.el9")
 
     def test_compare(self):
-        a = Rpm(name="foo", epoch=1, version="1.2.3", release="1.el9", arch="x86_64")
-        b = Rpm(name="foo", epoch=1, version="1.10.3", release="1.el9", arch="x86_64")
+        a = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
+        b = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.10.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.10.3-1.el9.src.rpm",
+        )
         self.assertTrue(a.compare(b) < 0)
-        a = Rpm(name="foo", epoch=2, version="1.2.3", release="1.el9", arch="x86_64")
-        b = Rpm(name="foo", epoch=1, version="1.10.3", release="1.el9", arch="x86_64")
+        a = Rpm(
+            name="foo",
+            epoch=2,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
+        b = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.10.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.10.3-1.el9.src.rpm",
+        )
         self.assertTrue(a.compare(b) > 0)
-        a = Rpm(name="foo", epoch=0, version="1.2.3", release="1.el9", arch="x86_64")
-        b = Rpm(name="foo", epoch=0, version="1.2.3", release="1.el9", arch="aarch64")
+        a = Rpm(
+            name="foo",
+            epoch=0,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
+        b = Rpm(
+            name="foo",
+            epoch=0,
+            version="1.2.3",
+            release="1.el9",
+            arch="aarch64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
         self.assertTrue(a.compare(b) == 0)
 
     def test_to_dict(self):
-        rpm = Rpm(name="foo", epoch=1, version="1.2.3", release="1.el9", arch="x86_64")
+        rpm = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.2.3",
+            release="1.el9",
+            arch="x86_64",
+            checksum="dummy",
+            size=123,
+            location="foo.rpm",
+            sourcerpm="foo-1.2.3-1.el9.src.rpm",
+        )
         expected = {
             "name": "foo",
             "epoch": "1",
             "version": "1.2.3",
             "release": "1.el9",
             "arch": "x86_64",
+            "checksum": "dummy",
+            "size": "123",
+            "location": "foo.rpm",
+            "sourcerpm": "foo-1.2.3-1.el9.src.rpm",
             "nvr": "foo-1.2.3-1.el9",
             "nevra": "foo-1:1.2.3-1.el9.x86_64",
         }
@@ -59,15 +153,25 @@ class TestRpm(TestCase):
 
     def test_from_metadata(self):
         xml = """
-        <package type="rpm" xmlns="http://linux.duke.edu/metadata/common">
+        <package type="rpm" xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm">
             <name>foo</name>
+            <checksum pkgid="YES" type="sha256">b67e2b</checksum>
             <arch>x86_64</arch>
+            <size archive="67404" installed="60614" package="80204" />
+            <location href="Packages/l/foo-2.3.1-4.el9.aarch64.rpm" />
             <version epoch="1" rel="1.el9" ver="1.2.3" />
+            <format>
+                <rpm:sourcerpm>foo-2.3.1-4.el9.src.rpm</rpm:sourcerpm>
+            </format>
         </package>
         """
         metadata = ET.fromstring(xml)
         rpm = Rpm.from_metadata(metadata)
         self.assertEqual(rpm.nevra, "foo-1:1.2.3-1.el9.x86_64")
+        self.assertEqual(rpm.size, 80204)
+        self.assertEqual(rpm.location, "Packages/l/foo-2.3.1-4.el9.aarch64.rpm")
+        self.assertEqual(rpm.version, "1.2.3")
+        self.assertEqual(rpm.sourcerpm, "foo-2.3.1-4.el9.src.rpm")
 
 
 class TestRpmModule(TestCase):
@@ -88,22 +192,62 @@ class TestRpmModule(TestCase):
 
 
 class TestRepodata(TestCase):
+    def setUp(self):
+        # Setup for get_rpms tests
+        self.rpms = [
+            Rpm(
+                name="foo",
+                epoch=1,
+                version="1.2.3",
+                checksum="abc",
+                size=123,
+                location="foo.rpm",
+                sourcerpm="foo-1.2.3-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="bar",
+                epoch=0,
+                version="2.0.0",
+                checksum="def",
+                size=456,
+                location="bar.rpm",
+                sourcerpm="bar-2.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+        ]
+        self.repodata = Repodata(name="testrepo", primary_rpms=self.rpms, modules=[])
+
     def test_from_metadatas(self):
         repo_name = "test-x86_64"
         primary_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<metadata packages="2" xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm">
-    <package type="rpm">
-        <name>foo</name>
-        <arch>x86_64</arch>
-        <version epoch="1" rel="1.el9" ver="1.2.3" />
-    </package>
-    <package type="rpm">
-        <name>bar</name>
-        <arch>x86_64</arch>
-        <version epoch="1" rel="1.el9" ver="2.2.3" />
-    </package>
-</metadata>
-"""
+    <metadata packages="2" xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm">
+        <package type="rpm">
+            <name>foo</name>
+            <checksum pkgid="YES" type="sha256">sfy8dfa</checksum>
+            <size archive="3" installed="4" package="6" />
+            <location href="Packages/l/foo-1.2.3-1.el9.x86_64.rpm" />
+            <arch>x86_64</arch>
+            <version epoch="1" rel="1.el9" ver="1.2.3" />
+            <format>
+                <rpm:sourcerpm>foo-1.2.3-1.el9.src.rpm</rpm:sourcerpm>
+            </format>
+        </package>
+        <package type="rpm">
+            <name>bar</name>
+            <checksum pkgid="YES" type="sha256">barcsum</checksum>
+            <size archive="10" installed="20" package="30" />
+            <location href="Packages/l/bar-2.2.3-1.el9.x86_64.rpm" />
+            <arch>x86_64</arch>
+            <version epoch="1" rel="1.el9" ver="2.2.3" />
+            <format>
+                <rpm:sourcerpm>bar-2.2.3-1.el9.src.rpm</rpm:sourcerpm>
+            </format>
+        </package>
+    </metadata>
+    """
         modules_yaml = """
 ---
 document: modulemd
@@ -134,6 +278,37 @@ data:
         self.assertEqual(
             [m.nsvca for m in repodata.modules], ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64']
         )
+
+    def test_get_rpms_by_name_found(self):
+        found, not_found = self.repodata.get_rpms("foo")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "foo")
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_by_name_not_found(self):
+        found, not_found = self.repodata.get_rpms("baz")
+        self.assertEqual(found, [])
+        self.assertEqual(not_found, ["baz"])
+
+    def test_get_rpms_by_nvr_found(self):
+        nvr = self.rpms[1].nvr
+        found, not_found = self.repodata.get_rpms(nvr)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "bar")
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_multiple_items(self):
+        items = ["foo", self.rpms[1].nvr, "baz"]
+        found, not_found = self.repodata.get_rpms(items)
+        self.assertEqual({rpm.name for rpm in found}, {"foo", "bar"})
+        self.assertEqual(not_found, ["baz"])
+
+    def test_get_rpms_duplicates(self):
+        items = ["foo", "foo"]
+        found, not_found = self.repodata.get_rpms(items)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "foo")
+        self.assertEqual(not_found, [])
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
@@ -173,13 +348,25 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
 <metadata packages="2" xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm">
     <package type="rpm">
         <name>foo</name>
+        <checksum pkgid="YES" type="sha256">sfy8dfa</checksum>
+        <size archive="3" installed="4" package="6" />
+        <location href="Packages/l/foo-1.2.3-1.el9.x86_64.rpm" />
         <arch>x86_64</arch>
         <version epoch="1" rel="1.el9" ver="1.2.3" />
+        <format>
+            <rpm:sourcerpm>foo-1.2.3-1.el9.src.rpm</rpm:sourcerpm>
+        </format>
     </package>
     <package type="rpm">
         <name>bar</name>
+        <checksum pkgid="YES" type="sha256">barcsum</checksum>
+        <size archive="10" installed="20" package="30" />
+        <location href="Packages/l/bar-2.2.3-1.el9.x86_64.rpm" />
         <arch>x86_64</arch>
         <version epoch="1" rel="1.el9" ver="2.2.3" />
+        <format>
+            <rpm:sourcerpm>bar-2.2.3-1.el9.src.rpm</rpm:sourcerpm>
+        </format>
     </package>
 </metadata>
 """
