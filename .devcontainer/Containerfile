@@ -3,71 +3,92 @@ LABEL name="art-tools-dev" \
   description="art-tools development container image" \
   maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
 
+ENV \
+  ELLIOTT_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
+  DOOZER_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
+  PATH="/usr/local/go/bin:$PATH"
+
+ARG \
+  LANG="en_US.UTF-8" \
+  LC_ALL="en_US.UTF-8" \
+  OC_VERSION=latest \
+  GO_VERSION=1.24.4 \
+  ACT_VERSION=v0.2.78 \
+  # User configuration
+  # These values can be overridden at build time
+  # to customize the user and group IDs
+  # for the development user in the container.
+  # This is useful for matching the host user to avoid permission issues
+  # when mounting volumes or sharing files between the host and container.
+  USERNAME=dev \
+  USER_UID=1000 \
+  USER_GID=$USER_UID
+
 # Trust the Red Hat IT Root CAs and set up rcm-tools repo
-RUN curl -fLo /etc/pki/ca-trust/source/anchors/IT-Root-CAs.pem \
-              https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
- && update-ca-trust extract \
- && curl -o /etc/yum.repos.d/rcm-tools-fedora.repo \
-         https://download.devel.redhat.com/rel-eng/RCMTOOLS/rcm-tools-fedora.repo
+RUN curl -fLo /etc/pki/ca-trust/source/anchors/IT-Root-CAs.pem https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
+  && update-ca-trust extract \
+  && curl -o /etc/yum.repos.d/rcm-tools-fedora.repo https://download.devel.redhat.com/rel-eng/RCMTOOLS/rcm-tools-fedora.repo
 
 RUN dnf install -y \
-    # runtime dependencies
-    krb5-workstation git tig rsync koji skopeo podman docker rpmdevtools \
-    python3.11 python3-certifi python-bugzilla-cli \
-    # required by microshift
-    jq golang \
-    # provides en_US.UTF-8 locale
-    glibc-langpack-en \
-    # development dependencies
-    gcc gcc-c++ krb5-devel \
-    python3-devel python3-pip python3-wheel python3-autopep8 \
-    # other tools for development and troubleshooting
-    bash-completion vim tmux procps-ng psmisc wget net-tools iproute socat \
-    # install rcm-tools
-    koji brewkoji rhpkg \
-    # add sigstore cosign tool
-    https://download.eng.bos.redhat.com/brewroot/vol/rhel-8/packages/cosign/2.2.2/3/x86_64/cosign-2.2.2-3.x86_64.rpm \
- && dnf clean all \
- && ln -sfn /usr/bin/python3 /usr/bin/python   # make "python" available
+  # runtime dependencies
+  krb5-workstation git tig rsync koji skopeo podman docker rpmdevtools \
+  python3.11 python3-certifi python-bugzilla-cli \
+  # nice to have tools
+  jq tree findutils expect \
+  # provides en_US.UTF-8 locale
+  glibc-langpack-en \
+  # development dependencies
+  gcc gcc-c++ krb5-devel \
+  python3-devel python3-pip python3-wheel python3-autopep8 \
+  # other tools for development and troubleshooting
+  bash-completion vim tmux procps-ng psmisc wget net-tools iproute socat \
+  # install rcm-tools
+  koji brewkoji rhpkg \
+  # add sigstore cosign tool (commented out for now) \
+  && dnf clean all \
+  && ln -sfn /usr/bin/python3 /usr/bin/python
 
-# include oc client
-ARG OC_VERSION=latest
+# Include oc client
 RUN wget -O /tmp/openshift-client-linux-"$OC_VERSION".tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/"$OC_VERSION"/openshift-client-linux.tar.gz \
-  && tar -C /usr/local/bin -xzf  /tmp/openshift-client-linux-"$OC_VERSION".tar.gz oc kubectl \
+  && tar -C /usr/local/bin -xzf /tmp/openshift-client-linux-"$OC_VERSION".tar.gz oc kubectl \
   && rm /tmp/openshift-client-linux-"$OC_VERSION".tar.gz
-# install yq
-RUN GOBIN=/usr/bin/ go install github.com/mikefarah/yq/v4@latest
 
-# change default locale to en_US.UTF-8 - tito requires this
-RUN echo 'LANG="en_US.UTF-8"' > /etc/locale.conf
+# Install golang from source
+RUN wget -O /tmp/go${GO_VERSION}.linux-amd64.tar.gz https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz \
+  && rm -rf /usr/local/go \
+  && tar -C /usr/local -xzf /tmp/go${GO_VERSION}.linux-amd64.tar.gz \
+  && rm /tmp/go${GO_VERSION}.linux-amd64.tar.gz
 
-# Create a non-root user - see https://aka.ms/vscode-remote/containers/non-root-user.
-ARG USERNAME=dev
-# On Linux, replace with your actual UID, GID if not the default 1000
-ARG USER_UID=1000
-ARG USER_GID=$USER_UID
+# install act CLI
+RUN curl -sSfL -o act.tar.gz https://github.com/nektos/act/releases/download/${ACT_VERSION}/act_Linux_x86_64.tar.gz && \
+  tar -xzf act.tar.gz && \
+  mv act /usr/local/bin/act && \
+  chmod +x /usr/local/bin/act && \
+  rm act.tar.gz
 
-# Create the "dev" user
+# Set locale early for any package installs that might rely on it
+RUN echo $LANG > /etc/locale.conf
+
+# Create the "dev" user with necessary permissions and directories
 RUN groupadd --gid "$USER_GID" "$USERNAME" \
-    && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" \
-    && mkdir -p /workspaces/{art-tools,ocp-build-data,doozer-working-dir,elliott-working-dir} \
-    && chown -R "${USER_UID}:${USER_GID}" /home/"$USERNAME" /workspaces \
-    && chmod 0755 /home/"$USERNAME" \
-    && echo "$USERNAME" ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/"$USERNAME" \
-    && chmod 0440 /etc/sudoers.d/"$USERNAME"
+  && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" \
+  && mkdir -p /workspaces/{art-tools,ocp-build-data,doozer-working-dir,elliott-working-dir} \
+  && chown -R "$USER_UID:$USER_GID" /home/"$USERNAME" /workspaces \
+  && chmod 0755 /home/"$USERNAME" \
+  && echo "$USERNAME ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/"$USERNAME" \
+  && chmod 0440 /etc/sudoers.d/"$USERNAME"
 
 # Configure Kerberos
 COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf.d/
 
-# Preinstall dependencies and doozer
 WORKDIR /workspaces/art-tools
 ADD . .
-RUN chown "$USERNAME" -R /workspaces/art-tools
-RUN sudo -u "$USERNAME" pip3 install --user -U "pip>=22.3" "setuptools>=64"
-RUN sudo -u "$USERNAME" pip3 install --user -e ./artcommon -e ./doozer -e ./elliott -e ./pyartcd
-# RUN cd elliott && sudo -u "$USERNAME" pip3 install --user -e .[tests]
+
+RUN chown -R "$USERNAME:$USER_GID" /workspaces/art-tools
+
+# Use --ignore-installed to avoid conflicts with rpm-installed Python packages
+RUN pip3 install --ignore-installed -U "pip>=22.3" "setuptools>=64" \
+  && pip3 install --ignore-installed ruff pylint pytest flexmock click jsonschema schema \
+  && pip3 install --ignore-installed -e ./artcommon -e ./doozer -e ./elliott -e ./pyartcd
+
 USER "$USER_UID"
-ENV ELLIOTT_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
-    _ELLIOTT_DATA_PATH=/workspaces/ocp-build-data \
-    DOOZER_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
-    _DOOZER_DATA_PATH=/workspaces/ocp-build-data
