@@ -840,9 +840,10 @@ class JIRABugTracker(BugTracker):
             # Setting maxResults=0 retrieves all matching issues from the JIRA API.
             results = self._client.search_issues(query, maxResults=0)
         except JIRAError as e:
-            # truncate the error message to avoid flooding the logs
-            if len(e.text) > 1000:
-                e.text = e.text[:1000] + '...[truncated]'
+            # a lot of times we get JIRAError with massive HTML dump in the error text
+            # do not dump full html in the logs
+            if "<html>" in e.text:
+                e.text = e.text.strip()[:100] + '...[truncated html]'
             raise e
 
         if results is None:
