@@ -67,8 +67,9 @@ async def attach_cve_flaws_cli(
         advisories = [advisory_id]
 
     # Get the advisory kind-id mapping
-    releases_config = runtime.get_releases_config()
-    advisories_by_kind = releases_config['releases'][runtime.assembly]['assembly']['group']['advisories']
+    advisories_by_kind = runtime.group_config.advisories
+
+    advisory_kind = next((k for k, v in advisories_by_kind.items() if v == advisory_id), None)
 
     exit_code = 0
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
@@ -87,7 +88,7 @@ async def attach_cve_flaws_cli(
 
         try:
             if flaw_bugs:
-                _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, flaw_bug_tracker, noop)
+                _update_advisory(runtime, advisory, advisory_kind, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
                 LOGGER.info('Associating CVEs with builds')
                 await associate_builds_with_cves(
@@ -154,18 +155,12 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     return tracker_flaws, first_fix_flaw_bugs
 
 
-def _update_advisory(runtime, advisory, advisories_by_kind, flaw_bugs, bug_tracker, noop):
+def _update_advisory(runtime, advisory, advisory_kind, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
 
-    # Get the name of the advisory (eg. image|rpm|metadata|microshift etc.)
-    art_advisory_key = next((k for k, v in advisories_by_kind.items() if v == advisory_id), None)
-
-    if not art_advisory_key:
-        raise ValueError(f'ART advisory key not found for advisory: {advisory_id} in list {advisories_by_kind.items()}')
-
     cve_boilerplate = get_advisory_boilerplate(
-        runtime=runtime, et_data=errata_config, art_advisory_key=art_advisory_key, errata_type='RHSA'
+        runtime=runtime, et_data=errata_config, art_advisory_key=advisory_kind, errata_type='RHSA'
     )
 
     try:
