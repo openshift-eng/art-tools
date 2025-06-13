@@ -8,14 +8,14 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.jenkins.init_jenkins')
     @patch('pyartcd.jenkins.update_title')
     @patch('pyartcd.locks.LockManager.from_lock', return_value=AsyncMock)
-    @patch('pyartcd.pipelines.build_plashets.build_plashets', return_value=AsyncMock)
+    @patch('pyartcd.pipelines.build_plashets.PlashetBuilder.build_plashets', return_value=AsyncMock)
     @patch('pyartcd.jenkins.start_sync_for_ci')
     @patch('pyartcd.jenkins.start_rhcos')
     async def test_build_plashets(self, mocked_rhcos, mocked_sync_for_ci, mocked_build_plashets, mocked_lm, *_):
         build_plashets_pipeline = BuildPlashetsPipeline(
             runtime=MagicMock(dry_run=False),
             version='4.13',
-            release='bogus',
+            release='20250603153045',
             assembly='stream',
             data_path='',
             data_gitref='',
