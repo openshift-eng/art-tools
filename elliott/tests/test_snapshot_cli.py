@@ -16,7 +16,6 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
             context=None,
         )
         self.image_repo_pull_secret = "/path/to/pull-secret"
-        self.for_bundle = False
         self.for_fbc = False
         self.dry_run = False
 
@@ -63,7 +62,6 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
                 image_repo_pull_secret=self.image_repo_pull_secret,
-                for_bundle=self.for_bundle,
                 for_fbc=self.for_fbc,
                 builds=['test-nvr-1', 'test-nvr-2'],
                 dry_run=self.dry_run,
@@ -106,15 +104,14 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
-        mock_records = ['mock_row1', 'mock_row2']
-        self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
         builds = ['openshift-v4.18.0-4.el9', 'openshift-clients-v4.18.0-4.el8']
+        mock_records = [Mock(nvr=builds[0]), Mock(nvr=builds[1])]
+        self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
 
         cli = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
-            for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             builds=builds,
             dry_run=self.dry_run,
@@ -137,7 +134,6 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             context=None,
         )
         self.image_repo_pull_secret = "/path/to/pull-secret"
-        self.for_bundle = False
         self.for_fbc = False
         self.dry_run = False
 
@@ -196,7 +192,6 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             runtime=self.runtime,
             konflux_config=self.konflux_config,
             image_repo_pull_secret='/path/to/pull-secret',
-            for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             snapshot='test-snapshot',
             dry_run=self.dry_run,
