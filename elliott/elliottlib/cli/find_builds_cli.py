@@ -1,7 +1,5 @@
 import asyncio
-import functools
 import json
-import logging
 import re
 import sys
 from typing import Dict, List, Set, Union
@@ -9,11 +7,16 @@ from typing import Dict, List, Set, Union
 import click
 import koji
 import requests
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
-from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.format_util import green_print, red_print, yellow_print
+from artcommonlib.konflux.konflux_build_record import (
+    Engine,
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
+)
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -31,7 +34,6 @@ from elliottlib.util import (
     isolate_el_version_in_brew_tag,
     parallel_results_with_progress,
     pbar_header,
-    progress_func,
 )
 
 LOGGER = logutil.get_logger(__name__)
@@ -166,15 +168,14 @@ async def find_builds_cli(
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
 
     if runtime.build_system == 'konflux':
-        if any(
-            [builds, builds_file, advisory_id, default_advisory_type, clean, no_cdn_repos, include_shipped, member_only]
-        ):
+        if any([advisory_id, default_advisory_type, clean, no_cdn_repos, include_shipped, member_only]):
             raise click.BadParameter(
-                'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
+                'Konflux does not support --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
-        records = await find_builds_konflux(runtime, payload)
+
+        records = await find_builds_konflux(runtime, payload, builds)
         if as_json:
             _json_dump(as_json, records, kind)
             return
@@ -696,24 +697,51 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-async def find_builds_konflux(runtime, payload):
+async def find_builds_konflux(runtime: Runtime, payload: bool, builds: List[str] = None) -> List[KonfluxBuildRecord]:
     """
-    Find konflux builds for group/assembly
+    Find konflux builds for a group/assembly
+    :param runtime: Runtime object
+    :param payload: If True, only return payload builds
+    :param builds: (Optional) List of build NVRs to find
+    :return: List of KonfluxBuildRecord objects
+    Raises ElliottFatalError if builds are not found
     """
 
-    runtime.konflux_db.bind(KonfluxBuildRecord)
+    if builds:
+        has_bundle_builds = any('bundle' in b for b in builds)
+        has_fbc_builds = any('fbc' in b for b in builds)
+        if has_bundle_builds and has_fbc_builds:
+            raise ElliottFatalError("Cannot mix bundle and fbc builds in the same command")
+        if has_bundle_builds and not all('bundle' in b for b in builds):
+            raise ElliottFatalError("All builds must be bundle builds if one is specified")
+        if has_fbc_builds and not all('fbc' in b for b in builds):
+            raise ElliottFatalError("All builds must be fbc builds if one is specified")
 
-    image_metas: List[ImageMetadata] = []
-    for image in runtime.image_metas():
-        if image.base_only or not image.is_release:
-            continue
-        if (payload and not image.is_payload) or (not payload and image.is_payload):
-            continue
-        image_metas.append(image)
+        if has_bundle_builds:
+            runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+        elif has_fbc_builds:
+            runtime.konflux_db.bind(KonfluxFbcBuildRecord)
+        else:
+            runtime.konflux_db.bind(KonfluxBuildRecord)
 
-    LOGGER.info("Fetching NVRs from DB...")
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
-    records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
-    if len(records) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
+        LOGGER.info("Fetching NVRs from DB...")
+        where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
+        records = await runtime.konflux_db.get_build_records_by_nvrs(builds, where=where, strict=True)
+    else:
+        runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        image_metas: List[ImageMetadata] = []
+        for image in runtime.image_metas():
+            if image.base_only or not image.is_release:
+                continue
+            if (payload and not image.is_payload) or (not payload and image.is_payload):
+                continue
+            image_metas.append(image)
+
+        LOGGER.info("Fetching NVRs from DB...")
+        tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+        records: List[KonfluxBuildRecord] = [r for r in await asyncio.gather(*tasks) if r is not None]
+        if len(records) != len(image_metas):
+            raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
+
     return records
