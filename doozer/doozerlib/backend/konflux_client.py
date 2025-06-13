@@ -388,7 +388,7 @@ class KonfluxClient:
         additional_tags: Optional[Sequence[str]] = None,
         skip_checks: bool = False,
         hermetic: Optional[bool] = None,
-        sast: Optional[bool] = False,
+        sast: Optional[bool] = None,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
@@ -487,7 +487,11 @@ class KonfluxClient:
                     if artifact_type:
                         _modify_param(task["params"], "artifact-type", artifact_type)
 
-        if not sast:
+        if sast and not has_sast_task:
+            raise IOError(
+                "SAST task is enabled, but the template does not contain it. Please ensure the template is up-to-date."
+            )
+        if sast is False and has_sast_task:  # if SAST is explicitly disabled, remove SAST tasks
             tasks = []
             has_sast_task = False
             for task in obj["spec"]["pipelineSpec"]["tasks"]:
@@ -553,7 +557,7 @@ class KonfluxClient:
         vm_override: dict,
         building_arches: Sequence[str],
         prefetch: Optional[list] = None,
-        sast: Optional[bool] = False,
+        sast: Optional[bool] = None,
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
@@ -577,7 +581,7 @@ class KonfluxClient:
         :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param building_arches: The architectures to build.
         :param prefetch: The param values for Konflux prefetch dependencies task
-        :param sast: To enable the SAST task in PLR
+        :param sast: To enable the SAST task in PLR. If None, use the default value from the pipeline template.
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
