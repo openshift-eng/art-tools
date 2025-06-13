@@ -207,7 +207,7 @@ class PrepareReleaseKonfluxPipeline:
         self.validate_shipment_config(self.shipment_config)
 
         shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
-        env = shipment_config.get("env", "prod")
+        env = shipment_config.get("env", "stage")
         generated_shipments: Dict[str, ShipmentConfig] = {}
         for shipment_advisory_config in shipment_config.get("advisories"):
             kind = shipment_advisory_config.get("kind")
