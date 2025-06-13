@@ -613,6 +613,7 @@ class ConfigScanSources:
                 'reason': "could not find an RHCOS build to sync",
             }
         """
+        return []
         statuses = []
 
         version = self.runtime.get_minor_version()
