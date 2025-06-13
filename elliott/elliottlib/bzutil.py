@@ -19,7 +19,7 @@ from artcommonlib import exectools, logutil
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
-from jira import JIRA, Issue
+from jira import JIRA, Issue, JIRAError
 from koji import ClientSession
 from requests_gssapi import HTTPSPNEGOAuth
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -694,7 +694,7 @@ class JIRABugTracker(BugTracker):
         client = JIRA(self._server, token_auth=token_auth)
         return client
 
-    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     def _init_fields(self):
         for f in self._client.fields():
             if f['name'] == 'Target Version':
@@ -832,10 +832,21 @@ class JIRABugTracker(BugTracker):
             query += custom_query
         return query
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     def _search(self, query, verbose=False) -> List[JIRABug]:
         if verbose:
             logger.info(query)
-        results = self._client.search_issues(query, maxResults=0)
+        try:
+            # Setting maxResults=0 retrieves all matching issues from the JIRA API.
+            results = self._client.search_issues(query, maxResults=0)
+        except JIRAError as e:
+            # truncate the error message to avoid flooding the logs
+            if len(e.text) > 1000:
+                e.text = e.text[:1000] + '...[truncated]'
+            raise e
+
+        if results is None:
+            return []
         return [JIRABug(j) for j in results]
 
     def blocker_search(self, status, search_filter='default', verbose=False, **kwargs):
