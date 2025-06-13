@@ -314,7 +314,10 @@ class PrepareReleasePipeline:
                 self.pre_release = True
 
                 # Remove all builds from the metadata advisory
-                await self.remove_builds_all(advisories["metadata"])
+                try:
+                    await self.remove_builds_all(advisories["metadata"])
+                except KeyError:
+                    _LOGGER.warning("metadata advisory is not present, not dropping builds")
             else:
                 _LOGGER.info(
                     f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle "
