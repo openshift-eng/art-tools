@@ -108,6 +108,60 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         self.assertEqual(len(actual_records), 1)
         self.assertEqual(actual_records[0]['nvr'], builds[0])
 
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_find_builds_konflux_bundle_builds(self, MockKonfluxBundleBuildRecord: mock.MagicMock):
+        builds = ["image1-bundle-1.0.0-1.el8"]
+        expected_result = [{"nvr": builds[0]}]
+
+        # Create mock runtime with mock konflux_db
+        mock_konflux_db = MagicMock()
+        mock_konflux_db.bind = MagicMock()
+        mock_konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=expected_result)
+
+        runtime = MagicMock()
+        runtime.konflux_db = mock_konflux_db
+        runtime.group = "openshift-4.18"
+
+        actual_records = await find_builds_konflux(runtime, payload=True, builds=builds)
+
+        # Verify the mock was called correctly
+        mock_konflux_db.bind.assert_called_once_with(MockKonfluxBundleBuildRecord)
+        mock_konflux_db.get_build_records_by_nvrs.assert_called_once_with(
+            builds,
+            where={'group': 'openshift-4.18', 'engine': 'konflux'},
+            strict=True,
+        )
+
+        self.assertEqual(len(actual_records), 1)
+        self.assertEqual(actual_records[0]['nvr'], builds[0])
+
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxFbcBuildRecord")
+    async def test_find_builds_konflux_bundle_builds(self, MockKonfluxFbcBuildRecord: mock.MagicMock):
+        builds = ["image1-fbc-1.0.0-1.el8"]
+        expected_result = [{"nvr": builds[0]}]
+
+        # Create mock runtime with mock konflux_db
+        mock_konflux_db = MagicMock()
+        mock_konflux_db.bind = MagicMock()
+        mock_konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=expected_result)
+
+        runtime = MagicMock()
+        runtime.konflux_db = mock_konflux_db
+        runtime.group = "openshift-4.18"
+
+        actual_records = await find_builds_konflux(runtime, payload=True, builds=builds)
+
+        # Verify the mock was called correctly
+        mock_konflux_db.bind.assert_called_once_with(MockKonfluxFbcBuildRecord)
+        mock_konflux_db.get_build_records_by_nvrs.assert_called_once_with(
+            builds,
+            where={'group': 'openshift-4.18', 'engine': 'konflux'},
+            strict=True,
+        )
+
+        self.assertEqual(len(actual_records), 1)
+        self.assertEqual(actual_records[0]['nvr'], builds[0])
+
 
 if __name__ == "__main__":
     unittest.main()
