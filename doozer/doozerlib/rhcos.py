@@ -313,7 +313,7 @@ class RHCOSBuildInspector:
             release, arch = ra.rsplit('.', 1)
             entries.append([name, epoch, version, release, arch])
 
-        if exclude_rhel:
+        if exclude_rhel and self.layered:
             # for node image exclude rpms in rhel layer
             filtered_entries = []
             for item in entries:
