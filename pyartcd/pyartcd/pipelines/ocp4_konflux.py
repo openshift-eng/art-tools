@@ -123,6 +123,9 @@ class KonfluxOcp4Pipeline:
                 successful_images = []  # TODO
             case BuildStrategy.ONLY:
                 successful_images = [image for image in self.image_list if image not in failed_images]
+            case _:
+                raise ValueError(f"Unknown build strategy: {self.build_plan.build_strategy}")
+
         await asyncio.gather(*[redis.delete_key(f'{redis_branch}:{image}') for image in successful_images])
 
         # Increment fail counters for failing images
@@ -155,6 +158,7 @@ class KonfluxOcp4Pipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
+            await self.update_rebase_fail_counters([])
 
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
