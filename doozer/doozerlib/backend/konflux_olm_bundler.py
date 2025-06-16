@@ -396,20 +396,30 @@ class KonfluxOlmBundleRebaser:
         bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
 
         bundle_df.content = 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata'
-        bundle_df.labels = operator_df.labels
-        bundle_df.labels['com.redhat.component'] = metadata.get_olm_bundle_brew_component_name()
-        bundle_df.labels['com.redhat.delivery.appregistry'] = False
-        bundle_df.labels['name'] = metadata.get_olm_bundle_image_name()
-        bundle_df.labels['version'] = '{}.{}'.format(
-            operator_df.labels['version'],
-            operator_df.labels['release'],
-        )
+
+        # Copy the operator's Dockerfile labels to the bundle's Dockerfile
+        # and add additional labels required by the bundle
         bundle_df.labels = {
-            **bundle_df.labels,
+            **operator_df.labels,
             **self._redhat_delivery_tags,
             **operator_framework_tags,
+            'com.redhat.component': metadata.get_olm_bundle_brew_component_name(),
+            'com.redhat.delivery.appregistry': '',  # This is a bundle, not an operator
+            'name': (bundle_name := metadata.get_olm_bundle_image_name()),
+            'version': (bundle_version := f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'),
+            'release': input_release,
         }
-        bundle_df.labels['release'] = input_release
+
+        # The following labels are required by Conforma
+        if 'distribution-scope' not in bundle_df.labels:
+            # If the operator doesn't have a distribution-scope label, default to public
+            bundle_df.labels['distribution-scope'] = 'public'
+        if 'url' not in bundle_df.labels:
+            # If the operator doesn't have a URL label, default to what OSBS uses for bundle images
+            # (https://redhat-internal.slack.com/archives/C02AX10EQJW/p1749699266047229).
+            bundle_df.labels['url'] = (
+                f'https://access.redhat.com/containers/#/registry.access.redhat.com/{bundle_name}/images/{bundle_version}-{input_release}'
+            )
 
 
 class KonfluxOlmBundleBuildError(Exception):

@@ -273,6 +273,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 'com.redhat.component': 'test-component',
                 'version': '1.0',
                 'release': '1',
+                'distribution-scope': 'public',
+                'url': 'https://example.com',
             }
             mock_bundle_df = MagicMock()
             mock_dockerfile_parser.side_effect = [mock_operator_df, mock_bundle_df]
@@ -289,7 +291,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 mock_bundle_df.labels,
                 {
                     'com.redhat.component': 'test-component',
-                    'com.redhat.delivery.appregistry': False,
+                    'com.redhat.delivery.appregistry': '',
                     'name': 'test-image',
                     'version': '1.0.1',
                     'release': '1.0-1',
@@ -301,6 +303,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
                     'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
                     'operators.operatorframework.io.bundle.package.v1': 'test-package',
+                    'distribution-scope': 'public',
+                    'url': 'https://example.com',
                 },
             )
 
