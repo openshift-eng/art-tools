@@ -129,7 +129,6 @@ class CreateReleaseCli:
             self.runtime,
             self.konflux_config,
             self.image_repo_pull_secret,
-            for_bundle=False,
             for_fbc=meta.fbc,
             snapshot=release_config.snapshot,
             dry_run=False,

@@ -19,7 +19,7 @@ from artcommonlib import exectools, logutil
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
-from jira import JIRA, Issue
+from jira import JIRA, Issue, JIRAError
 from koji import ClientSession
 from requests_gssapi import HTTPSPNEGOAuth
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -832,10 +832,22 @@ class JIRABugTracker(BugTracker):
             query += custom_query
         return query
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     def _search(self, query, verbose=False) -> List[JIRABug]:
         if verbose:
             logger.info(query)
-        results = self._client.search_issues(query, maxResults=0)
+        try:
+            # Setting maxResults=0 retrieves all matching issues from the JIRA API.
+            results = self._client.search_issues(query, maxResults=0)
+        except JIRAError as e:
+            # a lot of times we get JIRAError with massive HTML dump in the error text
+            # do not dump full html in the logs
+            if "<html>" in e.text:
+                e.text = e.text.strip()[:100] + '...[truncated html]'
+            raise e
+
+        if results is None:
+            return []
         return [JIRABug(j) for j in results]
 
     def blocker_search(self, status, search_filter='default', verbose=False, **kwargs):
@@ -1451,6 +1463,9 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
         component = t.whiteboard_component
         if component in components_not_yet_fixed:
             first_fix_components.append((component, t.id))
+            logger.info(f'Component {component} for CVE {alias} has a first-fix with {t.id}')
+        else:
+            logger.info(f'Component {component} for CVE {alias} has been fixed before {t.id}')
 
     if first_fix_components:
         logger.info(

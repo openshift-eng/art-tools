@@ -51,8 +51,10 @@ class Ocp4ScanPipeline:
         await self._rhcos_inconsistent()
 
         # Handle source changes, if any
+        changes = False
         if self.changes.get('rpms', None) or self.changes.get('images', None):
             self.logger.info('Detected at least one updated RPM or image')
+            changes = True
             rpm_list = self.changes.get('rpms', [])
             image_list = self.changes.get('images', [])
 
@@ -76,6 +78,7 @@ class Ocp4ScanPipeline:
             )
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
+            changes = True
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
             if self.rhcos_outdated:
@@ -92,6 +95,7 @@ class Ocp4ScanPipeline:
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
+            changes = True
             self.logger.info('Detected at least one updated RHCOS')
 
             if self.runtime.dry_run:
@@ -109,7 +113,8 @@ class Ocp4ScanPipeline:
                 assembly="stream",
                 build_system="konflux",
             )
-        else:
+
+        if changes is False:
             self.logger.info('*** No changes detected')
             jenkins.update_title(' [NO CHANGES]')
 

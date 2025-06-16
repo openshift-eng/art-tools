@@ -83,14 +83,20 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     return container['image']
 
 
-def get_build_id_from_rhcos_pullspec(pullspec):
+def get_build_id_from_rhcos_pullspec(pullspec, layered_id: bool = True) -> str:
     """
-    Extract the RHCOS build ID from an image pullspec. Starting from 4.16, the version is extracted from a new label
-    "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
+    Extract the RHCOS build ID from an image pullspec.
+    - Starting from 4.16, the version is extracted from a new label "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
+    - Starting with 4.19, we also support layered RHCOS images, which have a label "coreos.build.manifest-list-tag" that contains the build ID for the image. The base rhel layer buildID is preserved in the "org.opencontainers.image.version" label.
 
-    Raises:
-         - a ChildProcessError if oc fails fetching the build info
-         - a generic Exception if the required labels are not found
+    :param pullspec: The image pullspec to extract the build ID from.
+    :param layered_id: If True, will attempt to extract the build ID from the "coreos.build.manifest-list-tag" label first if available, otherwise will use the "org.opencontainers.image.version" label.
+
+    :return: The extracted build ID as a string.
+
+    :raises:
+    - ChildProcessError if the `oc image info` command fails to fetch the build info.
+    - Exception if the required labels are not found in the image info.
     """
 
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
@@ -101,10 +107,14 @@ def get_build_id_from_rhcos_pullspec(pullspec):
 
     # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
     # brew build name looks like rhcos-x86_64-4.19.9.6.202505081313-0 we need build_id 4.19.9.6.202505081313-0
-    if manifest_tag := labels.get('coreos.build.manifest-list-tag'):
-        list_tag = manifest_tag.split('-')
+    manifest_tag_label = labels.get('coreos.build.manifest-list-tag')
+    image_version_label = labels.get('org.opencontainers.image.version')
+    if layered_id and manifest_tag_label:
+        list_tag = manifest_tag_label.split('-')
         build_id = f"{list_tag[0]}.{list_tag[1]}.{list_tag[2]}-0"
-    elif not (build_id := labels.get('org.opencontainers.image.version', None)):
+    elif image_version_label:
+        build_id = image_version_label
+    else:
         build_id = labels.version
 
     if not build_id:

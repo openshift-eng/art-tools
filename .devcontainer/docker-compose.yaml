@@ -8,6 +8,7 @@ services:
     volumes:
     - ../:/workspaces/art-tools:cached,z
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/dev/.ssh:ro,cached,z
+    - ${HOME:-}${USERPROFILE:-}/.gitconfig:/home/dev/.gitconfig
     - ${HOME:-}${USERPROFILE:-}/.docker:/home/dev/.docker:ro,cached,z
     - ./doozer.settings.yaml:/home/dev/.config/doozer/settings.yaml:ro,cached,z
     - ../artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
