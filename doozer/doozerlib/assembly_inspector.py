@@ -11,7 +11,7 @@ from artcommonlib.assembly import (
     assembly_type,
 )
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
+from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs, get_build_id_from_rhcos_pullspec, get_primary_container_conf
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
@@ -619,6 +619,8 @@ class AssemblyInspector:
             assembly_rhcos_arch_pullspec = self.assembly_rhcos_config[container_conf.name].images[brew_arch]
             if assembly_rhcos_arch_pullspec:
                 pullspec_for_tag[container_conf.name] = assembly_rhcos_arch_pullspec
+                if container_conf.name == get_primary_container_conf(self.runtime):
+                    build_id = get_build_id_from_rhcos_pullspec(assembly_rhcos_arch_pullspec)
                 continue
 
             # for non-stream assemblies we expect explicit config for RHCOS
