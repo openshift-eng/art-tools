@@ -20,6 +20,7 @@ rh-doozer
 rh-elliott
 ruamel.yaml
 semver ~= 3.0.1
+slack_bolt >= 1.23.0
 slack_sdk >= 3.13.0
 stomp.py ~= 8.1.0
 tenacity ~= 8.4, != 8.4.0 # https://github.com/jd/tenacity/issues/471
