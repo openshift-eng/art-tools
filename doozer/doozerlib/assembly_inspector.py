@@ -11,7 +11,12 @@ from artcommonlib.assembly import (
     assembly_type,
 )
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs, get_build_id_from_rhcos_pullspec, get_primary_container_conf
+from artcommonlib.rhcos import (
+    RhcosMissingContainerException,
+    get_build_id_from_rhcos_pullspec,
+    get_container_configs,
+    get_primary_container_conf,
+)
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
