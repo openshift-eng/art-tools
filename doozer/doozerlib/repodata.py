@@ -122,7 +122,7 @@ class Rpm:
             name=name.text,
             epoch=int(version.attrib["epoch"]),
             version=version.attrib["ver"],
-            checksum=checksum.text,
+            checksum=f'{checksum.attrib["type"]}:{checksum.text}',
             size=int(size.attrib["package"]),
             location=location.attrib["href"],
             sourcerpm=sourcerpm,

@@ -267,7 +267,7 @@ class RPMLockfileGenerator:
         repositories: set[str],
         rpms: set[str],
         path: Path = Path('.'),
-        filename: str = 'rpms.lock.yml',
+        filename: str = 'rpms.lock.yaml',
     ) -> None:
         """
         Generate a lockfile YAML containing RPM info for specified arches and repos.
@@ -296,18 +296,20 @@ class RPMLockfileGenerator:
                 self.logger.warning(f"Failed to read digest file '{digest_path}': {e}")
 
         lockfile = {
-            "version": 1,
+            "lockfileVersion": 1,
             "lockfileVendor": "redhat",
-            "arches": {},
+            "arches": [],
         }
 
         rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, repositories, rpms)
         for arch, rpm_list in rpms_info_by_arch.items():
-            lockfile["arches"][arch] = {
-                "packages": [rpm.to_dict() for rpm in rpm_list],
-                "source": [],
-                "module_metadata": [],
-            }
+            lockfile["arches"].append(
+                {
+                    "arch": arch,
+                    "packages": [rpm.to_dict() for rpm in rpm_list],
+                    "module_metadata": [],
+                }
+            )
 
         self._write_yaml(lockfile, lockfile_path)
 
