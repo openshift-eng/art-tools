@@ -3,6 +3,7 @@ from typing import Optional, Sequence
 from pyartcd.cli import cli
 from pyartcd.pipelines import (
     advisory_drop,
+    art_notify,
     brew_scan_osh,
     build_fbc,
     build_microshift,
