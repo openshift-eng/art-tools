@@ -325,7 +325,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
             nvr="foo-bundle-1.0.0-1",
-            image_pullspec="dev.example.com/foo-bundle:1.0.0",
+            image_pullspec="dev.example.com/foo-bundle@1",
             image_tag="deadbeef",
             source_repo="https://example.com/foo-operator.git",
             commitish="beefdead",
@@ -409,7 +409,6 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         images_mirror_set_file = StringIO()
         mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
         mock_get_referenced_images.return_value = [
-            MagicMock(image_pullspec="example.com/art-images@1"),
             MagicMock(image_pullspec="example.com/art-images@2"),
         ]
 
