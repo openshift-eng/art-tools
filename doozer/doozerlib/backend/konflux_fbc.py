@@ -361,10 +361,11 @@ class KonfluxFbcRebaser:
         konflux_db: KonfluxDb = metadata.runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
         ref_builds = await self._get_referenced_images(konflux_db, bundle_build)
-        ref_pullspecs = [
+        ref_builds.append(bundle_build)  # Include the bundle build itself
+        ref_pullspecs = {
             b.image_pullspec.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL)
             for b in ref_builds
-        ]
+        }
 
         # Load current catalog
         catalog_dir = build_repo.local_dir.joinpath("catalog", olm_package)
