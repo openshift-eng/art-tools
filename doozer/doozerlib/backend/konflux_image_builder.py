@@ -315,7 +315,7 @@ class KonfluxImageBuilder:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        cachi2_enabled = metadata.is_cachi2_enabled(logger=logger)
+        cachi2_enabled = metadata.is_cachi2_enabled()
 
         if not cachi2_enabled:
             logger.info("Not setting pre-fetch since cachi2 not enabled")

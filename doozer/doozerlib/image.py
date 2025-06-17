@@ -5,6 +5,7 @@ from copy import copy
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from artcommonlib import util as artlib_util
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
@@ -644,7 +645,6 @@ class ImageMetadata(Metadata):
         Determine if cachi2 is enabled or not
         image config override > group config override > fallback to cachito config
         """
-        from artcommonlib import util as artlib_util
 
         cachi2_config_override = self.config.konflux.cachi2.enabled
         cachi2_group_override = self.runtime.group_config.konflux.cachi2.enabled
