@@ -1,7 +1,8 @@
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Missing
 from dockerfile_parse import DockerfileParser
@@ -272,3 +273,147 @@ USER 3000
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
 
         self.assertEqual(dfp.content.strip(), expected.strip())
+
+    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
+    def test_write_rpms_lock_file_no_parents(self, mock_rpmlockfile_cls):
+        mock_rpmlockfile = AsyncMock()
+        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
+
+        metadata = MagicMock()
+        metadata.distgit_key = "foo"
+        metadata.get_arches.return_value = ["x86_64"]
+        metadata.config.konflux.cachi2.lockfile.packages.get.side_effect = lambda k, default=None: []
+        metadata.get_parent_members.return_value = {}
+        metadata.config.get.side_effect = lambda k, default=None: []
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_lockfile_force_enabled.return_value = False
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build = AsyncMock(return_value=MagicMock(installed_packages=["pkg1", "pkg2"]))
+
+        rebaser = KonfluxRebaser(runtime, MagicMock(), MagicMock(), "unsigned")
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        mock_rpmlockfile.generate_lockfile.assert_awaited_with(
+            ["x86_64"], set(), {"pkg1", "pkg2"}, Path("."), distgit_key="foo", force=False
+        )
+
+    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
+    def test_write_rpms_lock_file_with_parents(self, mock_rpmlockfile_cls):
+        mock_rpmlockfile = AsyncMock()
+        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
+
+        metadata = MagicMock()
+        metadata.distgit_key = "foo"
+        metadata.get_arches.return_value = ["x86_64"]
+        metadata.config.konflux.cachi2.lockfile.packages.get.side_effect = lambda k, default=None: []
+        metadata.get_parent_members.return_value = {"bar": None}
+        metadata.config.get.side_effect = lambda k, default=None: []
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_lockfile_force_enabled.return_value = False
+
+        async def get_latest_build(name, group):
+            if name == "foo":
+                return MagicMock(installed_packages=["pkg1", "pkg2"])
+            elif name == "bar":
+                return MagicMock(installed_packages=["pkg2"])
+            return None
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build = AsyncMock(side_effect=get_latest_build)
+
+        rebaser = KonfluxRebaser(runtime, MagicMock(), MagicMock(), "unsigned")
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        mock_rpmlockfile.generate_lockfile.assert_awaited_with(
+            ["x86_64"], set(), {"pkg1"}, Path("."), distgit_key="foo", force=False
+        )
+
+    def test_write_rpms_lock_file_disabled(self):
+        metadata = MagicMock()
+        metadata.image_name = "foo"
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        logger = MagicMock()
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._logger = logger
+        rebaser._rpm_lockfile_generator = MagicMock()
+
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        # Assert that generate_lockfile was not called
+        rebaser._rpm_lockfile_generator.generate_lockfile.assert_not_called()
+        logger.info.assert_called_with("Skipping lockfile generation for foo")
+
+    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
+    def test_write_rpms_lock_file_empty_rpms(self, mock_rpmlockfile_cls):
+        mock_rpmlockfile = AsyncMock()
+        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
+
+        metadata = MagicMock()
+        metadata.distgit_key = "foo"
+        metadata.get_arches.return_value = ["x86_64"]
+        metadata.config.konflux.cachi2.lockfile.packages.get.side_effect = lambda k, default=None: []
+        metadata.get_parent_members.return_value = {}
+        metadata.config.get.side_effect = lambda k, default=None: []
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_lockfile_force_enabled.return_value = False
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        rebaser = KonfluxRebaser(runtime, MagicMock(), MagicMock(), "unsigned")
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        mock_rpmlockfile.generate_lockfile.assert_not_called()
+
+    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
+    def test_write_rpms_lock_file_with_force_enabled(self, mock_rpmlockfile_cls):
+        mock_rpmlockfile = AsyncMock()
+        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
+
+        metadata = MagicMock()
+        metadata.distgit_key = "foo"
+        metadata.get_arches.return_value = ["x86_64"]
+        metadata.config.konflux.cachi2.lockfile.packages.get.side_effect = lambda k, default=None: []
+        metadata.get_parent_members.return_value = {}
+        metadata.config.get.side_effect = lambda k, default=None: []
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_lockfile_force_enabled.return_value = True
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build = AsyncMock(return_value=MagicMock(installed_packages=["pkg1", "pkg2"]))
+
+        rebaser = KonfluxRebaser(runtime, MagicMock(), MagicMock(), "unsigned")
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        # Should call generate_lockfile with force=True
+        mock_rpmlockfile.generate_lockfile.assert_awaited_with(
+            ["x86_64"], set(), {"pkg1", "pkg2"}, Path("."), distgit_key="foo", force=True
+        )
+
+    @patch("doozerlib.backend.rebaser.RPMLockfileGenerator")
+    def test_write_rpms_lock_file_with_force_disabled(self, mock_rpmlockfile_cls):
+        mock_rpmlockfile = AsyncMock()
+        mock_rpmlockfile_cls.return_value = mock_rpmlockfile
+
+        metadata = MagicMock()
+        metadata.distgit_key = "foo"
+        metadata.get_arches.return_value = ["x86_64"]
+        metadata.config.konflux.cachi2.lockfile.packages.get.side_effect = lambda k, default=None: []
+        metadata.get_parent_members.return_value = {}
+        metadata.config.get.side_effect = lambda k, default=None: []
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_lockfile_force_enabled.return_value = False
+
+        runtime = MagicMock()
+        runtime.konflux_db.get_latest_build = AsyncMock(return_value=MagicMock(installed_packages=["pkg1", "pkg2"]))
+
+        rebaser = KonfluxRebaser(runtime, MagicMock(), MagicMock(), "unsigned")
+        asyncio.run(rebaser._write_rpms_lock_file(metadata, "test-group", Path(".")))
+
+        # Should call generate_lockfile with force=False
+        mock_rpmlockfile.generate_lockfile.assert_awaited_with(
+            ["x86_64"], set(), {"pkg1", "pkg2"}, Path("."), distgit_key="foo", force=False
+        )

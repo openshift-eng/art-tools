@@ -307,33 +307,6 @@ class KonfluxImageBuilder:
         name = f"ose-{name.removeprefix('openshift-')}"
         return name
 
-    @staticmethod
-    def _is_cachi2_enabled(metadata, logger=None):
-        """
-        Determine if cachi2 is enabled or not
-        image config override > group config override > fallback to cachito config
-        """
-        logger = logger or LOGGER
-        cachi2_config_override = metadata.config.konflux.cachi2.enabled
-        cachi2_group_override = metadata.runtime.group_config.konflux.cachi2.enabled
-
-        if cachi2_config_override not in [Missing, None]:
-            # If cachi2 override is defined in image metadata
-            cachi2_enabled = cachi2_config_override
-            logger.info("cachi2 enabled from metadata config")
-        elif cachi2_group_override not in [Missing, None]:
-            # If cachi2 override is defined in group metadata
-            cachi2_enabled = cachi2_group_override
-            logger.info("cachi2 enabled from group config")
-        else:
-            # Enable cachi2 based on cachito config
-            logger.info("cachi2 override not found. fallback to use cachito config")
-            cachi2_enabled = artlib_util.is_cachito_enabled(
-                metadata=metadata, group_config=metadata.runtime.group_config, logger=logger
-            )
-
-        return cachi2_enabled
-
     def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
@@ -342,7 +315,7 @@ class KonfluxImageBuilder:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        cachi2_enabled = self._is_cachi2_enabled(metadata=metadata, logger=logger)
+        cachi2_enabled = metadata.is_cachi2_enabled()
 
         if not cachi2_enabled:
             logger.info("Not setting pre-fetch since cachi2 not enabled")

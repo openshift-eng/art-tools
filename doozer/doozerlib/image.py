@@ -5,6 +5,7 @@ from copy import copy
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from artcommonlib import util as artlib_util
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
@@ -638,3 +639,80 @@ class ImageMetadata(Metadata):
                 self.logger.warning(f"Parent member {member_name} not loaded for {self.distgit_key}")
             parent_members[member_name] = member
         return parent_members
+
+    def is_cachi2_enabled(self):
+        """
+        Determine if cachi2 is enabled or not
+        image config override > group config override > fallback to cachito config
+        """
+
+        cachi2_config_override = self.config.konflux.cachi2.enabled
+        cachi2_group_override = self.runtime.group_config.konflux.cachi2.enabled
+
+        if cachi2_config_override not in [Missing, None]:
+            # If cachi2 override is defined in image metadata
+            cachi2_enabled = cachi2_config_override
+            self.logger.info("cachi2 enabled from metadata config")
+        elif cachi2_group_override not in [Missing, None]:
+            # If cachi2 override is defined in group metadata
+            cachi2_enabled = cachi2_group_override
+            self.logger.info("cachi2 enabled from group config")
+        else:
+            # Enable cachi2 based on cachito config
+            self.logger.info("cachi2 override not found. fallback to use cachito config")
+            cachi2_enabled = artlib_util.is_cachito_enabled(
+                metadata=self, group_config=self.runtime.group_config, logger=self.logger
+            )
+
+        return cachi2_enabled
+
+    def is_lockfile_generation_enabled(self) -> bool:
+        """
+        Determines whether lockfile generation is enabled for the current image configuration.
+
+        The method checks if the cachi2 feature is enabled. If not, lockfile generation is disabled.
+        If cachi2 is enabled, it looks for lockfile generation overrides in the following order:
+        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.enabled`)
+        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.enabled`)
+        If neither override is set, lockfile generation defaults to enabled.
+
+        Returns:
+            bool: True if lockfile generation is enabled, False otherwise.
+        """
+        lockfile_enabled = True
+
+        cachi2_enabled = self.is_cachi2_enabled()
+        if not cachi2_enabled:
+            return False
+
+        lockfile_config_override = self.config.konflux.cachi2.lockfile.enabled
+        if lockfile_config_override not in [Missing, None]:
+            lockfile_enabled = lockfile_config_override
+            self.logger.info(f"Lockfile generation set from metadata config {lockfile_enabled}")
+        else:
+            lockfile_group_override = self.runtime.group_config.konflux.cachi2.lockfile.enabled
+            if lockfile_group_override not in [Missing, None]:
+                lockfile_enabled = lockfile_group_override
+                self.logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
+
+        return lockfile_enabled
+
+    def is_lockfile_force_enabled(self) -> bool:
+        """
+        Determines whether lockfile force generation is enabled for the current image configuration.
+
+        This method only checks the image metadata configuration for the force parameter:
+        - Image metadata configuration (`self.config.konflux.cachi2.lockfile.force`)
+
+        If not set, force generation defaults to disabled.
+
+        Returns:
+            bool: True if lockfile force generation is enabled, False otherwise.
+        """
+        lockfile_force_config_override = self.config.konflux.cachi2.lockfile.force
+        if lockfile_force_config_override not in [Missing, None]:
+            lockfile_force = bool(lockfile_force_config_override)
+            self.logger.info(f"Lockfile force generation set from metadata config {lockfile_force}")
+            return lockfile_force
+
+        return False

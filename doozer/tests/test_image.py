@@ -4,9 +4,11 @@ import shutil
 import tempfile
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
+from unittest.mock import MagicMock, patch
 
 from artcommonlib import exectools
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
+from doozerlib.image import ImageMetadata
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
@@ -172,6 +174,245 @@ class TestImageMetadata(unittest.TestCase):
         rt = mock.MagicMock()
         imeta = image.ImageMetadata(rt, data_obj)
         self.assertEqual(imeta.get_brew_image_name_short(), 'openshift-test')
+
+    def _create_image_metadata(self, name):
+        image_model = Model(
+            {
+                'name': name,
+            }
+        )
+        data_obj = Model(
+            {
+                'key': 'my-distgit',
+                'data': image_model,
+                'filename': 'my-distgit.yaml',
+            }
+        )
+        rt = MagicMock()
+        return image.ImageMetadata(rt, data_obj)
+
+    def test_cachi2_enabled_1(self):
+        metadata = self._create_image_metadata('openshift/test_0')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_2(self):
+        metadata = self._create_image_metadata('openshift/test')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = False
+        metadata.config = mock_config
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_3(self):
+        metadata = self._create_image_metadata('openshift/test_1')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = None
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_4(self):
+        metadata = self._create_image_metadata('openshift/test_2')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = Missing
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = False
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    @patch("artcommonlib.util.is_cachito_enabled")
+    def test_cachi2_enabled_5(self, is_cachito_enabled):
+        metadata = self._create_image_metadata('openshift/test_3')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = Missing
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = Missing
+        is_cachito_enabled.return_value = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    @patch("artcommonlib.util.is_cachito_enabled")
+    def test_cachi2_enabled_6(self, is_cachito_enabled):
+        metadata = self._create_image_metadata('openshift/test_4')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = False
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = Missing
+        is_cachito_enabled.return_value = True
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    def test_lockfile_enabled_metadata_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile generation set from metadata config True")
+
+    def test_lockfile_enabled_metadata_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = False
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_group_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile generation set from group config True")
+
+    def test_lockfile_enabled_group_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_missing_overrides(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+
+    def test_lockfile_enabled_cachi2_disabled(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=False):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_all_missing(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=Missing):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_force_enabled_metadata_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config True")
+
+    def test_lockfile_force_enabled_metadata_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = False
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config False")
+
+    def test_lockfile_force_enabled_missing_override(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        # Should not log anything when using default
+
+    def test_lockfile_force_enabled_none_override(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        # Should not log anything when using default
 
 
 class TestImageInspector(IsolatedAsyncioTestCase):
