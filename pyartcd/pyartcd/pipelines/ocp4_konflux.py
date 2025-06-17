@@ -124,7 +124,9 @@ class KonfluxOcp4Pipeline:
             case BuildStrategy.ONLY:
                 successful_images = [image for image in self.image_list if image not in failed_images]
             case _:
-                raise ValueError(f"Unknown build strategy: {self.build_plan.build_strategy}")
+                raise ValueError(
+                    f"Unknown build strategy: {self.build_plan.build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
+                )
 
         await asyncio.gather(*[redis.delete_key(f'{redis_branch}:{image}') for image in successful_images])
 
