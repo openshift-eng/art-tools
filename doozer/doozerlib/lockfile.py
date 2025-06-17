@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Set
 import yaml
 
 # Removed unused import 'List' from aiohttp_retry
-from artcommonlib import logutil
+from artcommonlib import exectools, logutil
 from artcommonlib.rpm_utils import compare_nvr
 
 from doozerlib.repodata import Repodata, Rpm
@@ -242,9 +242,10 @@ class RPMLockfileGenerator:
     for asynchronous RPM metadata retrieval and outputs YAML lockfiles along with digest files.
     """
 
-    def __init__(self, repos: Repos, logger: Optional[Logger] = None):
+    def __init__(self, repos: Repos, logger: Optional[Logger] = None, runtime=None):
         self.logger = logger or logutil.get_logger(__name__)
         self.builder = RpmInfoCollector(repos, self.logger)
+        self.runtime = runtime
 
     @staticmethod
     def _compute_hash(rpms: set[str]) -> str:
@@ -261,6 +262,44 @@ class RPMLockfileGenerator:
         joined = '\n'.join(sorted_items)
         return hashlib.sha256(joined.encode('utf-8')).hexdigest()
 
+    def _get_digest_from_target_branch(self, digest_path: Path, distgit_key: str) -> Optional[str]:
+        """
+        Fetch digest file content from the target art branch.
+
+        Args:
+            digest_path (Path): Path to the digest file relative to repo root.
+            distgit_key (str): Distgit key to construct the target branch name.
+
+        Returns:
+            Optional[str]: Digest content if found, None otherwise.
+        """
+        if not self.runtime:
+            return None
+
+        # Construct target branch name using the same format as rebaser
+        target_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format(
+            group=self.runtime.group,
+            assembly_name=self.runtime.assembly,
+            distgit_key=distgit_key,
+        )
+
+        try:
+            # Use just the filename since the digest file is in the root of the git repo
+            digest_filename = digest_path.name
+
+            # Use exectools to run git show command
+            rc, stdout, stderr = exectools.cmd_gather(['git', 'show', f'{target_branch}:{digest_filename}'])
+            if rc == 0:
+                return stdout.strip()
+            else:
+                self.logger.debug(
+                    f"Could not fetch digest file '{digest_filename}' from branch '{target_branch}': {stderr}"
+                )
+                return None
+        except Exception as e:
+            self.logger.debug(f"Error fetching digest from git branch '{target_branch}': {e}")
+            return None
+
     async def generate_lockfile(
         self,
         arches: list[str],
@@ -268,11 +307,13 @@ class RPMLockfileGenerator:
         rpms: set[str],
         path: Path = Path('.'),
         filename: str = 'rpms.lock.yaml',
+        distgit_key: Optional[str] = None,
+        force: bool = False,
     ) -> None:
         """
         Generate a lockfile YAML containing RPM info for specified arches and repos.
 
-        Skips generation if RPM fingerprint digest matches an existing one.
+        Skips generation if RPM fingerprint digest matches an existing one, unless force=True.
 
         Args:
             arches (list[str]): Target architectures.
@@ -280,20 +321,38 @@ class RPMLockfileGenerator:
             rpms (set[str]): RPM names or NVRs to lock.
             path (str): Directory path to save lockfile and digest.
             filename (str): Lockfile filename.
+            distgit_key (Optional[str]): Distgit key for fetching digest from target branch.
+            force (bool): If True, ignore digest comparison and force regeneration.
         """
         fingerprint = self._compute_hash(rpms)
         lockfile_path = path / filename
         digest_path = path / f'{filename}.digest'
 
-        if digest_path.exists():
-            try:
-                with open(digest_path, 'r') as f:
-                    old_fingerprint = f.read().strip()
-                if old_fingerprint == fingerprint:
-                    self.logger.info("No changes in RPM list. Skipping lockfile generation.")
-                    return
-            except Exception as e:
-                self.logger.warning(f"Failed to read digest file '{digest_path}': {e}")
+        # Skip digest check if force=True
+        if force:
+            self.logger.info("Force flag set. Regenerating lockfile without digest check.")
+        else:
+            # Check local digest file first
+            old_fingerprint = None
+            if digest_path.exists():
+                try:
+                    with open(digest_path, 'r') as f:
+                        old_fingerprint = f.read().strip()
+                except Exception as e:
+                    self.logger.warning(f"Failed to read local digest file '{digest_path}': {e}")
+
+            # If no local digest or distgit_key provided, try fetching from target branch
+            if old_fingerprint is None and distgit_key:
+                old_fingerprint = self._get_digest_from_target_branch(digest_path, distgit_key)
+                if old_fingerprint:
+                    self.logger.info(f"Found digest in target branch for {distgit_key}")
+
+            # Compare fingerprints
+            if old_fingerprint == fingerprint:
+                self.logger.info("No changes in RPM list. Skipping lockfile generation.")
+                return
+            elif old_fingerprint:
+                self.logger.info("RPM list changed. Regenerating lockfile.")
 
         lockfile = {
             "lockfileVersion": 1,

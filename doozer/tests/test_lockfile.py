@@ -389,3 +389,122 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
         # We cannot easily assert the YAML content here, but just ensure write was called
         self.assertTrue(written_content or True)
+
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('builtins.open', new_callable=mock_open, read_data='oldfingerprint')
+    @patch('pathlib.Path.exists', return_value=True)
+    async def test_generate_lockfile_force_skips_digest_check(self, mock_exists, mock_file, mock_write_yaml):
+        """Test that force=True skips digest checking and always generates lockfile"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+
+        await self.generator.generate_lockfile(
+            self.arches, self.repos_set, self.rpms, self.path, self.filename, force=True
+        )
+
+        # Should not read the digest file when force=True
+        mock_file().read.assert_not_called()
+        # Should generate lockfile regardless
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        mock_write_yaml.assert_called_once()
+        self.logger.info.assert_any_call("Force flag set. Regenerating lockfile without digest check.")
+
+    @patch('artcommonlib.exectools.cmd_gather')
+    def test_get_digest_from_target_branch_success(self, mock_cmd_gather):
+        """Test successful digest fetching from target branch"""
+        mock_runtime = MagicMock()
+        mock_runtime.group = "openshift-4.20"
+        mock_runtime.assembly = "test"
+
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
+
+        # Mock successful git command
+        mock_cmd_gather.return_value = (0, "abc123hash", "")
+
+        digest_path = Path('/some/path/rpms.lock.yaml.digest')
+        result = generator._get_digest_from_target_branch(digest_path, "test-image")
+
+        self.assertEqual(result, "abc123hash")
+        mock_cmd_gather.assert_called_once_with(
+            ['git', 'show', 'art-openshift-4.20-assembly-test-dgk-test-image:rpms.lock.yaml.digest']
+        )
+
+    @patch('artcommonlib.exectools.cmd_gather')
+    def test_get_digest_from_target_branch_not_found(self, mock_cmd_gather):
+        """Test digest fetching when file doesn't exist in target branch"""
+        mock_runtime = MagicMock()
+        mock_runtime.group = "openshift-4.20"
+        mock_runtime.assembly = "test"
+
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
+
+        # Mock git command failure (file not found)
+        mock_cmd_gather.return_value = (128, "", "fatal: path does not exist")
+
+        digest_path = Path('/some/path/rpms.lock.yaml.digest')
+        result = generator._get_digest_from_target_branch(digest_path, "test-image")
+
+        self.assertIsNone(result)
+
+    def test_get_digest_from_target_branch_no_runtime(self):
+        """Test digest fetching when no runtime is provided"""
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=None)
+
+        digest_path = Path('/some/path/rpms.lock.yaml.digest')
+        result = generator._get_digest_from_target_branch(digest_path, "test-image")
+
+        self.assertIsNone(result)
+
+    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('pathlib.Path.exists', return_value=False)
+    async def test_generate_lockfile_uses_target_branch_digest(self, mock_exists, mock_write_yaml, mock_get_digest):
+        """Test that generate_lockfile uses target branch digest when local file doesn't exist"""
+        fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
+
+        # Mock target branch returning same fingerprint
+        mock_get_digest.return_value = fingerprint
+
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+
+        await self.generator.generate_lockfile(
+            self.arches, self.repos_set, self.rpms, self.path, self.filename, distgit_key="test-image"
+        )
+
+        # Should call target branch digest fetching
+        mock_get_digest.assert_called_once_with(self.path / f'{self.filename}.digest', "test-image")
+        # Should skip generation since fingerprints match
+        self.generator.builder.fetch_rpms_info.assert_not_called()
+        mock_write_yaml.assert_not_called()
+        self.logger.info.assert_any_call("Found digest in target branch for test-image")
+        self.logger.info.assert_any_call("No changes in RPM list. Skipping lockfile generation.")
+
+    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('pathlib.Path.exists', return_value=False)
+    async def test_generate_lockfile_regenerates_when_target_branch_digest_differs(
+        self, mock_exists, mock_write_yaml, mock_get_digest
+    ):
+        """Test that generate_lockfile regenerates when target branch digest differs"""
+        # Mock target branch returning different fingerprint
+        mock_get_digest.return_value = "differenthash"
+
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+
+        await self.generator.generate_lockfile(
+            self.arches, self.repos_set, self.rpms, self.path, self.filename, distgit_key="test-image"
+        )
+
+        # Should call target branch digest fetching
+        mock_get_digest.assert_called_once()
+        # Should generate since fingerprints differ
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        mock_write_yaml.assert_called_once()
+        self.logger.info.assert_any_call("Found digest in target branch for test-image")
+        self.logger.info.assert_any_call("RPM list changed. Regenerating lockfile.")

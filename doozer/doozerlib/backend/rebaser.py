@@ -85,7 +85,7 @@ class KonfluxRebaser:
         self._source_modifier_factory = source_modifier_factory
         self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
-        self._rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos)
+        self._rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -710,7 +710,12 @@ class KonfluxRebaser:
         enabled_repos = set(metadata.config.get("enabled_repos", []))
 
         await self._rpm_lockfile_generator.generate_lockfile(
-            metadata.get_arches(), enabled_repos, rpms_to_install, dest_dir
+            metadata.get_arches(),
+            enabled_repos,
+            rpms_to_install,
+            dest_dir,
+            distgit_key=metadata.distgit_key,
+            force=metadata.is_lockfile_force_enabled(),
         )
 
     def _make_actual_release_string(

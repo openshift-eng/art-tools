@@ -362,6 +362,58 @@ class TestImageMetadata(unittest.TestCase):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
 
+    def test_lockfile_force_enabled_metadata_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config True")
+
+    def test_lockfile_force_enabled_metadata_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = False
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config False")
+
+    def test_lockfile_force_enabled_missing_override(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        # Should not log anything when using default
+
+    def test_lockfile_force_enabled_none_override(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        # Should not log anything when using default
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")

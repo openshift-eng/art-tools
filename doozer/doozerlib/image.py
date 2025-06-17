@@ -696,3 +696,23 @@ class ImageMetadata(Metadata):
                 self.logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
 
         return lockfile_enabled
+
+    def is_lockfile_force_enabled(self) -> bool:
+        """
+        Determines whether lockfile force generation is enabled for the current image configuration.
+
+        This method only checks the image metadata configuration for the force parameter:
+        - Image metadata configuration (`self.config.konflux.cachi2.lockfile.force`)
+
+        If not set, force generation defaults to disabled.
+
+        Returns:
+            bool: True if lockfile force generation is enabled, False otherwise.
+        """
+        lockfile_force_config_override = self.config.konflux.cachi2.lockfile.force
+        if lockfile_force_config_override not in [Missing, None]:
+            lockfile_force = bool(lockfile_force_config_override)
+            self.logger.info(f"Lockfile force generation set from metadata config {lockfile_force}")
+            return lockfile_force
+
+        return False
