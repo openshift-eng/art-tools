@@ -32,7 +32,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient

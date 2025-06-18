@@ -9,7 +9,7 @@ from artcommonlib import model, runtime
 from artcommonlib.exectools import cmd_gather_async
 
 from pyartcd import constants, jenkins, util
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.slack import SlackClient
 
