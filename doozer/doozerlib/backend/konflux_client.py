@@ -949,7 +949,7 @@ class KonfluxClient:
                         namespace=namespace,
                         serialize=False,
                         field_selector=f"metadata.name={release_name}",
-                        timeout_seconds=5 * 60,
+                        timeout_seconds=60,
                     )
                     for event in release_obj:
                         assert isinstance(event, Dict)
