@@ -75,6 +75,7 @@ class PrepareReleaseKonfluxPipeline:
         # these will be initialized later
         self.releases_config = None
         self.group_config = None
+        self.olm_builds = []
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -299,6 +300,9 @@ class PrepareReleaseKonfluxPipeline:
         if kind in ("image", "extras"):
             snapshot_spec = await self.find_builds(kind)
             shipment.shipment.snapshot.spec = snapshot_spec
+        if kind == "metadata"
+            # TODO: rebuild olm_builds_not_found builds
+            shipment.shipment.snapshot.spec = Spec(nvrs=self.olm_builds)
         else:
             _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
 
@@ -380,6 +384,7 @@ class PrepareReleaseKonfluxPipeline:
         if stdout:
             out = json.loads(stdout)
             builds = out.get("builds", [])
+            self.olm_builds = self.olm_builds.append(out.get("olm_builds", []))
         return Spec(nvrs=builds)
 
     async def create_update_shipment_mr(
