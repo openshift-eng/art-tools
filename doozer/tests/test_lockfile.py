@@ -457,15 +457,21 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('pathlib.Path.write_text')
     @patch('pathlib.Path.exists', return_value=False)
-    async def test_generate_lockfile_uses_target_branch_digest(self, mock_exists, mock_write_yaml, mock_get_digest):
-        """Test that generate_lockfile uses target branch digest when local file doesn't exist"""
+    async def test_generate_lockfile_uses_target_branch_digest(
+        self, mock_exists, mock_write_text, mock_write_yaml, mock_get_digest, mock_get_lockfile
+    ):
+        """Test that generate_lockfile downloads files from upstream when digest matches"""
         fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
+        mock_lockfile_content = "lockfile: content"
 
-        # Mock target branch returning same fingerprint
+        # Mock target branch returning same fingerprint and lockfile content
         mock_get_digest.return_value = fingerprint
+        mock_get_lockfile.return_value = mock_lockfile_content
 
         dummy_rpm_info = MagicMock()
         dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
@@ -477,11 +483,18 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         # Should call target branch digest fetching
         mock_get_digest.assert_called_once_with(self.path / f'{self.filename}.digest', "test-image")
+        # Should call target branch lockfile fetching
+        mock_get_lockfile.assert_called_once_with(self.path / self.filename, "test-image")
         # Should skip generation since fingerprints match
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()
+        # Should download both files
+        mock_write_text.assert_any_call(fingerprint)
+        mock_write_text.assert_any_call(mock_lockfile_content)
         self.logger.info.assert_any_call("Found digest in target branch for test-image")
-        self.logger.info.assert_any_call("No changes in RPM list. Skipping lockfile generation.")
+        self.logger.info.assert_any_call("No changes in RPM list. Downloading digest and lockfile from upstream.")
+        self.logger.info.assert_any_call(f"Downloaded digest file to {self.path / f'{self.filename}.digest'}")
+        self.logger.info.assert_any_call(f"Downloaded lockfile to {self.path / self.filename}")
 
     @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_write_yaml')
@@ -508,3 +521,79 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_write_yaml.assert_called_once()
         self.logger.info.assert_any_call("Found digest in target branch for test-image")
         self.logger.info.assert_any_call("RPM list changed. Regenerating lockfile.")
+
+    def test_get_lockfile_from_target_branch_success(self):
+        """Test successful lockfile fetching from target branch"""
+        mock_runtime = MagicMock()
+        mock_runtime.group = "test-group"
+        mock_runtime.assembly = "test-assembly"
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
+
+        lockfile_path = Path('/some/path/rpms.lock.yaml')
+        expected_content = "lockfile: yaml content"
+        expected_branch = "art-test-group-assembly-test-assembly-dgk-test-image"
+
+        with patch('artcommonlib.exectools.cmd_gather') as mock_cmd:
+            mock_cmd.return_value = (0, expected_content, "")
+
+            result = generator._get_lockfile_from_target_branch(lockfile_path, "test-image")
+
+            self.assertEqual(result, expected_content)
+            mock_cmd.assert_called_once_with(['git', 'show', f'{expected_branch}:rpms.lock.yaml'])
+
+    def test_get_lockfile_from_target_branch_not_found(self):
+        """Test lockfile fetching when file doesn't exist in target branch"""
+        mock_runtime = MagicMock()
+        mock_runtime.group = "test-group"
+        mock_runtime.assembly = "test-assembly"
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
+
+        lockfile_path = Path('/some/path/rpms.lock.yaml')
+
+        with patch('artcommonlib.exectools.cmd_gather') as mock_cmd:
+            mock_cmd.return_value = (128, "", "fatal: Path 'rpms.lock.yaml' does not exist")
+
+            result = generator._get_lockfile_from_target_branch(lockfile_path, "test-image")
+
+            self.assertIsNone(result)
+            self.logger.debug.assert_called()
+
+    def test_get_lockfile_from_target_branch_no_runtime(self):
+        """Test lockfile fetching when no runtime is provided"""
+        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=None)
+
+        lockfile_path = Path('/some/path/rpms.lock.yaml')
+        result = generator._get_lockfile_from_target_branch(lockfile_path, "test-image")
+
+        self.assertIsNone(result)
+
+    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
+    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('pathlib.Path.write_text')
+    @patch('pathlib.Path.exists', return_value=False)
+    async def test_generate_lockfile_handles_missing_upstream_lockfile(
+        self, mock_exists, mock_write_text, mock_write_yaml, mock_get_digest, mock_get_lockfile
+    ):
+        """Test that generate_lockfile handles case when upstream lockfile is missing"""
+        fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
+
+        # Mock target branch returning digest but no lockfile
+        mock_get_digest.return_value = fingerprint
+        mock_get_lockfile.return_value = None  # Lockfile not found upstream
+
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+
+        await self.generator.generate_lockfile(
+            self.arches, self.repos_set, self.rpms, self.path, self.filename, distgit_key="test-image"
+        )
+
+        # Should still download digest file
+        mock_write_text.assert_any_call(fingerprint)
+        # Should log warning about missing lockfile
+        self.logger.warning.assert_any_call("Could not download lockfile from upstream branch for test-image")
+        # Should skip generation since fingerprints match
+        self.generator.builder.fetch_rpms_info.assert_not_called()
+        mock_write_yaml.assert_not_called()
