@@ -49,7 +49,6 @@ dependencies = [
     "koji >= 1.18",
     "semver",
     "pip_system_certs",
-    "pydantic ~= 2.0.0",
     "pygit2 >= 1.11.1",  # https://github.com/libgit2/pygit2/issues/1176
     "python-bugzilla >= 3.2",
     "pyyaml",
