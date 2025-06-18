@@ -124,7 +124,6 @@ class CreateReleaseCli:
                 )
 
         # verify snapshot
-        # TODO: make it work for bundle
         get_snapshot_cli = GetSnapshotCli(
             self.runtime,
             self.konflux_config,

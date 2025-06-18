@@ -4,13 +4,15 @@ from datetime import timedelta
 
 import click
 from artcommonlib import logutil
-from artcommonlib import util as art_util
+from artcommonlib.util import KubeCondition, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.runtime import Runtime
+
+yaml = new_roundtrip_yaml_handler()
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -30,14 +32,19 @@ class WatchReleaseCli:
         )
         self.konflux_client.verify_connection()
 
-    async def run(self):
+    async def run(self) -> tuple[bool, dict]:
+        """
+        Run the watch release pipeline.
+        :return: A tuple of (success: bool, release_obj: dict)
+        """
+
         self.runtime.initialize(no_group=True)
         release_obj = await self.konflux_client.wait_for_release(
             self.release, overall_timeout_timedelta=timedelta(hours=self.timeout)
         )
 
         # Assume that these will be available
-        released_condition = art_util.KubeCondition.find_condition(release_obj, 'Released')
+        released_condition = KubeCondition.find_condition(release_obj, 'Released')
         if not released_condition:
             raise ValueError("Expected to find `Released` status in release_obj but couldn't")
 
@@ -46,14 +53,14 @@ class WatchReleaseCli:
         success = reason == "Succeeded" and status == "True"
 
         if success:
-            return True
+            return True, release_obj
 
         message = released_condition.message
         if message == "Release processing failed on managed pipelineRun":
             managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
             message += f" {managed_plr}"
         LOGGER.error(message)
-        return False
+        return False, release_obj
 
 
 @konflux_release_cli.command("watch", short_help="Watch and report on status of a given Konflux Release")
@@ -80,6 +87,7 @@ class WatchReleaseCli:
     help='Time to wait, in hours. Set 0 to report and exit.',
 )
 @click.option('--dry-run', is_flag=True, help='Init and exit')
+@click.option('--dump', is_flag=True, help='Dump the release object to stdout in YAML format')
 @click.pass_obj
 @click_coroutine
 async def watch_release_cli(
@@ -90,6 +98,7 @@ async def watch_release_cli(
     konflux_namespace,
     timeout: int,
     dry_run: bool,
+    dump: bool,
 ):
     """
     Watch the given Konflux Release and report on its status
@@ -112,10 +121,12 @@ async def watch_release_cli(
     pipeline = WatchReleaseCli(
         runtime, release=release, konflux_config=konflux_config, timeout=timeout, dry_run=dry_run
     )
-    release_status = await pipeline.run()
-    if release_status is True:
-        click.echo("Release successful!")
-        sys.exit(0)
-    else:
-        click.echo("Release failed!")
-        sys.exit(1)
+
+    release_status, release_obj = await pipeline.run()
+    message = f"Release {'successful' if release_status else 'failed'}!"
+    rc = 0 if release_status else 1
+
+    LOGGER.info(message)
+    if dump:
+        yaml.dump(release_obj.to_dict(), sys.stdout)
+    sys.exit(rc)

@@ -70,8 +70,9 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
-        status = await cli.run()
+        status, obj = await cli.run()
         self.assertEqual(status, True)
+        self.assertEqual(obj, Model(release))
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -107,8 +108,9 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
-        status = await cli.run()
+        status, obj = await cli.run()
         self.assertEqual(status, False)
+        self.assertEqual(obj, Model(release))
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -144,8 +146,9 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
-        status = await cli.run()
+        status, obj = await cli.run()
         self.assertEqual(status, False)
+        self.assertEqual(obj, Model(release))
 
 
 class TestCreateReleaseCli(IsolatedAsyncioTestCase):
