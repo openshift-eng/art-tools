@@ -11,7 +11,10 @@ from doozerlib.runtime import Runtime
 @click.option('--yaml', 'as_yaml', required=False, default=False, is_flag=True, help='Format the output as yaml')
 @pass_runtime
 def config_read_rpms(runtime: Runtime, as_yaml: bool):
-    runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)
+    if runtime.group == "openshift-4.20":
+        runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False, build_system="konflux")
+    else:
+        runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)
     config = runtime.get_rpm_config()
 
     if as_yaml:
