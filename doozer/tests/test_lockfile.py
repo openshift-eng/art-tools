@@ -508,3 +508,14 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_write_yaml.assert_called_once()
         self.logger.info.assert_any_call("Found digest in target branch for test-image")
         self.logger.info.assert_any_call("RPM list changed. Regenerating lockfile.")
+
+    async def test_generate_lockfile_skips_when_repositories_empty(self):
+        """Test that generate_lockfile skips when repositories set is empty"""
+        # Mock the fetch_rpms_info method to track if it's called
+        self.generator.builder.fetch_rpms_info = MagicMock()
+
+        await self.generator.generate_lockfile(self.arches, set(), self.rpms, self.path, self.filename)
+
+        # Should skip generation due to empty repositories
+        self.generator.builder.fetch_rpms_info.assert_not_called()
+        self.logger.warning.assert_called_with("Skipping lockfile generation: repositories set is empty")
