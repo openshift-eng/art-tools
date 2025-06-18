@@ -22,7 +22,7 @@ from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)
-LOCKFILE_FILENAME = 'rpms.lock.yaml'
+DEFAULT_LOCKFILE_NAME = "rpms.lock.yaml"
 
 
 @total_ordering
@@ -292,7 +292,7 @@ class RPMLockfileGenerator:
         )
 
     async def should_generate_lockfile(
-        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_LOCKFILE_NAME
     ) -> tuple[bool, set[str]]:
         """
         Determine if lockfile generation is needed and return RPMs to install.
@@ -409,7 +409,7 @@ class RPMLockfileGenerator:
             self.logger.info("No images need lockfile generation - skipping repository loading")
 
     async def _sync_from_upstream_if_needed(
-        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_LOCKFILE_NAME
     ) -> None:
         """
         Download existing lockfile and digest from target branch if available.
@@ -537,7 +537,7 @@ class RPMLockfileGenerator:
             return None
 
     async def generate_lockfile(
-        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_LOCKFILE_NAME
     ) -> None:
         """
         Generate RPM lockfile for image with resolved package metadata.

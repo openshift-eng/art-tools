@@ -23,6 +23,7 @@ from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.image import ImageMetadata
+from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from kubernetes.dynamic import resource
@@ -319,6 +320,18 @@ class KonfluxImageBuilder:
 
         if required_package_managers in [Missing, None]:
             raise ValueError(f"{required_package_managers} should not be empty if cachi2 is enabled")
+
+        lockfile_enabled = metadata.is_lockfile_generation_enabled()
+        if lockfile_enabled:
+            lockfile_path = metadata.config.konflux.cachi2.lockfile.get("path", ".")
+            data = {
+                "type": "rpm",
+                "path": lockfile_path,
+            }
+            prefetch.append(data)
+            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_LOCKFILE_NAME} at path: {lockfile_path}")
+        else:
+            logger.debug("RPM lockfile generation is disabled, skipping RPM prefetch")
 
         for package_manager in ["gomod", "npm", "pip", "yarn"]:
             if package_manager in required_package_managers:
