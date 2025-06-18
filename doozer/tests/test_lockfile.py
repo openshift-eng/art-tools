@@ -597,7 +597,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         # Should skip generation since fingerprints match
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()
-        
+
     async def test_generate_lockfile_skips_when_repositories_empty(self):
         """Test that generate_lockfile skips when repositories set is empty"""
         # Mock the fetch_rpms_info method to track if it's called
