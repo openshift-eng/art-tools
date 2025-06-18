@@ -270,7 +270,7 @@ class TestGenPayloadCli(TestCase):
             gacli._get_release_pullspecs()
 
     def test_get_advisories_release_jira_default(self):
-        runtime = MagicMock()
+        runtime = MagicMock(build_system='brew')
         runtime.get_major_minor_fields.return_value = (4, 11)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.11.2')
         advisories, release_jira = gacli._get_advisories_release_jira()
@@ -324,6 +324,18 @@ class TestGenPayloadCli(TestCase):
             },
         )
 
+        runtime.build_system = 'konflux'
+        runtime.get_major_minor_fields.return_value = (4, 11)
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.11.2')
+        advisories, release_jira = gacli._get_advisories_release_jira()
+        self.assertEqual(
+            advisories,
+            {
+                'rpm': -1,
+            },
+        )
+        self.assertEqual(release_jira, "ART-0")
+
     def test_get_advisories_release_jira_candidate_reuse(self):
         runtime = MagicMock()
         advisories = {'image': 123, 'rpm': 456, 'extras': 789, 'metadata': 654}
@@ -347,3 +359,97 @@ class TestGenPayloadCli(TestCase):
         actual = gacli._get_advisories_release_jira()
         self.assertEqual(advisories, actual[0])
         self.assertEqual(release_jira, actual[1])
+
+    def test_get_shipment_info_ec0(self):
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.0')
+        group_info = {}
+        gacli._get_shipment_info(group_info)
+        expected = {
+            'shipment': {
+                'advisories': [
+                    {'kind': 'image'},
+                    {'kind': 'extras'},
+                    {'kind': 'metadata'},
+                    {'kind': 'prerelease'},
+                ]
+            }
+        }
+        self.assertEqual(expected, group_info)
+
+    def test_get_shipment_info_ec1_from_ec0(self):
+        runtime = MagicMock(build_system='konflux')
+        shipment_info = {
+            'advisories': [
+                {'kind': 'image', 'live_id': 123},
+                {'kind': 'extras', 'live_id': 456},
+                {'kind': 'metadata', 'live_id': 789},
+            ]
+        }
+        runtime.get_releases_config.return_value = Model(
+            {'releases': {'ec.0': {'assembly': {'group': {'shipment': shipment_info}}}}}
+        )
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.1')
+        group_info = {}
+        gacli._get_shipment_info(group_info)
+        self.assertEqual({'shipment': shipment_info}, group_info)
+
+    def test_get_shipment_info_rc0_from_ec4(self):
+        runtime = MagicMock(build_system='konflux')
+        shipment_info = {
+            'advisories': [
+                {'kind': 'image', 'live_id': 123},
+                {'kind': 'extras', 'live_id': 456},
+                {'kind': 'metadata', 'live_id': 789},
+            ]
+        }
+        runtime.get_releases_config.return_value = Model(
+            {
+                'releases': {
+                    'ec.2': {'assembly': {'group': {'shipment': {}}}},
+                    'ec.4': {'assembly': {'group': {'shipment': shipment_info}}},
+                    'ec.1': {'assembly': {'group': {'shipment': {}}}},
+                }
+            }
+        )
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.0')
+        group_info = {}
+        gacli._get_shipment_info(group_info)
+        self.assertEqual({'shipment': shipment_info}, group_info)
+
+    def test_get_shipment_info_rc1_from_rc0(self):
+        runtime = MagicMock(build_system='konflux')
+        shipment_info = {
+            'advisories': [
+                {'kind': 'image', 'live_id': 123},
+                {'kind': 'extras', 'live_id': 456},
+                {'kind': 'metadata', 'live_id': 789},
+            ]
+        }
+        runtime.get_releases_config.return_value = Model(
+            {'releases': {'rc.0': {'assembly': {'group': {'shipment': shipment_info}}}}}
+        )
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
+        group_info = {}
+        gacli._get_shipment_info(group_info)
+        self.assertEqual({'shipment': shipment_info}, group_info)
+
+    def test_get_shipment_info_rc1_no_rc0(self):
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
+        group_info = {}
+        gacli.logger = MagicMock()
+        gacli._get_shipment_info(group_info)
+        expected = {
+            'shipment': {
+                'advisories': [
+                    {'kind': 'image'},
+                    {'kind': 'extras'},
+                    {'kind': 'metadata'},
+                ]
+            }
+        }
+        self.assertEqual(expected, group_info)
+        gacli.logger.warning.assert_called_once_with("No matching previous assembly found")

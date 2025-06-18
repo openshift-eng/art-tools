@@ -244,6 +244,9 @@ class GenAssemblyCli:
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
 
+        # Load releases_config
+        self.releases_config = self.runtime.get_releases_config()
+
         # Check if OCP should have the new release versioning scheme (i.e. 4.20.0-0)
         self.includes_release_version = getattr(self.runtime.group_config, 'new_payload_versioning_scheme', None)
 
@@ -436,7 +439,7 @@ class GenAssemblyCli:
             # will only look for builds *completed* before the basis event. This could
             # be changed to *created* before the basis event in the future. However,
             # other logic that is used to find latest builds requires the build to be
-            # tagged into an rhaos tag before the basis brew event.
+            # tagged into an rhaos tag before the basis event.
             # To choose a safe / reliable basis brew event, we first find the
             # time at which a build was completed, then add 5 minutes.
             # That extra 5 minutes ensures brew will have had time to tag the
@@ -756,18 +759,24 @@ class GenAssemblyCli:
     def _get_advisories_release_jira(self) -> Tuple[Dict[str, int], str]:
         # Add placeholder advisory numbers and JIRA key.
         # Those values will be replaced with real values by pyartcd when preparing a release.
-        releases_config = self.runtime.get_releases_config()
-        advisories = {
-            'image': -1,
-            'rpm': -1,
-            'extras': -1,
-            'metadata': -1,
-        }
-
         preGA_advisory_type = ['prerelease']
-        for key in preGA_advisory_type:
-            if self.pre_ga_mode == key:
-                advisories[key] = -1
+
+        if self.runtime.build_system == 'brew':
+            advisories = {
+                'image': -1,
+                'rpm': -1,
+                'extras': -1,
+                'metadata': -1,
+            }
+            for key in preGA_advisory_type:
+                if self.pre_ga_mode == key:
+                    advisories[key] = -1
+        else:  # konflux
+            advisories = {
+                'rpm': -1,
+            }
+            # for konflux, prerelease advisories are noted in the `shipment` field.
+            # No need to add it to the advisories map.
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
@@ -778,9 +787,9 @@ class GenAssemblyCli:
 
         if self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             # For standalone assembly, if the advisories and jira already exist, reuse them
-            if self.gen_assembly_name in releases_config.releases:
-                advisories = releases_config.releases[self.gen_assembly_name].assembly.group.advisories.primitive()
-                release_jira = releases_config.releases[self.gen_assembly_name].assembly.group.release_jira
+            if self.gen_assembly_name in self.releases_config.releases:
+                advisories = self.releases_config.releases[self.gen_assembly_name].assembly.group.advisories.primitive()
+                release_jira = self.releases_config.releases[self.gen_assembly_name].assembly.group.release_jira
             return advisories, release_jira
 
         # if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
@@ -795,18 +804,18 @@ class GenAssemblyCli:
 
         # For RCs
         if current_v == 0 and self.assembly_type == AssemblyTypes.CANDIDATE:
-            ec_assemblies = sorted([a for a in releases_config.releases if a.startswith("ec.")])
+            ec_assemblies = sorted([a for a in self.releases_config.releases if a.startswith("ec.")])
             if not ec_assemblies:
                 self.logger.info("No matching previous assembly found")
                 return advisories, release_jira
             previous_assembly = ec_assemblies[-1]
         else:
             previous_assembly = f"{split[0]}{current_v - 1}"
-            if previous_assembly not in releases_config.releases:
+            if previous_assembly not in self.releases_config.releases:
                 self.logger.info("No matching previous assembly found")
                 return advisories, release_jira
 
-        previous_group = releases_config.releases[previous_assembly].assembly.group
+        previous_group = self.releases_config.releases[previous_assembly].assembly.group
         previous_advisories = previous_group.advisories.primitive()
 
         # preGA advisories (prerelease) associated with an assembly should not be reused
@@ -839,6 +848,9 @@ class GenAssemblyCli:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
             if self.pre_ga_mode == 'prerelease':
                 group_info['operator_index_mode'] = 'pre-release'
+
+        if self.runtime.build_system == 'konflux':
+            self._get_shipment_info(group_info)
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
@@ -916,3 +928,69 @@ class GenAssemblyCli:
                 )
 
         return image_member_overrides, rpm_member_overrides
+
+    def _get_default_shipment(self):
+        default_shipment = {
+            'advisories': [
+                {'kind': 'image'},
+                {'kind': 'extras'},
+                {'kind': 'metadata'},
+            ]
+        }
+        if self.pre_ga_mode == 'prerelease':
+            default_shipment['advisories'].append({'kind': 'prerelease'})
+        return default_shipment
+
+    def _get_previous_shipment_info(self):
+        """
+        if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
+        or if this assembly is rc.0 then check if there is a previously defined ec.X
+        pick shipment info from there
+        """
+
+        split = re.split(r'(\d+)', self.gen_assembly_name)  # ['rc.', '2', '']
+        current_v = int(split[1])
+
+        # For EC.0, this is the first shipment info
+        if self.assembly_type == AssemblyTypes.PREVIEW and current_v == 0:
+            return self._get_default_shipment()
+
+        # For RC.0, inherit from last EC
+        if current_v == 0 and self.assembly_type == AssemblyTypes.CANDIDATE:
+            ec_assemblies = sorted([a for a in self.releases_config.releases if a.startswith("ec.")])
+            if not ec_assemblies:
+                self.logger.warning("No matching previous assembly found")
+                return self._get_default_shipment()
+            previous_assembly = ec_assemblies[-1]
+
+        # For other cases, inherit from previous assembly
+        else:
+            previous_assembly = f"{split[0]}{current_v - 1}"
+            if previous_assembly not in self.releases_config.releases:
+                self.logger.warning("No matching previous assembly found")
+                return self._get_default_shipment()
+
+        # Return previous assembly shipment info
+        return (
+            self.releases_config.releases[previous_assembly].assembly.group.shipment.primitive()
+            or self._get_default_shipment()
+        )
+
+    def _get_shipment_info(self, group_info):
+        """
+        For konflux, we need to add shipment information to the assembly definition.
+        """
+        if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            group_info['shipment'] = self._get_previous_shipment_info()
+
+        elif self.assembly_type != AssemblyTypes.CUSTOM:
+            # for konflux, we have a shipment model
+            group_info['shipment'] = {
+                'advisories': [
+                    {'kind': 'image'},
+                    {'kind': 'extras'},
+                    {'kind': 'metadata'},
+                ]
+            }
+            if self.pre_ga_mode == 'prerelease':
+                group_info['shipment']['advisories'].append({'kind': 'prerelease'})
