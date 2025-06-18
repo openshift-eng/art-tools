@@ -360,7 +360,7 @@ class ArtNotifyPipeline:
         for engine, versions in failures.items():
             if text:
                 text += '\n'
-            text += f"{engine.capitalize()} Image Rebase Failures*"
+            text += f"{engine.capitalize()} Image Rebase Failures"
             for version, failures in versions.items():
                 text += f"\n{version}: {len(failures)} image{'s' if len(failures) > 1 else ''}"
                 for image, counter in failures.items():
