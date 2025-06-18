@@ -3,7 +3,7 @@ import json
 from collections import OrderedDict
 from copy import copy
 from multiprocessing import Event
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
 from artcommonlib.model import Missing, Model
@@ -97,6 +97,21 @@ class ImageMetadata(Metadata):
         if not short_name.startswith('ose-'):
             short_name = 'ose-' + short_name
         return f"openshift/{short_name}"
+
+    def get_olm_bundle_delivery_repo_name(self):
+        """Returns the delivery repository name for the OLM bundle of this OLM operator.
+
+        :return: The delivery repository name for the OLM bundle.
+        :raises IOError: If the image is not an OLM operator.
+        """
+        if not self.is_olm_operator:
+            raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        repo_name = self.config.delivery.bundle_delivery_repo_name
+        if repo_name is Missing:
+            raise IOError(
+                f"[{self.distgit_key}] No delivery.bundle_delivery_repo_name config found in the image's metadata"
+            )
+        return cast(str, repo_name)
 
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
@@ -670,29 +685,39 @@ class ImageMetadata(Metadata):
         """
         Determines whether lockfile generation is enabled for the current image configuration.
 
-        The method checks if the cachi2 feature is enabled. If not, lockfile generation is disabled.
-        If cachi2 is enabled, it looks for lockfile generation overrides in the following order:
-        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.enabled`)
-        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.enabled`)
-        If neither override is set, lockfile generation defaults to enabled.
+        The method checks preconditions in the following order:
+        1. Cachi2 feature must be enabled
+        2. enabled_repos must be defined and not empty
+        3. Lockfile generation overrides:
+           - Image metadata configuration (`self.config.konflux.cachi2.lockfile.enabled`)
+           - Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.enabled`)
+        If no override is set, lockfile generation defaults to enabled.
 
         Returns:
             bool: True if lockfile generation is enabled, False otherwise.
         """
         lockfile_enabled = True
 
+        # First check: cachi2 must be enabled
         cachi2_enabled = self.is_cachi2_enabled()
         if not cachi2_enabled:
             return False
 
+        # Second check: enabled_repos must exist and not be empty
+        enabled_repos = self.config.get("enabled_repos", [])
+        if not enabled_repos:
+            self.logger.info("Lockfile generation disabled: enabled_repos is empty or not defined")
+            return False
+
+        # Third check: lockfile-specific overrides
         lockfile_config_override = self.config.konflux.cachi2.lockfile.enabled
         if lockfile_config_override not in [Missing, None]:
-            lockfile_enabled = lockfile_config_override
+            lockfile_enabled = bool(lockfile_config_override)
             self.logger.info(f"Lockfile generation set from metadata config {lockfile_enabled}")
         else:
             lockfile_group_override = self.runtime.group_config.konflux.cachi2.lockfile.enabled
             if lockfile_group_override not in [Missing, None]:
-                lockfile_enabled = lockfile_group_override
+                lockfile_enabled = bool(lockfile_group_override)
                 self.logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
 
         return lockfile_enabled

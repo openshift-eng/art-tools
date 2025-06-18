@@ -320,6 +320,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         metadata.runtime = MagicMock()
+        metadata.get_olm_bundle_delivery_repo_name = MagicMock(return_value="openshift4/foo-bundle")
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
         bundle_build = MagicMock(

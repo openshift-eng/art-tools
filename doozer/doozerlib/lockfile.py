@@ -368,6 +368,11 @@ class RPMLockfileGenerator:
             distgit_key (Optional[str]): Distgit key for fetching digest from target branch.
             force (bool): If True, ignore digest comparison and force regeneration.
         """
+        # Defensive check: repositories must not be empty
+        if not repositories:
+            self.logger.warning("Skipping lockfile generation: repositories set is empty")
+            return
+
         fingerprint = self._compute_hash(rpms)
         lockfile_path = path / filename
         digest_path = path / f'{filename}.digest'

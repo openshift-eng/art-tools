@@ -333,6 +333,9 @@ class KonfluxFbcRebaser:
     ):
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
+        # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
+        delivery_repo_name = metadata.get_olm_bundle_delivery_repo_name()
+
         # Fetch bundle image info and blob
         logger.info("Fetching OLM bundle image %s from %s", bundle_build.nvr, bundle_build.image_pullspec)
         olm_bundle_image_info = await self._fetch_olm_bundle_image_info(bundle_build)
@@ -433,9 +436,8 @@ class KonfluxFbcRebaser:
                 package_blob["defaultChannel"] = default_channel_name
 
         # Replace pullspecs to use the prod registry
-        new_image_name = image_name.replace('openshift/', 'openshift4/')
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
-        bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{new_image_name}@{digest}"
+        bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{delivery_repo_name}@{digest}"
         olm_bundle_blob["image"] = bundle_prod_pullspec
         related_images = olm_bundle_blob.get("relatedImages", [])
         if related_images:
