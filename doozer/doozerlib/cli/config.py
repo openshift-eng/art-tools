@@ -209,6 +209,8 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
+    if runtime.group == "openshift-4.20":
+        CONFIG_RUNTIME_OPTS['build_system'] = 'konflux'
     runtime.initialize(**CONFIG_RUNTIME_OPTS)
     content = get_releases(runtime)
 
