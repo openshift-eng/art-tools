@@ -3,7 +3,7 @@ import json
 from collections import OrderedDict
 from copy import copy
 from multiprocessing import Event
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
 from artcommonlib.model import Missing, Model
@@ -97,6 +97,21 @@ class ImageMetadata(Metadata):
         if not short_name.startswith('ose-'):
             short_name = 'ose-' + short_name
         return f"openshift/{short_name}"
+
+    def get_olm_bundle_delivery_repo_name(self):
+        """Returns the delivery repository name for the OLM bundle of this OLM operator.
+
+        :return: The delivery repository name for the OLM bundle.
+        :raises IOError: If the image is not an OLM operator.
+        """
+        if not self.is_olm_operator:
+            raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        repo_name = self.config.delivery.bundle_delivery_repo_name
+        if repo_name is Missing:
+            raise IOError(
+                f"[{self.distgit_key}] No delivery.bundle_delivery_repo_name config found in the image's metadata"
+            )
+        return cast(str, repo_name)
 
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
