@@ -649,6 +649,18 @@ class KonfluxClient:
             f"pipelineruns/{pipelinerun_name}"
         )
 
+    @staticmethod
+    def resource_url(resource_instance: resource.ResourceInstance) -> str:
+        """Returns the URL to the Konflux UI for the given resource instance.
+        :param resource_instance: The resource instance.
+        :return: The URL.
+        """
+        kind = resource_instance.kind.lower()
+        name = resource_instance.metadata.name
+        namespace = resource_instance.metadata.namespace or constants.KONFLUX_DEFAULT_NAMESPACE
+        application = resource_instance.metadata.labels.get("appstudio.openshift.io/application", "unknown-application")
+        return f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/{application}/{kind}s/{name}"
+
     async def wait_for_pipelinerun(
         self,
         pipelinerun_name: str,
@@ -918,6 +930,10 @@ class KonfluxClient:
             }
             self._logger.info(f"[DRY RUN] Would have waited for Release {release_name} to complete")
             return resource.ResourceInstance(self.dyn_client, release)
+
+        release_obj = await self._get(API_VERSION, KIND_RELEASE, release_name)
+        url = self.resource_url(release_obj)
+        self._logger.info("Found release at %s", url)
 
         def _inner():
             watcher = watch.Watch()

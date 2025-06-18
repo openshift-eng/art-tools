@@ -111,7 +111,12 @@ class CreateSnapshotCli:
         await self.get_pullspecs([b.image_pullspec for b in build_records], self.image_repo_pull_secret)
 
         snapshot_obj = await self.new_snapshot(build_records)
-        return await self.konflux_client._create(snapshot_obj)
+        snapshot_obj = await self.konflux_client._create(snapshot_obj)
+
+        snapshot_url = self.konflux_client.resource_url(snapshot_obj)
+        LOGGER.info("Created Konflux Snapshot %s", snapshot_url)
+
+        return snapshot_obj
 
     @staticmethod
     async def get_pullspecs(pullspecs: list, image_repo_pull_secret: str):

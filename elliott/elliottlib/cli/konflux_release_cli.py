@@ -143,9 +143,8 @@ class CreateReleaseCli:
 
         release_obj = await self.new_release(release_config)
         created_release = await self.konflux_client._create(release_obj)
-        LOGGER.info(
-            f"Successfully created Release {KONFLUX_UI_HOST}/ns/{self.konflux_config['namespace']}/applications/{release_config.application}/releases/{release_config.release_name}"
-        )
+        release_url = self.konflux_client.resource_url(created_release)
+        LOGGER.info("Successfully created Release %s", release_url)
         return created_release
 
     @staticmethod
