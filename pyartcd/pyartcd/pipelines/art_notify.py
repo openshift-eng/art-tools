@@ -208,7 +208,15 @@ class ArtNotifyPipeline:
         self.logger.info('Found matching messages: \n%s', json.dumps(all_matches, indent=4))
         return all_matches
 
-    def _notify_messages(self, failed_jobs_text, messages, expired_certificates):
+    def _notify_messages(self, failed_jobs_text, messages, expired_certificates, rebase_failures):
+        """
+        Notify the release artist about unresolved ART threads in Slack.
+        :param failed_jobs_text: Text containing information about failed jobs
+        :param messages: List of messages containing unresolved ART threads
+        :param expired_certificates: Text containing information about expired SSL certificates
+        :param rebase_failures: Dictionary containing rebase failures for different engines
+        """
+
         header_text = "Currently unresolved ART threads"
         fallback_text = header_text
 
@@ -294,30 +302,45 @@ class ArtNotifyPipeline:
             if expired_certificates:
                 self.logger.info(expired_certificates)
 
-        else:
-            # https://api.slack.com/methods/chat.postMessage#examples
-            response = self.app.client.chat_postMessage(
-                channel=self.channel,
-                text=f'@{RELEASE_ARTIST_HANDLE} - {fallback_text}',
-                blocks=header_block,
-                unfurl_links=False,
-            )
+            if rebase_failures:
+                self.logger.info(f"Rebase failures: {json.dumps(rebase_failures, indent=4)}")
 
-            # Post warnings about inaccessible channels first
-            for warning in channel_warnings.values():
-                self.app.client.chat_postMessage(channel=self.channel, text=warning, thread_ts=response['ts'])
+            return
 
-            for response_message in response_messages:
+        # https://api.slack.com/methods/chat.postMessage#examples
+        response = self.app.client.chat_postMessage(
+            channel=self.channel,
+            text=f'@{RELEASE_ARTIST_HANDLE} - {fallback_text}',
+            blocks=header_block,
+            unfurl_links=False,
+        )
+
+        # Post warnings about inaccessible channels first
+        for warning in channel_warnings.values():
+            self.app.client.chat_postMessage(channel=self.channel, text=warning, thread_ts=response['ts'])
+
+        for response_message in response_messages:
+            self.app.client.chat_postMessage(
+                channel=self.channel, text=response_message, thread_ts=response['ts']
+            )  # use the timestamp from the response
+
+        if failed_jobs_text:
+            self.app.client.chat_postMessage(channel=self.channel, text=failed_jobs_text, thread_ts=response['ts'])
+
+        if expired_certificates:
+            self.app.client.chat_postMessage(channel=self.channel, text=expired_certificates, thread_ts=response['ts'])
+
+        for engine, versions in rebase_failures.items():
+            for version, failures in versions.items():
+                text = f":warning: {version}: {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*"
+
+                for image, counter in failures.items():
+                    text += (f'- `{image}`: failed {counter} times',)
+
                 self.app.client.chat_postMessage(
-                    channel=self.channel, text=response_message, thread_ts=response['ts']
-                )  # use the timestamp from the response
-
-            if failed_jobs_text:
-                self.app.client.chat_postMessage(channel=self.channel, text=failed_jobs_text, thread_ts=response['ts'])
-
-            if expired_certificates:
-                self.app.client.chat_postMessage(
-                    channel=self.channel, text=expired_certificates, thread_ts=response['ts']
+                    channel=self.channel,
+                    thread_ts=response['ts'],
+                    text=text,
                 )
 
     async def _get_rebase_failures(self):
@@ -342,54 +365,20 @@ class ArtNotifyPipeline:
         await asyncio.gather(*[_get_failures_for_engine(engine) for engine in ['brew', 'konflux']])
         return failures
 
-    async def _notify_rebase_failures(self):
-        """
-        Notify about rebase failures in Brew and Konflux
-        """
-
-        rebase_failures = await self._get_rebase_failures()
-
-        if not rebase_failures:
-            self.logger.info('No rebase failures found.')
-            return
-
-        self.logger.info('Found rebase failures:')
-        self.logger.info(json.dumps(rebase_failures, indent=4))
-
-        if self.runtime.dry_run:
-            self.logger.info("[DRY RUN] Would have notified rebase failures")
-            return
-
-        for engine, versions in rebase_failures.items():
-            for version, failures in versions.items():
-                major, minor = version.split('.')
-                channel = f'#art-release-{major}-{minor}'
-                response = self.app.client.chat_postMessage(
-                    channel=channel,
-                    text=f":warning: @{RELEASE_ARTIST_HANDLE} {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*",
-                    link_names=True,
-                )
-
-                for image, counter in failures.items():
-                    self.app.client.chat_postMessage(
-                        channel=channel, text=f'- `{image}`: failed {counter} times', thread_ts=response['ts']
-                    )
-
     async def run(self):
         failed_jobs_text = self._get_failed_jobs_text()
         messages = self._get_messages()
         expired_certificates = await SSLCertificateChecker().check_expired_certificates()
+        rebase_failures = await self._get_rebase_failures()
+        self.logger.info('Rebase failures: %s', json.dumps(rebase_failures, indent=4))
 
-        if any([failed_jobs_text, messages, expired_certificates]):
-            self._notify_messages(failed_jobs_text, messages, expired_certificates)
-
+        if any([failed_jobs_text, messages, expired_certificates, rebase_failures]):
+            self._notify_messages(failed_jobs_text, messages, expired_certificates, rebase_failures)
         else:
             self.logger.info('No messages matching attention emoji criteria and no failed jobs found')
             self.app.client.chat_postMessage(
                 channel=self.channel, text=':check: no unresolved threads / job failures found'
             )
-
-        await self._notify_rebase_failures()
 
 
 @cli.command('art-notify', help='Rebase and build FBC segments for OLM operators')
