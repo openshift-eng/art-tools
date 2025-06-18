@@ -366,7 +366,7 @@ class ArtNotifyPipeline:
                 channel = f'#art-release-{major}-{minor}'
                 response = self.app.client.chat_postMessage(
                     channel=channel,
-                    text=f":warning: @{RELEASE_ARTIST_HANDLE} {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*",
+                    text=f":warning: {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*",
                     link_names=True,
                 )
 
