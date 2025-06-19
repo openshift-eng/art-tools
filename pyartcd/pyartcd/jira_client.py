@@ -4,9 +4,6 @@ from typing import Any, Callable, Dict, List, Optional
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-# Re-export Issue for type annotations
-__all__ = ["JIRAClient", "Issue"]
-
 _LOGGER = logging.getLogger(__name__)
 
 
