@@ -2,7 +2,7 @@ import json
 
 import click
 import yaml
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.runtime import Runtime
 
@@ -11,10 +11,7 @@ from doozerlib.runtime import Runtime
 @click.option('--yaml', 'as_yaml', required=False, default=False, is_flag=True, help='Format the output as yaml')
 @pass_runtime
 def config_read_rpms(runtime: Runtime, as_yaml: bool):
-    if runtime.group.split("-") in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-        runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False, build_system="konflux")
-    else:
-        runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)
+    runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)
     config = runtime.get_rpm_config()
 
     if as_yaml:

@@ -10,7 +10,6 @@ import yaml
 from artcommonlib import gitdata
 from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
 from artcommonlib.metadata import CONFIG_MODES
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from ghapi.core import GhApi
 
 from doozerlib import Runtime, metadata
@@ -210,8 +209,6 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
-    if runtime.group.split("-")[1] in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-        CONFIG_RUNTIME_OPTS['build_system'] = 'konflux'
     runtime.initialize(**CONFIG_RUNTIME_OPTS)
     content = get_releases(runtime)
 
