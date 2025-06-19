@@ -247,6 +247,24 @@ class RPMLockfileGenerator:
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
 
+    def _get_target_branch(self, distgit_key: str) -> Optional[str]:
+        """
+        Construct target branch name using the same format as rebaser.
+
+        Args:
+            distgit_key (str): Distgit key to construct the target branch name.
+
+        Returns:
+            Optional[str]: Target branch name, or None if runtime is not available.
+        """
+        if not self.runtime:
+            return None
+        return "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format(
+            group=self.runtime.group,
+            assembly_name=self.runtime.assembly,
+            distgit_key=distgit_key,
+        )
+
     @staticmethod
     def _compute_hash(rpms: set[str]) -> str:
         """
@@ -273,15 +291,9 @@ class RPMLockfileGenerator:
         Returns:
             Optional[str]: Digest content if found, None otherwise.
         """
-        if not self.runtime:
+        target_branch = self._get_target_branch(distgit_key)
+        if not target_branch:
             return None
-
-        # Construct target branch name using the same format as rebaser
-        target_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format(
-            group=self.runtime.group,
-            assembly_name=self.runtime.assembly,
-            distgit_key=distgit_key,
-        )
 
         try:
             # Use just the filename since the digest file is in the root of the git repo
@@ -298,6 +310,38 @@ class RPMLockfileGenerator:
                 return None
         except Exception as e:
             self.logger.debug(f"Error fetching digest from git branch '{target_branch}': {e}")
+            return None
+
+    def _get_lockfile_from_target_branch(self, lockfile_path: Path, distgit_key: str) -> Optional[str]:
+        """
+        Fetch lockfile content from the target art branch.
+
+        Args:
+            lockfile_path (Path): Path to the lockfile relative to repo root.
+            distgit_key (str): Distgit key to construct the target branch name.
+
+        Returns:
+            Optional[str]: Lockfile content if found, None otherwise.
+        """
+        target_branch = self._get_target_branch(distgit_key)
+        if not target_branch:
+            return None
+
+        try:
+            # Use just the filename since the lockfile is in the root of the git repo
+            lockfile_filename = lockfile_path.name
+
+            # Use exectools to run git show command
+            rc, stdout, stderr = exectools.cmd_gather(['git', 'show', f'{target_branch}:{lockfile_filename}'])
+            if rc == 0:
+                return stdout
+            else:
+                self.logger.debug(
+                    f"Could not fetch lockfile '{lockfile_filename}' from branch '{target_branch}': {stderr}"
+                )
+                return None
+        except Exception as e:
+            self.logger.debug(f"Error fetching lockfile from git branch '{target_branch}': {e}")
             return None
 
     async def generate_lockfile(
@@ -347,14 +391,39 @@ class RPMLockfileGenerator:
                     self.logger.warning(f"Failed to read local digest file '{digest_path}': {e}")
 
             # If no local digest or distgit_key provided, try fetching from target branch
+            upstream_digest_found = False
             if old_fingerprint is None and distgit_key:
                 old_fingerprint = self._get_digest_from_target_branch(digest_path, distgit_key)
                 if old_fingerprint:
                     self.logger.info(f"Found digest in target branch for {distgit_key}")
+                    upstream_digest_found = True
 
             # Compare fingerprints
             if old_fingerprint == fingerprint:
-                self.logger.info("No changes in RPM list. Skipping lockfile generation.")
+                if upstream_digest_found and distgit_key:
+                    # Download both digest and lockfile from upstream to ensure they're available locally
+                    self.logger.info("No changes in RPM list. Downloading digest and lockfile from upstream.")
+
+                    # Write the digest file locally
+                    if old_fingerprint:
+                        try:
+                            digest_path.write_text(old_fingerprint)
+                            self.logger.info(f"Downloaded digest file to {digest_path}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
+
+                    # Download and write the lockfile locally
+                    upstream_lockfile = self._get_lockfile_from_target_branch(lockfile_path, distgit_key)
+                    if upstream_lockfile:
+                        try:
+                            lockfile_path.write_text(upstream_lockfile)
+                            self.logger.info(f"Downloaded lockfile to {lockfile_path}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
+                    else:
+                        self.logger.warning(f"Could not download lockfile from upstream branch for {distgit_key}")
+                else:
+                    self.logger.info("No changes in RPM list. Skipping lockfile generation.")
                 return
             elif old_fingerprint:
                 self.logger.info("RPM list changed. Regenerating lockfile.")
