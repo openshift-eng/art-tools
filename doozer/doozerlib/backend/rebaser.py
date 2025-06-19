@@ -238,7 +238,7 @@ class KonfluxRebaser:
             # If this image is FROM another group member, we need to wait on that group
             # member to determine if there is a private fix in it.
             LOGGER.info("Waiting for parent members of %s...", metadata.distgit_key)
-            parent_members = self._wait_for_parent_members(metadata)
+            parent_members = await self._wait_for_parent_members(metadata)
             failed_parents = [
                 parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status
             ]
@@ -377,7 +377,7 @@ class KonfluxRebaser:
         # Didn't find a match for upstream parent: do typical stream resolution
         return stream_image
 
-    def _wait_for_parent_members(self, metadata: ImageMetadata):
+    async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group
         # member before determining if there is a private fix in it.
         parent_members = list(metadata.get_parent_members().values())
@@ -385,13 +385,14 @@ class KonfluxRebaser:
             if parent_member is None:
                 continue  # Parent member is not included in the group; no need to wait
             # wait for parent member to be rebased
-            if not parent_member.rebase_event.is_set():
+            while not parent_member.rebase_event.is_set():
                 self._logger.info(
                     "[%s] Parent image %s is being rebasing; waiting...",
                     metadata.distgit_key,
                     parent_member.distgit_key,
                 )
-                parent_member.rebase_event.wait()
+                # parent_member.rebase_event.wait() shouldn't be used here because it will block the event loop
+                await asyncio.sleep(10)  # check every 10 seconds
         return parent_members
 
     @staticmethod
