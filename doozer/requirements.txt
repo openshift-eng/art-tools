@@ -31,3 +31,4 @@ jira>=3.4.1
 ghapi
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 packageurl-python
+protobuf>=4.25.8 # not directly required, pinned by Snyk to avoid a vulnerability
