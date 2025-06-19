@@ -1,6 +1,6 @@
 from unittest import TestCase, mock
 
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 
 
 class TestJIRAClient(TestCase):
