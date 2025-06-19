@@ -34,3 +34,4 @@ zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 async_lru
 packageurl-python
 python-gitlab
+protobuf>=4.25.8 # not directly required, pinned by Snyk to avoid a vulnerability
