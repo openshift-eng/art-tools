@@ -460,4 +460,4 @@ async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Option
         env["REGISTRY_AUTH_FILE"] = registry_auth_file
     _, out, _ = await cmd_gather_async(cmd, env=env)
 
-    return out
+    return out.strip()
