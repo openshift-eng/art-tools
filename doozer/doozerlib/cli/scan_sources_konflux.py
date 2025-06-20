@@ -471,7 +471,7 @@ class ConfigScanSources:
         # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
         try:
             attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-                pull_spec=build_record.image_pullspec,
+                pullspec=build_record.image_pullspec,
                 registry_auth_file=self.registry_auth_file,
             )
 
