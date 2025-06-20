@@ -647,7 +647,7 @@ class BuildMicroShiftPipeline:
     is_flag=True,
     help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
-@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-11-25)")
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
 @click_coroutine
 async def build_microshift(
@@ -659,7 +659,7 @@ async def build_microshift(
     no_rebase: bool,
     force: bool,
     skip_prepare_advisory: bool,
-    date: str,
+    date: Optional[str],
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
