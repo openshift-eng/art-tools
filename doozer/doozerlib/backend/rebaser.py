@@ -13,10 +13,8 @@ from typing import Dict, List, Optional, Tuple, cast
 
 import bashlex
 import bashlex.errors
-import requests
 import yaml
 from artcommonlib import exectools, release_util
-from artcommonlib.brew import BuildStates
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
@@ -24,7 +22,6 @@ from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_en
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import RPMLockfileGenerator
@@ -33,6 +30,7 @@ from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 
@@ -397,16 +395,18 @@ class KonfluxRebaser:
                 await asyncio.sleep(10)  # check every 10 seconds
         return parent_members
 
-    @staticmethod
-    async def _recursive_overwrite(src, dest, ignore=set()):
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+    async def _recursive_overwrite(self, src, dest, ignore=set()):
         """
         Use rsync to copy one file tree to a new location
         """
+
+        self._logger.info('Copying files from %s to %s', src, dest)
         exclude = ' --exclude .git '
         for i in ignore:
             exclude += ' --exclude="{}" '.format(i)
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
-        await exectools.cmd_assert_async(cmd, retries=3)
+        await exectools.cmd_assert_async(cmd)
 
     async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
         """
