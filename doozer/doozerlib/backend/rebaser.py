@@ -17,6 +17,7 @@ import requests
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.brew import BuildStates
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
@@ -91,6 +92,7 @@ class KonfluxRebaser:
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
 
+    @limit_concurrency(100)
     async def rebase_to(
         self,
         metadata: ImageMetadata,
