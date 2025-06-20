@@ -278,7 +278,6 @@ class BugValidator:
             permitted_bug_ids=permitted_bug_ids,
             permissive=True,
             operator_bundle_advisory=operator_bundle_advisory,
-            noop=True,
             major_version=major_version,
             minor_version=minor_version,
         )

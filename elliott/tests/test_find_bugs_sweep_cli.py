@@ -253,9 +253,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'extras': {bugs[0].whiteboard_component: None},
             'microshift': dict(),
         }
-        noop = False
-        for b in bugs:
-            b.should_receive("update_summary")
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
         for kind in advisory_id_map.keys():
@@ -274,7 +271,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
             bugs=bugs,
             advisory_id_map=advisory_id_map,
             permitted_bug_ids=4,
-            noop=noop,
             major_version=major_version,
             minor_version=minor_version,
             operator_bundle_advisory="metadata",
@@ -293,14 +289,12 @@ class TestCategorizeBugsByType(unittest.TestCase):
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         major_version = 4
         minor_version = 11
-        noop = False
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
             categorize_bugs_by_type(
                 bugs=bugs,
                 advisory_id_map=advisory_id_map,
                 permitted_bug_ids=4,
-                noop=noop,
                 major_version=major_version,
                 minor_version=minor_version,
                 operator_bundle_advisory="metadata",

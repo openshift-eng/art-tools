@@ -88,6 +88,10 @@ class Bug:
             raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
         return self.product == "Security Response" and self.component == "vulnerability"
 
+    def has_valid_summary_suffix(self, major_version, minor_version):
+        expected_summary_suffix = f"[openshift-{major_version}.{minor_version}]"
+        return self.summary.endswith(expected_summary_suffix)
+
     def is_ocp_bug(self):
         raise NotImplementedError
 

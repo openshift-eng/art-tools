@@ -1,20 +1,20 @@
 import json
 import sys
-import traceback
+from collections.abc import Container
 from datetime import datetime, timezone
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 import click
 from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_issues_config
-from artcommonlib.format_util import green_prefix, green_print
+from artcommonlib.format_util import green_print
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import chunk, fix_summary_suffix
+from elliottlib.util import chunk
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -271,7 +271,6 @@ async def find_and_attach_bugs(
         bugs=bugs,
         advisory_id_map=advisory_ids,
         permitted_bug_ids=included_bug_ids,
-        noop=noop,
         major_version=major_version,
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
@@ -311,7 +310,7 @@ async def find_and_attach_bugs(
     return bugs
 
 
-def get_assembly_bug_ids(runtime, bug_tracker_type):
+def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
     # Loads included/excluded bugs from assembly config
     issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
     included_bug_ids = {i["id"] for i in issues_config.include}
@@ -329,18 +328,28 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 def categorize_bugs_by_type(
     bugs: List[Bug],
     advisory_id_map: Dict[str, int],
-    permitted_bug_ids,
-    noop,
     major_version: int,
     minor_version: int,
-    operator_bundle_advisory: str = "metadata",
-    permissive=False,
-):
+    permitted_bug_ids: Optional[set] = None,
+    operator_bundle_advisory: Optional[str] = "metadata",
+    permissive: bool = False,
+) -> tuple[Dict[str, type_bug_set], List[str]]:
     """Categorize bugs into different types of advisories
-    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
-    """
-    issues = []
+    :param bugs: List of Bug objects to categorize
+    :param advisory_id_map: Map of advisory types to their IDs
+    :param major_version: Major version of the release
+    :param minor_version: Minor version of the release
+    :param permitted_bug_ids: Set of bug IDs that are explicitly permitted for inclusion
+    :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
+    :param permissive: If True, ignore invalid bugs instead of raising an error
 
+    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_kind: bug_ids} and issues is a list of problems found
+    """
+
+    # record problems with bugs found during categorization
+    issues: List[str] = []
+
+    # initialize dict to hold bug ids by advisory kind
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -364,44 +373,60 @@ def categorize_bugs_by_type(
     non_tracker_bugs: type_bug_set = set()
     fake_trackers: type_bug_set = set()
 
+    # Categorize into tracker and non-tracker bugs
+    # while also collecting fake trackers
     for b in bugs:
         if b.is_tracker_bug():
             tracker_bugs.add(b)
         else:
-            non_tracker_bugs.add(b)
             if b.is_invalid_tracker_bug():
                 fake_trackers.add(b)
+            else:
+                non_tracker_bugs.add(b)
 
+    # Categorize non-tracker bugs into different types
     bugs_by_type["extras"] = extras_bugs(non_tracker_bugs)
     remaining = non_tracker_bugs - bugs_by_type["extras"]
     bugs_by_type["microshift"] = {b for b in remaining if b.component and b.component.startswith('MicroShift')}
     remaining = remaining - bugs_by_type["microshift"]
     bugs_by_type["image"] = remaining
 
+    # Complain about fake trackers
     if fake_trackers:
-        message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
+        sorted_ids = sorted([t.id for t in fake_trackers])
+        message = f"Bug(s) {sorted_ids} look like CVE trackers, but really are not."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
+    # Return early if there are no tracker bugs to process
     if not tracker_bugs:
         return bugs_by_type, issues
 
+    # Process tracker bugs
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
+    # Validate tracker bugs' summary suffixes
+    invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
-        # get summary of tracker-bug and update it if needed
-        summary_suffix = f"[openshift-{major_version}.{minor_version}]"
-        if not b.summary.endswith(summary_suffix):
-            new_s = fix_summary_suffix(b.summary, summary_suffix)
-            try:
-                b.update_summary(new_s, noop=noop)
-            except Exception as e:
-                logger.warning("Failed to fix summary: %s", str(e))
+        if not b.has_valid_summary_suffix(major_version, minor_version):
+            invalid_summary_trackers.add(b)
 
+    if invalid_summary_trackers:
+        sorted_ids = sorted([t.id for t in invalid_summary_trackers])
+        message = f"Tracker Bug(s) {sorted_ids} have invalid summary suffixes."
+        if permissive:
+            logger.warning(f"{message} Ignoring them.")
+            issues.append(message)
+        else:
+            raise ElliottFatalError(f"{message} Please fix.")
+
+        tracker_bugs -= invalid_summary_trackers
+
+    # If advisories are not provided, we cannot categorize tracker bugs
     if not advisory_id_map:
         logger.warning(
             "Skipping categorizing Tracker Bugs; advisories with attached builds must be given for this operation."
