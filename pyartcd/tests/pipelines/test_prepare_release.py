@@ -30,7 +30,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.prepare_release.aiofiles.open')
     @patch('pyartcd.pipelines.prepare_release.exectools.cmd_assert_async')
     @patch('pyartcd.pipelines.prepare_release.yaml')
-    async def test_update_build_data_non_stream_assembly(
+    async def test_update_build_data_new_advisories(
         self, mock_yaml, mock_cmd_assert, mock_aiofiles_open, mock_jira_client
     ):
         """Test update_build_data for non-stream assembly scenario where advisories get saved and git push'd"""
@@ -156,7 +156,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
             original_releases_config = {
                 "releases": {
                     "test-assembly": {
-                        "assembly": {"group": {"advisories": {"rpm": -1, "image": -1}, "release_jira": "OLD-123"}}
+                        "assembly": {"group": {"advisories": {"rpm": -1, "image": -1}, "release_jira": "ART-5678"}}
                     }
                 }
             }
@@ -249,7 +249,9 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
             original_releases_config = {
                 "releases": {
                     "test-assembly": {
-                        "assembly": {"group": {"advisories": {"rpm": 12345, "image": 67890}, "release_jira": "OLD-123"}}
+                        "assembly": {
+                            "group": {"advisories": {"rpm": 12345, "image": 67890}, "release_jira": "ART-1234"}
+                        }
                     }
                 }
             }
