@@ -62,10 +62,10 @@ class BuildMicroShiftPipeline:
         no_rebase: bool,
         force: bool,
         skip_prepare_advisory: bool,
-        date: Optional[str] = None,
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
+        date: Optional[str] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -673,9 +673,9 @@ async def build_microshift(
             no_rebase=no_rebase,
             force=force,
             skip_prepare_release=skip_prepare_advisory,
-            date=date,
             data_path=data_path,
             slack_client=slack_client,
+            date=date,
         )
         await pipeline.run()
     except Exception as err:
