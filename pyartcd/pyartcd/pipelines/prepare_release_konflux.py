@@ -18,7 +18,7 @@ from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import ShipmentConfig, Spec
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Spec
 from ghapi.all import GhApi
 
 from pyartcd import constants
@@ -302,6 +302,9 @@ class PrepareReleaseKonfluxPipeline:
         else:
             _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
 
+        # find issues for the advisory
+        shipment.shipment.data.releaseNotes.issues = await self.find_issues(kind)
+
         return shipment
 
     async def reserve_live_id(self, shipment_advisory_config: dict, env: str) -> Optional[str]:
@@ -381,6 +384,34 @@ class PrepareReleaseKonfluxPipeline:
             out = json.loads(stdout)
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
+
+    async def find_issues(self, kind: str) -> Optional[Issues]:
+        if self._issues_by_kind is not None:
+            return self._issues_by_kind.get(kind)
+
+        find_bugs_cmd = self._elliott_base_command + [
+            "find-bugs",
+            "--filter-attached",
+            "--permissive",
+            "--output=json",
+        ]
+        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd)
+        if stderr:
+            _LOGGER.info("Shipment find bugs command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
+        if rc != 0:
+            raise RuntimeError(f"cmd failed with exit code {rc}: {find_bugs_cmd}")
+
+        self._issues_by_kind = {}
+        if stdout:
+            for advisory_kind, bugs in json.loads(stdout).items():
+                if not bugs:
+                    continue
+                issues = Issues(fixed=[Issue(id=b, source="issues.redhat.com") for b in bugs])
+                self._issues_by_kind[advisory_kind] = issues
+
+        return self._issues_by_kind.get(kind)
 
     async def create_update_shipment_mr(
         self, shipment_config: dict, generated_shipments: Dict[str, ShipmentConfig], env: str
