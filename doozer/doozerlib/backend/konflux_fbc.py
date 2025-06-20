@@ -574,8 +574,6 @@ class KonfluxFbcRebaser:
         return await util.oc_image_info_for_arch_async__caching(
             bundle_build.image_pullspec,
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
-            registry_username=os.environ.get("KONFLUX_ART_IMAGES_USERNAME"),
-            registry_password=os.environ.get("KONFLUX_ART_IMAGES_PASSWORD"),
         )
 
     async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord):
@@ -586,8 +584,6 @@ class KonfluxFbcRebaser:
         """
         registry_auth = opm.OpmRegistryAuth(
             path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
-            username=os.environ.get("KONFLUX_ART_IMAGES_USERNAME"),
-            password=os.environ.get("KONFLUX_ART_IMAGES_PASSWORD"),
         )
         rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate=True, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:

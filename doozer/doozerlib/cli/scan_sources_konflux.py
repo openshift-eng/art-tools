@@ -83,8 +83,7 @@ class ConfigScanSources:
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
-        self.art_images_username = os.environ['KONFLUX_ART_IMAGES_USERNAME']
-        self.art_images_password = os.environ['KONFLUX_ART_IMAGES_PASSWORD']
+        self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -473,8 +472,7 @@ class ConfigScanSources:
         try:
             attestation = await artcommonlib.util.get_konflux_slsa_attestation(
                 pull_spec=build_record.image_pullspec,
-                registry_username=self.art_images_username,
-                registry_password=self.art_images_password,
+                registry_auth_file=self.registry_auth_file,
             )
 
         except ChildProcessError as e:
@@ -483,7 +481,8 @@ class ConfigScanSources:
 
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+            attestation_json = json.loads(attestation.strip())
+            payload_json = json.loads(base64.b64decode(attestation_json["payload"]).decode("utf-8"))
         except Exception as e:
             raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
 

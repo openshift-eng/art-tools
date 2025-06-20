@@ -273,11 +273,6 @@ async def new_snapshot_cli(
     if not konflux_kubeconfig:
         raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
 
-    # These will be needed for image inspection
-    for secret in ['KONFLUX_ART_IMAGES_USERNAME', 'KONFLUX_ART_IMAGES_PASSWORD']:
-        if secret not in os.environ:
-            raise EnvironmentError(f"Missing required environment variable {secret}")
-
     if builds_file:
         if builds_file == "-":
             builds_file = sys.stdin

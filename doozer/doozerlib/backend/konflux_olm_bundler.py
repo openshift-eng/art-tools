@@ -294,8 +294,7 @@ class KonfluxOlmBundleRebaser:
                     asyncio.create_task(
                         util.oc_image_info_for_arch_async__caching(
                             build_pullspec,
-                            registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
-                            registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                            registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
                         )
                     )
                 )
