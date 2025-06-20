@@ -206,7 +206,7 @@ class KonfluxRebaser:
         # If this image has upstream source, merge it into the build repo
         if source:
             source_dir = SourceResolver.get_source_dir(source, metadata)
-            self._merge_source(metadata=metadata, source=source, source_dir=source_dir, dest_dir=dest_dir)
+            await self._merge_source(metadata=metadata, source=source, source_dir=source_dir, dest_dir=dest_dir)
 
         # Load Dockerfile from the build repo
         dfp = DockerfileParser(str(df_path))
@@ -396,7 +396,7 @@ class KonfluxRebaser:
         return parent_members
 
     @staticmethod
-    def _recursive_overwrite(src, dest, ignore=set()):
+    async def _recursive_overwrite(src, dest, ignore=set()):
         """
         Use rsync to copy one file tree to a new location
         """
@@ -404,9 +404,9 @@ class KonfluxRebaser:
         for i in ignore:
             exclude += ' --exclude="{}" '.format(i)
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
-        exectools.cmd_assert(cmd, retries=3)
+        await exectools.cmd_assert_async(cmd, retries=3)
 
-    def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
+    async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
         """
         Pulls source defined in content.source and overwrites most things in the distgit
         clone with content from that source.
@@ -445,7 +445,7 @@ class KonfluxRebaser:
                 shutil.rmtree(str(ent.resolve()))
 
         # Copy all files and overwrite where necessary
-        self._recursive_overwrite(source_dir, dest_dir)
+        await self._recursive_overwrite(source_dir, dest_dir)
 
         df_path = dest_dir.joinpath('Dockerfile')
 
