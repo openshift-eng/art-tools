@@ -45,7 +45,7 @@ from tenacity import (
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 from pyartcd.locks import Lock
 from pyartcd.mail import MailService
 from pyartcd.oc import (

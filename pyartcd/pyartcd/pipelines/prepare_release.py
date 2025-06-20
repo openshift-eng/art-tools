@@ -32,7 +32,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.jira import JIRAClient
+from pyartcd.jira_client import JIRAClient
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
@@ -714,7 +714,7 @@ class PrepareReleasePipeline:
         cmd = ["git", "-C", str(repo), "diff-index", "--quiet", "HEAD"]
         rc = await exectools.cmd_assert_async(cmd, check=False)
         if rc == 0:
-            _LOGGER.warn("Skip saving advisories: No changes.")
+            _LOGGER.warning("Skip saving advisories: No changes.")
             return False
         cmd = ["git", "-C", str(repo), "commit", "-m", f"Prepare release {self.release_name}"]
         await exectools.cmd_assert_async(cmd)
@@ -723,8 +723,8 @@ class PrepareReleasePipeline:
             cmd = ["git", "-C", str(repo), "push", "origin", self.group_name]
             await exectools.cmd_assert_async(cmd)
         else:
-            _LOGGER.warn("Would have run %s", cmd)
-            _LOGGER.warn("Would have pushed changes to upstream")
+            _LOGGER.warning("Would have run %s", cmd)
+            _LOGGER.warning("Would have pushed changes to upstream")
         return True
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
