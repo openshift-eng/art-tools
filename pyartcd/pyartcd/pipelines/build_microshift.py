@@ -61,7 +61,8 @@ class BuildMicroShiftPipeline:
         payloads: Tuple[str, ...],
         no_rebase: bool,
         force: bool,
-        skip_prepare_release: bool,
+        skip_prepare_advisory: bool,
+        date: Optional[str] = None,
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
@@ -73,7 +74,8 @@ class BuildMicroShiftPipeline:
         self.payloads = payloads
         self.no_rebase = no_rebase
         self.force = force
-        self.skip_prepare_release = skip_prepare_release
+        self.skip_prepare_advisory = skip_prepare_advisory
+        self.date = date
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -152,7 +154,7 @@ class BuildMicroShiftPipeline:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         release_version = VersionInfo.parse(release_name)
         advisory_type = "RHEA" if release_version.patch == 0 else "RHBA"
-        release_date = get_assembly_release_date(self.assembly, self.group)
+        release_date = self.date if self.date else get_assembly_release_date(self.assembly, self.group)
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
         boilerplate = get_advisory_boilerplate(
             runtime=self, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
@@ -641,10 +643,11 @@ class BuildMicroShiftPipeline:
 )
 @click.option("--force", is_flag=True, help="(For named assemblies) Rebuild even if a build already exists")
 @click.option(
-    "--skip-prepare-release",
+    "--skip-prepare-advisory",
     is_flag=True,
     help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-11-25)")
 @pass_runtime
 @click_coroutine
 async def build_microshift(
@@ -655,7 +658,8 @@ async def build_microshift(
     payloads: Tuple[str, ...],
     no_rebase: bool,
     force: bool,
-    skip_prepare_release,
+    skip_prepare_advisory: bool,
+    date: str,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -668,7 +672,8 @@ async def build_microshift(
             payloads=payloads,
             no_rebase=no_rebase,
             force=force,
-            skip_prepare_release=skip_prepare_release,
+            skip_prepare_release=skip_prepare_advisory,
+            date=date,
             data_path=data_path,
             slack_client=slack_client,
         )
