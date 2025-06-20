@@ -119,10 +119,10 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.prepare_release.aiofiles.open')
     @patch('pyartcd.pipelines.prepare_release.exectools.cmd_assert_async')
     @patch('pyartcd.pipelines.prepare_release.yaml')
-    async def test_update_build_data_existing_advisories(
+    async def test_update_build_data_blank_advisories(
         self, mock_yaml, mock_cmd_assert, mock_aiofiles_open, mock_jira_client
     ):
-        """Test update_build_data when advisories already exist and get updated"""
+        """Test update_build_data when advisories exist (template values) and get updated"""
 
         # Mock JIRA client to prevent HTTP requests
         mock_jira_client.return_value = Mock()
@@ -156,7 +156,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
             original_releases_config = {
                 "releases": {
                     "test-assembly": {
-                        "assembly": {"group": {"advisories": {"rpm": 11111, "image": 22222}, "release_jira": "OLD-123"}}
+                        "assembly": {"group": {"advisories": {"rpm": -1, "image": -1}, "release_jira": "OLD-123"}}
                     }
                 }
             }
@@ -247,7 +247,11 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
 
             # Create mock releases.yml content
             original_releases_config = {
-                "releases": {"test-assembly": {"assembly": {"group": {"advisories": {}, "release_jira": "OLD-123"}}}}
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {"group": {"advisories": {"rpm": 12345, "image": 67890}, "release_jira": "OLD-123"}}
+                    }
+                }
             }
 
             # Mock file operations
