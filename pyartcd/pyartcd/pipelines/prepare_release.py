@@ -1025,7 +1025,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
 )
 @click.option('--data-gitref', required=False, help='Doozer data path git [branch / tag / sha] to use')
 @click.option("--name", metavar="RELEASE_NAME", help="release name (e.g. 4.6.42)")
-@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-11-25)")
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @click.option(
     "--package-owner",
     metavar='EMAIL',
