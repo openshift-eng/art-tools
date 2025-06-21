@@ -11,13 +11,14 @@ import sys
 import threading
 import time
 import traceback
+import weakref
 from contextlib import contextmanager
 from datetime import datetime
 from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 from urllib.request import urlopen
 
 import tenacity
@@ -34,6 +35,8 @@ SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
 TRACER = trace.get_tracer(__name__)
+
+F = TypeVar('F', bound=Callable[..., Awaitable])
 
 cmd_counter_lock = threading.Lock()
 cmd_counter = 0  # Increments atomically to help search logs for command start/stop
@@ -358,24 +361,39 @@ async def to_thread(func, *args, **kwargs):
     return await loop.run_in_executor(to_thread_executor, func_call)
 
 
-def limit_concurrency(limit=5):
+def limit_concurrency(limit: int = 5) -> Callable[[F], F]:
     """A decorator to limit the number of parallel tasks with asyncio.
 
-    It should be noted that when the decorator function is executed, the created Semaphore is bound to the default event loop.
-    https://stackoverflow.com/a/66289885
+    Creates per-event-loop semaphores to avoid event loop binding issues.
+    Uses BoundedSemaphore to prevent accidentally increasing the original limit.
+    Uses WeakKeyDictionary to prevent memory leaks from accumulated event loops.
+
+    Args:
+        limit: Maximum number of concurrent executions (must be positive)
+
+    Raises:
+        ValueError: If limit is not positive
+        TypeError: If decorated function is not async
     """
+    if limit <= 0:
+        raise ValueError("Limit must be positive")
 
-    # use asyncio.BoundedSemaphore(5) instead of Semaphore to prevent accidentally increasing the original limit
-    # (stackoverflow.com/a/48971158/6687477)
-    sem = asyncio.BoundedSemaphore(limit)
+    _semaphores = weakref.WeakKeyDictionary()
 
-    def executor(func):
+    def executor(func: F) -> F:
+        if not asyncio.iscoroutinefunction(func):
+            raise TypeError("limit_concurrency can only decorate async functions")
+
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            async with sem:
+            loop = asyncio.get_running_loop()
+            if loop not in _semaphores:
+                _semaphores[loop] = asyncio.BoundedSemaphore(limit)
+
+            async with _semaphores[loop]:
                 return await func(*args, **kwargs)
 
-        return wrapper
+        return wrapper  # type: ignore
 
     return executor
 
