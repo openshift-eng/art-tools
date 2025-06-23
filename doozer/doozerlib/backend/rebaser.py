@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
+import aiofiles
 import bashlex
 import bashlex.errors
 import yaml
@@ -90,7 +91,6 @@ class KonfluxRebaser:
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
 
-    @limit_concurrency(100)
     async def rebase_to(
         self,
         metadata: ImageMetadata,
@@ -194,7 +194,7 @@ class KonfluxRebaser:
         df_path = dest_dir.joinpath('Dockerfile')
         source_dir = None
 
-        self._generate_config_digest(metadata, dest_dir)
+        await self._generate_config_digest(metadata, dest_dir)
 
         # Use a separate Dockerfile for konflux if required
         # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
@@ -209,19 +209,21 @@ class KonfluxRebaser:
             await self._merge_source(metadata=metadata, source=source, source_dir=source_dir, dest_dir=dest_dir)
 
         # Load Dockerfile from the build repo
-        dfp = DockerfileParser(str(df_path))
+        dfp = await exectools.to_thread(DockerfileParser, str(df_path))
 
         # Determine if this image contains private fixes
         if private_fix is None:
             if source and source_dir:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
+                is_commit_in_public_upstream = await exectools.to_thread(
+                    util.is_commit_in_public_upstream, source.commit_hash, source.public_upstream_branch, source_dir
+                )
+
                 if (
                     source.has_public_upstream
                     and not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
-                    and not util.is_commit_in_public_upstream(
-                        source.commit_hash, source.public_upstream_branch, source_dir
-                    )
+                    and not is_commit_in_public_upstream
                 ):
                     private_fix = True
             else:
@@ -268,7 +270,12 @@ class KonfluxRebaser:
         # If this image defines source modifications, apply them
         if metadata.config.content.source.modifications:
             metadata_scripts_path = os.path.join(self._runtime.data_dir, "modifications")
-            self._run_modifications(metadata=metadata, dest_dir=dest_dir, metadata_scripts_path=metadata_scripts_path)
+            await exectools.to_thread(
+                self._run_modifications,
+                metadata=metadata,
+                dest_dir=dest_dir,
+                metadata_scripts_path=metadata_scripts_path,
+            )
 
         # Given an input release string, make an actual release string
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
@@ -278,18 +285,18 @@ class KonfluxRebaser:
         )
         metadata.private_fix = private_fix
 
-        self._update_dockerignore(build_repo.local_dir)
+        await self._update_dockerignore(build_repo.local_dir)
         return version, release, private_fix
 
-    def _update_dockerignore(self, path):
+    async def _update_dockerignore(self, path):
         """
         If a .dockerignore file exists, we need to update it to allow .oit dir
         """
         docker_ignore_path = f"{path}/.dockerignore"
         if os.path.exists(docker_ignore_path):
             self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
-            with open(docker_ignore_path, "a") as file:
-                file.write("\n!/.oit/**\n")
+            async with aiofiles.open(docker_ignore_path, "a") as file:
+                await file.write("\n!/.oit/**\n")
 
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """Resolve the parent images for the given image metadata."""
@@ -311,7 +318,7 @@ class KonfluxRebaser:
             elif "image" in parent:
                 mapped_images.append((parent["image"], False))
             elif "stream" in parent:
-                mapped_images.append((self._resolve_stream_parent(parent['stream'], original_parent, dfp), False))
+                mapped_images.append((await self._resolve_stream_parent(parent['stream'], original_parent, dfp), False))
             else:
                 raise ValueError(f"Image in 'from' for [{metadata.distgit_key}] is missing its definition.")
 
@@ -350,7 +357,7 @@ class KonfluxRebaser:
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
 
-    def _resolve_stream_parent(self, stream_name: str, original_parent: str, dfp: DockerfileParser):
+    async def _resolve_stream_parent(self, stream_name: str, original_parent: str, dfp: DockerfileParser):
         stream = self._runtime.resolve_stream(stream_name)
         stream_image = str(stream.image)
 
@@ -370,7 +377,7 @@ class KonfluxRebaser:
             return stream_image
 
         # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
-        matching_image = self._resolve_image_from_upstream_parent(original_parent, dfp)
+        matching_image = await self._resolve_image_from_upstream_parent(original_parent, dfp)
         if matching_image:
             return matching_image
 
@@ -414,9 +421,6 @@ class KonfluxRebaser:
         clone with content from that source.
         """
 
-        class MergeSourceResult:
-            pass
-
         # Initialize env_vars_from source.
         # update_distgit_dir makes a distinction between None and {}
         env_vars_from_source = {}
@@ -444,7 +448,7 @@ class KonfluxRebaser:
             if ent.is_file() or ent.is_symlink():
                 ent.unlink()
             else:
-                shutil.rmtree(str(ent.resolve()))
+                await exectools.to_thread(shutil.rmtree, str(ent.resolve()))
 
         # Copy all files and overwrite where necessary
         await self._recursive_overwrite(source_dir, dest_dir)
@@ -465,7 +469,7 @@ class KonfluxRebaser:
             # as /Dockerfile (which OSBS requires). Read in the content and write it back out
             # to the required distgit location.
             source_dockerfile_content = source_dockerfile.read()
-            distgit_dockerfile.write(source_dockerfile_content)
+            await exectools.to_thread(distgit_dockerfile.write, source_dockerfile_content)
 
         append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
         if append_gomod_patch and append_gomod_patch is not Missing:
@@ -491,8 +495,8 @@ class KonfluxRebaser:
 
                         # If there is no match or if the go version is not >= 1.22, use the same go version
                         new_lines.append(line)
-                with open(gomod_path, "w") as file:
-                    file.writelines(new_lines)
+                async with aiofiles.open(gomod_path, "w") as file:
+                    await file.writelines(new_lines)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
@@ -529,14 +533,14 @@ class KonfluxRebaser:
             with exectools.Dir(source_dir):
                 author_email = None
                 err = None
-                rc, sha, err = exectools.cmd_gather(
+                rc, sha, err = await exectools.cmd_gather_async(
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
                     'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
                 )
                 if rc == 0:
-                    rc, ae, err = exectools.cmd_gather('git show -s --pretty=format:%ae {}'.format(sha))
+                    rc, ae, err = await exectools.cmd_gather_async('git show -s --pretty=format:%ae {}'.format(sha))
                     if rc == 0:
                         if ae.lower().endswith('@redhat.com'):
                             self._logger.info('Last Dockerfile committer: {}'.format(ae))
@@ -569,8 +573,9 @@ class KonfluxRebaser:
                     dockerfile=str(dest_dir.joinpath('Dockerfile')),
                 )
 
+    @staticmethod
     def extract_version_release_private_fix(
-        self, dfp: DockerfileParser
+        dfp: DockerfileParser,
     ) -> Tuple[Optional[str], Optional[str], Optional[bool]]:
         """
         Extract version, release, and private_fix fields from Dockerfile.
@@ -586,7 +591,7 @@ class KonfluxRebaser:
         version = dfp.labels.get("version")
         return version, prev_release, private_fix
 
-    def _run_modifications(self, metadata: ImageMetadata, dest_dir: Path, metadata_scripts_path: Path):
+    async def _run_modifications(self, metadata: ImageMetadata, dest_dir: Path, metadata_scripts_path: Path):
         """
         Interprets and applies content.source.modifications steps in the image metadata.
         """
@@ -626,8 +631,8 @@ class KonfluxRebaser:
             else:
                 raise IOError("Don't know how to perform modification action: %s" % modification.action)
         if new_dockerfile_data is not None and new_dockerfile_data != dockerfile_data:
-            with df_path.open('w', encoding="utf-8") as df:
-                df.write(new_dockerfile_data)
+            async with aiofiles.open(df_path, 'w', encoding='utf-8') as df:
+                await df.write(new_dockerfile_data)
 
     async def _update_build_dir(
         self,
@@ -642,22 +647,30 @@ class KonfluxRebaser:
         uuid_tag: str,
     ):
         with exectools.Dir(dest_dir):
-            self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
+            await self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
 
-            self._write_cvp_owners(metadata, dest_dir)
+            await self._write_cvp_owners(metadata, dest_dir)
 
-            self._write_fetch_artifacts(metadata, dest_dir)
+            await self._write_fetch_artifacts(metadata, dest_dir)
 
-            self._write_osbs_image_config(metadata, dest_dir, source, version)
+            await self._write_osbs_image_config(metadata, dest_dir, source, version)
 
             await self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir)
 
             df_path = dest_dir.joinpath('Dockerfile')
-            self._update_dockerfile(
-                metadata, source, df_path, version, release, downstream_parents, force_yum_updates, uuid_tag, dest_dir
+            await self._update_dockerfile(
+                metadata,
+                source,
+                df_path,
+                version,
+                release,
+                downstream_parents,
+                force_yum_updates,
+                uuid_tag,
+                dest_dir,
             )
 
-            self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
+            await self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
             return version, release
 
@@ -786,7 +799,7 @@ class KonfluxRebaser:
         df_stages.append(df_stage)
         return df_stages
 
-    def _update_dockerfile(
+    async def _update_dockerfile(
         self,
         metadata: ImageMetadata,
         source: Optional[SourceResolution],
@@ -941,7 +954,7 @@ class KonfluxRebaser:
             shutil.copyfileobj(df_fileobj, df)
             df_fileobj.close()
 
-        self._update_environment_variables(
+        await self._update_environment_variables(
             metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs
         )
 
@@ -950,7 +963,7 @@ class KonfluxRebaser:
 
         self._modify_cachito_commands(metadata, dfp)
 
-        self._reflow_labels(df_path)
+        await self._reflow_labels(df_path)
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
@@ -1229,7 +1242,7 @@ class KonfluxRebaser:
         if updated_lines:
             dfp.lines = updated_lines
 
-    def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
+    async def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
         Generates a repo file in .oit/repo.conf
         """
@@ -1244,37 +1257,45 @@ class KonfluxRebaser:
         non_shipping_repos = metadata.config.get('non_shipping_repos', [])
 
         for t in repos.repotypes:
-            with dest_dir.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
+            rc_path = dest_dir.joinpath('.oit', f'{t}.repo')
+            async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
                 content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=True)
-                rc.write(content)
+                await rc.write(content)
 
-        with dest_dir.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
-            rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
+        rc_path = dest_dir.joinpath('content_sets.yml')
+        async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
+            await rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
 
-    def _generate_config_digest(self, metadata: ImageMetadata, dest_dir: Path):
+    async def _generate_config_digest(self, metadata: ImageMetadata, dest_dir: Path):
         # The config digest is used by scan-sources to detect config changes
         self._logger.debug("Calculating config digest...")
         digest = metadata.calculate_config_digest(self._runtime.group_config, self._runtime.streams)
         os.makedirs(f"{dest_dir}/.oit", exist_ok=True)
-        with dest_dir.joinpath(".oit", "config_digest").open('w') as f:
-            f.write(digest)
+
+        config_path = dest_dir.joinpath(".oit", "config_digest")
+        async with aiofiles.open(config_path, 'w') as f:
+            await f.write(digest)
+
         self._logger.info("Saved config digest %s to .oit/config_digest", digest)
 
-    def _write_cvp_owners(self, metadata: ImageMetadata, dest_dir: Path):
+    async def _write_cvp_owners(self, metadata: ImageMetadata, dest_dir: Path):
         """
         The Container Verification Pipeline will notify image owners when their image is
         not passing CVP tests. ART knows these owners and needs to write them into distgit
         for CVP to find.
         :return:
         """
-        self._logger.debug("Generating cvp-owners.yml for {}".format(metadata.distgit_key))
-        with dest_dir.joinpath('cvp-owners.yml').open('w', encoding="utf-8") as co:
-            if metadata.config.owners:  # Not missing and non-empty
-                # only spam owners on failure; ref. https://red.ht/2x0edYd
-                owners = {owner: "FAILURE" for owner in metadata.config.owners}
-                yaml.safe_dump(owners, co, default_flow_style=False)
 
-    def _write_fetch_artifacts(self, metadata: ImageMetadata, dest_dir: Path):
+        if metadata.config.owners:  # Not missing and non-empty
+            # only spam owners on failure; ref. https://red.ht/2x0edYd
+            self._logger.debug("Generating cvp-owners.yml for {}".format(metadata.distgit_key))
+            owners = {owner: "FAILURE" for owner in metadata.config.owners}
+            yaml_str = yaml.safe_dump(owners, default_flow_style=False)
+
+            async with aiofiles.open(dest_dir.joinpath('cvp-owners.yml'), 'w', encoding='utf-8') as co:
+                await co.write(yaml_str)
+
+    async def _write_fetch_artifacts(self, metadata: ImageMetadata, dest_dir: Path):
         # Write fetch-artifacts-url.yaml for OSBS to fetch external artifacts
         # See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#using-artifacts-from-koji-or-project-newcastle-aka-pnc
         config_value = None
@@ -1290,9 +1311,11 @@ class KonfluxRebaser:
             )
         if not config_value:
             return  # fetch-artifacts-url.yaml is not needed.
+
         self._logger.info('Generating fetch-artifacts-url.yaml')
-        with path.open("w") as f:
-            yaml.safe_dump(config_value, f)
+        yaml_str = yaml.safe_dump(config_value)
+        async with aiofiles.open(path, "w") as f:
+            await f.write(yaml_str)
 
     def _clean_repos(self, dfp):
         """
@@ -1388,7 +1411,7 @@ class KonfluxRebaser:
             cmd = " ".join(docker_cmd_options) + " " + cmd
         return changed, cmd
 
-    def _write_osbs_image_config(
+    async def _write_osbs_image_config(
         self, metadata: ImageMetadata, dest_dir: Path, source: Optional[SourceResolution], version: str
     ):
         # Writes OSBS image config (container.yaml).
@@ -1404,8 +1427,8 @@ class KonfluxRebaser:
 
         # generate yaml data with header
         content_yml = yaml.safe_dump(container_config, default_flow_style=False)
-        with dest_dir.joinpath('container.yaml').open('w', encoding="utf-8") as rc:
-            rc.write(CONTAINER_YAML_HEADER + content_yml)
+        async with aiofiles.open(dest_dir.joinpath('container.yaml'), 'w', encoding="utf-8") as rc:
+            await rc.write(CONTAINER_YAML_HEADER + content_yml)
 
     def _generate_osbs_image_config(
         self, metadata: ImageMetadata, dest_dir: Path, source: Optional[SourceResolution], version: str
@@ -1639,7 +1662,7 @@ class KonfluxRebaser:
         output.seek(0)
         return output
 
-    def _resolve_image_from_upstream_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
+    async def _resolve_image_from_upstream_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
         """
         Given an upstream image (CI) pullspec, find a matching entry in streams.yml by comparing the rhel version,
         and the builder X.Y fields. If no match is found, return None
@@ -1653,7 +1676,7 @@ class KonfluxRebaser:
 
         try:
             self._logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
+            labels = await util.oc_image_info_for_arch_async__caching(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = util.extract_version_fields(labels['version'])
@@ -1694,7 +1717,7 @@ class KonfluxRebaser:
 
         return None
 
-    def _update_environment_variables(
+    async def _update_environment_variables(
         self,
         metadata: ImageMetadata,
         source: Optional[SourceResolution],
@@ -1763,8 +1786,8 @@ class KonfluxRebaser:
 
             dfp_content = dfp.content
             # Write the file back out
-            with df_path.open('w', encoding="utf-8") as df:
-                df.write(dfp_content)
+            async with aiofiles.open(df_path, 'w', encoding='utf-8') as df:
+                await df.write(dfp_content)
 
         # The env vars we want to set have been removed from the target Dockerfile.
         # Now, we want to inject the values we have available. In a Dockerfile, ENV must
@@ -1817,7 +1840,7 @@ class KonfluxRebaser:
         dfp = DockerfileParser(str(df_path))
         df_lines = dfp.content.splitlines(False)
 
-        with df_path.open('w', encoding="utf-8") as df:
+        async with aiofiles.open(df_path, 'w', encoding="utf-8") as df:
             for line in df_lines:
                 # Always remove the env line we update each time.
                 if env_update_line_flag in line:
@@ -1827,15 +1850,16 @@ class KonfluxRebaser:
                 if merge_env_line and env_merge_line_flag in line:
                     continue
 
-                df.write(f'{line}\n')
+                await df.write(f'{line}\n')
 
                 if line.startswith('FROM '):
                     if update_env_line:
-                        df.write(f'{update_env_line}\n')
+                        await df.write(f'{update_env_line}\n')
                     if merge_env_line:
-                        df.write(f'{merge_env_line}\n')
+                        await df.write(f'{merge_env_line}\n')
 
-    def _reflow_labels(self, df_path: Path):
+    @staticmethod
+    async def _reflow_labels(df_path: Path):
         """
         The Dockerfile parser we are presently using writes all labels on a single line
         and occasionally makes multiple LABEL statements. Calling this method with a
@@ -1853,8 +1877,8 @@ class KonfluxRebaser:
         df_content = dfp.content.strip()
 
         # Write the file back out and append the labels to the end
-        with df_path.open('w', encoding="utf-8") as df:
-            df.write("%s\n\n" % df_content)
+        async with aiofiles.open(df_path, 'w', encoding="utf-8") as df:
+            await df.write("%s\n\n" % df_content)
             if labels:
                 additional_labels = {}
 
@@ -1870,12 +1894,12 @@ class KonfluxRebaser:
 
                 labels.update(additional_labels)
 
-                df.write("LABEL")
+                await df.write("LABEL")
                 for k, v in labels.items():
-                    df.write(" \\\n")  # All but the last line should have line extension backslash "\"
+                    await df.write(" \\\n")  # All but the last line should have line extension backslash "\"
                     escaped_v = v.replace('"', '\\"')  # Escape any " with \"
-                    df.write("        %s=\"%s\"" % (k, escaped_v))
-                df.write("\n\n")
+                    await df.write("        %s=\"%s\"" % (k, escaped_v))
+                await df.write("\n\n")
 
     def _get_csv_file_and_refs(self, metadata: ImageMetadata, repo_dir: Path, csv_config):
         #           bundle-dir: stable/
@@ -1916,7 +1940,7 @@ class KonfluxRebaser:
             )
         return str(csvs[0]), image_refs
 
-    def _update_csv(
+    async def _update_csv(
         self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str, image_repo: str, uuid_tag: str
     ):
         csv_config = metadata.config.get('update-csv', None)
@@ -1949,11 +1973,9 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(
-                    meta.get_latest_build(
-                        el_target=f'el{meta.branch_el_target()}',
-                        engine=Engine.KONFLUX,
-                    )
+                build = await meta.get_latest_build(
+                    el_target=f'el{meta.branch_el_target()}',
+                    engine=Engine.KONFLUX,
                 )
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
@@ -1972,13 +1994,15 @@ class KonfluxRebaser:
                 raise ValueError('csv_namespace is required in group.yaml when any image defines update-csv')
             replace = '{}/{}/{}'.format(registry, namespace, image_tag)
 
-            with io.open(csv_file, 'r+', encoding="utf-8") as f:
-                content = f.read()
-                content = content.replace(spec + '\n', replace + '\n')
-                content = content.replace(spec + '"', replace + '"')
-                f.seek(0)
-                f.truncate()
-                f.write(content)
+            # Read content
+            async with aiofiles.open(csv_file, 'r', encoding='utf-8') as f:
+                content = await f.read()
+            # Modify content
+            content = content.replace(spec + '\n', replace + '\n')
+            content = content.replace(spec + '"', replace + '"')
+            # Overwrite file with updated content
+            async with aiofiles.open(csv_file, 'w', encoding='utf-8') as f:
+                await f.write(content)
 
         if version.startswith('v'):
             version = version[1:]  # strip off leading v
@@ -2025,8 +2049,9 @@ class KonfluxRebaser:
                     raise ValueError('{} does not exist as defined in art.yaml'.format(f_path))
 
                 self._logger.info('Updating {}'.format(f_path))
-                with io.open(f_path, 'r+', encoding="utf-8") as sr_file:
-                    sr_file_str = sr_file.read()
+                # Read the content
+                async with aiofiles.open(f_path, 'r+', encoding="utf-8") as sr_file:
+                    sr_file_str = await sr_file.read()
                     for sr in u_list:
                         s = sr.get('search', None)
                         r = sr.get('replace', None)
@@ -2037,6 +2062,7 @@ class KonfluxRebaser:
                         sr_file_str = sr_file_str.replace(s, r)
                         if sr_file_str == original_string:
                             self._logger.error(f'Search `{s}` and replace was ineffective for {metadata.distgit_key}')
-                    sr_file.seek(0)
-                    sr_file.truncate()
-                    sr_file.write(sr_file_str)
+
+                # Overwrite file with updated content
+                async with aiofiles.open(f_path, 'w', encoding='utf-8') as sr_file:
+                    await sr_file.write(sr_file_str)
