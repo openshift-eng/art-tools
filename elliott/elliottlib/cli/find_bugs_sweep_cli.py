@@ -1,6 +1,5 @@
 import json
 import sys
-from collections.abc import Container
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -8,6 +7,7 @@ import click
 from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_print
+from artcommonlib.rpm_utils import parse_nvr
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
@@ -149,7 +149,6 @@ async def find_bugs_sweep_cli(
             )
 
     runtime.initialize(mode="both")
-    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
@@ -267,9 +266,18 @@ async def find_and_attach_bugs(
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
+
+    builds_by_advisory_kind: Dict[str, List[str]] = {}
+    if runtime.build_system == 'brew':
+        for kind, kind_advisory_id in advisory_ids.items():
+            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(kind_advisory_id)
+    elif runtime.build_system == 'konflux':
+        # fetch builds from shipments
+        pass
+
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs=bugs,
-        advisory_id_map=advisory_ids,
+        builds_by_advisory_kind=builds_by_advisory_kind,
         permitted_bug_ids=included_bug_ids,
         major_version=major_version,
         minor_version=minor_version,
@@ -327,7 +335,7 @@ def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]
 
 def categorize_bugs_by_type(
     bugs: List[Bug],
-    advisory_id_map: Dict[str, int],
+    builds_by_advisory_kind: Dict[str, List[str]],
     major_version: int,
     minor_version: int,
     permitted_bug_ids: Optional[set] = None,
@@ -336,7 +344,7 @@ def categorize_bugs_by_type(
 ) -> tuple[Dict[str, type_bug_set], List[str]]:
     """Categorize bugs into different types of advisories
     :param bugs: List of Bug objects to categorize
-    :param advisory_id_map: Map of advisory types to their IDs
+    :param builds_by_advisory_kind: Dict of {advisory_kind: [builds]} where builds are the NVRs attached to advisories
     :param major_version: Major version of the release
     :param minor_version: Minor version of the release
     :param permitted_bug_ids: Set of bug IDs that are explicitly permitted for inclusion
@@ -427,9 +435,9 @@ def categorize_bugs_by_type(
         tracker_bugs -= invalid_summary_trackers
 
     # If advisories are not provided, we cannot categorize tracker bugs
-    if not advisory_id_map:
+    if not builds_by_advisory_kind:
         logger.warning(
-            "Skipping categorizing Tracker Bugs; advisories with attached builds must be given for this operation."
+            "Skipping categorizing Tracker Bugs; builds attached to advisories must be given for this operation."
         )
         return bugs_by_type, issues
 
@@ -438,11 +446,8 @@ def categorize_bugs_by_type(
     for kind in bugs_by_type.keys():
         if len(found) == len(tracker_bugs):
             break
-        advisory = advisory_id_map.get(kind)
-        if not advisory:
-            continue
-        attached_builds = errata.get_advisory_nvrs(advisory)
-        packages = set(attached_builds.keys())
+        attached_nvrs = builds_by_advisory_kind.get(kind, [])
+        packages = {parse_nvr(nvr)["name"] for nvr in attached_nvrs}
         exception_packages = []
         if kind == 'image':
             # golang builder is a special tracker component
@@ -455,7 +460,7 @@ def categorize_bugs_by_type(
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(
-                    f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached"
+                    f"skip categorizing microshift bug {bug.id} to microshift advisory because advisory has no builds attached"
                 )
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):

@@ -174,6 +174,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(errata).should_receive("get_advisory_nvrs")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
             {
                 "image": set(image_bugs),
@@ -206,7 +207,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
     def setUp(self):
         self.major_version = 4
         self.minor_version = 11
-        self.advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
 
     def test_categorize_no_trackers(self):
         bugs = [
@@ -252,7 +252,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
 
         queried, issues = categorize_bugs_by_type(
             bugs=bugs,
-            advisory_id_map=None,
+            builds_by_advisory_kind=None,
             major_version=self.major_version,
             minor_version=self.minor_version,
         )
@@ -312,18 +312,16 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 summary='',
             ),
         ]
-        builds_map = {
-            'image': {bugs[2].whiteboard_component: None},
-            'rpm': {bugs[1].whiteboard_component: None},
-            'extras': {bugs[0].whiteboard_component: None},
+
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0], bugs[3]})
+
+        builds_by_advisory_kind = {
+            'image': {f"{bugs[2].whiteboard_component}-version-release.el9"},
+            'rpm': {f"{bugs[1].whiteboard_component}-version-release.el9"},
+            'extras': {f"{bugs[0].whiteboard_component}-version-release.el9"},
             'microshift': {},
         }
 
-        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
-        for kind in self.advisory_id_map.keys():
-            flexmock(errata).should_receive("get_advisory_nvrs").with_args(self.advisory_id_map[kind]).and_return(
-                builds_map[kind]
-            )
         expected = {
             'rpm': {bugs[1].id},
             'image': {bugs[2].id},
@@ -334,7 +332,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
 
         queried, issues = categorize_bugs_by_type(
             bugs=bugs,
-            advisory_id_map=self.advisory_id_map,
+            builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,
             minor_version=self.minor_version,
         )
@@ -358,7 +356,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
             categorize_bugs_by_type(
                 bugs=bugs,
-                advisory_id_map=self.advisory_id_map,
+                builds_by_advisory_kind=None,
                 major_version=self.major_version,
                 minor_version=self.minor_version,
             )
@@ -378,7 +376,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         with self.assertRaisesRegex(ElliottFatalError, 'invalid summary suffixes'):
             categorize_bugs_by_type(
                 bugs=bugs,
-                advisory_id_map=self.advisory_id_map,
+                builds_by_advisory_kind=None,
                 major_version=self.major_version,
                 minor_version=self.minor_version,
             )
@@ -412,18 +410,15 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 component='',
             ),
         ]
-        builds_map = {
+        builds_by_advisory_kind = {
             'image': {},
-            'rpm': {bugs[1].whiteboard_component: None},
-            'extras': {bugs[0].whiteboard_component: None},
+            'rpm': {f"{bugs[1].whiteboard_component}-version-release.el9"},
+            'extras': {f"{bugs[0].whiteboard_component}-version-release.el9"},
             'microshift': {},
         }
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
-        for kind in self.advisory_id_map.keys():
-            flexmock(errata).should_receive("get_advisory_nvrs").with_args(self.advisory_id_map[kind]).and_return(
-                builds_map[kind]
-            )
+
         expected = {
             'image': set(),
             'rpm': set(),
@@ -434,7 +429,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
 
         queried, issues = categorize_bugs_by_type(
             bugs=bugs,
-            advisory_id_map=self.advisory_id_map,
+            builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,
             minor_version=self.minor_version,
             permissive=True,
