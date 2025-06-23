@@ -864,7 +864,8 @@ class KonfluxClient:
                             )
                             cancel_pipelinerun = True
 
-                        if cancel_pipelinerun:
+                        # Cannot cancel release pipelineruns in the managed namespace
+                        if cancel_pipelinerun and namespace != "rhtap-releng-tenant":
                             self._logger.info("PipelineRun %s is being cancelled", pipelinerun_name)
                             try:
                                 # Setting spec.status in the PipelineRun should cause tekton to start canceling the pipeline.

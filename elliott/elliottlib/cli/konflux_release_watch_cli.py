@@ -53,6 +53,24 @@ class WatchReleaseCli:
         success = reason == "Succeeded" and status == "True"
 
         if success:
+            # Get the managed pipeline run name
+            managed_plr_name = release_obj["status"]["managedProcessing"]["pipelineRun"]
+            managed_plr_obj = await self.konflux_client.wait_for_pipelinerun(pipelinerun_name=managed_plr_name, namespace="rhtap-releng-tenant")
+
+            # Find advisory_url in results
+            release_results = managed_plr_obj["status"]["results"]
+            LOGGER.info(f"Release results: {release_results}")
+
+            advisory_url = None
+            for result in release_results:
+                if result.get("name") == "advisory_url":
+                    advisory_url = result.get("value")
+                    break
+
+            # Eg from 'https://access.stage.redhat.com/errata/RHBA-2025:10381' extract '10381'
+            live_id = advisory_url.split(":")[-1]
+            LOGGER.info(f"Live ID: {live_id}")
+
             return True, release_obj
 
         message = released_condition.message
