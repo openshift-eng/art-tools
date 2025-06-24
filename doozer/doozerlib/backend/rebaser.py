@@ -16,7 +16,6 @@ import bashlex
 import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
-from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
@@ -216,8 +215,8 @@ class KonfluxRebaser:
             if source and source_dir:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
-                is_commit_in_public_upstream = await exectools.to_thread(
-                    util.is_commit_in_public_upstream, source.commit_hash, source.public_upstream_branch, source_dir
+                is_commit_in_public_upstream = await util.is_commit_in_public_upstream_async(
+                    source.commit_hash, source.public_upstream_branch, source_dir
                 )
 
                 if (
@@ -270,8 +269,7 @@ class KonfluxRebaser:
         # If this image defines source modifications, apply them
         if metadata.config.content.source.modifications:
             metadata_scripts_path = os.path.join(self._runtime.data_dir, "modifications")
-            await exectools.to_thread(
-                self._run_modifications,
+            await self._run_modifications(
                 metadata=metadata,
                 dest_dir=dest_dir,
                 metadata_scripts_path=metadata_scripts_path,
@@ -460,16 +458,15 @@ class KonfluxRebaser:
             # be directed to the target file). So unlink explicitly.
             df_path.unlink()
 
-        with (
-            open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile,
-            open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile,
-        ):
-            # The source Dockerfile could be named virtually anything (e.g. Dockerfile.rhel) or
-            # be a symlink. Ultimately, we don't care - we just need its content in distgit
-            # as /Dockerfile (which OSBS requires). Read in the content and write it back out
-            # to the required distgit location.
-            source_dockerfile_content = source_dockerfile.read()
-            await exectools.to_thread(distgit_dockerfile.write, source_dockerfile_content)
+        # The source Dockerfile could be named virtually anything (e.g. Dockerfile.rhel) or
+        # be a symlink. Ultimately, we don't care - we just need its content in distgit
+        # as /Dockerfile (which OSBS requires). Read in the content and write it back out
+        # to the required distgit location.
+        async with aiofiles.open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile:
+            source_dockerfile_content = await source_dockerfile.read()
+
+        async with aiofiles.open(df_path, mode='w+', encoding='utf-8') as distgit_dockerfile:
+            await distgit_dockerfile.write(source_dockerfile_content)
 
         append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
         if append_gomod_patch and append_gomod_patch is not Missing:
@@ -596,8 +593,8 @@ class KonfluxRebaser:
         Interprets and applies content.source.modifications steps in the image metadata.
         """
         df_path = dest_dir.joinpath('Dockerfile')
-        with df_path.open('r') as df:
-            dockerfile_data = df.read()
+        async with aiofiles.open(df_path, 'r', encoding='utf-8') as df:
+            dockerfile_data = await df.read()
 
         self._logger.debug("About to start modifying Dockerfile [%s]:\n%s\n" % (metadata.distgit_key, dockerfile_data))
 
@@ -630,6 +627,7 @@ class KonfluxRebaser:
                 new_dockerfile_data = context.get("result", new_dockerfile_data)
             else:
                 raise IOError("Don't know how to perform modification action: %s" % modification.action)
+
         if new_dockerfile_data is not None and new_dockerfile_data != dockerfile_data:
             async with aiofiles.open(df_path, 'w', encoding='utf-8') as df:
                 await df.write(new_dockerfile_data)
