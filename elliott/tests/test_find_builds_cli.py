@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
-from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds, find_builds_konflux
+from elliottlib.cli.find_builds_cli import (
+    _filter_out_attached_builds,
+    _find_shipped_builds,
+    find_builds_konflux,
+    find_builds_konflux_all_types,
+)
 from flexmock import flexmock
 
 
@@ -58,7 +63,7 @@ class TestFindBuildsCli(unittest.TestCase):
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
-    async def test_find_builds_konflux(
+    async def find_builds_konflux_all_types(
         self, MockKonfluxBuildRecord: mock.MagicMock, MockKonfluxBundleBuildRecord: mock.MagicMock
     ):
         runtime = flexmock(konflux_db=flexmock())
@@ -87,9 +92,29 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         mock_record.nvr = "image1-bundle-1.0.0-1.el8"
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
         runtime.konflux_db.should_receive("search_builds_by_fields").and_return(async_gen(mock_record))
-        actual_records, olm_records, olm_builds_not_found = await find_builds_konflux(runtime, payload=True)
+        actual_records, non_payload_records, olm_records, olm_builds_not_found = await find_builds_konflux_all_types(
+            runtime
+        )
         self.assertEqual(len(actual_records), 1)
         self.assertEqual(actual_records[0].nvr, "image1-1.0.0-1.el8")
+
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
+        runtime = flexmock(konflux_db=flexmock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.branch_el_target.return_value = "el8"
+        image_meta_1.get_latest_build = AsyncMock(return_value={"nvr": "image1-1.0.0-1.el8"})
+
+        image_meta_2 = MagicMock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+        actual_records = await find_builds_konflux(runtime, payload=True)
+        self.assertEqual(len(actual_records), 1)
+        self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
 
 
 if __name__ == "__main__":
