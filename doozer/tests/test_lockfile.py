@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
@@ -287,8 +288,8 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
             self.assertIn("rhel-9-baseos-rpms-x86_64", self.collector.loaded_repos)
             self.assertIn("rhel-9-appstream-rpms-x86_64", self.collector.loaded_repos)
 
-            get1.assert_awaited_once_with('x86_64')
-            get2.assert_awaited_once_with('x86_64')
+            get1.assert_awaited_once_with('x86_64', entity=unittest.mock.ANY)
+            get2.assert_awaited_once_with('x86_64', entity=unittest.mock.ANY)
 
     def test_load_repos_handles_partial_loading(self):
         # Preload one repo
@@ -482,19 +483,15 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         )
 
         # Should call target branch digest fetching
-        mock_get_digest.assert_called_once_with(self.path / f'{self.filename}.digest', "test-image")
+        mock_get_digest.assert_called_once_with(self.path / f'{self.filename}.digest', "test-image", unittest.mock.ANY)
         # Should call target branch lockfile fetching
-        mock_get_lockfile.assert_called_once_with(self.path / self.filename, "test-image")
+        mock_get_lockfile.assert_called_once_with(self.path / self.filename, "test-image", unittest.mock.ANY)
         # Should skip generation since fingerprints match
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()
         # Should download both files
         mock_write_text.assert_any_call(fingerprint)
         mock_write_text.assert_any_call(mock_lockfile_content)
-        self.logger.info.assert_any_call("Found digest in target branch for test-image")
-        self.logger.info.assert_any_call("No changes in RPM list. Downloading digest and lockfile from upstream.")
-        self.logger.info.assert_any_call(f"Downloaded digest file to {self.path / f'{self.filename}.digest'}")
-        self.logger.info.assert_any_call(f"Downloaded lockfile to {self.path / self.filename}")
 
     @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_write_yaml')
@@ -519,8 +516,6 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         # Should generate since fingerprints differ
         self.generator.builder.fetch_rpms_info.assert_called_once()
         mock_write_yaml.assert_called_once()
-        self.logger.info.assert_any_call("Found digest in target branch for test-image")
-        self.logger.info.assert_any_call("RPM list changed. Regenerating lockfile.")
 
     def test_get_lockfile_from_target_branch_success(self):
         """Test successful lockfile fetching from target branch"""
@@ -592,8 +587,6 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         # Should still download digest file
         mock_write_text.assert_any_call(fingerprint)
-        # Should log warning about missing lockfile
-        self.logger.warning.assert_any_call("Could not download lockfile from upstream branch for test-image")
         # Should skip generation since fingerprints match
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()

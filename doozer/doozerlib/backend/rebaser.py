@@ -17,6 +17,7 @@ import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.logutil import EntityLoggingAdapter
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
 from dockerfile_parse import DockerfileParser
@@ -101,6 +102,8 @@ class KonfluxRebaser:
         commit_message: str,
         push: bool,
     ) -> None:
+        logger = EntityLoggingAdapter(self._logger, {'entity': metadata.distgit_key})
+
         # If there is a konflux stanza in the image config, merge it with the main config
         if metadata.config.konflux is not Missing:
             metadata.config = Model(deep_merge(metadata.config.primitive(), metadata.config.konflux.primitive()))
@@ -108,7 +111,7 @@ class KonfluxRebaser:
         try:
             # If this image has an upstream source, resolve it
             if metadata.has_source():
-                self._logger.info(f"Resolving source for {metadata.qualified_key}")
+                logger.info(f"Resolving source for {metadata.qualified_key}")
                 source = cast(
                     SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata)
                 )
@@ -125,18 +128,25 @@ class KonfluxRebaser:
                 }
             )
 
-            self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
+            logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
 
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
             # Clone the build repository
-            build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
+            build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
             await build_repo.ensure_source(upcycle=self.upcycle)
 
             # Rebase the image in the build repository
-            self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
+            logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
             actual_version, actual_release, _ = await self._rebase_dir(
-                metadata, source, build_repo, version, input_release, force_yum_updates, image_repo
+                metadata,
+                source,
+                build_repo,
+                version,
+                input_release,
+                force_yum_updates,
+                image_repo,
+                contextual_logger=logger,
             )
 
             # Commit changes
@@ -163,7 +173,7 @@ class KonfluxRebaser:
 
             # Push changes
             if push:
-                self._logger.info("Pushing changes to %s...", build_repo.url)
+                logger.info("Pushing changes to %s...", build_repo.url)
                 await build_repo.push()
 
             metadata.rebase_status = True
@@ -180,11 +190,14 @@ class KonfluxRebaser:
         input_release: str,
         force_yum_updates: bool,
         image_repo: str,
+        contextual_logger: Optional[logging.Logger] = None,
     ):
         """
         Rebase the image in the build repository.
         :return: Tuple of version, release, private_fix
         """
+        logger = contextual_logger or self._logger
+
         # Whether or not the source contains private fixes; None means we don't know yet
         private_fix = None
         if self.force_private_bit:  # --embargoed is set, force private_fix to True
@@ -200,7 +213,7 @@ class KonfluxRebaser:
         # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
         dockerfile_override = metadata.config.konflux.content.source.dockerfile
         if dockerfile_override:
-            self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
+            logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
             metadata.config.content.source.dockerfile = dockerfile_override
 
         # If this image has upstream source, merge it into the build repo
@@ -237,7 +250,7 @@ class KonfluxRebaser:
         if "from" in metadata.config:
             # If this image is FROM another group member, we need to wait on that group
             # member to determine if there is a private fix in it.
-            LOGGER.info("Waiting for parent members of %s...", metadata.distgit_key)
+            logger.info("Waiting for parent members of %s...", metadata.distgit_key)
             parent_members = await self._wait_for_parent_members(metadata)
             failed_parents = [
                 parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status
@@ -257,7 +270,7 @@ class KonfluxRebaser:
             ]
 
         if private_fix:
-            self._logger.warning("The source of image %s contains private fixes.", metadata.distgit_key)
+            logger.warning("The source of image %s contains private fixes.", metadata.distgit_key)
         else:
             private_fix = False  # Didn't find any private fixes in the source or parents
 
@@ -274,7 +287,16 @@ class KonfluxRebaser:
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
         await self._update_build_dir(
-            metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates, image_repo, uuid_tag
+            metadata,
+            dest_dir,
+            source,
+            version,
+            release,
+            downstream_parents,
+            force_yum_updates,
+            image_repo,
+            uuid_tag,
+            contextual_logger=logger,
         )
         metadata.private_fix = private_fix
 
@@ -640,7 +662,10 @@ class KonfluxRebaser:
         force_yum_updates: bool,
         image_repo: str,
         uuid_tag: str,
+        contextual_logger: Optional[logging.Logger] = None,
     ):
+        logger = contextual_logger or self._logger
+
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
 
@@ -650,7 +675,7 @@ class KonfluxRebaser:
 
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
-            await self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir)
+            await self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir, contextual_logger=logger)
 
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
@@ -674,16 +699,20 @@ class KonfluxRebaser:
             self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
             return set()
 
-    async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path):
+    async def _write_rpms_lock_file(
+        self, metadata: ImageMetadata, group: str, dest_dir: Path, contextual_logger: Optional[logging.Logger] = None
+    ):
         """
         Generates RPM lockfile based on image metadata and repository configuration.
 
         Fetches RPM package lists from metadata and parent metadata, calculates
         RPMs to install, and delegates lockfile generation to RPMLockfileGenerator.
         """
+        logger = contextual_logger or self._logger
+
         lockfile_enabled = metadata.is_lockfile_generation_enabled()
         if not lockfile_enabled:
-            self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
+            logger.info(f'Skipping lockfile generation for {metadata.image_name}')
             return
 
         rpms_to_install = set(metadata.config.konflux.cachi2.lockfile.packages.get('install', []))
@@ -699,16 +728,14 @@ class KonfluxRebaser:
         else:
             rpms = await self._fetch_packages_from_metadata(metadata.distgit_key, group)
             if rpms:
-                self._logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
+                logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
                 rpms_to_install.update(rpms)
 
         if not rpms_to_install:
-            self._logger.warning(
-                f'Empty RPM list to install for {metadata.distgit_key}; all required RPMs may be inherited'
-            )
+            logger.warning(f'Empty RPM list to install for {metadata.distgit_key}; all required RPMs may be inherited')
             return
         else:
-            self._logger.info(f'Final install RPMs for {metadata.distgit_key}: {sorted(rpms_to_install)}')
+            logger.info(f'Final install RPMs for {metadata.distgit_key}: {sorted(rpms_to_install)}')
 
         enabled_repos = set(metadata.config.get("enabled_repos", []))
 

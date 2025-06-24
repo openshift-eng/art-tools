@@ -13,6 +13,7 @@ import aiohttp
 import defusedxml.ElementTree as ET
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.logutil import EntityLoggingAdapter
 from artcommonlib.rpm_utils import label_compare, parse_nvr
 from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
@@ -208,6 +209,13 @@ class Repodata:
 
 
 class RepodataLoader:
+    def __init__(self, entity: Optional[str] = None):
+        self.logger = (
+            EntityLoggingAdapter(logutil.get_logger(__name__), {'entity': entity})
+            if entity
+            else logutil.get_logger(__name__)
+        )
+
     @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
@@ -242,10 +250,10 @@ class RepodataLoader:
                     resp.raise_for_status()
                     repomd_xml = ET.fromstring(await resp.text())
             except Exception as e:
-                LOGGER.warning('Failed fetching %s: %s', repomd_url, e)
+                self.logger.warning('Failed fetching %s: %s', repomd_url, e)
                 curl_cmd = ['curl', '-v', repomd_url]
                 _, _, err = await cmd_gather_async(curl_cmd)
-                LOGGER.info('curl command stderr: %s', err)
+                self.logger.info('curl command stderr: %s', err)
                 raise
 
             primary_data_element = repomd_xml.find('repo:data[@type="primary"]', NAMESPACES)
