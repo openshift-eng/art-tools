@@ -672,7 +672,7 @@ async def build_microshift(
             payloads=payloads,
             no_rebase=no_rebase,
             force=force,
-            skip_prepare_release=skip_prepare_advisory,
+            skip_prepare_advisory=skip_prepare_advisory,
             data_path=data_path,
             slack_client=slack_client,
             date=date,
