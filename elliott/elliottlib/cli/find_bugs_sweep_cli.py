@@ -1,24 +1,30 @@
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
+from urllib.parse import urlparse
 
 import click
+import gitlab
 from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import new_roundtrip_yaml_handler
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
+from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.util import chunk
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
 type_bug_set = Set[Bug]
+yaml = new_roundtrip_yaml_handler()
 
 
 class FindBugsMode:
@@ -324,30 +330,54 @@ def get_builds_by_advisory_kind(runtime) -> Dict[str, List[str]]:
         # fetch builds from shipments
         assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
         shipment = assembly_group_config.get("shipment", {})
-        for advisory_info in shipment.get("advisories", []):
-            kind = advisory_info["kind"]
-            builds_by_advisory_kind[kind] = set()
+        kinds = [advisory_info["kind"] for advisory_info in shipment.get("advisories", [])]
         mr_url = shipment.get("url")
         if not mr_url:
             logger.warning("No shipment URL found in assembly config, cannot fetch builds for advisories.")
         else:
             logger.info(f"Fetching builds from shipment URL: {mr_url}")
-            builds_by_advisory_kind = get_builds_from_mr(mr_url)
+            builds_by_advisory_kind = get_builds_from_mr(mr_url, kinds)
     return builds_by_advisory_kind
 
 
 def get_builds_from_mr(mr_url: str, kinds: List[str]) -> Dict[str, List[str]]:
     """Fetch builds from a merge request URL."""
+    gitlab_token = os.getenv("GITLAB_TOKEN")
+    parsed_url = urlparse(mr_url)
+    project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+    mr_id = parsed_url.path.split('/')[-1]
+    gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    # call gitlab api to get mr details
-    # do some basic validation like mr is open, etc
-    # fetch the branch name, e.g prepare-shipment-4.18.100-20250528184115
-    # then fetch /projects/:id/merge_requests/:merge_request_iid/diffs
-    # from the response, fetch the file names that are new in the merge request
-    # then fetch the raw content of the files using raw url
-    # then parse the content to get the builds
+    gl = gitlab.Gitlab(gitlab_url, private_token=gitlab_token)
+    gl.auth()
 
-    pass
+    project = gl.projects.get(project_path)
+    mr = project.mergerequests.get(mr_id)
+    source_project = gl.projects.get(mr.source_project_id)
+
+    diff_info = mr.diffs.list(all=True)[0]
+    builds_by_kind = {}
+    diff = mr.diffs.get(diff_info.id)
+    for file_diff in diff.diffs:
+        file_path = file_diff.get('new_path') or file_diff.get('old_path')
+        if not file_path or not file_path.endswith(('.yaml', '.yml')):
+            continue
+
+        filename = file_path.split('/')[-1]
+        parts = filename.replace('.yaml', '').replace('.yml', '')
+        kind = next(k for k in kinds if k in parts)
+        if not kind:
+            logger.warning(f"No kind found for {file_path}")
+            continue
+
+        file_content = source_project.files.get(file_path, mr.source_branch)
+        content = file_content.decode().decode('utf-8')
+        shipment_data = ShipmentConfig(**yaml.load(content))
+        nvrs = shipment_data.shipment.snapshot.spec.nvrs
+        logger.info(f"Found {len(nvrs)} builds for {kind}")
+        builds_by_kind[kind] = nvrs
+
+    return builds_by_kind
 
 
 def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
@@ -515,9 +545,10 @@ def categorize_bugs_by_type(
         still_not_found = not_found
         if permitted_bug_ids:
             logger.info(
-                'The following bugs will be included because they are '
+                'The following tracker bugs will be included in image advisory because they are '
                 f'explicitly included in the assembly config: {permitted_bug_ids}'
             )
+            bugs_by_type["image"] = {b for b in not_found if b.id in permitted_bug_ids}
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
