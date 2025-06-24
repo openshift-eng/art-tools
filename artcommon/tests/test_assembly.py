@@ -204,7 +204,7 @@ releases:
 """
         self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         with self.assertRaises(ValueError) as cm:
-            assembly_basis_event(self.releases_config, 'foo')
+            assembly_basis_event(self.releases_config, 'foo', build_system='konflux')
         self.assertIn("Invalid time format for assembly", str(cm.exception))
 
     def test_assembly_basis_time_invalid_2(self):
@@ -218,7 +218,7 @@ releases:
 """
         self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         with self.assertRaises(ValueError) as cm:
-            assembly_basis_event(self.releases_config, 'foo')
+            assembly_basis_event(self.releases_config, 'foo', build_system='konflux')
         self.assertIn("Invalid isoformat string", str(cm.exception))
 
     def test_assembly_basis_time_valid(self):
@@ -232,8 +232,74 @@ releases:
 """
         self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         self.assertEqual(
-            assembly_basis_event(self.releases_config, 'foo'), datetime(2021, 1, 1, 0, 0, tzinfo=timezone.utc)
+            assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='konflux'),
+            datetime(2021, 1, 1, 0, 0, tzinfo=timezone.utc),
         )
+
+    def test_asssembly_basis_time_with_brew_event_1(self):
+        releases_yml = """
+        releases:
+          foo:
+            assembly:
+              basis:
+                time: "2021-01-01T00:00:00Z"
+                brew_event: 123456
+            type: standard
+        """
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        self.assertEqual(
+            assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='konflux'),
+            datetime(2021, 1, 1, 0, 0, tzinfo=timezone.utc),
+        )
+
+    def test_asssembly_basis_time_with_brew_event_2(self):
+        releases_yml = """
+        releases:
+          foo:
+            assembly:
+              basis:
+                time: "2021-01-01T00:00:00Z"
+                brew_event: 123456
+            type: standard
+        """
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        self.assertEqual(
+            assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='brew'),
+            123456,
+        )
+
+    def test_asssembly_basis_time_with_brew_event_3(self):
+        releases_yml = """
+        releases:
+          foo:
+            assembly:
+              basis:
+                time: "2021-01-01T00:00:00Z"
+            type: standard
+        """
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        self.assertEqual(
+            assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='brew'),
+            None,
+        )
+
+    def test_asssembly_basis_time_with_brew_event_4(self):
+        releases_yml = """
+        releases:
+          foo:
+            assembly:
+              basis: {}
+            type: standard
+        """
+        self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+
+        with self.assertRaises(ValueError) as _:
+            assembly_basis_event(
+                releases_config=self.releases_config, assembly='foo', build_system='konflux', strict=True
+            )
+
+        with self.assertRaises(ValueError) as _:
+            assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='brew', strict=True)
 
     def test_assembly_group_config(self):
         group_config = Model(

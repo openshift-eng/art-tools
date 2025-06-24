@@ -355,7 +355,9 @@ class MetadataBase(object):
                 # we are returning true latest.
                 builds = latest_build_list('')
             else:
-                basis_event = assembly_basis_event(self.runtime.get_releases_config(), assembly=assembly)
+                basis_event = assembly_basis_event(
+                    self.runtime.get_releases_config(), assembly=assembly, build_system='brew'
+                )
                 if basis_event:
                     # If an assembly has a basis event, its latest images can only be sourced from
                     # "is:" or the stream assembly. We've already checked for "is" above.
@@ -479,7 +481,9 @@ class MetadataBase(object):
             build_record = await self.runtime.konflux_db.get_latest_build(**base_search_params)
 
         else:
-            basis_event = assembly_basis_event(self.runtime.get_releases_config(), assembly=assembly)
+            basis_event = assembly_basis_event(
+                self.runtime.get_releases_config(), assembly=assembly, build_system='konflux'
+            )
             if basis_event:
                 # If an assembly has a basis event, its latest images can only be sourced from
                 # "is:" or the stream assembly. We've already checked for "is" above.
