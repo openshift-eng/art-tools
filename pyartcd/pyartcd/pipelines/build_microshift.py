@@ -61,7 +61,7 @@ class BuildMicroShiftPipeline:
         payloads: Tuple[str, ...],
         no_rebase: bool,
         force: bool,
-        skip_prepare_release: bool,
+        skip_prepare_advisory: bool,
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
@@ -74,7 +74,7 @@ class BuildMicroShiftPipeline:
         self.payloads = payloads
         self.no_rebase = no_rebase
         self.force = force
-        self.skip_prepare_release = skip_prepare_release
+        self.skip_prepare_advisory = skip_prepare_advisory
         self.date = date
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
@@ -643,9 +643,9 @@ class BuildMicroShiftPipeline:
 )
 @click.option("--force", is_flag=True, help="(For named assemblies) Rebuild even if a build already exists")
 @click.option(
-    "--skip-prepare-release",
+    "--skip-prepare-advisory",
     is_flag=True,
-    help="(For named assemblies) Skip prepare release logic",
+    help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
 @click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
@@ -658,7 +658,7 @@ async def build_microshift(
     payloads: Tuple[str, ...],
     no_rebase: bool,
     force: bool,
-    skip_prepare_release: bool,
+    skip_prepare_advisory: bool,
     date: Optional[str],
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
@@ -672,7 +672,7 @@ async def build_microshift(
             payloads=payloads,
             no_rebase=no_rebase,
             force=force,
-            skip_prepare_release=skip_prepare_release,
+            skip_prepare_advisory=skip_prepare_advisory,
             data_path=data_path,
             slack_client=slack_client,
             date=date,
