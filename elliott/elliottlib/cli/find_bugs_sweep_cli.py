@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Set
 
 import click
 from artcommonlib import arch_util, logutil
-from artcommonlib.assembly import assembly_issues_config
+from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 
@@ -267,13 +267,7 @@ async def find_and_attach_bugs(
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
 
-    builds_by_advisory_kind: Dict[str, List[str]] = {}
-    if runtime.build_system == 'brew':
-        for kind, kind_advisory_id in advisory_ids.items():
-            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(kind_advisory_id)
-    elif runtime.build_system == 'konflux':
-        # fetch builds from shipments
-        pass
+    builds_by_advisory_kind = get_builds_by_advisory_kind(runtime)
 
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs=bugs,
@@ -316,6 +310,44 @@ async def find_and_attach_bugs(
                 [b.id for b in kind_bugs], advisory_id=advisory_ids[advisory_type], noop=noop, verbose=runtime.debug
             )
     return bugs
+
+
+def get_builds_by_advisory_kind(runtime) -> Dict[str, List[str]]:
+    """Get builds attached to advisories by advisory kind."""
+
+    builds_by_advisory_kind: Dict[str, List[str]] = {}
+    if runtime.build_system == 'brew':
+        advisory_ids = runtime.get_default_advisories()
+        for kind, kind_advisory_id in advisory_ids.items():
+            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(kind_advisory_id)
+    elif runtime.build_system == 'konflux':
+        # fetch builds from shipments
+        assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
+        shipment = assembly_group_config.get("shipment", {})
+        for advisory_info in shipment.get("advisories", []):
+            kind = advisory_info["kind"]
+            builds_by_advisory_kind[kind] = set()
+        mr_url = shipment.get("url")
+        if not mr_url:
+            logger.warning("No shipment URL found in assembly config, cannot fetch builds for advisories.")
+        else:
+            logger.info(f"Fetching builds from shipment URL: {mr_url}")
+            builds_by_advisory_kind = get_builds_from_mr(mr_url)
+    return builds_by_advisory_kind
+
+
+def get_builds_from_mr(mr_url: str, kinds: List[str]) -> Dict[str, List[str]]:
+    """Fetch builds from a merge request URL."""
+
+    # call gitlab api to get mr details
+    # do some basic validation like mr is open, etc
+    # fetch the branch name, e.g prepare-shipment-4.18.100-20250528184115
+    # then fetch /projects/:id/merge_requests/:merge_request_iid/diffs
+    # from the response, fetch the file names that are new in the merge request
+    # then fetch the raw content of the files using raw url
+    # then parse the content to get the builds
+
+    pass
 
 
 def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
