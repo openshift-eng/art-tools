@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import sys
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 import click
 import koji
@@ -13,7 +13,7 @@ from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -174,9 +174,9 @@ async def find_builds_cli(
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
-        records = await find_builds_konflux(runtime, payload)
+        records, olm_records, olm_records_not_found = await find_builds_konflux(runtime, payload)
         if as_json:
-            _json_dump(as_json, records, kind)
+            _json_dump(as_json, records, kind, olm_records, olm_records_not_found)
             return
         for nvr in sorted([r.nvr for r in records]):
             click.echo(nvr)
@@ -427,14 +427,21 @@ def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
     return nvrps
 
 
-def _json_dump(as_json: str, builds: list, kind: str):
+def _json_dump(
+    as_json: str, builds: list, kind: str, olm_builds: Optional[list] = [], olm_records_not_found: Optional[list] = []
+):
     """Dumps builds as JSON to a file or stdout
     :param as_json: file name to dump JSON to, or '-' for stdout
     :param builds: list of Brew build objects
     :param kind: kind of builds, either 'rpm' or 'image'
     """
 
-    json_data = dict(builds=sorted([b.nvr for b in builds]), kind=kind)
+    json_data = {
+        'builds': sorted([b.nvr for b in builds]),
+        'kind': kind,
+        'olm_builds': sorted([b.nvr for b in olm_builds]),
+        'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+    }
     if as_json == '-':
         click.echo(json.dumps(json_data, indent=4, sort_keys=True))
     else:
@@ -692,7 +699,6 @@ async def find_builds_konflux(runtime, payload):
     """
 
     runtime.konflux_db.bind(KonfluxBuildRecord)
-
     image_metas: List[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
@@ -702,8 +708,25 @@ async def find_builds_konflux(runtime, payload):
         image_metas.append(image)
 
     LOGGER.info("Fetching NVRs from DB...")
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
-    records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
-    if len(records) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
-    return records
+    # find build result (is_olm_operator, build_Record)
+    tasks = [
+        (image.is_olm_operator, image.get_latest_build(el_target=image.branch_el_target())) for image in image_metas
+    ]
+    results = await asyncio.gather(*[task[1] for task in tasks])
+    records_with_olm = [(task[0], r) for task, r in zip(tasks, results) if r is not None]
+    if len(records_with_olm) != len(image_metas):
+        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records_with_olm)} images")
+
+    # get related bundle records in KonfluxBundleBuildRecord
+    LOGGER.info("Fetching bundle build from DB ...")
+    runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+    olm_tasks = [
+        (record, anext(runtime.konflux_db.search_builds_by_fields(where={"operator_nvr": record.nvr}, limit=1), None))
+        for is_olm, record in records_with_olm
+        if is_olm
+    ]
+    # find olm result (olm_operator build, olm build)
+    olm_records = await asyncio.gather(*[task[1] for task in olm_tasks])
+    olm_records_not_found = [olm_task[0] for olm_task, r in zip(olm_tasks, olm_records) if r is None]
+    olm_records = [record for record in olm_records if record is not None]
+    return [record for _, record in records_with_olm], olm_records, olm_records_not_found
