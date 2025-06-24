@@ -451,14 +451,20 @@ class Runtime(GroupRuntime):
             org_stream_model = Model(dict_to_model=streams_data.data)
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
 
-        self.assembly_basis_event = assembly_basis_event(self.get_releases_config(), self.assembly)
+        strict_mode = True
+        if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
+            strict_mode = False
+
+        self.assembly_basis_event = assembly_basis_event(
+            self.get_releases_config(), self.assembly, strict=strict_mode, build_system=self.build_system
+        )
         if self.assembly_basis_event:
             if self.brew_event:
                 raise IOError(
                     f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
-            if self.build_system == 'brew' or isinstance(self.assembly_basis_event, int):
+            if isinstance(self.assembly_basis_event, int):
                 # The assembly basis event is a Brew event
                 self.brew_event = self.assembly_basis_event
 
