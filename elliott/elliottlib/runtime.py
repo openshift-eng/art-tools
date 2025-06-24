@@ -72,6 +72,7 @@ class Runtime(GroupRuntime):
         self.shipment_path = None
         self.shipment_gitdata = None
         self.product = None
+        self.group_config = None
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
@@ -100,6 +101,11 @@ class Runtime(GroupRuntime):
         if match:
             self._logger.debug(f"Found major.minor.patch {match.group()} for assembly {self.assembly}")
             return self.assembly.split(".")
+        elif self.assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
+            major = self.group_config.vars.MAJOR
+            minor = self.group_config.vars.MINOR
+            patch = 0
+            return major, minor, patch
         else:
             raise ValueError(
                 f"Could not find major.minor.patch for assembly {self.assembly}. Use get_major_minor() instead for major.minor"
