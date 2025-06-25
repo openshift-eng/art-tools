@@ -4,7 +4,7 @@ import json
 import os
 import threading
 import time
-from typing import Dict, List, cast
+from typing import Dict, List, Optional, cast
 
 import requests
 import yaml
@@ -236,13 +236,13 @@ class Repo(object):
 
         return result
 
-    async def get_repodata(self, arch: str):
+    async def get_repodata(self, arch: str, entity: Optional[str] = None):
         repodata = self._repodatas.get(arch)
         if repodata:
             return repodata
         name = f"{self.name}-{arch}"
         repourl = cast(str, self.baseurl("unsigned", arch))
-        repodata = self._repodatas[arch] = await RepodataLoader().load(name, repourl)
+        repodata = self._repodatas[arch] = await RepodataLoader(entity=entity).load(name, repourl)
 
         if self.excludepkgs:
             LOGGER.info(f"Excluding packages from {name} based on following patterns: {self.excludepkgs}")

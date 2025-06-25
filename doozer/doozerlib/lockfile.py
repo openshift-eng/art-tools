@@ -12,6 +12,7 @@ import yaml
 
 # Removed unused import 'List' from aiohttp_retry
 from artcommonlib import exectools, logutil
+from artcommonlib.logutil import EntityLoggingAdapter
 from artcommonlib.rpm_utils import compare_nvr
 
 from doozerlib.repodata import Repodata, Rpm
@@ -124,7 +125,7 @@ class RpmInfoCollector:
         self.loaded_repos: dict[str, Repodata] = {}
         self.logger = logger or logutil.get_logger(__name__)
 
-    async def _load_repos(self, requested_repos: set[str], arch: str):
+    async def _load_repos(self, requested_repos: set[str], arch: str, contextual_logger: Optional[Logger] = None):
         """
         Load repodata synchronously for the given repositories and architecture.
 
@@ -134,28 +135,36 @@ class RpmInfoCollector:
         Args:
             requested_repos (set[str]): Set of repository names to load.
             arch (str): Architecture identifier for fetching repodata.
+            contextual_logger (Optional[Logger]): Optional contextual logger for this operation.
         """
+        logger = contextual_logger or self.logger
+
         not_yet_loaded = {repo for repo in requested_repos if f'{repo}-{arch}' not in self.loaded_repos}
         already_loaded = requested_repos - not_yet_loaded
 
         if already_loaded:
-            self.logger.info(f"Repos already loaded, skipping: {', '.join(sorted(already_loaded))} for arch {arch}")
+            logger.info(f"Repos already loaded, skipping: {', '.join(sorted(already_loaded))} for arch {arch}")
 
         enabled_repos = {r.name for r in self.repos.values() if r.enabled}
         repos_to_fetch = sorted(enabled_repos | set(not_yet_loaded))
 
         if not repos_to_fetch:
-            self.logger.info("No new repos to load.")
+            logger.info("No new repos to load.")
             return
 
-        self.logger.info(f"Loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
+        logger.info(f"Loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
 
-        repodatas = await asyncio.gather(*(self.repos[repo_name].get_repodata(arch) for repo_name in repos_to_fetch))
+        entity = getattr(logger, 'extra', {}).get('entity') if hasattr(logger, 'extra') else None
+        repodatas = await asyncio.gather(
+            *(self.repos[repo_name].get_repodata(arch, entity=entity) for repo_name in repos_to_fetch)
+        )
 
         self.loaded_repos.update({r.name: r for r in repodatas})
-        self.logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
+        logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
 
-    def _fetch_rpms_info_per_arch(self, rpm_names: set[str], repo_names: set[str], arch: str) -> list[RpmInfo]:
+    def _fetch_rpms_info_per_arch(
+        self, rpm_names: set[str], repo_names: set[str], arch: str, contextual_logger: Optional[Logger] = None
+    ) -> list[RpmInfo]:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
@@ -163,10 +172,13 @@ class RpmInfoCollector:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
             arch (str): Target architecture.
+            contextual_logger (Optional[Logger]): Optional contextual logger for this operation.
 
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
+        logger = contextual_logger or self.logger
+
         rpm_info_list = []
         unresolved_rpms = set(rpm_names)
         missing_rpms = unresolved_rpms
@@ -174,14 +186,12 @@ class RpmInfoCollector:
         for repo_name in repo_names:
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
             if repodata is None:
-                self.logger.error(
-                    f'repodata {repo_name}-{arch} not found while fetching rpms, it should be loaded by now'
-                )
+                logger.error(f'repodata {repo_name}-{arch} not found while fetching rpms, it should be loaded by now')
                 continue
 
             repo = self.repos._repos[repo_name]
             if repo is None:
-                self.logger.error(f'repo {repo_name} not found')
+                logger.error(f'repo {repo_name} not found')
                 continue
 
             found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms)
@@ -201,12 +211,12 @@ class RpmInfoCollector:
             unresolved_rpms = missing_rpms
 
         if missing_rpms:
-            self.logger.warning(f"Could not find {','.join(missing_rpms)} in {', '.join(repo_names)} for arch {arch}")
+            logger.warning(f"Could not find {','.join(missing_rpms)} in {', '.join(repo_names)} for arch {arch}")
 
         return sorted(rpm_info_list)
 
     async def fetch_rpms_info(
-        self, arches: list[str], repositories: set[str], rpm_names: set[str]
+        self, arches: list[str], repositories: set[str], rpm_names: set[str], contextual_logger: Optional[Logger] = None
     ) -> dict[str, list[RpmInfo]]:
         """
         Resolve RPM info across multiple architectures and repositories.
@@ -215,16 +225,19 @@ class RpmInfoCollector:
             arches (list[str]): Target architectures.
             repositories (set[str]): Names of repositories to search.
             rpm_names (set[str]): Names or NVRs of RPMs to resolve.
+            contextual_logger (Optional[Logger]): Optional contextual logger for this operation.
 
         Returns:
             dict[str, list[RpmInfo]]: Mapping of architecture to resolved RPM metadata.
         """
-        await asyncio.gather(*(self._load_repos(repositories, arch) for arch in arches))
+        logger = contextual_logger or self.logger
+
+        await asyncio.gather(*(self._load_repos(repositories, arch, contextual_logger=logger) for arch in arches))
 
         results = await asyncio.gather(
             *[
                 asyncio.get_running_loop().run_in_executor(
-                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch
+                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch, logger
                 )
                 for arch in arches
             ]
@@ -280,17 +293,21 @@ class RPMLockfileGenerator:
         joined = '\n'.join(sorted_items)
         return hashlib.sha256(joined.encode('utf-8')).hexdigest()
 
-    def _get_digest_from_target_branch(self, digest_path: Path, distgit_key: str) -> Optional[str]:
+    def _get_digest_from_target_branch(
+        self, digest_path: Path, distgit_key: str, contextual_logger: Optional[Logger] = None
+    ) -> Optional[str]:
         """
         Fetch digest file content from the target art branch.
 
         Args:
             digest_path (Path): Path to the digest file relative to repo root.
             distgit_key (str): Distgit key to construct the target branch name.
+            contextual_logger (Optional[Logger]): Optional contextual logger for this operation.
 
         Returns:
             Optional[str]: Digest content if found, None otherwise.
         """
+        logger = contextual_logger or self.logger
         target_branch = self._get_target_branch(distgit_key)
         if not target_branch:
             return None
@@ -304,25 +321,27 @@ class RPMLockfileGenerator:
             if rc == 0:
                 return stdout.strip()
             else:
-                self.logger.debug(
-                    f"Could not fetch digest file '{digest_filename}' from branch '{target_branch}': {stderr}"
-                )
+                logger.debug(f"Could not fetch digest file '{digest_filename}' from branch '{target_branch}': {stderr}")
                 return None
         except Exception as e:
-            self.logger.debug(f"Error fetching digest from git branch '{target_branch}': {e}")
+            logger.debug(f"Error fetching digest from git branch '{target_branch}': {e}")
             return None
 
-    def _get_lockfile_from_target_branch(self, lockfile_path: Path, distgit_key: str) -> Optional[str]:
+    def _get_lockfile_from_target_branch(
+        self, lockfile_path: Path, distgit_key: str, contextual_logger: Optional[Logger] = None
+    ) -> Optional[str]:
         """
         Fetch lockfile content from the target art branch.
 
         Args:
             lockfile_path (Path): Path to the lockfile relative to repo root.
             distgit_key (str): Distgit key to construct the target branch name.
+            contextual_logger (Optional[Logger]): Optional contextual logger for this operation.
 
         Returns:
             Optional[str]: Lockfile content if found, None otherwise.
         """
+        logger = contextual_logger or self.logger
         target_branch = self._get_target_branch(distgit_key)
         if not target_branch:
             return None
@@ -336,12 +355,10 @@ class RPMLockfileGenerator:
             if rc == 0:
                 return stdout
             else:
-                self.logger.debug(
-                    f"Could not fetch lockfile '{lockfile_filename}' from branch '{target_branch}': {stderr}"
-                )
+                logger.debug(f"Could not fetch lockfile '{lockfile_filename}' from branch '{target_branch}': {stderr}")
                 return None
         except Exception as e:
-            self.logger.debug(f"Error fetching lockfile from git branch '{target_branch}': {e}")
+            logger.debug(f"Error fetching lockfile from git branch '{target_branch}': {e}")
             return None
 
     async def generate_lockfile(
@@ -368,9 +385,10 @@ class RPMLockfileGenerator:
             distgit_key (Optional[str]): Distgit key for fetching digest from target branch.
             force (bool): If True, ignore digest comparison and force regeneration.
         """
-        # Defensive check: repositories must not be empty
+        logger = EntityLoggingAdapter(self.logger, {'entity': distgit_key}) if distgit_key else self.logger
+
         if not repositories:
-            self.logger.warning("Skipping lockfile generation: repositories set is empty")
+            logger.warning("Skipping lockfile generation: repositories set is empty")
             return
 
         fingerprint = self._compute_hash(rpms)
@@ -379,54 +397,48 @@ class RPMLockfileGenerator:
 
         # Skip digest check if force=True
         if force:
-            self.logger.info("Force flag set. Regenerating lockfile without digest check.")
+            logger.info("Force flag set. Regenerating lockfile without digest check.")
         else:
-            # Check local digest file first
             old_fingerprint = None
             if digest_path.exists():
                 try:
                     with open(digest_path, 'r') as f:
                         old_fingerprint = f.read().strip()
                 except Exception as e:
-                    self.logger.warning(f"Failed to read local digest file '{digest_path}': {e}")
+                    logger.warning(f"Failed to read local digest file '{digest_path}': {e}")
 
-            # If no local digest or distgit_key provided, try fetching from target branch
             upstream_digest_found = False
             if old_fingerprint is None and distgit_key:
-                old_fingerprint = self._get_digest_from_target_branch(digest_path, distgit_key)
+                old_fingerprint = self._get_digest_from_target_branch(digest_path, distgit_key, logger)
                 if old_fingerprint:
-                    self.logger.info(f"Found digest in target branch for {distgit_key}")
+                    logger.info(f"Found digest in target branch for {distgit_key}")
                     upstream_digest_found = True
 
-            # Compare fingerprints
             if old_fingerprint == fingerprint:
                 if upstream_digest_found and distgit_key:
-                    # Download both digest and lockfile from upstream to ensure they're available locally
-                    self.logger.info("No changes in RPM list. Downloading digest and lockfile from upstream.")
+                    logger.info("No changes in RPM list. Downloading digest and lockfile from upstream.")
 
-                    # Write the digest file locally
                     if old_fingerprint:
                         try:
                             digest_path.write_text(old_fingerprint)
-                            self.logger.info(f"Downloaded digest file to {digest_path}")
+                            logger.info(f"Downloaded digest file to {digest_path}")
                         except Exception as e:
-                            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
+                            logger.warning(f"Failed to write digest file '{digest_path}': {e}")
 
-                    # Download and write the lockfile locally
-                    upstream_lockfile = self._get_lockfile_from_target_branch(lockfile_path, distgit_key)
+                    upstream_lockfile = self._get_lockfile_from_target_branch(lockfile_path, distgit_key, logger)
                     if upstream_lockfile:
                         try:
                             lockfile_path.write_text(upstream_lockfile)
-                            self.logger.info(f"Downloaded lockfile to {lockfile_path}")
+                            logger.info(f"Downloaded lockfile to {lockfile_path}")
                         except Exception as e:
-                            self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
+                            logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
                     else:
-                        self.logger.warning(f"Could not download lockfile from upstream branch for {distgit_key}")
+                        logger.warning(f"Could not download lockfile from upstream branch for {distgit_key}")
                 else:
-                    self.logger.info("No changes in RPM list. Skipping lockfile generation.")
+                    logger.info("No changes in RPM list. Skipping lockfile generation.")
                 return
             elif old_fingerprint:
-                self.logger.info("RPM list changed. Regenerating lockfile.")
+                logger.info("RPM list changed. Regenerating lockfile.")
 
         lockfile = {
             "lockfileVersion": 1,
@@ -434,7 +446,7 @@ class RPMLockfileGenerator:
             "arches": [],
         }
 
-        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, repositories, rpms)
+        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, repositories, rpms, contextual_logger=logger)
         for arch, rpm_list in rpms_info_by_arch.items():
             lockfile["arches"].append(
                 {
@@ -449,7 +461,7 @@ class RPMLockfileGenerator:
         try:
             digest_path.write_text(fingerprint)
         except Exception as e:
-            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
+            logger.warning(f"Failed to write digest file '{digest_path}': {e}")
 
     def _write_yaml(self, data: dict, output_path: Path) -> None:
         """
