@@ -54,6 +54,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": {jira_bug}}, [])
 
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -143,6 +144,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123})
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": set(bugs)}, [])
 
         # jira mocks
@@ -174,6 +176,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
             {
                 "image": set(image_bugs),
@@ -203,35 +206,95 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCategorizeBugsByType(unittest.TestCase):
-    def test_categorize_bugs_by_type(self):
-        major_version = 4
-        minor_version = 11
-        advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
+    def setUp(self):
+        self.major_version = 4
+        self.minor_version = 11
+
+    def test_categorize_no_trackers(self):
         bugs = [
+            # extras bug
+            flexmock(
+                id='OCPBUGS-0',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+            ),
+            # image bug
+            flexmock(
+                id='OCPBUGS-1',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+            ),
+            # image bug
+            flexmock(
+                id='OCPBUGS-2',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+            ),
+            # microshift bug
+            flexmock(
+                id='OCPBUGS-3',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='MicroShift',
+            ),
+        ]
+
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+
+        expected = {
+            'rpm': set(),
+            'image': {bugs[1].id, bugs[2].id},
+            'extras': {bugs[0].id},
+            'metadata': set(),
+            'microshift': {bugs[3].id},
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            bugs=bugs,
+            builds_by_advisory_kind=None,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+        )
+        self.assertEqual(issues, [])
+        for kind in expected:
+            self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
+
+    def test_categorize_with_trackers_no_builds(self):
+        bugs = [
+            # valid tracker
             flexmock(
                 id='OCPBUGS-0',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
                 whiteboard_component='foo',
                 component='',
                 summary='',
             ),
+            # valid tracker
             flexmock(
                 id='OCPBUGS-1',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
                 whiteboard_component='bar',
                 component='',
                 summary='',
             ),
+            # valid tracker
             flexmock(
                 id='OCPBUGS-2',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
                 summary='',
             ),
+            # valid extras non-tracker bug
             flexmock(
                 id='OCPBUGS-3',
                 is_tracker_bug=lambda: False,
@@ -239,6 +302,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 component='',
                 summary='',
             ),
+            # valid microshift non-tracker bug
             flexmock(
                 id='OCPBUGS-4',
                 is_tracker_bug=lambda: False,
@@ -247,21 +311,86 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 summary='',
             ),
         ]
-        builds_map = {
-            'image': {bugs[2].whiteboard_component: None},
-            'rpm': {bugs[1].whiteboard_component: None},
-            'extras': {bugs[0].whiteboard_component: None},
-            'microshift': dict(),
-        }
-        noop = False
-        for b in bugs:
-            b.should_receive("update_summary")
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
-        for kind in advisory_id_map.keys():
-            flexmock(errata).should_receive("get_advisory_nvrs").with_args(advisory_id_map[kind]).and_return(
-                builds_map[kind]
-            )
+
+        expected = {
+            'rpm': set(),
+            'image': {bugs[0].id, bugs[1].id, bugs[2].id},
+            'extras': {bugs[3].id},
+            'metadata': set(),
+            'microshift': {bugs[4].id},
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            bugs=bugs,
+            builds_by_advisory_kind=None,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+        )
+        self.assertEqual(issues, [])
+        for kind in expected:
+            self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
+
+    def test_categorize_with_trackers_and_builds(self):
+        bugs = [
+            # valid extras tracker
+            flexmock(
+                id='OCPBUGS-0',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
+                whiteboard_component='foo',
+                component='',
+                summary='',
+            ),
+            # valid rpm tracker
+            flexmock(
+                id='OCPBUGS-1',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
+                whiteboard_component='bar',
+                component='',
+                summary='',
+            ),
+            # valid image tracker
+            flexmock(
+                id='OCPBUGS-2',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
+                whiteboard_component='buzz',
+                component='',
+                summary='',
+            ),
+            # valid extras non-tracker bug
+            flexmock(
+                id='OCPBUGS-3',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+                summary='',
+            ),
+            # valid microshift non-tracker bug
+            flexmock(
+                id='OCPBUGS-4',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='MicroShift',
+                summary='',
+            ),
+        ]
+
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0], bugs[3]})
+
+        builds_by_advisory_kind = {
+            'image': {f"{bugs[2].whiteboard_component}-version-release.el9"},
+            'rpm': {f"{bugs[1].whiteboard_component}-version-release.el9"},
+            'extras': {f"{bugs[0].whiteboard_component}-version-release.el9"},
+            'microshift': {},
+        }
+
         expected = {
             'rpm': {bugs[1].id},
             'image': {bugs[2].id},
@@ -270,41 +399,123 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'microshift': {bugs[4].id},
         }
 
-        queried, issues = categorize_bugs_by_type(
+        bugs_by_kind, issues = categorize_bugs_by_type(
             bugs=bugs,
-            advisory_id_map=advisory_id_map,
-            permitted_bug_ids=4,
-            noop=noop,
-            major_version=major_version,
-            minor_version=minor_version,
-            operator_bundle_advisory="metadata",
+            builds_by_advisory_kind=builds_by_advisory_kind,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
         )
         self.assertEqual(issues, [])
-        for adv in queried:
-            actual = set()
-            for bug in queried[adv]:
-                actual.add(bug.id)
-            self.assertEqual(actual, expected[adv])
+        for kind in expected:
+            self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
 
     def test_raise_fake_trackers(self):
         bugs = [
-            flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')
+            flexmock(
+                id='OCPBUGS-5',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: True,
+                component='',
+            ),
+            flexmock(
+                id='OCPBUGS-6',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+            ),
         ]
-        advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
-        major_version = 4
-        minor_version = 11
-        noop = False
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
             categorize_bugs_by_type(
                 bugs=bugs,
-                advisory_id_map=advisory_id_map,
-                permitted_bug_ids=4,
-                noop=noop,
-                major_version=major_version,
-                minor_version=minor_version,
-                operator_bundle_advisory="metadata",
+                builds_by_advisory_kind=None,
+                major_version=self.major_version,
+                minor_version=self.minor_version,
             )
+
+    def test_raise_tracker_bad_summary(self):
+        bugs = [
+            flexmock(
+                id='OCPBUGS-5',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: False,
+                whiteboard_component='foo',
+                component='',
+            )
+        ]
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+        with self.assertRaisesRegex(ElliottFatalError, 'invalid summary suffixes'):
+            categorize_bugs_by_type(
+                bugs=bugs,
+                builds_by_advisory_kind=None,
+                major_version=self.major_version,
+                minor_version=self.minor_version,
+            )
+
+    def test_ignore_bad_trackers(self):
+        bugs = [
+            # valid tracker
+            flexmock(
+                id='OCPBUGS-2',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: True,
+                whiteboard_component='buzz',
+                component='',
+                summary='',
+            ),
+            # bad summary tracker
+            flexmock(
+                id='OCPBUGS-4',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                has_valid_summary_suffix=lambda *_: False,
+                whiteboard_component='foo',
+                component='',
+            ),
+            # invalid tracker
+            flexmock(
+                id='OCPBUGS-5',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: True,
+                component='',
+            ),
+        ]
+        builds_by_advisory_kind = {
+            'image': {},
+            'rpm': {f"{bugs[1].whiteboard_component}-version-release.el9"},
+            'extras': {f"{bugs[0].whiteboard_component}-version-release.el9"},
+            'microshift': {},
+        }
+
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+
+        expected = {
+            'image': set(),
+            'rpm': set(),
+            'extras': {bugs[0].id},
+            'metadata': set(),
+            'microshift': set(),
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            bugs=bugs,
+            builds_by_advisory_kind=builds_by_advisory_kind,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+            permissive=True,
+        )
+        for kind in expected:
+            self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
+
+        self.assertEqual(
+            issues,
+            [
+                "Bug(s) ['OCPBUGS-5'] look like CVE trackers, but really are not.",
+                "Tracker Bug(s) ['OCPBUGS-4'] have invalid summary suffixes.",
+            ],
+        )
 
 
 class TestGenAssemblyBugIDs(unittest.TestCase):
