@@ -527,14 +527,14 @@ class KonfluxRebaser:
 
         if dockerfile_notify:
             # Leave a record for external processes that owners will need to be notified.
-            with exectools.Dir(source_dir):
+            with exectools.Dir(source_dir) as curdir:
                 author_email = None
                 err = None
                 rc, sha, err = await exectools.cmd_gather_async(
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
-                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
+                    f'git -C {curdir} log --no-merges --diff-filter=a -n 1 --pretty=format:%H {dockerfile_name}',
                 )
                 if rc == 0:
                     rc, ae, err = await exectools.cmd_gather_async('git show -s --pretty=format:%ae {}'.format(sha))
