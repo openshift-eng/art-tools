@@ -566,21 +566,6 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     return all_payload_nvrs
 
 
-def fix_summary_suffix(summary, summary_suffix):
-    # Regex to match [openshift*]at the end of the string
-    version_pattern = r"\[openshift[^\]]*\]$"
-    if re.search(version_pattern, summary):
-        # Replace the existing version suffix with the new one
-        new_s = re.sub(version_pattern, summary_suffix, summary)
-        LOGGER.info("new summary after replacement: %s", new_s)
-    else:
-        # No version suffix, append the new one
-        new_s = f"{summary} {summary_suffix}"
-        LOGGER.info("new summary with addition of summary-suffix: %s", new_s)
-
-    return new_s
-
-
 def get_common_advisory_template(runtime):
     out = runtime.get_file_from_branch(branch="main", filename="config/advisory_templates.yml")
     return yaml.safe_load(out)

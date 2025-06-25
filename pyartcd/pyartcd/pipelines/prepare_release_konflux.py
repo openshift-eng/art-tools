@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
@@ -15,10 +17,11 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import ShipmentConfig, Spec
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Spec
+from elliottlib.shipment_utils import get_shipment_configs_by_kind
 from ghapi.all import GhApi
 
 from pyartcd import constants
@@ -73,8 +76,10 @@ class PrepareReleaseKonfluxPipeline:
         self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
 
         # these will be initialized later
+        self.assembly_type = None
         self.releases_config = None
         self.group_config = None
+        self._issues_by_kind = None
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -163,11 +168,16 @@ class PrepareReleaseKonfluxPipeline:
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
 
     async def setup_repos(self):
+        # setup build-data repo which should reside in GitHub
+        # pushing is done via SSH
         await self.build_data_repo.setup(
-            remote_url=self.build_data_push_url,
+            remote_url=convert_remote_git_to_ssh(self.build_data_push_url),
             upstream_remote_url=self.build_repo_pull_url,
         )
         await self.build_data_repo.fetch_switch_branch(self.build_data_gitref or self.group)
+
+        # setup shipment-data repo which should reside in GitLab
+        # pushing is done via basic auth
         await self.shipment_data_repo.setup(
             remote_url=self.basic_auth_url(self.shipment_repo_push_url, self.gitlab_token),
             upstream_remote_url=self.shipment_repo_pull_url,
@@ -178,11 +188,11 @@ class PrepareReleaseKonfluxPipeline:
         self.group_config = yaml.load(await self.build_data_repo.read_file("group.yml"))
 
     async def validate_assembly(self):
+        self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         # validate assembly and init release vars
         if self.releases_config.get("releases", {}).get(self.assembly) is None:
             raise ValueError(f"Assembly not found: {self.assembly}")
-        assembly_type = get_assembly_type(self.releases_config, self.assembly)
-        if assembly_type == AssemblyTypes.STREAM:
+        if self.assembly_type == AssemblyTypes.STREAM:
             raise ValueError("Preparing a release from a stream assembly is no longer supported.")
 
         # validate product from group config
@@ -208,16 +218,63 @@ class PrepareReleaseKonfluxPipeline:
 
         shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
         env = shipment_config.get("env", "prod")
-        generated_shipments: Dict[str, ShipmentConfig] = {}
-        for shipment_advisory_config in shipment_config.get("advisories"):
-            kind = shipment_advisory_config.get("kind")
-            generated_shipments[kind] = await self.generate_shipment(shipment_advisory_config, env)
+        shipment_url = shipment_config.get("url")
 
-        await self.create_update_shipment_mr(shipment_config, generated_shipments, env)
+        shipments_by_kind: Dict[str, ShipmentConfig]
+        # if shipment MR exists, load the shipment configs from it
+        # assume advisory content and liveIDs are already set
+        if shipment_url:
+            shipments_by_kind = get_shipment_configs_by_kind(shipment_url)
+        else:
+            shipments_by_kind = {}
+            for shipment_advisory_config in shipment_config.get("advisories", []):
+                kind = shipment_advisory_config.get("kind")
+                # init advisory content
+                shipment: ShipmentConfig = await self.init_shipment(kind)
+                # generate live ID
+                shipment.shipment.data.releaseNotes.live_id = await self.reserve_live_id(shipment_advisory_config, env)
+                shipments_by_kind[kind] = shipment
+
+            # close errata API connection now that we have the live IDs
+            if "_errata_api" in self.__dict__:
+                await self._errata_api.close()
+
+        # find builds for the advisories
+        # if builds are already set, this will overwrite them
+        # in an ideal case, content should be the same
+        # and any additional builds should be pinned in the assembly config
+        for kind, shipment in shipments_by_kind.items():
+            snapshot_spec = await self.find_builds(kind)
+            shipment.shipment.snapshot.spec = snapshot_spec
+
+        # now that we have basic shipment configs setup, we can commit them to shipment MR
+        if not shipment_url:
+            shipment_url = await self.create_shipment_mr(shipments_by_kind, env)
+            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
+            shipment_config["url"] = shipment_url
+        else:
+            _LOGGER.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
+            updated = await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+            if updated:
+                await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
+
+        # create or update build data PR
+        # commit any new builds that might be getting added before bug finding
         await self.create_update_build_data_pr(shipment_config)
 
-        if "_errata_api" in self.__dict__:
-            await self._errata_api.close()
+        # IMPORTANT: Bug Finding is special, it dynamically categorizes tracker bugs based on where the builds are found.
+        # The Bug-Finder needs standardized access to shipment configs and respective builds via shipment MR.
+        # Therefore bug finding should be run only after:
+        # - shipment MR is created with all the right builds
+        # - shipment MR is committed to build-data
+        # Then the output of Bug-Finder is committed to shipment MR
+        permissive = False
+        if self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
+            permissive = True
+        for kind, shipment in shipments_by_kind.items():
+            shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
+
+        await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -288,22 +345,6 @@ class PrepareReleaseKonfluxPipeline:
 
         _LOGGER.info("Shipment MR is valid: %s", shipment_url)
 
-    async def generate_shipment(self, shipment_advisory_config: dict, env: str) -> ShipmentConfig:
-        kind = shipment_advisory_config.get("kind")
-        shipment: ShipmentConfig = await self.init_shipment(kind)
-
-        # generate live ID
-        shipment.shipment.data.releaseNotes.live_id = await self.reserve_live_id(shipment_advisory_config, env)
-
-        # find builds for the advisory
-        if kind in ("image", "extras"):
-            snapshot_spec = await self.find_builds(kind)
-            shipment.shipment.snapshot.spec = snapshot_spec
-        else:
-            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
-
-        return shipment
-
     async def reserve_live_id(self, shipment_advisory_config: dict, env: str) -> Optional[str]:
         """Reserve a live ID for the shipment advisory.
         :param shipment_advisory_config: The shipment advisory configuration to reserve a live ID for
@@ -359,7 +400,8 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         if kind not in ("image", "extras"):
-            raise ValueError(f"Invalid kind: {kind}. Only image and extras are supported")
+            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
+            return Spec(nvrs=[])
         payload = True if kind == "image" else False
 
         find_builds_cmd = self._elliott_base_command + [
@@ -382,29 +424,43 @@ class PrepareReleaseKonfluxPipeline:
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
 
-    async def create_update_shipment_mr(
-        self, shipment_config: dict, generated_shipments: Dict[str, ShipmentConfig], env: str
-    ):
-        """Create or update the shipment MR with the given shipment config files.
-        :param shipment_config: The shipment configuration to create or update the MR with
-        :param generated_shipments: The generated shipment configurations for each advisory kind
-        :param env: The environment for which the shipment is being prepared (prod or stage)
+    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
+        """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
+        :param kind: The kind for which to find bugs
+        :param permissive: Ignore invalid bugs that are found and continue
+        :return: An Issues object containing the bugs found
         """
 
-        shipment_url = shipment_config.get("url")
-        if not shipment_url or shipment_url == "N/A":
-            shipment_mr_url = await self.create_shipment_mr(generated_shipments, env)
-            shipment_config["url"] = shipment_mr_url
-            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_mr_url}")
-        else:
-            _LOGGER.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
-            updated = await self.update_shipment_mr(generated_shipments, env, shipment_url)
-            if updated:
-                await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
+        if self._issues_by_kind is not None:
+            return self._issues_by_kind.get(kind)
 
-    async def create_shipment_mr(self, shipment_configs: Dict[str, ShipmentConfig], env: str) -> str:
+        find_bugs_cmd = self._elliott_base_command + [
+            "find-bugs",
+            "--output=json",
+        ]
+        if permissive:
+            find_bugs_cmd.append("--permissive")
+        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd)
+        if stderr:
+            _LOGGER.info("Shipment find bugs command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
+        if rc != 0:
+            raise RuntimeError(f"cmd failed with exit code {rc}: {find_bugs_cmd}")
+
+        self._issues_by_kind = {}
+        if stdout:
+            for advisory_kind, bugs in json.loads(stdout).items():
+                if not bugs:
+                    continue
+                issues = Issues(fixed=[Issue(id=b, source="issues.redhat.com") for b in bugs])
+                self._issues_by_kind[advisory_kind] = issues
+
+        return self._issues_by_kind.get(kind)
+
+    async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
-        :param shipment_configs: The shipment configurations to create the MR with
+        :param shipments_by_kind: The shipment configurations to create the MR with, by advisory kind
         :param env: The environment for which the shipment is being prepared (prod or stage)
         :return: The URL of the created MR
         """
@@ -421,7 +477,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # update shipment data repo with shipment configs
         commit_message = f"Add shipment configurations for {self.release_name}"
-        updated = await self.update_shipment_data(shipment_configs, env, commit_message, source_branch)
+        updated = await self.update_shipment_data(shipments_by_kind, env, commit_message, source_branch)
         if not updated:
             # this should not happen
             raise ValueError("Failed to update shipment data repo. Please investigate.")
@@ -456,9 +512,11 @@ class PrepareReleaseKonfluxPipeline:
 
         return mr_url
 
-    async def update_shipment_mr(self, shipments: Dict[str, ShipmentConfig], env: str, shipment_url: str) -> bool:
+    async def update_shipment_mr(
+        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, shipment_url: str
+    ) -> bool:
         """Update existing shipment MR with the given shipment config files.
-        :param shipments: The shipment configurations to update in the shipment MR
+        :param shipments_by_kind: The shipment configurations to update in the shipment MR by advisory kind
         :param env: The environment for which the shipment is being prepared (prod or stage)
         :param shipment_url: The URL of the existing shipment MR to update
         :return: True if the MR was updated successfully, False otherwise.
@@ -481,7 +539,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # Update shipment data
         commit_message = f"Update shipment configurations for {self.release_name}"
-        updated = await self.update_shipment_data(shipments, env, commit_message, source_branch)
+        updated = await self.update_shipment_data(shipments_by_kind, env, commit_message, source_branch)
         if not updated:
             _LOGGER.info("No changes in shipment data. MR will not be updated.")
             return False
@@ -499,11 +557,11 @@ class PrepareReleaseKonfluxPipeline:
         return True
 
     async def update_shipment_data(
-        self, shipments: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
+        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
     ) -> bool:
         """Update shipment data repo with the given shipment config files.
         Commits the changes and push to the remote repo.
-        :param shipments: The shipment configurations to update in the shipment data repo
+        :param shipments_by_kind: The shipment configurations to update in the shipment data repo by advisory kind
         :param env: The environment for which the shipment is being prepared (prod or stage)
         :param commit_message: The commit message to use for the changes
         :param branch: The branch to update in the shipment data repo
@@ -519,14 +577,15 @@ class PrepareReleaseKonfluxPipeline:
         # The branch name is expected to be in the format: prepare-shipment-<assembly>-<timestamp>
         timestamp = branch.split("-")[-1]
 
-        for advisory_key, shipment_config in shipments.items():
-            filename = f"{self.assembly}.{advisory_key}.{timestamp}.yaml"
+        for advisory_kind, shipment_config in shipments_by_kind.items():
+            filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
             filepath = relative_target_dir / filename
             _LOGGER.info("Updating shipment file: %s", filename)
             shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
             out = StringIO()
             yaml.dump(shipment_dump, out)
             await self.shipment_data_repo.write_file(filepath, out.getvalue())
+        await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
         return await self.shipment_data_repo.commit_push(commit_message)
 
@@ -554,6 +613,7 @@ class PrepareReleaseKonfluxPipeline:
             head=head,
             base=base,
         )
+        pull_number = None
         if not existing_prs.items:
             pr_title = f"Update shipment for assembly {self.assembly}"
             pr_body = f"This PR updates the shipment data for assembly {self.assembly}."
@@ -573,6 +633,7 @@ class PrepareReleaseKonfluxPipeline:
             )
             _LOGGER.info("PR to update shipment created: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update shipment created: {result.html_url}")
+            pull_number = result.number
         else:
             _LOGGER.info("Existing PR to update shipment found: %s", existing_prs.items[0].html_url)
             pull_number = existing_prs.items[0].number
@@ -590,6 +651,24 @@ class PrepareReleaseKonfluxPipeline:
             )
             _LOGGER.info("PR to update shipment updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update shipment updated: {result.html_url}")
+
+        await self._slack_client.say_in_thread(f"Waiting for PR to update shipment to be merged: {result.html_url}")
+
+        # wait until the PR is merged
+        timeout = 60 * 60  # 1 hour
+        start_time = time.time()
+        while True:
+            if (time.time() - start_time) > timeout:
+                raise TimeoutError(f"Timeout waiting for PR to update shipment to be merged: {result.html_url}")
+            await asyncio.sleep(10)
+            pr = api.pulls.get(pull_number)
+            if pr.merged:
+                _LOGGER.info("PR to update shipment was merged: %s", pr.html_url)
+                break
+            if pr.state == "closed":
+                _LOGGER.info("PR to update shipment was closed: %s", pr.html_url)
+                raise RuntimeError(f"PR to update shipment was closed: {pr.html_url}")
+            _LOGGER.info("Waiting for PR to update shipment to be merged: %s", pr.html_url)
 
         return True
 
@@ -619,6 +698,7 @@ class PrepareReleaseKonfluxPipeline:
         out = StringIO()
         yaml.dump(self.releases_config, out)
         await self.build_data_repo.write_file("releases.yml", out.getvalue())
+        await self.build_data_repo.add_all()
         await self.build_data_repo.log_diff()
 
         commit_message = f"Update shipment for assembly {self.assembly}"
