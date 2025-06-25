@@ -9,7 +9,7 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
 import bashlex
@@ -90,6 +90,65 @@ class KonfluxRebaser:
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
+
+    def _collect_repo_arch_combinations(self, metas: List[ImageMetadata]) -> Set[Tuple[str, str]]:
+        """
+        Collect specific (repository, architecture) combinations needed across all images.
+
+        Args:
+            metas: List of ImageMetadata objects to analyze
+
+        Returns:
+            Set of (repo_name, arch) tuples that will be needed for lockfile generation
+        """
+        repo_arch_pairs = set()
+        for image_meta in metas:
+            if image_meta.is_lockfile_generation_enabled():
+                enabled_repos = image_meta.config.get("enabled_repos", [])
+                target_arches = image_meta.get_arches()
+                # Create combinations specific to this image
+                for repo in enabled_repos:
+                    for arch in target_arches:
+                        repo_arch_pairs.add((repo, arch))
+        return repo_arch_pairs
+
+    async def _warm_repository_cache(self, repo_arch_pairs: Set[Tuple[str, str]]):
+        """
+        Pre-warm repository cache for specific (repository, architecture) combinations.
+
+        Args:
+            repo_arch_pairs: Set of (repo_name, arch) tuples to pre-load
+        """
+        if not repo_arch_pairs:
+            self._logger.debug("No repository-architecture combinations to warm")
+            return
+
+        # Group repo-arch pairs by architecture for efficient loading
+        arch_to_repos = {}
+        for repo, arch in repo_arch_pairs:
+            if arch not in arch_to_repos:
+                arch_to_repos[arch] = set()
+            arch_to_repos[arch].add(repo)
+
+        self._logger.info(
+            f"Warming repository cache for {len(repo_arch_pairs)} (repo, arch) combinations across {len(arch_to_repos)} architectures"
+        )
+
+        # Use existing RpmInfoCollector from RPMLockfileGenerator
+        collector = self._rpm_lockfile_generator.builder
+
+        # Warm cache for each architecture with its specific repositories
+        cache_warming_tasks = []
+        for arch, repos in arch_to_repos.items():
+            self._logger.debug(f"Preparing to warm cache for arch {arch} with repos: {sorted(repos)}")
+            cache_warming_tasks.append(collector.load_repos(repos, arch))
+
+        try:
+            await asyncio.gather(*cache_warming_tasks, return_exceptions=True)
+            self._logger.info("Repository cache warming completed")
+        except Exception as e:
+            self._logger.warning(f"Repository cache warming encountered errors: {e}")
+            # Continue execution - fallback to on-demand loading
 
     async def rebase_to(
         self,

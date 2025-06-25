@@ -255,7 +255,7 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         with patch.object(
             self.collector.repos["rhel-9-baseos-rpms"], 'get_repodata', new_callable=AsyncMock
         ) as get_repodata:
-            asyncio.run(self.collector._load_repos(set(self.repo_names), 'x86_64'))
+            asyncio.run(self.collector.load_repos(set(self.repo_names), 'x86_64'))
 
             # Should skip calling get_repodata
             get_repodata.assert_not_awaited()
@@ -282,7 +282,7 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
                 new=AsyncMock(return_value=repodata_mock_2),
             ) as get2,
         ):
-            asyncio.run(self.collector._load_repos(set(self.repo_names), 'x86_64'))
+            asyncio.run(self.collector.load_repos(set(self.repo_names), 'x86_64'))
 
             self.assertIn("rhel-9-baseos-rpms-x86_64", self.collector.loaded_repos)
             self.assertIn("rhel-9-appstream-rpms-x86_64", self.collector.loaded_repos)
@@ -300,7 +300,7 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         with patch.object(
             self.collector.repos["rhel-9-appstream-rpms"], 'get_repodata', new=AsyncMock(return_value=repodata_mock)
         ):
-            asyncio.run(self.collector._load_repos(set(self.repo_names), 'x86_64'))
+            asyncio.run(self.collector.load_repos(set(self.repo_names), 'x86_64'))
 
             self.assertIn("rhel-9-appstream-rpms-x86_64", self.collector.loaded_repos)
             self.collector.logger.info.assert_any_call(

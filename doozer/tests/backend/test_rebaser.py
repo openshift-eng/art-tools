@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from artcommonlib.model import Missing
 from dockerfile_parse import DockerfileParser
@@ -417,3 +417,133 @@ USER 3000
         mock_rpmlockfile.generate_lockfile.assert_awaited_with(
             ["x86_64"], set(), {"pkg1", "pkg2"}, Path("."), distgit_key="foo", force=False
         )
+
+    def test_collect_repo_arch_combinations_empty_metas(self):
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        result = rebaser._collect_repo_arch_combinations([])
+        self.assertEqual(result, set())
+
+    def test_collect_repo_arch_combinations_no_lockfile_enabled(self):
+        metadata = MagicMock()
+        metadata.is_lockfile_generation_enabled.return_value = False
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        result = rebaser._collect_repo_arch_combinations([metadata])
+        self.assertEqual(result, set())
+
+    def test_collect_repo_arch_combinations_basic(self):
+        metadata1 = MagicMock()
+        metadata1.is_lockfile_generation_enabled.return_value = True
+        metadata1.config.get.return_value = ["repo1", "repo2"]
+        metadata1.get_arches.return_value = ["x86_64", "aarch64"]
+
+        metadata2 = MagicMock()
+        metadata2.is_lockfile_generation_enabled.return_value = True
+        metadata2.config.get.return_value = ["repo2", "repo3"]
+        metadata2.get_arches.return_value = ["x86_64"]
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        result = rebaser._collect_repo_arch_combinations([metadata1, metadata2])
+
+        expected = {
+            ("repo1", "x86_64"),
+            ("repo1", "aarch64"),
+            ("repo2", "x86_64"),
+            ("repo2", "aarch64"),
+            ("repo3", "x86_64"),
+        }
+        self.assertEqual(result, expected)
+
+        # Verify the correct config key was requested
+        metadata1.config.get.assert_called_with("enabled_repos", [])
+        metadata2.config.get.assert_called_with("enabled_repos", [])
+
+    def test_collect_repo_arch_combinations_mixed_enabled_disabled(self):
+        metadata1 = MagicMock()
+        metadata1.is_lockfile_generation_enabled.return_value = True
+        metadata1.config.get.return_value = ["repo1"]
+        metadata1.get_arches.return_value = ["x86_64"]
+
+        metadata2 = MagicMock()
+        metadata2.is_lockfile_generation_enabled.return_value = False
+        metadata2.config.get.return_value = ["repo2"]
+        metadata2.get_arches.return_value = ["x86_64"]
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        result = rebaser._collect_repo_arch_combinations([metadata1, metadata2])
+
+        expected = {("repo1", "x86_64")}
+        self.assertEqual(result, expected)
+
+        # Verify only the enabled metadata had its config checked
+        metadata1.config.get.assert_called_with("enabled_repos", [])
+        # metadata2 should not have been called since lockfile generation is disabled
+        metadata2.config.get.assert_not_called()
+
+    @patch("doozerlib.backend.rebaser.asyncio")
+    def test_warm_repository_cache_empty_pairs(self, mock_asyncio):
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._logger = MagicMock()
+
+        asyncio.run(rebaser._warm_repository_cache(set()))
+
+        rebaser._logger.debug.assert_called_with("No repository-architecture combinations to warm")
+        mock_asyncio.gather.assert_not_called()
+
+    def test_warm_repository_cache_success(self):
+        mock_collector = AsyncMock()
+        mock_rpm_lockfile_generator = MagicMock()
+        mock_rpm_lockfile_generator.builder = mock_collector
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._logger = MagicMock()
+        rebaser._rpm_lockfile_generator = mock_rpm_lockfile_generator
+
+        repo_arch_pairs = {("repo1", "x86_64"), ("repo2", "x86_64"), ("repo1", "aarch64")}
+
+        asyncio.run(rebaser._warm_repository_cache(repo_arch_pairs))
+
+        rebaser._logger.info.assert_has_calls(
+            [
+                call("Warming repository cache for 3 (repo, arch) combinations across 2 architectures"),
+                call("Repository cache warming completed"),
+            ]
+        )
+
+        # Verify debug calls for each architecture
+        debug_calls = rebaser._logger.debug.call_args_list
+        self.assertTrue(
+            any("arch x86_64 with repos: ['repo1', 'repo2']" in str(call_args) for call_args in debug_calls)
+        )
+        self.assertTrue(any("arch aarch64 with repos: ['repo1']" in str(call_args) for call_args in debug_calls))
+
+        # Verify collector.load_repos was called for each architecture
+        expected_calls = [call({"repo1", "repo2"}, "x86_64"), call({"repo1"}, "aarch64")]
+        mock_collector.load_repos.assert_has_calls(expected_calls, any_order=True)
+
+    def test_warm_repository_cache_with_error(self):
+        """Test that cache warming handles errors gracefully and continues operation."""
+        mock_collector = AsyncMock()
+        mock_collector.load_repos.side_effect = Exception("Cache warming failed")
+        mock_rpm_lockfile_generator = MagicMock()
+        mock_rpm_lockfile_generator.builder = mock_collector
+
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._logger = MagicMock()
+        rebaser._rpm_lockfile_generator = mock_rpm_lockfile_generator
+
+        repo_arch_pairs = {("repo1", "x86_64")}
+
+        # Should not raise exception - should handle gracefully
+        asyncio.run(rebaser._warm_repository_cache(repo_arch_pairs))
+
+        # Verify that process completed and logged completion despite errors
+        rebaser._logger.info.assert_has_calls(
+            [
+                call("Warming repository cache for 1 (repo, arch) combinations across 1 architectures"),
+                call("Repository cache warming completed"),
+            ]
+        )
+
+        # Verify the load_repos was attempted
+        mock_collector.load_repos.assert_called_once_with({"repo1"}, "x86_64")

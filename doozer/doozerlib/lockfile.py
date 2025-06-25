@@ -124,9 +124,9 @@ class RpmInfoCollector:
         self.loaded_repos: dict[str, Repodata] = {}
         self.logger = logger or logutil.get_logger(__name__)
 
-    async def _load_repos(self, requested_repos: set[str], arch: str):
+    async def load_repos(self, requested_repos: set[str], arch: str):
         """
-        Load repodata synchronously for the given repositories and architecture.
+        Load repodata for the given repositories and architecture.
 
         Only repositories not already loaded in `self.loaded_repos` will be fetched.
         Logs a summary of which repos are skipped and which are loaded.
@@ -219,7 +219,7 @@ class RpmInfoCollector:
         Returns:
             dict[str, list[RpmInfo]]: Mapping of architecture to resolved RPM metadata.
         """
-        await asyncio.gather(*(self._load_repos(repositories, arch) for arch in arches))
+        await asyncio.gather(*(self.load_repos(repositories, arch) for arch in arches))
 
         results = await asyncio.gather(
             *[
