@@ -54,6 +54,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": {jira_bug}}, [])
 
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -143,6 +144,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123})
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": set(bugs)}, [])
 
         # jira mocks
@@ -174,7 +176,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
-        flexmock(errata).should_receive("get_advisory_nvrs")
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
             {
                 "image": set(image_bugs),
