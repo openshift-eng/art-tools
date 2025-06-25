@@ -373,7 +373,7 @@ class TestImageMetadata(unittest.TestCase):
 
         result = metadata.is_lockfile_force_enabled()
         self.assertTrue(result)
-        self.logger.info.assert_any_call("Lockfile force generation set from metadata config True")
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config: True")
 
     def test_lockfile_force_enabled_metadata_override_false(self):
         self.logger = MagicMock()
@@ -386,7 +386,7 @@ class TestImageMetadata(unittest.TestCase):
 
         result = metadata.is_lockfile_force_enabled()
         self.assertFalse(result)
-        self.logger.info.assert_any_call("Lockfile force generation set from metadata config False")
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config: False")
 
     def test_lockfile_force_enabled_missing_override(self):
         self.logger = MagicMock()
@@ -395,6 +395,7 @@ class TestImageMetadata(unittest.TestCase):
         mock_config = MagicMock()
         mock_config.konflux.cachi2.lockfile.force = Missing
         metadata.config = mock_config
+        metadata.runtime.group_config.konflux.cachi2.lockfile.force = Missing
         metadata.logger = self.logger
 
         result = metadata.is_lockfile_force_enabled()
@@ -408,11 +409,54 @@ class TestImageMetadata(unittest.TestCase):
         mock_config = MagicMock()
         mock_config.konflux.cachi2.lockfile.force = None
         metadata.config = mock_config
+        metadata.runtime.group_config.konflux.cachi2.lockfile.force = None
         metadata.logger = self.logger
 
         result = metadata.is_lockfile_force_enabled()
         self.assertFalse(result)
         # Should not log anything when using default
+
+    def test_lockfile_force_enabled_group_config_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.cachi2.lockfile.force = True
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from group config: True")
+
+    def test_lockfile_force_enabled_group_config_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.cachi2.lockfile.force = False
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from group config: False")
+
+    def test_lockfile_force_enabled_metadata_precedence(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile_force')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.force = False
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.cachi2.lockfile.force = True
+        metadata.logger = self.logger
+
+        result = metadata.is_lockfile_force_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile force generation set from metadata config: False")
 
 
 class TestImageInspector(IsolatedAsyncioTestCase):
