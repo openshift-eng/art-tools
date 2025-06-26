@@ -44,6 +44,7 @@ from elliottlib.cli.create_cli import create_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.create_textonly_cli import create_textonly_cli
 from elliottlib.cli.find_bugs_blocker_cli import find_bugs_blocker_cli
+from elliottlib.cli.find_bugs_cli import find_bugs_cli
 from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
 from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
@@ -407,6 +408,7 @@ cli.add_command(create_placeholder_cli)
 cli.add_command(create_cli)
 cli.add_command(change_state_cli)
 cli.add_command(find_bugs_sweep_cli)
+cli.add_command(find_bugs_cli)
 cli.add_command(find_builds_cli)
 cli.add_command(find_k_builds_cli)
 cli.add_command(tag_builds_cli)
