@@ -16,7 +16,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
-    Spec,
+    SnapshotSpec,
 )
 from elliottlib.util import get_advisory_boilerplate
 
@@ -109,7 +109,7 @@ class InitShipmentCli:
                     stage=ShipmentEnv(releasePlan=self.stage_rpa),
                     prod=ShipmentEnv(releasePlan=self.prod_rpa),
                 ),
-                snapshot=Snapshot(name=self.snapshot, spec=Spec(nvrs=[])),
+                snapshot=Snapshot(name=self.snapshot, spec=SnapshotSpec(nvrs=[])),
                 data=data,
             ),
         )

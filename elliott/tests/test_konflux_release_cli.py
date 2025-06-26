@@ -15,7 +15,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
-    Spec,
+    SnapshotSpec,
 )
 
 
@@ -199,7 +199,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(releasePlan="test-prod-rp"),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=Spec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
@@ -405,7 +405,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=Spec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
@@ -459,7 +459,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(releasePlan="test-prod-rp"),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=Spec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",

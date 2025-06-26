@@ -19,7 +19,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
-    Spec,
+    SnapshotSpec,
 )
 
 from pyartcd import constants
@@ -424,7 +424,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     assembly=self.assembly,
                     application="app-image",
                 ),
-                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot1"),
+                snapshot=Snapshot(spec=SnapshotSpec(nvrs=[]), name="snapshot1"),
                 environments=Environments(
                     stage=ShipmentEnv(releasePlan="rp-img-stage"), prod=ShipmentEnv(releasePlan="rp-img-prod")
                 ),
@@ -447,7 +447,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     assembly=self.assembly,
                     application="app-extras",
                 ),
-                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot2"),
+                snapshot=Snapshot(spec=SnapshotSpec(nvrs=[]), name="snapshot2"),
                 environments=Environments(
                     stage=ShipmentEnv(releasePlan="rp-ext-stage"), prod=ShipmentEnv(releasePlan="rp-ext-prod")
                 ),
@@ -473,8 +473,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         def find_builds(kind):
             return {
-                "image": Spec(nvrs=["image-nvr"]),
-                "extras": Spec(nvrs=["extras-nvr"]),
+                "image": SnapshotSpec(nvrs=["image-nvr"]),
+                "extras": SnapshotSpec(nvrs=["extras-nvr"]),
             }.get(kind)
 
         mock_find_builds.side_effect = find_builds
