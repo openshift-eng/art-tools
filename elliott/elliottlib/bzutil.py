@@ -612,7 +612,7 @@ class BugTracker:
 
     @staticmethod
     def get_corresponding_flaw_bugs(
-        tracker_bugs: List[Bug], flaw_bug_tracker, brew_api, strict: bool = True, verbose: bool = False
+        tracker_bugs: List[Bug], flaw_bug_tracker, brew_api=None, strict: bool = True, verbose: bool = False
     ) -> (Dict, Dict):
         """Get corresponding flaw bug objects for given list of tracker bug objects.
         flaw_bug_tracker object to fetch flaw bugs from
@@ -638,7 +638,7 @@ class BugTracker:
                 continue
 
             # is this component a valid package name in brew?
-            if not brew_api.getPackageID(component):
+            if brew_api and not brew_api.getPackageID(component):
                 logger.info(f'package `{component}` not found in brew')
                 trackers_with_invalid_components.add(t.id)
                 continue

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 from elliottlib import constants
 from elliottlib.bzutil import BugzillaBug
@@ -129,6 +129,98 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             errata_api, 12345, expected_builds, expected_cve_component_mapping, dry_run=False
         )
         self.assertEqual(actual, None)
+
+    def test_get_cve_component_mapping_simple_case(self):
+        # Create flaw bugs
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=["CVE-2022-1"])),
+            BugzillaBug(Mock(id=102, alias=["CVE-2022-2"])),
+        ]
+
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard="component: component-a")),
+            BugzillaBug(Mock(id=2, whiteboard="component: component-b")),
+        ]
+
+        tracker_flaws = {
+            1: [101, 102],  # Tracker 1 → CVE-2022-1, CVE-2022-2
+            2: [102],  # Tracker 2 → CVE-2022-2
+        }
+
+        result = attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
+
+        expected = {
+            "CVE-2022-1": {"component-a"},
+            "CVE-2022-2": {"component-a", "component-b"},
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_get_cve_component_mapping_rhcos(self):
+        with patch("artcommonlib.arch_util.RHCOS_BREW_COMPONENTS", {"rhcos-x86_64", "rhcos-aarch64"}):
+            flaw_bugs = [
+                BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+            ]
+            attached_tracker_bugs = [
+                BugzillaBug(Mock(id=1, whiteboard='component: rhcos')),
+            ]
+            tracker_flaws = {
+                1: [101],
+            }
+            attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
+
+            result = attach_cve_flaws_cli.get_cve_component_mapping(
+                flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+            )
+            expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
+            self.assertEqual(result, expected)
+
+    def test_get_cve_component_non_attached_flaw(self):
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+        ]
+        tracker_flaws = {
+            1: [101, 102],  # 102 is not in flaw_bugs, so it gets ignored
+        }
+        result = attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
+        expected = {'CVE-2022-1': {'component-a'}}
+        self.assertEqual(result, expected)
+
+    def test_get_cve_component_invalid_alias(self):
+        flaw_bugs_no_alias = [
+            BugzillaBug(Mock(id=101, alias=[])),
+        ]
+        flaw_bugs_multiple_aliases = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1', 'CVE-2022-2'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+        ]
+        tracker_flaws = {
+            1: [101],
+        }
+        with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
+            attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs_no_alias, attached_tracker_bugs, tracker_flaws)
+        with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
+            attach_cve_flaws_cli.get_cve_component_mapping(
+                flaw_bugs_multiple_aliases, attached_tracker_bugs, tracker_flaws
+            )
+
+    def test_get_cve_component_mapping_missing_whiteboard(self):
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: ')),
+        ]
+        tracker_flaws = {
+            1: [101],
+        }
+        with self.assertRaisesRegex(ValueError, "Bug 1 doesn't have a valid whiteboard component."):
+            attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
 
 
 if __name__ == '__main__':

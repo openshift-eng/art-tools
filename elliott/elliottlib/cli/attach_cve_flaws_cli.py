@@ -1,12 +1,17 @@
+import json
 import logging
+import os
 import sys
 import traceback
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Set, Tuple
+from urllib.parse import urlparse
 
 import click
+import gitlab
 from artcommonlib import arch_util
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import new_roundtrip_yaml_handler
 from errata_tool import Erratum
 
 from elliottlib import constants
@@ -15,6 +20,7 @@ from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, u
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
+from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
 from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logging.getLogger(__name__)
@@ -56,9 +62,98 @@ async def attach_cve_flaws_cli(
     1851422, 1866148, 1858981, 1852331, 1861044, 1857081, 1857977, 1848647,
     1849044, 1856529, 1843575, 1840253]
     """
+
     if sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories])) != 1:
         raise click.BadParameter("Use one of --use-default-advisory or --advisory or --into-default-advisories")
     runtime.initialize()
+
+    if runtime.build_system == 'konflux':
+        if into_default_advisories or advisory_id:
+            raise click.UsageError(
+                "Konflux does not yet support --into-default-advisories or --advisory options, "
+                "please use --use-default-advisory instead"
+            )
+
+        release_notes = await handle_konflux_cve_flaws(runtime, default_advisory_type)
+        click.echo(json.dumps(release_notes.model_dump(mode='json'), indent=4))
+
+    elif runtime.build_system == 'brew':
+        await handle_brew_cve_flaws(
+            runtime,
+            into_default_advisories,
+            advisory_id,
+            default_advisory_type,
+            noop,
+        )
+
+
+async def handle_konflux_cve_flaws(runtime: Runtime, default_advisory_type: str):
+    """
+    Handle attaching CVE flaws in a Konflux environment.
+    """
+
+    # Read shipment block from the assembly config
+    assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
+    shipment = assembly_group_config.get("shipment", {})
+    advisories = shipment.get("advisories", [])
+    if not advisories:
+        LOGGER.info("No advisories found in the shipment block, exiting.")
+        sys.exit(0)
+
+    # Validate default advisory type
+    kinds = [advisory.get("kind") for advisory in advisories]
+    if default_advisory_type not in kinds:
+        raise click.UsageError(
+            f"Default advisory type '{default_advisory_type}' not found in shipment advisories: {advisories.keys()}"
+        )
+
+    # Get the shipment configs from the merge request URL
+    mr_url = shipment.get("url")
+    if not mr_url:
+        raise click.UsageError("Shipment block does not contain a 'url' field for the merge request")
+    LOGGER.info(f"Fetching shipment configs from merge request: {mr_url}")
+
+    # Fetch the shipment configs from the merge request
+    release_notes = get_release_notes_from_mr(mr_url, default_advisory_type)
+
+    # Fetch the bug IDs from the release notes
+    bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
+
+    if not bug_ids:
+        LOGGER.info("No fixed issues found in the release notes, exiting.")
+        sys.exit(0)
+
+    # Get the bug trackers
+    tracker_bugs = get_attached_trackers(bug_ids, runtime.get_bug_tracker('jira'))
+    tracker_flaws, flaw_bugs = get_flaws(runtime.get_bug_tracker('bugzilla'), tracker_bugs)
+
+    if flaw_bugs:
+        LOGGER.info(f"Found {len(flaw_bugs)} flaw bugs, updating release notes.")
+
+        # Turn the advisory type into an RHSA
+        release_notes.type = 'RHSA'
+
+        # Add the CVE component mapping to the cve field
+        cve_component_mapping = get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
+        cves = [
+            {'cve_id': cve_id, 'component': component}
+            for cve_id, components in cve_component_mapping.items()
+            for component in components
+        ]
+        for cve in cves:
+            # tracker_flaw = [tracker_flaws[t.id]
+            release_notes.cves.append(CveAssociation(key=cve['cve_id'], component=cve['component']))
+
+    return release_notes
+
+
+async def handle_brew_cve_flaws(
+    runtime: Runtime, into_default_advisories: bool, advisory_id, default_advisory_type: str, noop: bool
+):
+    """
+    Handle attaching CVE flaws in a Brew environment.
+    """
+
     if into_default_advisories:
         advisories = runtime.group_config.advisories.values()
     elif default_advisory_type:
@@ -82,7 +177,8 @@ async def attach_cve_flaws_cli(
 
         attached_trackers = []
         for bug_tracker in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-            attached_trackers.extend(get_attached_trackers(advisory, bug_tracker))
+            advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
+            attached_trackers.extend(get_attached_trackers(advisory_bug_ids, bug_tracker))
 
         tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api)
 
@@ -105,14 +201,84 @@ async def attach_cve_flaws_cli(
     sys.exit(exit_code)
 
 
-def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
-    # get attached bugs from advisory
-    advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
-    if not advisory_bug_ids:
-        LOGGER.info(f'Found 0 {bug_tracker.type} bugs attached')
+def get_shipment_configs_from_mr(
+    mr_url: str, kinds: Tuple[str, ...] = ("rpm", "image", "extras", "microshift", "metadata")
+) -> Dict[str, ShipmentConfig]:
+    """Fetch shipment configs from a merge request URL.
+
+    :param mr_url: URL of the merge request
+    :param kinds: List of kinds to fetch shipment configs for
+    :return: Dict of {kind: ShipmentConfig}
+    """
+
+    shipment_configs: Dict[str, ShipmentConfig] = {}
+
+    gitlab_token = os.getenv("GITLAB_TOKEN")
+    parsed_url = urlparse(mr_url)
+    project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+    mr_id = parsed_url.path.split('/')[-1]
+    gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+    gl = gitlab.Gitlab(gitlab_url, private_token=gitlab_token)
+    gl.auth()
+
+    project = gl.projects.get(project_path)
+    mr = project.mergerequests.get(mr_id)
+    source_project = gl.projects.get(mr.source_project_id)
+
+    diff_info = mr.diffs.list(all=True)[0]
+    diff = mr.diffs.get(diff_info.id)
+    for file_diff in diff.diffs:
+        file_path = file_diff.get('new_path') or file_diff.get('old_path')
+        if not file_path or not file_path.endswith(('.yaml', '.yml')):
+            continue
+
+        filename = file_path.split('/')[-1]
+        parts = filename.replace('.yaml', '').replace('.yml', '')
+        kind = next((k for k in kinds if k in parts), None)
+        if not kind:
+            continue
+
+        file_content = source_project.files.get(file_path, mr.source_branch)
+        content = file_content.decode().decode('utf-8')
+
+        yaml = new_roundtrip_yaml_handler()
+        shipment_data = ShipmentConfig(**yaml.load(content))
+        if kind in shipment_configs:
+            raise ValueError(f"Multiple shipment configs found for {kind}")
+        shipment_configs[kind] = shipment_data
+
+    return shipment_configs
+
+
+def get_release_notes_from_mr(mr_url: str, kind: str) -> ReleaseNotes:
+    """Fetch release notes from a merge request URL."""
+
+    shipment_configs: Dict[str, ShipmentConfig] = get_shipment_configs_from_mr(mr_url, (kind,))
+    shipment_config = shipment_configs.get(kind)
+
+    if not shipment_config:
+        raise ValueError(f"No shipment config found for kind: {kind}")
+
+    release_notes = shipment_config.shipment.data.releaseNotes
+    if not release_notes:
+        raise ValueError(f"No release notes found in shipment config for {kind}")
+
+    return release_notes
+
+
+def get_attached_trackers(bugs_ids: List[str], bug_tracker: BugTracker) -> List[Bug]:
+    """
+    Get attached tracker bugs from a list of bug IDs.
+    """
+
+    if not bugs_ids:
         return []
 
-    attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(advisory_bug_ids)
+    attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(bugs_ids)
+    if not attached_tracker_bugs:
+        LOGGER.info(f'Found 0 {bug_tracker.type} tracker bugs attached')
+
     LOGGER.info(
         f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
         f'{sorted([b.id for b in attached_tracker_bugs])}'
@@ -120,7 +286,7 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
     return attached_tracker_bugs
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api) -> (Dict, List):
+def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api=None) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -190,19 +356,18 @@ def _update_advisory(runtime, advisory, advisory_kind, flaw_bugs, bug_tracker, n
     bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
 
-async def associate_builds_with_cves(
-    errata_api: AsyncErrataAPI,
-    advisory: Erratum,
+def get_cve_component_mapping(
     flaw_bugs: Iterable[Bug],
     attached_tracker_bugs: List[Bug],
     tracker_flaws: Dict[int, Iterable],
-    dry_run: bool,
-):
-    # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
-    attached_builds = await errata_api.get_builds_flattened(advisory.errata_id)
-    attached_components = {parse_nvr(build)["name"] for build in attached_builds}
+    attached_components: Iterable = [],
+) -> Dict[str, Set[str]]:
+    """
+    Get a mapping of CVE IDs to component names based on the attached tracker bugs and flaw bugs.
+    """
 
     cve_components_mapping: Dict[str, Set[str]] = {}
+
     for tracker in attached_tracker_bugs:
         whiteboard_component = tracker.whiteboard_component
         if not whiteboard_component:
@@ -225,6 +390,24 @@ async def associate_builds_with_cves(
                 raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
             cve = alias[0]
             cve_components_mapping.setdefault(cve, set()).update(component_names)
+
+    return cve_components_mapping
+
+
+async def associate_builds_with_cves(
+    errata_api: AsyncErrataAPI,
+    advisory: Erratum,
+    flaw_bugs: Iterable[Bug],
+    attached_tracker_bugs: List[Bug],
+    tracker_flaws: Dict[int, Iterable],
+    dry_run: bool,
+):
+    # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
+    attached_builds = await errata_api.get_builds_flattened(advisory.errata_id)
+    attached_components = {parse_nvr(build)["name"] for build in attached_builds}
+    cve_components_mapping = get_cve_component_mapping(
+        flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+    )
 
     await AsyncErrataUtils.associate_builds_with_cves(
         errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run
