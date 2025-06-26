@@ -47,6 +47,7 @@ from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
 from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
 from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
+from elliottlib.cli.find_bugs_second_fix_cli import find_bugs_second_fix_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
@@ -317,6 +318,7 @@ cli.add_command(konflux_release_cli)
 cli.add_command(assembly_pin_builds_cli)
 cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
+cli.add_command(find_bugs_second_fix_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
