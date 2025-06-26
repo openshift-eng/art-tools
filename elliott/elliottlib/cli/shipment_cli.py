@@ -93,8 +93,7 @@ class InitShipmentCli:
                 )
 
         shipment = ShipmentConfig(
-            # use model_construct to avoid validation errors for empty fields like snapshot
-            shipment=Shipment.model_construct(
+            shipment=Shipment(
                 metadata=Metadata(
                     product=self.runtime.product,
                     application=self.application,

@@ -144,7 +144,7 @@ class Shipment(StrictBaseModel):
 
     metadata: Metadata
     environments: Environments
-    snapshot: Snapshot
+    snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
     tools: Optional[Tools] = None
 
