@@ -15,7 +15,7 @@ from elliottlib import bzutil, constants
 from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type, get_builds_by_advisory_kind
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -272,13 +272,13 @@ class BugValidator:
             advance_release = True
         operator_bundle_advisory = "advance" if advance_release else "metadata"
         major_version, minor_version = self.runtime.get_major_minor()
-        builds_by_advisory_kind = get_builds_by_advisory_kind(self.runtime)
         bugs_by_type, issues = categorize_bugs_by_type(
             non_flaw_bugs,
-            builds_by_advisory_kind,
+            advisory_id_map,
             permitted_bug_ids=permitted_bug_ids,
             permissive=True,
             operator_bundle_advisory=operator_bundle_advisory,
+            noop=True,
             major_version=major_version,
             minor_version=minor_version,
         )

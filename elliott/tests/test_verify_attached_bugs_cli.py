@@ -246,7 +246,6 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
             {1: {bugs[0]}, 2: {bugs[1]}, 3: {bugs[2]}},
         )
         flexmock(BugValidator).should_receive("validate").and_return()
-        flexmock(verify_attached_bugs_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(verify_attached_bugs_cli).should_receive("categorize_bugs_by_type").and_return(
             {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}},
             [],

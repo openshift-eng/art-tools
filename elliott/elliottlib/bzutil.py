@@ -88,31 +88,6 @@ class Bug:
             raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
         return self.product == "Security Response" and self.component == "vulnerability"
 
-    def get_summary_with_ocp_suffix(self, major_version: int, minor_version: int) -> str:
-        """Given an OCPBUGS bug summary and the major and minor version numbers,
-        ensure that the summary ends with the correct version suffix.
-        :param summary: The bug summary string
-        :param major_version: The major version number (e.g., 4 for 4.18)
-        :param minor_version: The minor version number (e.g., 18 for 4.18)
-        :return: The summary with the correct version suffix appended or replaced
-        """
-
-        expected_suffix = f"[openshift-{major_version}.{minor_version}]"
-        if self.summary.endswith(expected_suffix):
-            return self.summary
-
-        version_suffix_pattern = r"\[openshift[^\]]*\]$"
-        if re.search(version_suffix_pattern, self.summary):
-            new_s = re.sub(version_suffix_pattern, expected_suffix, self.summary)
-        else:
-            new_s = f"{self.summary} {expected_suffix}"
-        return new_s
-
-    def has_valid_summary_suffix(self, major_version, minor_version):
-        """Check if the bug summary has the correct OCP version suffix."""
-
-        return self.get_summary_with_ocp_suffix(major_version, minor_version) == self.summary
-
     def is_ocp_bug(self):
         raise NotImplementedError
 

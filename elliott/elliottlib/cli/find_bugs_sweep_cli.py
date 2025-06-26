@@ -1,31 +1,28 @@
 import json
 import sys
+import traceback
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 import click
 from artcommonlib import arch_util, logutil
-from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
-from artcommonlib.format_util import green_print
-from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.assembly import assembly_issues_config
+from artcommonlib.format_util import green_prefix, green_print
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.shipment_utils import get_builds_from_mr
-from elliottlib.util import chunk
+from elliottlib.util import chunk, fix_summary_suffix
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
 type_bug_set = Set[Bug]
-yaml = new_roundtrip_yaml_handler()
 
 
 class FindBugsMode:
-    def __init__(self, status: List, cve_only: bool = False):
+    def __init__(self, status: List, cve_only: bool):
         self.status = set(status)
         self.cve_only = cve_only
 
@@ -44,7 +41,7 @@ class FindBugsMode:
 
 
 class FindBugsSweep(FindBugsMode):
-    def __init__(self, cve_only: bool = False):
+    def __init__(self, cve_only: bool):
         super().__init__(status={'MODIFIED', 'ON_QA', 'VERIFIED'}, cve_only=cve_only)
 
 
@@ -146,9 +143,13 @@ async def find_bugs_sweep_cli(
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
 
     if runtime.build_system == 'konflux':
-        raise click.BadParameter("Do not use find-bugs:sweep with --build-system=konflux, instead use find-bugs")
+        if count_advisory_attach_flags > 0 or advisory_id:
+            raise click.BadParameter(
+                "Options not supported with --build-system=konflux: --use-default-advisory, --into-default-advisories, --add"
+            )
 
     runtime.initialize(mode="both")
+    major_version, minor_version = runtime.get_major_minor()
     find_bugs_obj = FindBugsSweep(cve_only=cve_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
@@ -266,13 +267,11 @@ async def find_and_attach_bugs(
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
-
-    builds_by_advisory_kind = get_builds_by_advisory_kind(runtime)
-
     bugs_by_type, _ = categorize_bugs_by_type(
         bugs=bugs,
-        builds_by_advisory_kind=builds_by_advisory_kind,
+        advisory_id_map=advisory_ids,
         permitted_bug_ids=included_bug_ids,
+        noop=noop,
         major_version=major_version,
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
@@ -312,40 +311,7 @@ async def find_and_attach_bugs(
     return bugs
 
 
-def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
-    """Get builds attached to advisories by advisory kind, based on the build system.
-
-    For brew:
-    - fetch advisories from assembly.group.advisories
-    - for each advisory, fetch attached builds from Errata Tool
-
-    For konflux:
-    - fetch advisories from assembly.group.shipment.advisories
-    - for each shipment yaml file for an advisory in shipment MR, fetch builds from shipment spec
-
-    :param runtime: Runtime object
-    :return: Dict of {advisory_kind: [builds]} where builds is a list of NVRs (str) and kind is e.g. "rpm", "image", "extras", "microshift", "metadata"
-    """
-
-    builds_by_advisory_kind: Dict[str, List[str]] = {}
-    if runtime.build_system == 'brew':
-        advisory_ids = runtime.get_default_advisories()
-        for kind, kind_advisory_id in advisory_ids.items():
-            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(kind_advisory_id)
-    elif runtime.build_system == 'konflux':
-        # fetch builds from shipments
-        assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
-        shipment = assembly_group_config.get("shipment", {})
-        mr_url = shipment.get("url")
-        if not mr_url:
-            logger.warning("No shipment URL found in assembly config, cannot fetch builds for advisories.")
-        else:
-            logger.info(f"Fetching builds from shipment URL: {mr_url}")
-            builds_by_advisory_kind = get_builds_from_mr(mr_url)
-    return builds_by_advisory_kind
-
-
-def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
+def get_assembly_bug_ids(runtime, bug_tracker_type):
     # Loads included/excluded bugs from assembly config
     issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
     included_bug_ids = {i["id"] for i in issues_config.include}
@@ -362,29 +328,19 @@ def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]
 
 def categorize_bugs_by_type(
     bugs: List[Bug],
-    builds_by_advisory_kind: Dict[str, List[str]],
+    advisory_id_map: Dict[str, int],
+    permitted_bug_ids,
+    noop,
     major_version: int,
     minor_version: int,
-    permitted_bug_ids: Optional[set] = None,
-    operator_bundle_advisory: Optional[str] = "metadata",
-    permissive: bool = False,
-) -> tuple[Dict[str, type_bug_set], List[str]]:
+    operator_bundle_advisory: str = "metadata",
+    permissive=False,
+):
     """Categorize bugs into different types of advisories
-    :param bugs: List of Bug objects to categorize
-    :param builds_by_advisory_kind: Dict of {advisory_kind: [builds]} where builds are the NVRs attached to advisories
-    :param major_version: Major version of the release
-    :param minor_version: Minor version of the release
-    :param permitted_bug_ids: Set of bug IDs that are explicitly permitted for inclusion
-    :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
-    :param permissive: If True, ignore invalid bugs instead of raising an error
-
-    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_kind: bug_ids} and issues is a list of problems found
+    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
     """
+    issues = []
 
-    # record problems with bugs found during categorization
-    issues: List[str] = []
-
-    # initialize dict to hold bug ids by advisory kind
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -408,73 +364,48 @@ def categorize_bugs_by_type(
     non_tracker_bugs: type_bug_set = set()
     fake_trackers: type_bug_set = set()
 
-    # Categorize into tracker and non-tracker bugs
-    # while also collecting fake trackers
     for b in bugs:
         if b.is_tracker_bug():
             tracker_bugs.add(b)
         else:
+            non_tracker_bugs.add(b)
             if b.is_invalid_tracker_bug():
                 fake_trackers.add(b)
-            else:
-                non_tracker_bugs.add(b)
 
-    # Categorize non-tracker bugs into different types
-    # extras bugs go to extras advisory
-    non_tracker_extras = extras_bugs(non_tracker_bugs)
-    if non_tracker_extras:
-        bugs_by_type["extras"].update(non_tracker_extras)
-    non_tracker_bugs -= bugs_by_type["extras"]
+    bugs_by_type["extras"] = extras_bugs(non_tracker_bugs)
+    remaining = non_tracker_bugs - bugs_by_type["extras"]
+    bugs_by_type["microshift"] = {b for b in remaining if b.component and b.component.startswith('MicroShift')}
+    remaining = remaining - bugs_by_type["microshift"]
+    bugs_by_type["image"] = remaining
 
-    # microshift bugs go to microshift advisory
-    bugs_by_type["microshift"] = {b for b in non_tracker_bugs if b.component and b.component.startswith('MicroShift')}
-    non_tracker_bugs -= bugs_by_type["microshift"]
-
-    # remaining non-tracker bugs go to image advisory
-    bugs_by_type["image"] = non_tracker_bugs
-
-    # Complain about fake trackers
     if fake_trackers:
-        sorted_ids = sorted([t.id for t in fake_trackers])
-        message = f"Bug(s) {sorted_ids} look like CVE trackers, but really are not."
+        message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
-    # Return early if there are no tracker bugs to process
     if not tracker_bugs:
         return bugs_by_type, issues
 
-    # Process tracker bugs
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
-    # Validate tracker bugs' summary suffixes
-    invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
-        if not b.has_valid_summary_suffix(major_version, minor_version):
-            invalid_summary_trackers.add(b)
+        # get summary of tracker-bug and update it if needed
+        summary_suffix = f"[openshift-{major_version}.{minor_version}]"
+        if not b.summary.endswith(summary_suffix):
+            new_s = fix_summary_suffix(b.summary, summary_suffix)
+            try:
+                b.update_summary(new_s, noop=noop)
+            except Exception as e:
+                logger.warning("Failed to fix summary: %s", str(e))
 
-    if invalid_summary_trackers:
-        sorted_ids = sorted([t.id for t in invalid_summary_trackers])
-        message = f"Tracker Bug(s) {sorted_ids} have invalid summary suffixes."
-        if permissive:
-            logger.warning(f"{message} Ignoring them.")
-            issues.append(message)
-        else:
-            raise ElliottFatalError(f"{message} Please fix.")
-
-        tracker_bugs -= invalid_summary_trackers
-
-    # If advisories are not provided, we cannot categorize tracker bugs
-    if not builds_by_advisory_kind:
+    if not advisory_id_map:
         logger.warning(
-            "Skipping categorizing Tracker Bugs; builds attached to advisories must be given for this operation. All "
-            "tracker bugs are assumed to belong to `image` advisory"
+            "Skipping categorizing Tracker Bugs; advisories with attached builds must be given for this operation."
         )
-        bugs_by_type["image"].update(tracker_bugs)
         return bugs_by_type, issues
 
     logger.info("Validating tracker bugs with builds in advisories..")
@@ -482,8 +413,11 @@ def categorize_bugs_by_type(
     for kind in bugs_by_type.keys():
         if len(found) == len(tracker_bugs):
             break
-        attached_nvrs = builds_by_advisory_kind.get(kind, [])
-        packages = {parse_nvr(nvr)["name"] for nvr in attached_nvrs}
+        advisory = advisory_id_map.get(kind)
+        if not advisory:
+            continue
+        attached_builds = errata.get_advisory_nvrs(advisory)
+        packages = set(attached_builds.keys())
         exception_packages = []
         if kind == 'image':
             # golang builder is a special tracker component
@@ -496,7 +430,7 @@ def categorize_bugs_by_type(
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(
-                    f"skip categorizing microshift bug {bug.id} to microshift advisory because advisory has no builds attached"
+                    f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached"
                 )
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):
@@ -519,10 +453,9 @@ def categorize_bugs_by_type(
         still_not_found = not_found
         if permitted_bug_ids:
             logger.info(
-                'The following tracker bugs will be included in image advisory because they are '
+                'The following bugs will be included because they are '
                 f'explicitly included in the assembly config: {permitted_bug_ids}'
             )
-            bugs_by_type["image"] = {b for b in not_found if b.id in permitted_bug_ids}
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
