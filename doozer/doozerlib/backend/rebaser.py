@@ -18,6 +18,7 @@ import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -30,9 +31,11 @@ from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
+from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
+TRACER = trace.get_tracer(__name__)
 
 
 CONTAINER_YAML_HEADER = """
@@ -90,6 +93,7 @@ class KonfluxRebaser:
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
 
+    @start_as_current_span_async(TRACER, "rebase.rebase_to")
     async def rebase_to(
         self,
         metadata: ImageMetadata,
@@ -100,6 +104,15 @@ class KonfluxRebaser:
         commit_message: str,
         push: bool,
     ) -> None:
+        # Add business context to span
+        current_span = trace.get_current_span()
+        current_span.update_name(f"rebase.rebase_to {metadata.distgit_key}")
+        current_span.set_attribute("rebase.image_key", metadata.qualified_key)
+        current_span.set_attribute("rebase.version", version)
+        current_span.set_attribute("rebase.release", input_release)
+        current_span.set_attribute("rebase.force_yum_updates", force_yum_updates)
+        current_span.set_attribute("rebase.push", push)
+
         # If there is a konflux stanza in the image config, merge it with the main config
         if metadata.config.konflux is not Missing:
             metadata.config = Model(deep_merge(metadata.config.primitive(), metadata.config.konflux.primitive()))
@@ -170,6 +183,7 @@ class KonfluxRebaser:
             # notify child images
             metadata.rebase_event.set()
 
+    @start_as_current_span_async(TRACER, "rebase.rebase_dir")
     async def _rebase_dir(
         self,
         metadata: ImageMetadata,
@@ -184,6 +198,13 @@ class KonfluxRebaser:
         Rebase the image in the build repository.
         :return: Tuple of version, release, private_fix
         """
+        # Add business context to span
+        current_span = trace.get_current_span()
+        current_span.set_attribute("rebase.image_key", metadata.qualified_key)
+        current_span.set_attribute("rebase.version", version)
+        current_span.set_attribute("rebase.release", input_release)
+        current_span.set_attribute("rebase.has_source", source is not None)
+
         # Whether or not the source contains private fixes; None means we don't know yet
         private_fix = None
         if self.force_private_bit:  # --embargoed is set, force private_fix to True
@@ -286,6 +307,7 @@ class KonfluxRebaser:
         await self._update_dockerignore(build_repo.local_dir)
         return version, release, private_fix
 
+    @start_as_current_span_async(TRACER, "rebase.update_dockerignore")
     async def _update_dockerignore(self, path):
         """
         If a .dockerignore file exists, we need to update it to allow .oit dir
@@ -296,6 +318,7 @@ class KonfluxRebaser:
             async with aiofiles.open(docker_ignore_path, "a") as file:
                 await file.write("\n!/.oit/**\n")
 
+    @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
@@ -324,6 +347,7 @@ class KonfluxRebaser:
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
+    @start_as_current_span_async(TRACER, "rebase.resolve_member_parent")
     async def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
         """Resolve the parent image for the given image metadata."""
         parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
@@ -355,6 +379,7 @@ class KonfluxRebaser:
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
 
+    @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")
     async def _resolve_stream_parent(self, stream_name: str, original_parent: str, dfp: DockerfileParser):
         stream = self._runtime.resolve_stream(stream_name)
         stream_image = str(stream.image)
@@ -382,6 +407,7 @@ class KonfluxRebaser:
         # Didn't find a match for upstream parent: do typical stream resolution
         return stream_image
 
+    @start_as_current_span_async(TRACER, "rebase.wait_for_parent_members")
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group
         # member before determining if there is a private fix in it.
@@ -401,6 +427,7 @@ class KonfluxRebaser:
         return parent_members
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+    @start_as_current_span_async(TRACER, "rebase.recursive_overwrite")
     async def _recursive_overwrite(self, src, dest, ignore=set()):
         """
         Use rsync to copy one file tree to a new location
@@ -413,6 +440,7 @@ class KonfluxRebaser:
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
         await exectools.cmd_assert_async(cmd)
 
+    @start_as_current_span_async(TRACER, "rebase.merge_source")
     async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
         """
         Pulls source defined in content.source and overwrites most things in the distgit
@@ -588,6 +616,7 @@ class KonfluxRebaser:
         version = dfp.labels.get("version")
         return version, prev_release, private_fix
 
+    @start_as_current_span_async(TRACER, "rebase.run_modifications")
     async def _run_modifications(self, metadata: ImageMetadata, dest_dir: Path, metadata_scripts_path: Path):
         """
         Interprets and applies content.source.modifications steps in the image metadata.
@@ -632,6 +661,7 @@ class KonfluxRebaser:
             async with aiofiles.open(df_path, 'w', encoding='utf-8') as df:
                 await df.write(new_dockerfile_data)
 
+    @start_as_current_span_async(TRACER, "rebase.update_build_dir")
     async def _update_build_dir(
         self,
         metadata: ImageMetadata,
@@ -672,6 +702,7 @@ class KonfluxRebaser:
 
             return version, release
 
+    @start_as_current_span_async(TRACER, "rebase.fetch_packages_from_metadata")
     async def _fetch_packages_from_metadata(self, name: str, group_name: str) -> set[str]:
         """
         Fetch installed RPM packages for a given image and group from konflux_db.
@@ -685,6 +716,7 @@ class KonfluxRebaser:
             self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
             return set()
 
+    @start_as_current_span_async(TRACER, "rebase.write_rpms_lock_file")
     async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path):
         """
         Generates RPM lockfile based on image metadata and repository configuration.
@@ -692,7 +724,14 @@ class KonfluxRebaser:
         Fetches RPM package lists from metadata and parent metadata, calculates
         RPMs to install, and delegates lockfile generation to RPMLockfileGenerator.
         """
+        # Add business context to span
+        current_span = trace.get_current_span()
+        current_span.set_attribute("rebase.image_key", metadata.qualified_key)
+        current_span.set_attribute("rebase.group", group)
+        current_span.set_attribute("rebase.dest_dir", str(dest_dir))
+
         lockfile_enabled = metadata.is_lockfile_generation_enabled()
+        current_span.set_attribute("rebase.lockfile_enabled", lockfile_enabled)
         if not lockfile_enabled:
             self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
             return
@@ -797,6 +836,7 @@ class KonfluxRebaser:
         df_stages.append(df_stage)
         return df_stages
 
+    @start_as_current_span_async(TRACER, "rebase.update_dockerfile")
     async def _update_dockerfile(
         self,
         metadata: ImageMetadata,
@@ -1240,6 +1280,7 @@ class KonfluxRebaser:
         if updated_lines:
             dfp.lines = updated_lines
 
+    @start_as_current_span_async(TRACER, "rebase.generate_repo_conf")
     async def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
         Generates a repo file in .oit/repo.conf
@@ -1264,6 +1305,7 @@ class KonfluxRebaser:
         async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
             await rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
 
+    @start_as_current_span_async(TRACER, "rebase.generate_config_digest")
     async def _generate_config_digest(self, metadata: ImageMetadata, dest_dir: Path):
         # The config digest is used by scan-sources to detect config changes
         self._logger.debug("Calculating config digest...")
@@ -1276,6 +1318,7 @@ class KonfluxRebaser:
 
         self._logger.info("Saved config digest %s to .oit/config_digest", digest)
 
+    @start_as_current_span_async(TRACER, "rebase.write_cvp_owners")
     async def _write_cvp_owners(self, metadata: ImageMetadata, dest_dir: Path):
         """
         The Container Verification Pipeline will notify image owners when their image is
@@ -1293,6 +1336,7 @@ class KonfluxRebaser:
             async with aiofiles.open(dest_dir.joinpath('cvp-owners.yml'), 'w', encoding='utf-8') as co:
                 await co.write(yaml_str)
 
+    @start_as_current_span_async(TRACER, "rebase.write_fetch_artifacts")
     async def _write_fetch_artifacts(self, metadata: ImageMetadata, dest_dir: Path):
         # Write fetch-artifacts-url.yaml for OSBS to fetch external artifacts
         # See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#using-artifacts-from-koji-or-project-newcastle-aka-pnc
@@ -1409,6 +1453,7 @@ class KonfluxRebaser:
             cmd = " ".join(docker_cmd_options) + " " + cmd
         return changed, cmd
 
+    @start_as_current_span_async(TRACER, "rebase.write_osbs_image_config")
     async def _write_osbs_image_config(
         self, metadata: ImageMetadata, dest_dir: Path, source: Optional[SourceResolution], version: str
     ):
@@ -1660,6 +1705,7 @@ class KonfluxRebaser:
         output.seek(0)
         return output
 
+    @start_as_current_span_async(TRACER, "rebase.resolve_image_from_upstream_parent")
     async def _resolve_image_from_upstream_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
         """
         Given an upstream image (CI) pullspec, find a matching entry in streams.yml by comparing the rhel version,
@@ -1715,6 +1761,7 @@ class KonfluxRebaser:
 
         return None
 
+    @start_as_current_span_async(TRACER, "rebase.update_environment_variables")
     async def _update_environment_variables(
         self,
         metadata: ImageMetadata,
@@ -1857,6 +1904,7 @@ class KonfluxRebaser:
                         await df.write(f'{merge_env_line}\n')
 
     @staticmethod
+    @start_as_current_span_async(TRACER, "rebase.reflow_labels")
     async def _reflow_labels(df_path: Path):
         """
         The Dockerfile parser we are presently using writes all labels on a single line
@@ -1938,6 +1986,7 @@ class KonfluxRebaser:
             )
         return str(csvs[0]), image_refs
 
+    @start_as_current_span_async(TRACER, "rebase.update_csv")
     async def _update_csv(
         self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str, image_repo: str, uuid_tag: str
     ):
