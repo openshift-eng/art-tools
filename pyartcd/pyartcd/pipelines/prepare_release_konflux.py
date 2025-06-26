@@ -587,7 +587,7 @@ class PrepareReleaseKonfluxPipeline:
             await self.shipment_data_repo.write_file(filepath, out.getvalue())
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
-        return await self.shipment_data_repo.commit_push(commit_message)
+        return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
     async def create_update_build_data_pr(self, shipment_config: dict) -> bool:
         """Create or update a pull request in the build data repo with the updated shipment config.
@@ -702,7 +702,7 @@ class PrepareReleaseKonfluxPipeline:
         await self.build_data_repo.log_diff()
 
         commit_message = f"Update shipment for assembly {self.assembly}"
-        return await self.build_data_repo.commit_push(commit_message)
+        return await self.build_data_repo.commit_push(commit_message, safe=True)
 
 
 @cli.command("prepare-release-konflux")

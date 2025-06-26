@@ -331,7 +331,7 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
     if runtime.build_system == 'brew':
         advisory_ids = runtime.get_default_advisories()
         for kind, kind_advisory_id in advisory_ids.items():
-            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs(kind_advisory_id)
+            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
     elif runtime.build_system == 'konflux':
         # fetch builds from shipments
         assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})

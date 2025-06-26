@@ -672,6 +672,27 @@ def get_all_advisory_nvrs(advisory):
     return all_advisory_nvrs
 
 
+def get_advisory_nvrs_flattened(advisory: str | int) -> List[str]:
+    """
+    :return: get a flattened list of string nvrs for a given advisory
+    """
+    try:
+        builds = get_builds(advisory)
+    except exceptions.ErrataToolError as ex:
+        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+
+    all_advisory_nvrs = []
+    # Results come back with top level keys which are brew tags
+    for tag in builds.keys():
+        # Each top level has a key 'builds' which is a list of dicts
+        for build in builds[tag]['builds']:
+            for name in build.keys():
+                n, v, r = name.rsplit('-', 2)
+                all_advisory_nvrs.append(f"{n}-{v}-{r}")
+
+    return all_advisory_nvrs
+
+
 def get_advisory(advisory_id):
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}')
 

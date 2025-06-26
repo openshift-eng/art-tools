@@ -7,7 +7,13 @@ from click.testing import CliRunner
 from elliottlib import errata
 from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, categorize_bugs_by_type, extras_bugs, get_assembly_bug_ids
+from elliottlib.cli.find_bugs_sweep_cli import (
+    FindBugsMode,
+    categorize_bugs_by_type,
+    extras_bugs,
+    get_assembly_bug_ids,
+    get_builds_by_advisory_kind,
+)
 from elliottlib.exceptions import ElliottFatalError
 from flexmock import flexmock
 
@@ -556,6 +562,94 @@ class TestExtrasBugs(unittest.TestCase):
     def test_nonsubcomponent_bug(self):
         bugs = [flexmock(id='123', component='Networking', sub_component='Not SR-IOV')]
         self.assertEqual(len(extras_bugs(bugs)), 0)
+
+
+class TestGetBuildsByAdvisoryKind(unittest.TestCase):
+    def test_get_builds_brew_system(self):
+        """Test get_builds_by_advisory_kind for brew build system"""
+        runtime = flexmock(build_system='brew')
+        runtime.should_receive("get_default_advisories").and_return(
+            {'rpm': 12345, 'image': 12346, 'extras': 12347, 'metadata': 12348}
+        )
+
+        # Mock errata.get_advisory_nvrs_flattened for each advisory
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12345).and_return(
+            ['rpm-package-1-1.0.0-1.el9']
+        )
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12346).and_return(
+            ['image1-container-v1.0.0-1', 'image2-container-v1.0.0-1']
+        )
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12347).and_return(
+            ['extras-package-1.0.0-1.el9']
+        )
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12348).and_return(
+            ['metadata-package-1.0.0-1.el9']
+        )
+
+        expected = {
+            'rpm': ['rpm-package-1-1.0.0-1.el9'],
+            'image': ['image1-container-v1.0.0-1', 'image2-container-v1.0.0-1'],
+            'extras': ['extras-package-1.0.0-1.el9'],
+            'metadata': ['metadata-package-1.0.0-1.el9'],
+        }
+
+        result = get_builds_by_advisory_kind(runtime)
+        self.assertEqual(result, expected)
+
+    def test_get_builds_brew_system_empty_advisories(self):
+        """Test get_builds_by_advisory_kind for brew system with no advisories"""
+        runtime = flexmock(build_system='brew')
+        runtime.should_receive("get_default_advisories").and_return({})
+
+        expected = {}
+        result = get_builds_by_advisory_kind(runtime)
+        self.assertEqual(result, expected)
+
+    @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
+    @patch('elliottlib.cli.find_bugs_sweep_cli.get_builds_from_mr')
+    def test_get_builds_konflux_system_with_shipment(self, mock_get_builds, mock_assembly_config):
+        """Test get_builds_by_advisory_kind for konflux build system with shipment URL"""
+        runtime = flexmock(build_system='konflux', assembly='4.16.0')
+        runtime.should_receive("get_releases_config").and_return({})
+
+        mock_assembly_config.return_value = {
+            'shipment': {'url': 'https://gitlab.com/example/shipment/-/merge_requests/123'}
+        }
+
+        mock_get_builds.return_value = {
+            'rpm': ['konflux-rpm-1.0.0-1.el9'],
+            'image': ['konflux-image-container-v1.0.0-1'],
+            'extras': ['konflux-extras-1.0.0-1.el9'],
+        }
+
+        expected = {
+            'rpm': ['konflux-rpm-1.0.0-1.el9'],
+            'image': ['konflux-image-container-v1.0.0-1'],
+            'extras': ['konflux-extras-1.0.0-1.el9'],
+        }
+
+        result = get_builds_by_advisory_kind(runtime)
+        self.assertEqual(result, expected)
+
+        # Verify mocks were called correctly
+        mock_assembly_config.assert_called_once_with({}, '4.16.0', "group", {})
+        mock_get_builds.assert_called_once_with('https://gitlab.com/example/shipment/-/merge_requests/123')
+
+    @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
+    @patch('elliottlib.cli.find_bugs_sweep_cli.get_builds_from_mr')
+    def test_get_builds_konflux_system_no_shipment_url(self, mock_get_builds, mock_assembly_config):
+        """Test get_builds_by_advisory_kind for konflux system with no shipment URL"""
+        runtime = flexmock(build_system='konflux', assembly='4.16.0')
+        runtime.should_receive("get_releases_config").and_return({})
+
+        mock_assembly_config.return_value = {'shipment': {}}
+
+        expected = {}
+        result = get_builds_by_advisory_kind(runtime)
+        self.assertEqual(result, expected)
+
+        # Verify get_builds_from_mr was not called
+        mock_get_builds.assert_not_called()
 
 
 if __name__ == '__main__':
