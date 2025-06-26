@@ -2,6 +2,8 @@ import asyncio
 import datetime
 import re
 import time
+import threading
+import concurrent.futures
 from typing import Any, List, Optional, Tuple, Union
 
 from artcommonlib import logutil
@@ -546,7 +548,12 @@ class MetadataBase(object):
             except RuntimeError:
                 return asyncio.run(self.get_latest_konflux_build(**kwargs))
             else:
-                return loop.run_until_complete(self.get_latest_konflux_build(**kwargs))
+                def run_async():
+                    return asyncio.run(self.get_latest_konflux_build(**kwargs))
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(run_async)
+                    return future.result()
 
         else:
             raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')

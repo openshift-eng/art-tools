@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import time
+import re
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
@@ -17,6 +18,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
@@ -25,6 +27,7 @@ from elliottlib.shipment_utils import get_shipment_configs_by_kind
 from ghapi.all import GhApi
 
 from pyartcd import constants
+from pyartcd.record import parse_record_log
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -47,6 +50,7 @@ class PrepareReleaseKonfluxPipeline:
         assembly: str,
         github_token: str,
         gitlab_token: str,
+        kubeconfig: str,
         build_repo_url: Optional[str] = None,
         shipment_repo_url: Optional[str] = None,
         job_url: Optional[str] = None,
@@ -54,6 +58,7 @@ class PrepareReleaseKonfluxPipeline:
         self.runtime = runtime
         self.assembly = assembly
         self.group = group
+        self.kubeconfig = kubeconfig
         self._slack_client = slack_client
         self.github_token = github_token
         self.gitlab_token = gitlab_token
@@ -62,6 +67,7 @@ class PrepareReleaseKonfluxPipeline:
         self.application = KonfluxImageBuilder.get_application_name(self.group)
         self.working_dir = self.runtime.working_dir.absolute()
         self.elliott_working_dir = self.working_dir / "elliott-working"
+        self.doozer_working_dir = self.working_dir / "doozer-working"
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
         self._shipment_repo_dir = self.working_dir / "shipment-data-push"
         self.job_url = job_url
@@ -92,6 +98,16 @@ class PrepareReleaseKonfluxPipeline:
             '--build-system=konflux',
             f'--working-dir={self.elliott_working_dir}',
             f'--data-path={self.build_repo_pull_url}',
+        ]
+
+        self._doozer_base_command = [
+            'doozer',
+            group_param,
+            f'--assembly={self.assembly}',
+            '--build-system=konflux',
+            f'--working-dir={self.doozer_working_dir}',
+            f'--data-path={self.build_repo_pull_url}',
+            '--konflux-kubeconfig', self.kubeconfig,
         ]
 
     @staticmethod
@@ -166,6 +182,8 @@ class PrepareReleaseKonfluxPipeline:
             shutil.rmtree(self._shipment_repo_dir, ignore_errors=True)
         if self.elliott_working_dir.exists():
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
+        if self.doozer_working_dir.exists():
+            shutil.rmtree(self.doozer_working_dir, ignore_errors=True)
 
     async def setup_repos(self):
         # setup build-data repo which should reside in GitHub
@@ -243,9 +261,16 @@ class PrepareReleaseKonfluxPipeline:
         # if builds are already set, this will overwrite them
         # in an ideal case, content should be the same
         # and any additional builds should be pinned in the assembly config
+        extras_nvrs = []
         for kind, shipment in shipments_by_kind.items():
             snapshot_spec = await self.find_builds(kind)
             shipment.shipment.snapshot.spec = snapshot_spec
+            if kind == "extras":
+                extras_nvrs = snapshot_spec.nvrs or []
+            elif kind == "metadata":
+                if extras_nvrs is None:
+                    raise ValueError("extras_nvrs is not set. Cannot find bundle builds.")
+                shipment.shipment.snapshot.spec = await self.find_or_build_bundle_builds(extras_nvrs)
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -275,6 +300,56 @@ class PrepareReleaseKonfluxPipeline:
             shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
 
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> Spec:
+        async def get_olm_operators() -> list[str]:
+            cmd = self._doozer_base_command + ["olm-bundle:list-olm-operators"]
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+            if stderr:
+                _LOGGER.info("stderr:\n %s", stderr)
+            if stdout:
+                _LOGGER.info("stdout:\n %s", stdout)
+            if rc != 0:
+                raise RuntimeError(f"cmd failed with exit code {rc}: {cmd}")
+            return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+        olm_operators = await get_olm_operators()
+        olm_operator_nvrs = []
+        for nvr in operator_nvrs:
+            parsed_nvr = parse_nvr(nvr)
+            if parsed_nvr["name"] in olm_operators:
+                olm_operator_nvrs.append(nvr)
+
+        cmd = self._doozer_base_command + ["beta:images:konflux:bundle", "--"] + olm_operator_nvrs
+        await exectools.cmd_assert_async(cmd)
+        # Parse already exist builds
+        bundle_nvrs = []
+        pattern = re.compile(
+            r"doozerlib\.cli\.images_konflux\.\[(.*?)\].*A previous bundle build already exists: ([\w\-.]+)"
+        )
+        debug_log_path = Path(self.doozer_working_dir, 'debug.log')
+        if debug_log_path.exists():
+            with debug_log_path.open() as file:
+                for line in file:
+                    match = pattern.search(line)
+                    if match:
+                        bundle_nvr = match.group(2)
+                        bundle_nvrs.append(bundle_nvr)
+        # Parse new builds
+        record_log_path = Path(self.doozer_working_dir, 'record.log')
+        if record_log_path.exists():
+            with record_log_path.open() as file:
+                record_log = parse_record_log(file)
+            records = record_log.get('build_olm_bundle_konflux', [])
+            for record in records:
+                if record['status'] != '0':
+                    raise RuntimeError(
+                        'record.log includes unexpected build_olm_bundle_konflux '
+                        f'record with error message: {record["message"]}'
+                    )
+                bundle_nvrs.append(record['bundle_nvr'])
+
+        return Spec(nvrs=bundle_nvrs)
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -719,6 +794,7 @@ class PrepareReleaseKonfluxPipeline:
     required=True,
     help="The assembly to operate on e.g. 4.18.5",
 )
+@click.option("--kubeconfig", help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
     '--build-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
@@ -730,7 +806,7 @@ class PrepareReleaseKonfluxPipeline:
 @pass_runtime
 @click_coroutine
 async def prepare_release(
-    runtime: Runtime, group: str, assembly: str, build_repo_url: Optional[str], shipment_repo_url: Optional[str]
+    runtime: Runtime, group: str, assembly: str, kubeconfig: str, build_repo_url: Optional[str], shipment_repo_url: Optional[str]
 ):
     job_url = os.getenv('BUILD_URL')
 
@@ -759,6 +835,7 @@ async def prepare_release(
             github_token=github_token,
             gitlab_token=gitlab_token,
             build_repo_url=build_repo_url,
+            kubeconfig=kubeconfig,
             shipment_repo_url=shipment_repo_url,
             job_url=job_url,
         )
