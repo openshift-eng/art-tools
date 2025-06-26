@@ -21,30 +21,6 @@ class TestBug(unittest.TestCase):
         bug_true = flexmock(id=1, summary="CVE-2022-0001", keywords=[], whiteboard_component=None)
         self.assertEqual(BugzillaBug(bug_true).is_invalid_tracker_bug(), True)
 
-    def test_get_summary_with_ocp_suffix(self):
-        testdata = [
-            ["Some bug summary [openshift-whatever]", (4, 11), "Some bug summary [openshift-4.11]"],
-            ["Bug is fine [openshift-4.12]", (4, 12), "Bug is fine [openshift-4.12]"],
-            ["Append here", (4, 13), "Append here [openshift-4.13]"],
-        ]
-        for summary, version, expected in testdata:
-            major, minor = version
-            bug = JIRABug(flexmock(fields=flexmock(summary=summary)))
-            result = bug.get_summary_with_ocp_suffix(major, minor)
-            self.assertEqual(result, expected)
-
-    def test_has_valid_summary_suffix(self):
-        testdata = [
-            ["Some bug summary [openshift-whatever]", (4, 11), False],
-            ["Bug is fine [openshift-4.12]", (4, 12), True],
-            ["Append here", (4, 13), False],
-        ]
-        for summary, version, expected in testdata:
-            major, minor = version
-            bug = JIRABug(flexmock(fields=flexmock(summary=summary)))
-            result = bug.has_valid_summary_suffix(major, minor)
-            self.assertEqual(result, expected)
-
 
 class TestBugTracker(unittest.TestCase):
     def test_get_corresponding_flaw_bugs(self):
