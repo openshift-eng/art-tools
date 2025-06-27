@@ -190,6 +190,9 @@ class AttachCveFlaws:
         cve_boilerplate = get_advisory_boilerplate(
             runtime=self.runtime, et_data=self.errata_config, art_advisory_key=self.advisory_kind, errata_type='RHSA'
         )
+        release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
+        release_notes.topic = cve_boilerplate['topic'].format(IMPACT='Low', MINOR=self.minor, PATCH=self.patch)
+        release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
 
         # Add CVE component mapping
         cve_component_mapping = self.get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
