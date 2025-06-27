@@ -151,7 +151,10 @@ class CreateReleaseCli:
             "metadata": {
                 "name": snapshot_name,
                 "namespace": self.konflux_config['namespace'],
-                "labels": {"test.appstudio.openshift.io/type": "override"},
+                "labels": {
+                    "test.appstudio.openshift.io/type": "override",
+                    "appstudio.openshift.io/application": shipment.metadata.application,
+                },
             },
             "spec": shipment.snapshot.spec.model_dump(exclude_none=True),
         }

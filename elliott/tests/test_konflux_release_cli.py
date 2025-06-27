@@ -253,7 +253,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "metadata": {
                 "name": created_snapshot_name,
                 "namespace": self.konflux_config['namespace'],
-                "labels": {"test.appstudio.openshift.io/type": "override"},
+                "labels": {
+                    "test.appstudio.openshift.io/type": "override",
+                    "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
+                },
             },
             "spec": shipment_config.shipment.snapshot.spec.model_dump(exclude_none=True),
         }
