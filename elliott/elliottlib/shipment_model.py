@@ -111,6 +111,12 @@ class Environments(StrictBaseModel):
     )
 
 
+class Tools(StrictBaseModel):
+    """Tools to use when releasing shipment to an environment"""
+
+    art_tools: Optional[str] = Field(None, alias="art-tools")
+
+
 class Shipment(StrictBaseModel):
     """Config to ship a Konflux release for a product"""
 
@@ -118,6 +124,7 @@ class Shipment(StrictBaseModel):
     environments: Environments
     snapshot: Snapshot
     data: Optional[Data] = None
+    tools: Optional[Tools] = None
 
     @model_validator(mode='after')
     def make_sure_data_is_present_unless_fbc(self) -> Self:
