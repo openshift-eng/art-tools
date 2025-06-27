@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-05-16 14:39 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-06-27 13:58 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
       "additionalProperties": false,
@@ -34,24 +34,43 @@
       "title": "Data",
       "type": "object"
     },
+    "EnvAdvisory": {
+      "additionalProperties": false,
+      "description": "Information about the advisory that got shipped to the environment",
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "internal_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Internal Url"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "EnvAdvisory",
+      "type": "object"
+    },
     "Environments": {
       "additionalProperties": false,
       "description": "Environments to release the shipment to",
       "properties": {
         "stage": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/ShipmentEnv"
-            }
-          ],
+          "$ref": "#/$defs/ShipmentEnv",
           "description": "Config for releasing to stage environment"
         },
         "prod": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/ShipmentEnv"
-            }
-          ],
+          "$ref": "#/$defs/ShipmentEnv",
           "description": "Config for releasing to prod environment"
         }
       },
@@ -194,7 +213,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "cves": {
           "anyOf": [
@@ -232,8 +252,7 @@
         "synopsis",
         "topic",
         "description",
-        "solution",
-        "issues"
+        "solution"
       ],
       "title": "ReleaseNotes",
       "type": "object"
@@ -279,41 +298,16 @@
           "title": "Releaseplan",
           "type": "string"
         },
-        "releaseName": {
+        "advisory": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/EnvAdvisory"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Releasename"
-        },
-        "advisoryName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Advisoryname"
-        },
-        "advisoryInternalUrl": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Advisoryinternalurl"
+          "default": null
         }
       },
       "required": [
