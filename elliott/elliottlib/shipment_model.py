@@ -81,17 +81,21 @@ class Data(StrictBaseModel):
     releaseNotes: ReleaseNotes
 
 
+class EnvAdvisory(StrictBaseModel):
+    """Information about the advisory that got shipped to the environment"""
+
+    url: str
+    internal_url: Optional[str] = None
+
+
 class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
-    releaseName: Optional[str] = None
-    advisoryName: Optional[str] = None
-    advisoryInternalUrl: Optional[str] = None
+    advisory: Optional[EnvAdvisory] = None
 
     def shipped(self):
-        if self.releaseName or self.advisoryName or self.advisoryInternalUrl:
-            return True
+        return bool(self.advisory)
 
 
 class Environments(StrictBaseModel):

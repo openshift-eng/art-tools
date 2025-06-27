@@ -7,6 +7,7 @@ from elliottlib.cli.konflux_release_cli import CreateReleaseCli
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
     Data,
+    EnvAdvisory,
     Environments,
     Metadata,
     ReleaseNotes,
@@ -398,7 +399,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(
                         releasePlan="test-prod-rp",
-                        advisoryInternalUrl="foo-bar",
+                        advisory=EnvAdvisory(
+                            url="https://foo-bar",
+                            internal_url="https://foo-bar-internal",
+                        ),
                     ),
                 ),
                 snapshot=Snapshot(name="test-snapshot", spec=Spec(nvrs=["test-nvr-1", "test-nvr-2"])),
