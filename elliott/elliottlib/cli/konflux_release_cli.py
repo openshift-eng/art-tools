@@ -17,7 +17,6 @@ from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_UI_HOST
 from kubernetes.dynamic import exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
-from elliottlib.cli.snapshot_cli import GetSnapshotCli
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import Shipment, ShipmentConfig, ShipmentEnv
 
@@ -125,24 +124,6 @@ class CreateReleaseCli:
         snapshot_name = created_snapshot.metadata.name
         snapshot_url = self.konflux_client.resource_url(created_snapshot)
         LOGGER.info("Successfully created Snapshot %s", snapshot_url)
-
-        # Verify the created snapshot contains the expected NVRs
-        get_snapshot_cli = GetSnapshotCli(
-            self.runtime,
-            self.konflux_config,
-            self.image_repo_pull_secret,
-            for_fbc=meta.fbc,
-            snapshot=snapshot_name,
-            dry_run=False,
-        )
-        actual_nvrs = set(await get_snapshot_cli.run())
-        expected_nvrs = set(config.shipment.snapshot.nvrs)
-        if actual_nvrs != expected_nvrs:
-            missing = expected_nvrs - actual_nvrs
-            extra = actual_nvrs - expected_nvrs
-            raise ValueError(
-                f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} {extra=}"
-            )
 
         # Create release config using the created snapshot name
         release_config = self.get_release_config(config.shipment, self.release_env, release_name, snapshot_name)
