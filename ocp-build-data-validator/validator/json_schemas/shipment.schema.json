@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-06-27 13:58 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-06-27 14:22 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
       "additionalProperties": false,
@@ -280,6 +280,17 @@
             }
           ],
           "default": null
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tools"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -351,6 +362,26 @@
         "nvrs"
       ],
       "title": "Spec",
+      "type": "object"
+    },
+    "Tools": {
+      "additionalProperties": false,
+      "description": "Tools to use when releasing shipment to an environment",
+      "properties": {
+        "art-tools": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Art-Tools"
+        }
+      },
+      "title": "Tools",
       "type": "object"
     }
   },
