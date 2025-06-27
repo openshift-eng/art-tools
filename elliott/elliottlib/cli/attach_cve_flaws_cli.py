@@ -144,6 +144,9 @@ async def handle_konflux_cve_flaws(runtime: Runtime, default_advisory_type: str)
             # tracker_flaw = [tracker_flaws[t.id]
             release_notes.cves.append(CveAssociation(key=cve['cve_id'], component=cve['component']))
 
+        # Attach the flaw bugs to the release notes issues
+        release_notes.issues.fixed.extend([{'id': bug.id, 'source': "issues.redhat.com"} for bug in flaw_bugs])
+
     return release_notes
 
 
