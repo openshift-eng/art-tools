@@ -6,10 +6,13 @@ from unittest.mock import AsyncMock, Mock, call, patch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
+from artcommonlib.util import convert_remote_git_to_ssh
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import (
     Data,
     Environments,
+    Issue,
+    Issues,
     Metadata,
     ReleaseNotes,
     Shipment,
@@ -34,12 +37,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.runtime.config = {
             "gitlab_url": "https://gitlab.example.com",
             "build_config": {
-                "ocp_build_data_url": "https://build.url/repo",
-                "ocp_build_data_push_url": "https://build.push.url/repo",
+                "ocp_build_data_url": "https://github.com/user1/repo1",
+                "ocp_build_data_push_url": "https://github.com/user2/repo2",
             },
             "shipment_config": {
-                "shipment_data_url": "https://shipment.url/repo",
-                "shipment_data_push_url": "https://shipment.push.url/repo",
+                "shipment_data_url": "https://gitlab.example.com/user3/repo3",
+                "shipment_data_push_url": "https://gitlab.example.com/user4/repo4",
             },
         }
         self.mock_slack_client = Mock(spec=SlackClient)
@@ -130,7 +133,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         # Verify build repo setup
         mock_build_repo.setup.assert_awaited_once_with(
-            remote_url=pipeline.build_data_push_url,
+            remote_url=convert_remote_git_to_ssh(pipeline.build_data_push_url),
             upstream_remote_url=pipeline.build_repo_pull_url,
         )
         mock_build_repo.fetch_switch_branch.assert_awaited_once_with(self.group)
@@ -365,12 +368,21 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
 
     @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
-        self, mock_init_shipment, mock_find_builds, mock_create_mr, mock_create_pr, mock_errata_api
+        self,
+        mock_init_shipment,
+        mock_find_builds,
+        mock_find_bugs,
+        mock_create_shipment_mr,
+        mock_create_build_data_pr,
+        mock_update_shipment_mr,
+        mock_errata_api,
     ):
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
@@ -404,71 +416,113 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_errata_api_instance.reserve_live_id = AsyncMock(return_value=mock_live_id)
         mock_errata_api_instance.close = AsyncMock()
 
-        mock_data = Data(
-            releaseNotes=ReleaseNotes(
-                type="RHBA",
-                synopsis="synopsis",
-                topic="topic",
-                description="description",
-                solution="solution",
+        mock_shipment_image = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-image",
+                ),
+                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot1"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"), prod=ShipmentEnv(releasePlan="rp-img-prod")
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
+            )
+        )
+        mock_shipment_extras = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-extras",
+                ),
+                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot2"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-ext-stage"), prod=ShipmentEnv(releasePlan="rp-ext-prod")
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
             )
         )
 
-        mock_shipment_image_data = Shipment(
-            metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
-            snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot1"),
-            environments=Environments(
-                stage=ShipmentEnv(releasePlan="rp-img-stage"), prod=ShipmentEnv(releasePlan="rp-img-prod")
-            ),
-            data=mock_data,
-        )
-        mock_shipment_image = ShipmentConfig(shipment=mock_shipment_image_data)
+        def init_shipment(kind):
+            return {
+                "image": mock_shipment_image,
+                "extras": mock_shipment_extras,
+            }.get(kind)
 
-        mock_shipment_extras_data = Shipment(
-            metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-extras"),
-            snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot2"),
-            environments=Environments(
-                stage=ShipmentEnv(releasePlan="rp-ext-stage"), prod=ShipmentEnv(releasePlan="rp-ext-prod")
-            ),
-            data=mock_data,
-        )
-        mock_shipment_extras = ShipmentConfig(shipment=mock_shipment_extras_data)
+        mock_init_shipment.side_effect = init_shipment
 
-        # copy since the original objects will be modified
-        mock_init_shipment.side_effect = [copy.deepcopy(mock_shipment_image), copy.deepcopy(mock_shipment_extras)]
-        mock_find_builds.side_effect = [Spec(nvrs=["nvr1"]), Spec(nvrs=["nvr2"])]
-        mock_create_mr.return_value = "https://gitlab.example.com/mr/1"
+        def find_builds(kind):
+            return {
+                "image": Spec(nvrs=["image-nvr"]),
+                "extras": Spec(nvrs=["extras-nvr"]),
+            }.get(kind)
+
+        mock_find_builds.side_effect = find_builds
+
+        def find_bugs(kind, **_):
+            return {
+                "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
+                "extras": Issues(fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]),
+            }.get(kind)
+
+        mock_find_bugs.side_effect = find_bugs
+        mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
+        mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
         await pipeline.prepare_shipment()
 
+        # assert liveID is reserved
         mock_errata_api.assert_called_once()
         self.assertEqual(mock_errata_api_instance.reserve_live_id.call_count, 2)
 
-        mock_init_shipment.assert_any_call("image")
+        # assert shipment init calls and find-builds calls
         mock_init_shipment.assert_any_call("extras")
+        mock_init_shipment.assert_any_call("image")
         self.assertEqual(mock_init_shipment.call_count, 2)
 
-        mock_find_builds.assert_any_call("image")
         mock_find_builds.assert_any_call("extras")
+        mock_find_builds.assert_any_call("image")
         self.assertEqual(mock_find_builds.call_count, 2)
 
-        mock_create_mr.assert_awaited_once()
-        generated_shipments_arg = mock_create_mr.call_args[0][0]
+        # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
+        mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
+        mock_shipment_extras_create = copy.deepcopy(mock_shipment_extras)
+        mock_shipment_image_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_image_create.shipment.snapshot.spec.nvrs = ["image-nvr"]
+        mock_shipment_extras_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_extras_create.shipment.snapshot.spec.nvrs = ["extras-nvr"]
 
-        mock_shipment_image.shipment.snapshot.spec.nvrs = ["nvr1"]
-        mock_shipment_image.shipment.data.releaseNotes.live_id = mock_live_id
+        # assert MR is created with the right shipment configs
+        mock_create_shipment_mr.assert_awaited_once()
+        created_shipments_arg = mock_create_shipment_mr.call_args[0][0]
+        self.assertEqual(created_shipments_arg["image"], mock_shipment_image_create)
+        self.assertEqual(created_shipments_arg["extras"], mock_shipment_extras_create)
+        self.assertEqual(mock_create_shipment_mr.call_args[0][1], "prod")
 
-        mock_shipment_extras.shipment.snapshot.spec.nvrs = ["nvr2"]
-        mock_shipment_extras.shipment.data.releaseNotes.live_id = mock_live_id
-
-        self.assertEqual(generated_shipments_arg["image"], mock_shipment_image)
-        self.assertEqual(generated_shipments_arg["extras"], mock_shipment_extras)
-        self.assertEqual(mock_create_mr.call_args[0][1], "prod")
-
-        mock_create_pr.assert_awaited_once()
-        final_shipment_config_arg = mock_create_pr.call_args[0][0]
+        # assert that build-data PR was created with the right config
+        mock_create_build_data_pr.assert_awaited_once()
         self.assertEqual(
-            final_shipment_config_arg,
+            mock_create_build_data_pr.call_args[0][0],
             {
                 "env": "prod",
                 "advisories": [
@@ -479,3 +533,23 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             },
         )
         mock_errata_api_instance.close.assert_called_once()
+
+        # assert bug finding was done and MR updated with the right shipment configs
+        mock_find_bugs.assert_any_call("extras", permissive=False)
+        mock_find_bugs.assert_any_call("image", permissive=False)
+        self.assertEqual(mock_find_bugs.call_count, 2)
+
+        mock_update_shipment_mr.assert_awaited_once()
+        updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
+
+        mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
+        mock_shipment_extras_update = copy.deepcopy(mock_shipment_extras_create)
+        mock_shipment_image_update.shipment.data.releaseNotes.issues = Issues(
+            fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]
+        )
+        mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
+            fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]
+        )
+        self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
+        self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
+        self.assertEqual(mock_update_shipment_mr.call_args[0][1], "prod")

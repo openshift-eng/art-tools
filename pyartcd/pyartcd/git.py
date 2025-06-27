@@ -64,6 +64,12 @@ class GitRepository:
             await f.write(content)
         return path
 
+    async def add_all(self):
+        """Add all files to the git repository."""
+        env = os.environ.copy()
+        env.update(GIT_NO_PROMPTS)
+        await exectools.cmd_assert_async(["git", "-C", str(self._directory), "add", "."], env=env)
+
     async def log_diff(self, ref: str = "HEAD"):
         """Log diff of the current working tree against the specified reference."""
         env = os.environ.copy()
@@ -114,25 +120,34 @@ class GitRepository:
         # Clean workdir
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "clean", "-fdx"], env=env)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
-    async def commit_push(self, commit_message: str) -> bool:
+    async def commit_push(self, commit_message: str, safe: bool = False) -> bool:
         """Create a commit that includes all file changes in the working tree and push the commit to the remote repository.
         If there are no changes in thw working tree, do nothing.
         """
+        # Make sure all files are added to the index
+        await self.add_all()
+
+        # Check if there are any changes to commit
         env = os.environ.copy()
         env.update(GIT_NO_PROMPTS)
         repo_dir = str(self._directory)
-        cmd = ["git", "-C", repo_dir, "add", "."]
-        await exectools.cmd_assert_async(cmd, env=env)
         cmd = ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=no"]
         _, out, _ = await exectools.cmd_gather_async(cmd, env=env)
         if not out.strip():  # Nothing to commit
             return False
+
+        # Commit the changes
         cmd = ["git", "-C", repo_dir, "commit", "--message", commit_message]
         await exectools.cmd_assert_async(cmd, env=env)
-        cmd = ["git", "-C", repo_dir, "push", "-f", "origin", "HEAD"]
-        if not self._dry_run:
-            await exectools.cmd_assert_async(cmd, env=env)
-        else:
-            LOGGER.warning("[DRY RUN] Would have run %s", cmd)
+
+        @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
+        async def _push():
+            # Push the commit to the remote repository
+            cmd = ["git", "-C", repo_dir, "push", "--force-with-lease" if safe else "--force", "origin", "HEAD"]
+            if not self._dry_run:
+                await exectools.cmd_assert_async(cmd, env=env)
+            else:
+                LOGGER.warning("[DRY RUN] Would have run %s", cmd)
+
+        await _push()
         return True

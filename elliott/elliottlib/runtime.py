@@ -7,7 +7,6 @@ import time
 from contextlib import contextmanager
 from multiprocessing import Lock, RLock
 from typing import Dict, Optional
-from urllib.parse import urlparse
 
 import click
 import yaml
@@ -18,6 +17,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.runtime import GroupRuntime
 
 from elliottlib import brew, constants
+from elliottlib.brew import brew_event_from_datetime
 from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
@@ -72,6 +72,7 @@ class Runtime(GroupRuntime):
         self.shipment_path = None
         self.shipment_gitdata = None
         self.product = None
+        self.group_config = None
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
@@ -100,6 +101,11 @@ class Runtime(GroupRuntime):
         if match:
             self._logger.debug(f"Found major.minor.patch {match.group()} for assembly {self.assembly}")
             return self.assembly.split(".")
+        elif self.assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
+            major = self.group_config.vars.MAJOR
+            minor = self.group_config.vars.MINOR
+            patch = 0
+            return major, minor, patch
         else:
             raise ValueError(
                 f"Could not find major.minor.patch for assembly {self.assembly}. Use get_major_minor() instead for major.minor"
@@ -290,14 +296,26 @@ class Runtime(GroupRuntime):
         if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
             strict_mode = False
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
-        self.assembly_basis_event = assembly_basis_event(self.get_releases_config(), self.assembly, strict=strict_mode)
+        self.assembly_basis_event = assembly_basis_event(
+            self.get_releases_config(), self.assembly, strict=strict_mode, build_system=self.build_system
+        )
         if self.assembly_basis_event:
             if self.brew_event:
                 raise ElliottFatalError(
                     f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
-            self.brew_event = self.assembly_basis_event
+            if isinstance(self.assembly_basis_event, int):
+                # The assembly basis event is a Brew event
+                self.brew_event = self.assembly_basis_event
+
+            else:
+                # The assembly basis event for Konflux is a timestamp, e.g. 2025-04-15 13:28:09
+                # Use koji.getLatestEvent() to get the latest Brew event that came before the assembly Konflux event
+                self._logger.info('Computed assembly basis event: %s', self.assembly_basis_event)
+                with self.shared_koji_client_session() as koji_api:
+                    self.brew_event = brew_event_from_datetime(self.assembly_basis_event, koji_api)
+
             self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
 
         self.initialized = True
@@ -469,6 +487,7 @@ class Runtime(GroupRuntime):
         with self.koji_lock:
             if self._koji_client_session is None:
                 self._koji_client_session = self.build_retrying_koji_client()
+                self._logger.info("Authenticating to Brew...")
                 self._koji_client_session.gssapi_login()
             yield self._koji_client_session
 

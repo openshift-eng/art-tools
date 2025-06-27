@@ -13,9 +13,13 @@ import yaml
 # Removed unused import 'List' from aiohttp_retry
 from artcommonlib import exectools, logutil
 from artcommonlib.rpm_utils import compare_nvr
+from artcommonlib.telemetry import start_as_current_span_async
+from opentelemetry import trace
 
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
+
+TRACER = trace.get_tracer(__name__)
 
 
 @total_ordering
@@ -124,6 +128,7 @@ class RpmInfoCollector:
         self.loaded_repos: dict[str, Repodata] = {}
         self.logger = logger or logutil.get_logger(__name__)
 
+    @start_as_current_span_async(TRACER, "lockfile.load_repos")
     async def load_repos(self, requested_repos: set[str], arch: str):
         """
         Load repodata for the given repositories and architecture.
@@ -138,6 +143,13 @@ class RpmInfoCollector:
         not_yet_loaded = {repo for repo in requested_repos if f'{repo}-{arch}' not in self.loaded_repos}
         already_loaded = requested_repos - not_yet_loaded
 
+        current_span = trace.get_current_span()
+        current_span.update_name(f"lockfile.load_repos ({len(not_yet_loaded)}) {arch}")
+        current_span.set_attribute("lockfile.arch", arch)
+        current_span.set_attribute("lockfile.requested_repos", ",".join(sorted(requested_repos)))
+        current_span.set_attribute("lockfile.already_loaded_count", len(already_loaded))
+        current_span.set_attribute("lockfile.needs_loading_count", len(not_yet_loaded))
+
         if already_loaded:
             self.logger.info(f"Repos already loaded, skipping: {', '.join(sorted(already_loaded))} for arch {arch}")
 
@@ -149,6 +161,8 @@ class RpmInfoCollector:
             return
 
         self.logger.info(f"Loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
+        current_span.set_attribute("lockfile.repos_to_fetch", ",".join(repos_to_fetch))
+        current_span.set_attribute("lockfile.repo_count", len(repos_to_fetch))
 
         repodatas = await asyncio.gather(*(self.repos[repo_name].get_repodata(arch) for repo_name in repos_to_fetch))
 
@@ -205,6 +219,7 @@ class RpmInfoCollector:
 
         return sorted(rpm_info_list)
 
+    @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
         self, arches: list[str], repositories: set[str], rpm_names: set[str]
     ) -> dict[str, list[RpmInfo]]:
@@ -219,7 +234,13 @@ class RpmInfoCollector:
         Returns:
             dict[str, list[RpmInfo]]: Mapping of architecture to resolved RPM metadata.
         """
-        await asyncio.gather(*(self.load_repos(repositories, arch) for arch in arches))
+        current_span = trace.get_current_span()
+        current_span.set_attribute("lockfile.arches", ",".join(arches))
+        current_span.set_attribute("lockfile.repositories", ",".join(sorted(repositories)))
+        current_span.set_attribute("lockfile.rpm_count", len(rpm_names))
+        current_span.set_attribute("lockfile.arch_count", len(arches))
+
+        await asyncio.gather(*(self._load_repos(repositories, arch) for arch in arches))
 
         results = await asyncio.gather(
             *[
@@ -230,6 +251,8 @@ class RpmInfoCollector:
             ]
         )
 
+        total_resolved = sum(len(result) for result in results)
+        current_span.set_attribute("lockfile.total_resolved_packages", total_resolved)
         return dict(zip(arches, results))
 
 

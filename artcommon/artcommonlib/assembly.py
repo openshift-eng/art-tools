@@ -274,7 +274,7 @@ def _assembly_field(field_name: str, releases_config: Model, assembly: str) -> M
 
 
 def assembly_basis_event(
-    releases_config: Model, assembly: str, strict: bool = False
+    releases_config: Model, assembly: str, strict: bool = False, build_system: str = 'brew'
 ) -> typing.Optional[typing.Union[int, datetime]]:
     """
     :param releases_config: The content of releases.yml in Model form.
@@ -291,9 +291,25 @@ def assembly_basis_event(
     _check_recursion(releases_config, assembly)
     target_assembly = releases_config.releases[assembly].assembly
 
-    if target_assembly.basis.brew_event:
+    if not target_assembly.basis.brew_event and not target_assembly.basis.time:
+        return assembly_basis_event(
+            releases_config, target_assembly.basis.assembly, strict=strict, build_system=build_system
+        )
+
+    if build_system == 'brew':
+        if target_assembly.basis.brew_event is Missing:
+            if strict:
+                raise ValueError(f"Assembly {assembly} has no assembly.basis.brew_event defined")
+            return None
+
         return int(target_assembly.basis.brew_event)  # Integer for Brew event
-    elif target_assembly.basis.time:
+
+    elif build_system == 'konflux':
+        if target_assembly.basis.time is Missing:
+            if strict:
+                raise ValueError(f"Assembly {assembly} has no assembly.basis.time defined")
+            return None
+
         # datetime UTC for Konflux
         time_str = target_assembly.basis.time
         if not isinstance(time_str, str):
@@ -302,7 +318,9 @@ def assembly_basis_event(
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
-    return assembly_basis_event(releases_config, target_assembly.basis.assembly, strict=strict)
+
+    else:
+        raise ValueError(f"Unsupported build system: {build_system}. Supported systems are 'brew' and 'konflux'.")
 
 
 def assembly_group_config(releases_config: Model, assembly: typing.Optional[str], group_config: Model) -> Model:

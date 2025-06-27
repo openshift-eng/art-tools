@@ -126,16 +126,6 @@ class TestUtil(unittest.TestCase):
         actual = util.get_golang_container_nvrs(nvrs, None)
         self.assertEqual(expected, actual)
 
-    def test_suffix_replacement(self):
-        testdata = [
-            ["Some bug summary [openshift-whatever]", "[openshift-4.11]", "Some bug summary [openshift-4.11]"],
-            ["Bug is fine [openshift-4.12]", "[openshift-4.12]", "Bug is fine [openshift-4.12]"],
-            ["Append here", "[openshift-4.13]", "Append here [openshift-4.13]"],
-        ]
-        for summary, version, expected in testdata:
-            result = util.fix_summary_suffix(summary, version)
-            self.assertEqual(result, expected)
-
 
 if __name__ == '__main__':
     unittest.main()

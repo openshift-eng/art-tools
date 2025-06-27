@@ -79,6 +79,32 @@ def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, sou
     )
 
 
+async def is_commit_in_public_upstream_async(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
+    """
+    Same as is_commit_in_public_upstream, but for async execution.
+    """
+    cmd = [
+        "git",
+        "-C",
+        str(source_dir),
+        "merge-base",
+        "--is-ancestor",
+        "--",
+        revision,
+        "public_upstream/" + public_upstream_branch,
+    ]
+    # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
+    # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
+    rc, out, err = await exectools.cmd_gather_async(cmd)
+    if rc == 0:
+        return True
+    if rc == 1:
+        return False
+    raise IOError(
+        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+    )
+
+
 def is_in_directory(path: os.PathLike, directory: os.PathLike):
     """check whether a path is in another directory"""
     a = Path(path).parent.resolve()
