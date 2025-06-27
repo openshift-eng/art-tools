@@ -27,7 +27,6 @@ from elliottlib.shipment_utils import get_shipment_configs_by_kind
 from ghapi.all import GhApi
 
 from pyartcd import constants
-from pyartcd.record import parse_record_log
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -103,11 +102,9 @@ class PrepareReleaseKonfluxPipeline:
         self._doozer_base_command = [
             'doozer',
             group_param,
-            f'--assembly={self.assembly}',
             '--build-system=konflux',
             f'--working-dir={self.doozer_working_dir}',
             f'--data-path={self.build_repo_pull_url}',
-            '--konflux-kubeconfig', self.kubeconfig,
         ]
 
     @staticmethod
@@ -303,7 +300,7 @@ class PrepareReleaseKonfluxPipeline:
 
     async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> Spec:
         async def get_olm_operators() -> list[str]:
-            cmd = self._doozer_base_command + ["olm-bundle:list-olm-operators"]
+            cmd = self._doozer_base_command + [f'--assembly={self.assembly}', "olm-bundle:list-olm-operators"]
             rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
             if stderr:
                 _LOGGER.info("stderr:\n %s", stderr)
@@ -320,34 +317,13 @@ class PrepareReleaseKonfluxPipeline:
             if parsed_nvr["name"] in olm_operators:
                 olm_operator_nvrs.append(nvr)
 
-        cmd = self._doozer_base_command + ["beta:images:konflux:bundle", "--"] + olm_operator_nvrs
+        cmd = self._doozer_base_command + ['--quiet', f'--assembly=stream', "beta:images:konflux:bundle", f'--konflux-kubeconfig={self.kubeconfig}', "--"] + olm_operator_nvrs
         await exectools.cmd_assert_async(cmd)
-        # Parse already exist builds
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
         bundle_nvrs = []
-        pattern = re.compile(
-            r"doozerlib\.cli\.images_konflux\.\[(.*?)\].*A previous bundle build already exists: ([\w\-.]+)"
-        )
-        debug_log_path = Path(self.doozer_working_dir, 'debug.log')
-        if debug_log_path.exists():
-            with debug_log_path.open() as file:
-                for line in file:
-                    match = pattern.search(line)
-                    if match:
-                        bundle_nvr = match.group(2)
-                        bundle_nvrs.append(bundle_nvr)
-        # Parse new builds
-        record_log_path = Path(self.doozer_working_dir, 'record.log')
-        if record_log_path.exists():
-            with record_log_path.open() as file:
-                record_log = parse_record_log(file)
-            records = record_log.get('build_olm_bundle_konflux', [])
-            for record in records:
-                if record['status'] != '0':
-                    raise RuntimeError(
-                        'record.log includes unexpected build_olm_bundle_konflux '
-                        f'record with error message: {record["message"]}'
-                    )
-                bundle_nvrs.append(record['bundle_nvr'])
+        if stdout:
+            out = json.loads(stdout)
+            bundle_nvrs = out.get("results", [])
 
         return Spec(nvrs=bundle_nvrs)
 
