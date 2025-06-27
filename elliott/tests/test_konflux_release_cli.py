@@ -6,15 +6,18 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
+    ComponentSource,
     Data,
     EnvAdvisory,
     Environments,
+    GitSource,
     Metadata,
     ReleaseNotes,
     Shipment,
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
+    SnapshotComponent,
     SnapshotSpec,
 )
 
@@ -34,8 +37,9 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         self.konflux_client = AsyncMock()
-        # Patch verify_connection to be a regular Mock, not AsyncMock
+        # Patch verify_connection and resource_url to be regular Mocks, not AsyncMock
         self.konflux_client.verify_connection = MagicMock(return_value=True)
+        self.konflux_client.resource_url = MagicMock()
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -175,8 +179,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.image_repo_pull_secret = {}  # Use a dict as required by CreateReleaseCli
 
         self.konflux_client = AsyncMock()
-        # Patch verify_connection to be a regular Mock, not AsyncMock
+        # Patch verify_connection and resource_url to be regular Mocks, not AsyncMock
         self.konflux_client.verify_connection = MagicMock(return_value=True)
+        self.konflux_client.resource_url = MagicMock()
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -199,7 +204,28 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(releasePlan="test-prod-rp"),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(
+                    nvrs=["test-nvr-1", "test-nvr-2"],
+                    spec=SnapshotSpec(
+                        application="test-app",
+                        components=[
+                            SnapshotComponent(
+                                name="test-rpm",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-rpm.git", revision="abc123")
+                                ),
+                                containerImage="foo",
+                            ),
+                            SnapshotComponent(
+                                name="test-container",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-container.git", revision="def456")
+                                ),
+                                containerImage="bar",
+                            ),
+                        ],
+                    ),
+                ),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
@@ -217,10 +243,26 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get_api.return_value = MagicMock()
         self.konflux_client._get.return_value = MagicMock()
 
+        # Mock snapshot creation
+        created_snapshot_name = "ose-4-18-timestamp"
+        created_snapshot = MagicMock()
+        created_snapshot.metadata.name = created_snapshot_name
+
         # Mock snapshot verification
         mock_get_snapshot_instance = AsyncMock()
-        mock_get_snapshot_instance.run.return_value = shipment_config.shipment.snapshot.spec.nvrs
+        mock_get_snapshot_instance.run.return_value = shipment_config.shipment.snapshot.nvrs
         mock_get_snapshot_cli.return_value = mock_get_snapshot_instance
+
+        expected_snapshot = {
+            "apiVersion": API_VERSION,
+            "kind": "Snapshot",
+            "metadata": {
+                "name": created_snapshot_name,
+                "namespace": self.konflux_config['namespace'],
+                "labels": {"test.appstudio.openshift.io/type": "override"},
+            },
+            "spec": shipment_config.shipment.snapshot.spec.model_dump(exclude_none=True),
+        }
 
         expected_release = {
             "apiVersion": API_VERSION,
@@ -232,7 +274,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             },
             'spec': {
                 'releasePlan': shipment_config.shipment.environments.stage.releasePlan,
-                'snapshot': shipment_config.shipment.snapshot.name,
+                'snapshot': created_snapshot_name,
                 'data': {
                     'releaseNotes': {
                         'type': shipment_config.shipment.data.releaseNotes.type,
@@ -245,7 +287,13 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 },
             },
         }
-        self.konflux_client._create.return_value = Model(expected_release)
+
+        created_release = Model(expected_release)
+        self.konflux_client._create.side_effect = [
+            created_snapshot,
+            created_release,
+        ]  # First call for snapshot, second for release
+        self.konflux_client.resource_url.return_value = f"https://cluster/api/snapshot/{created_snapshot_name}"
 
         cli = CreateReleaseCli(
             runtime=self.runtime,
@@ -270,11 +318,15 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             API_VERSION, KIND_RELEASE_PLAN, shipment_config.shipment.environments.stage.releasePlan
         )
 
-        # Verify release was created with correct parameters
-        self.konflux_client._create.assert_called_once_with(expected_release)
+        # Verify snapshot was created first, then release
+        expected_calls = [
+            ((expected_snapshot,), {}),
+            ((expected_release,), {}),
+        ]
+        self.assertEqual(self.konflux_client._create.call_args_list, expected_calls)
 
         # Check result
-        self.assertEqual(result, Model(expected_release))
+        self.assertEqual(result, created_release)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -301,9 +353,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     },
                 },
                 "snapshot": {
-                    "name": "test-snapshot",
+                    "nvrs": ["test-nvr-1", "test-nvr-2"],
                     "spec": {
-                        "nvrs": ["test-nvr-1", "test-nvr-2"],
+                        "application": "test-app",
+                        "components": [],
                     },
                 },
             },
@@ -354,9 +407,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     },
                 },
                 "snapshot": {
-                    "name": "test-snapshot",
+                    "nvrs": ["test-nvr-1", "test-nvr-2"],
                     "spec": {
-                        "nvrs": ["test-nvr-1", "test-nvr-2"],
+                        "application": "test-app",
+                        "components": [],
                     },
                 },
             },
@@ -405,7 +459,21 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(
+                    nvrs=["test-nvr-1", "test-nvr-2"],
+                    spec=SnapshotSpec(
+                        application="test-app",
+                        components=[
+                            SnapshotComponent(
+                                name="test-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test.git", revision="abc123")
+                                ),
+                                containerImage="test-image",
+                            ),
+                        ],
+                    ),
+                ),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
@@ -433,6 +501,8 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             force=False,
         )
 
+        # This test checks that it raises an error when force=False and the environment is already shipped
+        # It should fail early before creating a snapshot, so no need to mock snapshot creation
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
@@ -459,7 +529,21 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(releasePlan="test-prod-rp"),
                 ),
-                snapshot=Snapshot(name="test-snapshot", spec=SnapshotSpec(nvrs=["test-nvr-1", "test-nvr-2"])),
+                snapshot=Snapshot(
+                    nvrs=["test-nvr-1", "test-nvr-2"],
+                    spec=SnapshotSpec(
+                        application="test-app",
+                        components=[
+                            SnapshotComponent(
+                                name="test-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test.git", revision="abc123")
+                                ),
+                                containerImage="test-image",
+                            ),
+                        ],
+                    ),
+                ),
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
@@ -476,6 +560,13 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         # Mock API queries
         self.konflux_client._get_api.return_value = MagicMock()
         self.konflux_client._get.return_value = MagicMock()
+
+        # Mock snapshot creation
+        created_snapshot_name = "ose-4-18-timestamp"
+        created_snapshot = MagicMock()
+        created_snapshot.metadata.name = created_snapshot_name
+        self.konflux_client._create.return_value = created_snapshot
+        self.konflux_client.resource_url.return_value = f"https://cluster/api/snapshot/{created_snapshot_name}"
 
         # Mock snapshot verification
         mock_get_snapshot_instance = AsyncMock()

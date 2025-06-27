@@ -109,11 +109,6 @@ class CreateReleaseCli:
 
         major, minor = self.runtime.get_major_minor()
         release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
-        release_config = self.get_release_config(config.shipment, self.release_env, release_name)
-        LOGGER.info(
-            f"Constructed release config with snapshot={release_config.snapshot}"
-            f" releasePlan={release_config.release_plan}"
-        )
 
         if not self.force:
             env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
@@ -123,17 +118,25 @@ class CreateReleaseCli:
                     f"{env_config.model_dump()}. Use --force to proceed"
                 )
 
-        # verify snapshot
+        # Create snapshot first using the spec from shipment config
+        LOGGER.info("Creating snapshot from shipment config...")
+        snapshot_obj = await self.create_snapshot(config.shipment)
+        created_snapshot = await self.konflux_client._create(snapshot_obj)
+        snapshot_name = created_snapshot.metadata.name
+        snapshot_url = self.konflux_client.resource_url(created_snapshot)
+        LOGGER.info("Successfully created Snapshot %s", snapshot_url)
+
+        # Verify the created snapshot contains the expected NVRs
         get_snapshot_cli = GetSnapshotCli(
             self.runtime,
             self.konflux_config,
             self.image_repo_pull_secret,
             for_fbc=meta.fbc,
-            snapshot=release_config.snapshot,
+            snapshot=snapshot_name,
             dry_run=False,
         )
         actual_nvrs = set(await get_snapshot_cli.run())
-        expected_nvrs = set(config.shipment.snapshot.spec.nvrs)
+        expected_nvrs = set(config.shipment.snapshot.nvrs)
         if actual_nvrs != expected_nvrs:
             missing = expected_nvrs - actual_nvrs
             extra = actual_nvrs - expected_nvrs
@@ -141,19 +144,45 @@ class CreateReleaseCli:
                 f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} {extra=}"
             )
 
+        # Create release config using the created snapshot name
+        release_config = self.get_release_config(config.shipment, self.release_env, release_name, snapshot_name)
+        LOGGER.info(
+            f"Constructed release config with snapshot={release_config.snapshot}"
+            f" releasePlan={release_config.release_plan}"
+        )
+
         release_obj = await self.new_release(release_config)
         created_release = await self.konflux_client._create(release_obj)
         release_url = self.konflux_client.resource_url(created_release)
         LOGGER.info("Successfully created Release %s", release_url)
         return created_release
 
+    async def create_snapshot(self, shipment: Shipment) -> dict:
+        """
+        Create a snapshot object from the shipment's snapshot spec
+        """
+        major, minor = self.runtime.get_major_minor()
+        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+
+        snapshot_obj = {
+            "apiVersion": API_VERSION,
+            "kind": KIND_SNAPSHOT,
+            "metadata": {
+                "name": snapshot_name,
+                "namespace": self.konflux_config['namespace'],
+                "labels": {"test.appstudio.openshift.io/type": "override"},
+            },
+            "spec": shipment.snapshot.spec.model_dump(exclude_none=True),
+        }
+        return snapshot_obj
+
     @staticmethod
-    def get_release_config(shipment: Shipment, env: str, release_name: str) -> ReleaseConfig:
+    def get_release_config(shipment: Shipment, env: str, release_name: str, snapshot_name: str) -> ReleaseConfig:
         """
         Construct a konflux release config based on env and raw config
         """
         rc = ReleaseConfig(
-            snapshot=shipment.snapshot.name,
+            snapshot=snapshot_name,
             release_plan=getattr(shipment.environments, env).releasePlan,
             application=shipment.metadata.application,
             release_name=release_name,
