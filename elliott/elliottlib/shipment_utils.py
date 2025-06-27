@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 
 
-def get_shipment_configs_by_kind(
+def get_shipment_configs_from_mr(
     mr_url: str, kinds: Tuple[str, ...] = ("rpm", "image", "extras", "microshift", "metadata")
 ) -> Dict[str, ShipmentConfig]:
     """Fetch shipment configs from a merge request URL.
@@ -25,6 +25,9 @@ def get_shipment_configs_by_kind(
     shipment_configs: Dict[str, ShipmentConfig] = {}
 
     gitlab_token = os.getenv("GITLAB_TOKEN")
+    if not gitlab_token:
+        raise ValueError("GITLAB_TOKEN environment variable is required for Konflux operations")
+
     parsed_url = urlparse(mr_url)
     project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
     mr_id = parsed_url.path.split('/')[-1]
@@ -65,7 +68,7 @@ def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:
     """Fetch builds from a merge request URL."""
 
     builds_by_kind = {}
-    shipment_configs = get_shipment_configs_by_kind(mr_url)
+    shipment_configs = get_shipment_configs_from_mr(mr_url)
     for kind, shipment_config in shipment_configs.items():
         nvrs = []
         if shipment_config.shipment.snapshot:
