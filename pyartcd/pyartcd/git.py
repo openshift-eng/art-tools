@@ -120,7 +120,7 @@ class GitRepository:
         # Clean workdir
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "clean", "-fdx"], env=env)
 
-    async def commit_push(self, commit_message: str) -> bool:
+    async def commit_push(self, commit_message: str, safe: bool = False) -> bool:
         """Create a commit that includes all file changes in the working tree and push the commit to the remote repository.
         If there are no changes in thw working tree, do nothing.
         """
@@ -143,8 +143,7 @@ class GitRepository:
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
         async def _push():
             # Push the commit to the remote repository
-            # use --force-with-lease to avoid race conditions
-            cmd = ["git", "-C", repo_dir, "push", "--force-with-lease", "origin", "HEAD"]
+            cmd = ["git", "-C", repo_dir, "push", "--force-with-lease" if safe else "--force", "origin", "HEAD"]
             if not self._dry_run:
                 await exectools.cmd_assert_async(cmd, env=env)
             else:
