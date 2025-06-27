@@ -214,6 +214,9 @@ def get_shipment_configs_from_mr(
     shipment_configs: Dict[str, ShipmentConfig] = {}
 
     gitlab_token = os.getenv("GITLAB_TOKEN")
+    if not gitlab_token:
+        raise click.UsageError("GITLAB_TOKEN environment variable is required for Konflux operations")
+
     parsed_url = urlparse(mr_url)
     project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
     mr_id = parsed_url.path.split('/')[-1]
