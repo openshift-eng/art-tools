@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import click
 import gitlab
+
 from artcommonlib import arch_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.rpm_utils import parse_nvr
@@ -24,6 +25,7 @@ from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConf
 from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logging.getLogger(__name__)
+YAML = new_roundtrip_yaml_handler()
 
 
 @cli.command('attach-cve-flaws', short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)')
@@ -40,10 +42,11 @@ LOGGER = logging.getLogger(__name__)
 @click.option(
     "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
 )
+@click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
 @click.pass_obj
 @click_coroutine
 async def attach_cve_flaws_cli(
-    runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool
+    runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool, output: str
 ):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
 
@@ -75,7 +78,11 @@ async def attach_cve_flaws_cli(
             )
 
         release_notes = await handle_konflux_cve_flaws(runtime, default_advisory_type)
-        click.echo(json.dumps(release_notes.model_dump(mode='json'), indent=4))
+
+        if output == 'json':
+            click.echo(json.dumps(release_notes.model_dump(mode='json'), indent=4))
+        else:
+            click.echo(YAML.dump(release_notes.model_dump(mode='python'), sys.stdout))
 
     elif runtime.build_system == 'brew':
         await handle_brew_cve_flaws(
@@ -243,8 +250,7 @@ def get_shipment_configs_from_mr(
         file_content = source_project.files.get(file_path, mr.source_branch)
         content = file_content.decode().decode('utf-8')
 
-        yaml = new_roundtrip_yaml_handler()
-        shipment_data = ShipmentConfig(**yaml.load(content))
+        shipment_data = ShipmentConfig(**YAML.load(content))
         if kind in shipment_configs:
             raise ValueError(f"Multiple shipment configs found for {kind}")
         shipment_configs[kind] = shipment_data
