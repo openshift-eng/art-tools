@@ -142,6 +142,9 @@ class CreateReleaseCli:
         """
         Create a snapshot object from the shipment's snapshot spec
         """
+        if not shipment.snapshot.spec.components:
+            raise ValueError("Snapshot spec must have components")
+
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 

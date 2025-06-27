@@ -81,6 +81,8 @@ class CreateSnapshotCli:
         self.runtime = runtime
         self.konflux_config = konflux_config
         self.for_fbc = for_fbc
+        if not builds:
+            raise ValueError("builds must be provided")
         self.builds = builds
         self.dry_run = dry_run
         self.image_repo_pull_secret = image_repo_pull_secret
