@@ -135,14 +135,9 @@ async def handle_konflux_cve_flaws(runtime: Runtime, default_advisory_type: str)
 
         # Add the CVE component mapping to the cve field
         cve_component_mapping = get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
-        cves = [
-            {'cve_id': cve_id, 'component': component}
-            for cve_id, components in cve_component_mapping.items()
-            for component in components
-        ]
-        for cve in cves:
-            # tracker_flaw = [tracker_flaws[t.id]
-            release_notes.cves.append(CveAssociation(key=cve['cve_id'], component=cve['component']))
+        for cve_id, components in cve_component_mapping.items():
+            for component in components:
+                release_notes.cves.append(CveAssociation(key=cve_id, component=component))
 
         # Attach the flaw bugs to the release notes issues
         release_notes.issues.fixed.extend([{'id': bug.id, 'source': "issues.redhat.com"} for bug in flaw_bugs])
