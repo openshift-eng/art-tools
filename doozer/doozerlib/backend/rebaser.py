@@ -93,65 +93,6 @@ class KonfluxRebaser:
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
 
-    def _collect_repo_arch_combinations(self, metas: List[ImageMetadata]) -> Set[Tuple[str, str]]:
-        """
-        Collect specific (repository, architecture) combinations needed across all images.
-
-        Args:
-            metas: List of ImageMetadata objects to analyze
-
-        Returns:
-            Set of (repo_name, arch) tuples that will be needed for lockfile generation
-        """
-        repo_arch_pairs = set()
-        for image_meta in metas:
-            if image_meta.is_lockfile_generation_enabled():
-                enabled_repos = image_meta.config.get("enabled_repos", [])
-                target_arches = image_meta.get_arches()
-                # Create combinations specific to this image
-                for repo in enabled_repos:
-                    for arch in target_arches:
-                        repo_arch_pairs.add((repo, arch))
-        return repo_arch_pairs
-
-    async def _warm_repository_cache(self, repo_arch_pairs: Set[Tuple[str, str]]):
-        """
-        Pre-warm repository cache for specific (repository, architecture) combinations.
-
-        Args:
-            repo_arch_pairs: Set of (repo_name, arch) tuples to pre-load
-        """
-        if not repo_arch_pairs:
-            self._logger.debug("No repository-architecture combinations to warm")
-            return
-
-        # Group repo-arch pairs by architecture for efficient loading
-        arch_to_repos = {}
-        for repo, arch in repo_arch_pairs:
-            if arch not in arch_to_repos:
-                arch_to_repos[arch] = set()
-            arch_to_repos[arch].add(repo)
-
-        self._logger.info(
-            f"Warming repository cache for {len(repo_arch_pairs)} (repo, arch) combinations across {len(arch_to_repos)} architectures"
-        )
-
-        # Use existing RpmInfoCollector from RPMLockfileGenerator
-        collector = self._rpm_lockfile_generator.builder
-
-        # Warm cache for each architecture with its specific repositories
-        cache_warming_tasks = []
-        for arch, repos in arch_to_repos.items():
-            self._logger.debug(f"Preparing to warm cache for arch {arch} with repos: {sorted(repos)}")
-            cache_warming_tasks.append(collector.load_repos(repos, arch))
-
-        try:
-            await asyncio.gather(*cache_warming_tasks, return_exceptions=True)
-            self._logger.info("Repository cache warming completed")
-        except Exception as e:
-            self._logger.warning(f"Repository cache warming encountered errors: {e}")
-            # Continue execution - fallback to on-demand loading
-
     @start_as_current_span_async(TRACER, "rebase.rebase_to")
     async def rebase_to(
         self,
@@ -742,7 +683,7 @@ class KonfluxRebaser:
 
             await self._write_osbs_image_config(metadata, dest_dir, source, version)
 
-            await self._write_rpms_lock_file(metadata, str(self._runtime.group), dest_dir)
+            await self._write_rpms_lock_file(metadata, dest_dir)
 
             df_path = dest_dir.joinpath('Dockerfile')
             await self._update_dockerfile(
@@ -761,74 +702,14 @@ class KonfluxRebaser:
 
             return version, release
 
-    @start_as_current_span_async(TRACER, "rebase.fetch_packages_from_metadata")
-    async def _fetch_packages_from_metadata(self, name: str, group_name: str) -> set[str]:
-        """
-        Fetch installed RPM packages for a given image and group from konflux_db.
-        """
-        try:
-            build = await self._runtime.konflux_db.get_latest_build(name=name, group=group_name)
-            if build and build.installed_packages:
-                return set(build.installed_packages)
-            return set()
-        except Exception as e:
-            self._logger.error(f"Failed to fetch RPMs for {name}/{group_name}: {e}")
-            return set()
-
-    @start_as_current_span_async(TRACER, "rebase.write_rpms_lock_file")
-    async def _write_rpms_lock_file(self, metadata: ImageMetadata, group: str, dest_dir: Path):
-        """
-        Generates RPM lockfile based on image metadata and repository configuration.
-
-        Fetches RPM package lists from metadata and parent metadata, calculates
-        RPMs to install, and delegates lockfile generation to RPMLockfileGenerator.
-        """
-        # Add business context to span
-        current_span = trace.get_current_span()
-        current_span.set_attribute("rebase.image_key", metadata.qualified_key)
-        current_span.set_attribute("rebase.group", group)
-        current_span.set_attribute("rebase.dest_dir", str(dest_dir))
-
-        lockfile_enabled = metadata.is_lockfile_generation_enabled()
-        current_span.set_attribute("rebase.lockfile_enabled", lockfile_enabled)
-        if not lockfile_enabled:
-            self._logger.info(f'Skipping lockfile generation for {metadata.image_name}')
+    async def _write_rpms_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
+        if not metadata.is_lockfile_generation_enabled():
+            self._logger.debug(f'RPM lockfile generation is disabled for {metadata.distgit_key}')
             return
 
-        rpms_to_install = set(metadata.config.konflux.cachi2.lockfile.packages.get('install', []))
-        parents = metadata.get_parent_members()
+        self._logger.info(f'Generating RPM lockfile for {metadata.distgit_key}')
 
-        if parents:
-            parent_name = next(iter(parents))
-            rpms, parent_rpms = await asyncio.gather(
-                self._fetch_packages_from_metadata(metadata.distgit_key, group),
-                self._fetch_packages_from_metadata(parent_name, group),
-            )
-            rpms_to_install.update(rpms - parent_rpms)
-        else:
-            rpms = await self._fetch_packages_from_metadata(metadata.distgit_key, group)
-            if rpms:
-                self._logger.warning(f'No parent found for {metadata.distgit_key}; using full RPM set')
-                rpms_to_install.update(rpms)
-
-        if not rpms_to_install:
-            self._logger.warning(
-                f'Empty RPM list to install for {metadata.distgit_key}; all required RPMs may be inherited'
-            )
-            return
-        else:
-            self._logger.info(f'Final install RPMs for {metadata.distgit_key}: {sorted(rpms_to_install)}')
-
-        enabled_repos = set(metadata.config.get("enabled_repos", []))
-
-        await self._rpm_lockfile_generator.generate_lockfile(
-            metadata.get_arches(),
-            enabled_repos,
-            rpms_to_install,
-            dest_dir,
-            distgit_key=metadata.distgit_key,
-            force=metadata.is_lockfile_force_enabled(),
-        )
+        await self._rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]

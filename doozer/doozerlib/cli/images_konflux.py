@@ -77,10 +77,7 @@ class KonfluxRebaseCli:
             force_private_bit=self.embargoed,
         )
 
-        # NEW: Eager repository cache warming
-        repo_arch_pairs = rebaser._collect_repo_arch_combinations(metas)
-        if repo_arch_pairs:
-            await rebaser._warm_repository_cache(repo_arch_pairs)
+        await rebaser._rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
 
         tasks = []
         for image_meta in metas:

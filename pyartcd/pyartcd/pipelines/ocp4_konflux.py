@@ -12,6 +12,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler
+from doozer.doozerlib.telemetry import initialize_telemetry
 from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, jenkins, locks, util
