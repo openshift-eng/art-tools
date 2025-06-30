@@ -390,7 +390,11 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     go_nvr_map = {}
     for build in all_build_objs:
         go_version = None
-        nvr = (build['name'], build['version'], build['release'])
+        try:
+            nvr = (build['name'], build['version'], build['release'])
+        except TypeError:
+            logger.error(f'Error parsing {build}')
+            raise
         name = nvr[0]
         if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
             go_version = golang_builder_version(nvr, logger)
