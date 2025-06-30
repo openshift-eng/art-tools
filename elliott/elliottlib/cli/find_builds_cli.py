@@ -721,6 +721,7 @@ async def find_builds_konflux(runtime, payload):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
     return records
 
+
 async def find_builds_konflux_all_types(runtime):
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
@@ -786,7 +787,9 @@ async def find_builds_konflux_all_types(runtime):
         if is_olm:
             operator_builds.append(record)
             payload_flags.append(is_payload)
-            olm_tasks.append(anext(runtime.konflux_db.search_builds_by_fields(where={"operator_nvr": record.nvr}, limit=1), None))
+            olm_tasks.append(
+                anext(runtime.konflux_db.search_builds_by_fields(where={"operator_nvr": record.nvr}, limit=1), None)
+            )
     # find olm result (olm_operator build, olm build, is_payload)
     olm_records = await asyncio.gather(*[task for task in olm_tasks])
     olm_records_not_found = [operator_build for operator_build, r in zip(operator_builds, olm_records) if r is None]

@@ -372,12 +372,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
-        mock_find_builds,
+        mock_find_builds_all,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_create_build_data_pr,
@@ -471,18 +471,16 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_init_shipment.side_effect = init_shipment
 
-        def find_builds(kind):
-            return {
-                "image": Spec(nvrs=["image-nvr"]),
-                "extras": Spec(nvrs=["extras-nvr"]),
-            }.get(kind)
+        def find_builds_all():
+            return ["image-nvr"], ["extras-nvr"], ["olm-nvr"], []
 
-        mock_find_builds.side_effect = find_builds
+        mock_find_builds_all.side_effect = find_builds_all
 
         def find_bugs(kind, **_):
             return {
                 "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
                 "extras": Issues(fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]),
+                "metadata": Issues(fixed=[Issue(id="METADATABUG", source="issues.redhat.com")]),
             }.get(kind)
 
         mock_find_bugs.side_effect = find_bugs
@@ -499,10 +497,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_shipment.assert_any_call("extras")
         mock_init_shipment.assert_any_call("image")
         self.assertEqual(mock_init_shipment.call_count, 2)
-
-        mock_find_builds.assert_any_call("extras")
-        mock_find_builds.assert_any_call("image")
-        self.assertEqual(mock_find_builds.call_count, 2)
+        self.assertEqual(mock_find_builds_all.call_count, 1)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)

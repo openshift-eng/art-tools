@@ -2,9 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
-import re
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
@@ -49,7 +49,7 @@ class PrepareReleaseKonfluxPipeline:
         assembly: str,
         github_token: str,
         gitlab_token: str,
-        kubeconfig: str,
+        kubeconfig: Optional[str] = None,
         build_repo_url: Optional[str] = None,
         shipment_repo_url: Optional[str] = None,
         job_url: Optional[str] = None,
@@ -316,7 +316,17 @@ class PrepareReleaseKonfluxPipeline:
             if parsed_nvr["name"] in olm_operators:
                 olm_operator_nvrs.append(nvr)
 
-        cmd = self._doozer_base_command + ['--quiet', f'--assembly=stream', "beta:images:konflux:bundle", f'--konflux-kubeconfig={self.kubeconfig}', "--"] + olm_operator_nvrs
+        cmd = (
+            self._doozer_base_command
+            + [
+                '--quiet',
+                '--assembly=stream',
+                "beta:images:konflux:bundle",
+                f'--konflux-kubeconfig={self.kubeconfig}',
+                "--",
+            ]
+            + olm_operator_nvrs
+        )
         await exectools.cmd_assert_async(cmd)
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
         bundle_nvrs = []
@@ -807,7 +817,12 @@ class PrepareReleaseKonfluxPipeline:
 @pass_runtime
 @click_coroutine
 async def prepare_release(
-    runtime: Runtime, group: str, assembly: str, kubeconfig: str, build_repo_url: Optional[str], shipment_repo_url: Optional[str]
+    runtime: Runtime,
+    group: str,
+    assembly: str,
+    kubeconfig: Optional[str],
+    build_repo_url: Optional[str],
+    shipment_repo_url: Optional[str],
 ):
     job_url = os.getenv('BUILD_URL')
 

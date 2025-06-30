@@ -220,7 +220,7 @@ class KonfluxOlmBundleRebaser:
             await f.write(yaml.safe_dump({'annotations': operator_framework_tags}))
 
         # Generate bundle's Dockerfile
-        await asyncio.to_thread(
+        nvr = await asyncio.to_thread(
             self._create_dockerfile, metadata, operator_dir, bundle_dir, operator_framework_tags, input_release
         )
 

@@ -1,9 +1,9 @@
 import asyncio
+import concurrent.futures
 import datetime
 import re
-import time
 import threading
-import concurrent.futures
+import time
 from typing import Any, List, Optional, Tuple, Union
 
 from artcommonlib import logutil
@@ -544,10 +544,11 @@ class MetadataBase(object):
                 kwargs['completed_before'] = basis_event
 
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 return asyncio.run(self.get_latest_konflux_build(**kwargs))
             else:
+
                 def run_async():
                     return asyncio.run(self.get_latest_konflux_build(**kwargs))
 
