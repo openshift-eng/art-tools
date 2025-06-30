@@ -281,7 +281,7 @@ USER 3000
 
         mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
-        rebaser._rpm_lockfile_generator = mock_generator
+        rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
 
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
@@ -296,7 +296,7 @@ USER 3000
 
         mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
-        rebaser._rpm_lockfile_generator = mock_generator
+        rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
 
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
