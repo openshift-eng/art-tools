@@ -788,7 +788,12 @@ async def find_builds_konflux_all_types(runtime):
             operator_builds.append(record)
             payload_flags.append(is_payload)
             olm_tasks.append(
-                anext(runtime.konflux_db.search_builds_by_fields(where={"operator_nvr": record.nvr}, limit=1), None)
+                anext(
+                    runtime.konflux_db.search_builds_by_fields(
+                        where={"operator_nvr": record.nvr, "outcome": "success"}, limit=1
+                    ),
+                    None,
+                )
             )
     # find olm result (olm_operator build, olm build, is_payload)
     olm_records = await asyncio.gather(*[task for task in olm_tasks])
