@@ -76,6 +76,9 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
         )
+
+        await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
+
         tasks = []
         for image_meta in metas:
             tasks.append(

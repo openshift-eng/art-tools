@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
@@ -458,6 +458,32 @@ class TestImageMetadata(unittest.TestCase):
         self.assertFalse(result)
         self.logger.info.assert_any_call("Lockfile force generation set from metadata config: False")
 
+    def test_get_enabled_repos_with_repos(self):
+        """Test get_enabled_repos returns configured repositories"""
+        metadata = self._create_image_metadata('openshift/test_repos')
+
+        mock_config = MagicMock()
+        mock_config.get.return_value = ['repo1', 'repo2', 'repo3']
+        metadata.config = mock_config
+
+        result = metadata.get_enabled_repos()
+
+        self.assertEqual(result, {'repo1', 'repo2', 'repo3'})
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_enabled_repos_empty_config(self):
+        """Test get_enabled_repos returns empty set when no repos configured"""
+        metadata = self._create_image_metadata('openshift/test_repos_empty')
+
+        mock_config = MagicMock()
+        mock_config.get.return_value = []
+        metadata.config = mock_config
+
+        result = metadata.get_enabled_repos()
+
+        self.assertEqual(result, set())
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
@@ -549,3 +575,200 @@ class TestImageInspector(IsolatedAsyncioTestCase):
         get_installed_rpm_dicts.assert_called_once_with()
         get_repodata_threadsafe.assert_awaited()
         self.assertEqual(actual, [('bar-0:1.0.0-1.el9.x86_64', 'bar-0:1.1.0-1.el9.x86_64', 'rhel-8-appstream-rpms')])
+
+
+class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
+    """Test class for async methods in ImageMetadata"""
+
+    def setUp(self):
+        self.logger = MagicMock()
+
+    def _create_image_metadata(self, name, distgit_key=None):
+        """Helper to create ImageMetadata with mock runtime"""
+        image_model = Model({'name': name})
+        data_obj = Model(
+            {
+                'key': distgit_key or 'test-image',
+                'data': image_model,
+                'filename': 'test-image.yaml',
+            }
+        )
+
+        rt = MagicMock()
+        rt.group = 'test-group'
+        rt.konflux_db = MagicMock()
+
+        metadata = image.ImageMetadata(rt, data_obj)
+        metadata.logger = self.logger
+        return metadata
+
+    async def test_fetch_rpms_from_build_cached_packages(self):
+        """Test fetch_rpms_from_build returns cached packages"""
+        metadata = self._create_image_metadata('openshift/test-cached')
+        metadata.installed_packages = ['pkg1', 'pkg2', 'pkg3']
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
+        # Should not call konflux_db when cached
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+        # Should not log anything when using cache
+        self.logger.error.assert_not_called()
+        self.logger.warning.assert_not_called()
+
+    async def test_fetch_rpms_from_build_no_build_found(self):
+        """Test fetch_rpms_from_build when no build is found"""
+        metadata = self._create_image_metadata('openshift/test-no-build')
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_packages, [])
+        metadata.runtime.konflux_db.get_latest_build.assert_called_once_with(name='test-image', group='test-group')
+        # Should not log errors when no build found (normal case)
+        self.logger.error.assert_not_called()
+
+    async def test_fetch_rpms_from_build_build_no_packages(self):
+        """Test fetch_rpms_from_build when build has no packages"""
+        metadata = self._create_image_metadata('openshift/test-no-packages')
+
+        mock_build = MagicMock()
+        mock_build.installed_packages = None
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_packages, [])
+        # Should not log errors when build has no packages (normal case)
+        self.logger.error.assert_not_called()
+
+    async def test_fetch_rpms_from_build_no_parent_full_package_set(self):
+        """Test fetch_rpms_from_build when no parent found, uses full package set"""
+        metadata = self._create_image_metadata('openshift/test-no-parent')
+
+        # Ensure no cached packages
+        metadata.installed_packages = None
+
+        mock_build = MagicMock()
+        mock_build.installed_packages = ['pkg1', 'pkg2', 'pkg3']
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        # Mock no parent members
+        with patch.object(metadata, 'get_parent_members', return_value=set()):
+            result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
+        self.assertEqual(set(metadata.installed_packages), {'pkg1', 'pkg2', 'pkg3'})
+        self.logger.warning.assert_called_with('No parent found for test-image; using full RPM set')
+
+    async def test_fetch_rpms_from_build_with_parent_difference(self):
+        """Test fetch_rpms_from_build calculates difference from parent packages"""
+        metadata = self._create_image_metadata('openshift/test-with-parent')
+
+        # Mock image build
+        mock_build = MagicMock()
+        mock_build.installed_packages = ['pkg1', 'pkg2', 'pkg3', 'pkg4']
+
+        # Mock parent build
+        mock_parent_build = MagicMock()
+        mock_parent_build.installed_packages = ['pkg1', 'pkg2']
+
+        async def mock_get_latest_build(name, group):
+            if name == 'test-image':
+                return mock_build
+            elif name == 'parent-image':
+                return mock_parent_build
+            return None
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=mock_get_latest_build)
+
+        # Mock parent members
+        with patch.object(metadata, 'get_parent_members', return_value={'parent-image'}):
+            result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg3', 'pkg4'})  # Difference: image packages - parent packages
+        self.assertEqual(set(metadata.installed_packages), {'pkg3', 'pkg4'})
+
+        # Verify both builds were fetched
+        expected_calls = [
+            mock.call(name='test-image', group='test-group'),
+            mock.call(name='parent-image', group='test-group'),
+        ]
+        metadata.runtime.konflux_db.get_latest_build.assert_has_calls(expected_calls, any_order=True)
+        # Should not log errors or warnings when parent calculation succeeds
+        self.logger.error.assert_not_called()
+        self.logger.warning.assert_not_called()
+
+    async def test_fetch_rpms_from_build_parent_no_packages(self):
+        """Test fetch_rpms_from_build when parent has no packages"""
+        metadata = self._create_image_metadata('openshift/test-parent-no-packages')
+
+        # Mock image build
+        mock_build = MagicMock()
+        mock_build.installed_packages = ['pkg1', 'pkg2']
+
+        # Mock parent build with no packages
+        mock_parent_build = MagicMock()
+        mock_parent_build.installed_packages = None
+
+        async def mock_get_latest_build(name, group):
+            if name == 'test-image':
+                return mock_build
+            elif name == 'parent-image':
+                return mock_parent_build
+            return None
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=mock_get_latest_build)
+
+        # Mock parent members
+        with patch.object(metadata, 'get_parent_members', return_value={'parent-image'}):
+            result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2'})  # All packages since parent has none
+        self.assertEqual(set(metadata.installed_packages), {'pkg1', 'pkg2'})
+        # Should not log errors when parent has no packages (normal case)
+        self.logger.error.assert_not_called()
+
+    async def test_fetch_rpms_from_build_exception_handling(self):
+        """Test fetch_rpms_from_build handles exceptions gracefully"""
+        metadata = self._create_image_metadata('openshift/test-exception')
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=Exception("Database error"))
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_packages, [])
+        self.logger.error.assert_called_with("Failed to fetch RPMs for test-image/test-group: Database error")
+
+    async def test_fetch_rpms_from_build_parent_exception_uses_full_set(self):
+        """Test fetch_rpms_from_build uses full package set when parent fetch fails"""
+        metadata = self._create_image_metadata('openshift/test-parent-exception')
+
+        # Mock image build
+        mock_build = MagicMock()
+        mock_build.installed_packages = ['pkg1', 'pkg2', 'pkg3']
+
+        async def mock_get_latest_build(name, group):
+            if name == 'test-image':
+                return mock_build
+            elif name == 'parent-image':
+                raise Exception("Parent database error")
+            return None
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=mock_get_latest_build)
+
+        # Mock parent members
+        with patch.object(metadata, 'get_parent_members', return_value={'parent-image'}):
+            result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})  # Full set due to parent error
+        self.assertEqual(set(metadata.installed_packages), {'pkg1', 'pkg2', 'pkg3'})
+        self.logger.error.assert_called_with(
+            "Failed to fetch parent RPMs for parent-image/test-group: Parent database error"
+        )

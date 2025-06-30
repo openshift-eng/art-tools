@@ -9,6 +9,7 @@ from typing import Dict, List, cast
 import requests
 import yaml
 from artcommonlib import logutil
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
@@ -236,6 +237,7 @@ class Repo(object):
 
         return result
 
+    @limit_concurrency(limit=8)
     async def get_repodata(self, arch: str):
         repodata = self._repodatas.get(arch)
         if repodata:
