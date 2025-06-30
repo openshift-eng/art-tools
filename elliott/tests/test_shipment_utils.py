@@ -157,7 +157,7 @@ shipment:
 
         self.assertIn("Multiple shipment configs found for rpm", str(context.exception))
 
-    @patch('elliottlib.shipment_utils.get_shipment_configs_by_kind')
+    @patch('elliottlib.shipment_utils.get_shipment_configs_from_mr')
     def test_get_builds_from_mr_success(self, mock_get_configs):
         """Test successful build extraction from merge request"""
         # Setup mock shipment config
@@ -181,6 +181,7 @@ shipment:
     def test_default_kinds_parameter(self):
         """Test that default kinds parameter works correctly"""
         with patch('elliottlib.shipment_utils.gitlab.Gitlab') as mock_gitlab_class:
+            os.environ['GITLAB_TOKEN'] = self.mock_gitlab_token
             mock_gitlab = mock_gitlab_class.return_value
             mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
 

@@ -1,13 +1,27 @@
 import unittest
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
+from typing import cast, Iterable, List, Dict
 
 from elliottlib import constants
-from elliottlib.bzutil import BugzillaBug
-from elliottlib.cli import attach_cve_flaws_cli
+from elliottlib.bzutil import BugzillaBug, Bug
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 
 
 class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Provide a minimal mock runtime for AttachCveFlaws
+        self.mock_runtime = Mock()
+        self.mock_runtime.get_errata_config.return_value = {}
+        self.mock_runtime.get_major_minor_patch.return_value = (4, 4, 42)
+        self.mock_runtime.get_bug_tracker.return_value = Mock()
+        self.mock_runtime.group_config.advisories = {}
+        self.mock_runtime.build_system = 'brew'
+        self.mock_runtime.assembly = None
+        self.mock_runtime.get_releases_config.return_value = {}
+        self.mock_runtime.get_bug_tracker.side_effect = lambda t: Mock(type=t, get_tracker_bugs=Mock(return_value=[]), advisory_bug_ids=Mock(return_value=[]), attach_bugs=Mock())
+        self.mock_runtime.build_retrying_koji_client.return_value = Mock()
+
     def test_get_updated_advisory_rhsa(self):
         boilerplate = {
             'security_reviewer': 'some reviewer',
@@ -30,7 +44,8 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             Mock(alias=['CVE-2022-456'], severity='high', summary='CVE-2022-456 bar'),
         ]
 
-        attach_cve_flaws_cli.get_updated_advisory_rhsa(
+        pipeline = AttachCveFlaws(self.mock_runtime, advisory_id=0, into_default_advisories=False, default_advisory_type="", output="json", noop=False)
+        pipeline.get_updated_advisory_rhsa(
             boilerplate,
             advisory,
             flaw_bugs,
@@ -108,8 +123,13 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             103: BugzillaBug(Mock(id=103, keywords=["Security"], alias=["CVE-2099-3"])),
         }
         flaw_bugs = list(flaw_id_bugs.values())
-        actual = await attach_cve_flaws_cli.associate_builds_with_cves(
-            errata_api, advisory, flaw_bugs, attached_tracker_bugs, tracker_flaws, dry_run=False
+        pipeline = AttachCveFlaws(self.mock_runtime, advisory_id=0, into_default_advisories=False, default_advisory_type="", output="json", noop=False)
+        pipeline.errata_api = errata_api
+        actual = await pipeline.associate_builds_with_cves(
+            advisory,
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws)
         )
         expected_builds = [
             'a-1.0.0-1.el8',
@@ -147,7 +167,11 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             2: [102],  # Tracker 2 → CVE-2022-2
         }
 
-        result = attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
+        result = AttachCveFlaws.get_cve_component_mapping(
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws)
+        )
 
         expected = {
             "CVE-2022-1": {"component-a"},
@@ -169,8 +193,11 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             }
             attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
 
-            result = attach_cve_flaws_cli.get_cve_component_mapping(
-                flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+            result = AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws),
+                attached_components
             )
             expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
             self.assertEqual(result, expected)
@@ -185,7 +212,11 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         tracker_flaws = {
             1: [101, 102],  # 102 is not in flaw_bugs, so it gets ignored
         }
-        result = attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
+        result = AttachCveFlaws.get_cve_component_mapping(
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws)
+        )
         expected = {'CVE-2022-1': {'component-a'}}
         self.assertEqual(result, expected)
 
@@ -203,10 +234,16 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             1: [101],
         }
         with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
-            attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs_no_alias, attached_tracker_bugs, tracker_flaws)
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs_no_alias),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws)
+            )
         with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
-            attach_cve_flaws_cli.get_cve_component_mapping(
-                flaw_bugs_multiple_aliases, attached_tracker_bugs, tracker_flaws
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs_multiple_aliases),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws)
             )
 
     def test_get_cve_component_mapping_missing_whiteboard(self):
@@ -220,7 +257,11 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             1: [101],
         }
         with self.assertRaisesRegex(ValueError, "Bug 1 doesn't have a valid whiteboard component."):
-            attach_cve_flaws_cli.get_cve_component_mapping(flaw_bugs, attached_tracker_bugs, tracker_flaws)
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws)
+            )
 
 
 if __name__ == '__main__':
