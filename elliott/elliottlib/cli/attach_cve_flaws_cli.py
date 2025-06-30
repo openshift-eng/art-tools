@@ -154,6 +154,7 @@ class AttachCveFlaws:
         attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(bugs_ids)
         if not attached_tracker_bugs:
             self.logger.info(f'Found 0 {bug_tracker.type} tracker bugs attached')
+            return []
 
         self.logger.info(
             f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
