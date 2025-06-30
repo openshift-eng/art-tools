@@ -5,6 +5,7 @@ Test functions related to controlled command execution
 
 import asyncio
 import subprocess
+import time
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
 
@@ -240,6 +241,38 @@ class TestExectools(IsolatedAsyncioTestCase):
         results = exectools.parallel_exec(lambda k, v: k, items, n_threads=4)
         results = results.get()
         self.assertEqual(results, items)
+
+    async def test_limit_concurrency(self):
+        """Test that limit_concurrency actually limits concurrent execution"""
+        concurrent_count = 0
+        max_concurrent = 0
+
+        @exectools.limit_concurrency(limit=2)
+        async def test_func(name):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+
+            await asyncio.sleep(0.1)  # Simulate work
+
+            concurrent_count -= 1
+            return name
+
+        # Run 5 tasks with limit=2
+        tasks = [test_func(f"task{i}") for i in range(5)]
+
+        start_time = time.time()
+        results = await asyncio.gather(*tasks)
+        duration = time.time() - start_time
+
+        # Should never have more than 2 concurrent executions
+        self.assertEqual(max_concurrent, 2)
+
+        # All tasks should complete
+        self.assertEqual(len(results), 5)
+
+        # With limit=2 and 5 tasks of 0.1s each, should take at least 0.25s
+        self.assertGreaterEqual(duration, 0.25)
 
 
 if __name__ == "__main__":
