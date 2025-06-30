@@ -8,9 +8,35 @@ import * as crypto from 'crypto';
 const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
 const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
+// Allowed domains for proxy targets to prevent SSRF attacks
+const allowedDomains = [
+    'developers.redhat.com',
+    'content.redhat.com',
+    'registry.redhat.io',
+    'access.redhat.com'
+];
+
 // Proxy function to forward the request to the target URL
 async function proxyToTarget(request: Request, targetBase: string, remainingPath: string): Promise<Response> {
     const targetUrl = `${targetBase}${remainingPath}`;
+
+    // Validate the target URL to prevent SSRF attacks
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(targetUrl);
+    } catch (error) {
+        return new Response('Invalid target URL', { status: 400 });
+    }
+
+    // Allow only HTTPS requests to trusted domains
+    if (parsedUrl.protocol !== 'https:') {
+        return new Response('Only HTTPS requests are allowed', { status: 400 });
+    }
+
+    // Whitelist allowed target domains (Red Hat Content Gateway domains)
+    if (!allowedDomains.includes(parsedUrl.hostname)) {
+        return new Response('Target domain not allowed', { status: 403 });
+    }
 
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
