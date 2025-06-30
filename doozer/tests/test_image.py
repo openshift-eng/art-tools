@@ -485,7 +485,6 @@ class TestImageMetadata(unittest.TestCase):
         mock_config.get.assert_called_once_with("enabled_repos", [])
 
 
-
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
     @mock.patch("doozerlib.build_info.BrewImageInspector.get_installed_rpm_dicts")
