@@ -536,7 +536,15 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     cmd_list = [token for token in cmd_list if token]
 
     span = trace.get_current_span()
-    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    # Set meaningful span name
+    meaningful_name = _get_meaningful_span_name(cmd_list)
+    span.update_name(meaningful_name)
+
+    # Set enhanced span attributes
+    span.set_attribute("param.cmd", cmd_list)
+    span.set_attribute("param.has_custom_env", "env" in kwargs)
+    span.set_attribute("command.type", cmd_list[0])
 
     # capture stdout and stderr if they are not set in kwargs
     if "stdout" not in kwargs:
@@ -556,19 +564,73 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
         env["TRACEPARENT"] = carrier["traceparent"]
 
     logger.info(f"Executing:cmd_gather_async: {' '.join(cmd_list)}")
+
+    start_time = time.time()
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    span.set_attribute("process.pid", proc.pid)
+
     stdout, stderr = await proc.communicate()
+    duration_seconds = time.time() - start_time
+
     stdout = stdout.decode() if stdout else ""
     stderr = stderr.decode() if stderr else ""
-    span.set_attribute("pyartcd.result.exit_code", str(proc.returncode))
+
+    span.set_attribute("result.exit_code", str(proc.returncode))
+    span.set_attribute("execution.duration_seconds", duration_seconds)
+    span.set_attribute("result.stdout_length", len(stdout))
+    span.set_attribute("result.stderr_length", len(stderr))
     if proc.returncode != 0:
         msg = f"Process {cmd_list!r} exited with code {proc.returncode}.\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        span.set_attribute("result.error_message", msg[:500])  # Truncate long error messages
+        span.add_event("command_failed", {"exit_code": proc.returncode, "duration_seconds": duration_seconds})
         if check:
             raise ChildProcessError(msg)
         else:
             logger.warning(msg)
+    else:
+        span.add_event("command_succeeded", {"duration_seconds": duration_seconds})
+
     span.set_status(trace.StatusCode.OK)
     return proc.returncode, stdout, stderr
+
+
+def _get_meaningful_span_name(cmd: Union[List[str], str]) -> str:
+    """Generate a meaningful span name based on the command being executed."""
+    if isinstance(cmd, str):
+        cmd_list = shlex.split(cmd)
+    else:
+        cmd_list = cmd
+
+    if not cmd_list:
+        return "exec.unknown"
+
+    base_cmd = cmd_list[0]
+
+    # Special handling for doozer commands
+    if base_cmd == "doozer":
+        # Find the main operation (last non-flag argument)
+        operation = None
+        for arg in reversed(cmd_list):
+            if not arg.startswith("-") and "=" not in arg and arg != "doozer":
+                operation = arg
+                break
+
+        # Extract assembly context
+        assembly = None
+        for arg in cmd_list:
+            if arg.startswith("--assembly="):
+                assembly = arg.split("=", 1)[1]
+                break
+
+        if operation and assembly:
+            # Simplify complex operation names
+            op_name = operation.replace(":", ".")
+            return f"doozer.{op_name}.{assembly}"
+        elif operation:
+            op_name = operation.replace(":", ".")
+            return f"doozer.{op_name}"
+
+    return f"exec.{base_cmd}"
 
 
 @start_as_current_span_async(TRACER, "cmd_assert_async")
@@ -588,7 +650,15 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
     cmd_list = [token for token in cmd_list if token]
 
     span = trace.get_current_span()
-    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    # Set meaningful span name
+    meaningful_name = _get_meaningful_span_name(cmd_list)
+    span.update_name(meaningful_name)
+
+    # Set enhanced span attributes
+    span.set_attribute("param.cmd", cmd_list)
+    span.set_attribute("param.has_custom_env", "env" in kwargs)
+    span.set_attribute("command.type", cmd_list[0])
 
     # Propagate trace context to subprocess
     carrier = {}
@@ -602,14 +672,27 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
         env["TRACEPARENT"] = carrier["traceparent"]
 
     logger.info(f"Executing:cmd_assert_async: {' '.join(cmd_list)}")
+
+    start_time = time.time()
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    span.set_attribute("process.pid", proc.pid)
+
     returncode = await proc.wait()
-    span.set_attribute("pyartcd.result.exit_code", str(returncode))
+    duration_seconds = time.time() - start_time
+
+    span.set_attribute("result.exit_code", str(returncode))
+    span.set_attribute("execution.duration_seconds", duration_seconds)
+
     if returncode != 0:
         msg = f"Process {cmd_list!r} exited with code {returncode}."
+        span.set_attribute("result.error_message", msg)
+        span.add_event("command_failed", {"exit_code": returncode, "duration_seconds": duration_seconds})
         if check:
             raise ChildProcessError(msg)
         else:
             logger.warning(msg)
+    else:
+        span.add_event("command_succeeded", {"duration_seconds": duration_seconds})
+
     span.set_status(trace.StatusCode.OK)
     return returncode
