@@ -258,16 +258,15 @@ class PrepareReleaseKonfluxPipeline:
         # if builds are already set, this will overwrite them
         # in an ideal case, content should be the same
         # and any additional builds should be pinned in the assembly config
-        extras_nvrs = []
+        image_builds, extra_builds, olm_builds, olm_builds_not_found = await self.find_builds_all()
+        if olm_builds_not_found:
+            operator_spec = await self.find_or_build_bundle_builds(olm_builds_not_found)
+            olm_builds = olm_builds + operator_spec.nvrs
+        kind_to_builds = {"image": image_builds, "extras": extra_builds, "metadata": olm_builds}
+
         for kind, shipment in shipments_by_kind.items():
-            snapshot_spec = await self.find_builds(kind)
-            shipment.shipment.snapshot.spec = snapshot_spec
-            if kind == "extras":
-                extras_nvrs = snapshot_spec.nvrs or []
-            elif kind == "metadata":
-                if extras_nvrs is None:
-                    raise ValueError("extras_nvrs is not set. Cannot find bundle builds.")
-                shipment.shipment.snapshot.spec = await self.find_or_build_bundle_builds(extras_nvrs)
+            if kind in kind_to_builds:
+                shipment.shipment.snapshot.spec = Spec(nvrs=kind_to_builds[kind])
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -474,6 +473,32 @@ class PrepareReleaseKonfluxPipeline:
             out = json.loads(stdout)
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
+
+    async def find_builds_all(self):
+        """
+        Run the elliott 'find-builds' command for images and return categorized build NVRs.
+        Returns:
+            tuple: Four lists containing:
+                - payload_builds: NVRs of payload image builds
+                - non_payload_builds: NVRs of non-payload image builds
+                - olm_builds: NVRs of OLM bundle builds
+                - olm_builds_not_found: NVRs of OLM operator builds for which no bundle build was found
+        """
+        cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-types", "--json=-"]
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        if not stdout:
+            _LOGGER.warning("No output received from find-builds command.")
+            return [], [], [], []
+
+        out = json.loads(stdout)
+        _LOGGER.info("Find image builds: \n%s", stdout)
+
+        return (
+            out.get("payload", []),
+            out.get("non_payload", []),
+            out.get("olm_builds", []),
+            out.get("olm_builds_not_found", []),
+        )
 
     async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
