@@ -116,7 +116,10 @@ class CreateSnapshotCli:
         snapshot_obj = await self.konflux_client._create(snapshot_obj)
 
         snapshot_url = self.konflux_client.resource_url(snapshot_obj)
-        LOGGER.info("Created Konflux Snapshot %s", snapshot_url)
+        if self.dry_run:
+            LOGGER.info("[DRY-RUN] Would have created Konflux Snapshot at %s", snapshot_url)
+        else:
+            LOGGER.info("Created Konflux Snapshot %s", snapshot_url)
 
         return snapshot_obj
 
