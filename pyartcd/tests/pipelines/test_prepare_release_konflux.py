@@ -373,10 +373,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
+        mock_find_or_build_bundle_builds,
         mock_find_builds_all,
         mock_find_bugs,
         mock_create_shipment_mr,
@@ -472,9 +474,18 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_shipment.side_effect = init_shipment
 
         def find_builds_all():
-            return ["image-nvr"], ["extras-nvr"], ["olm-nvr"], []
+            return {
+                "image": ["image-nvr"],
+                "extras": ["extras-nvr"],
+                "metadata": ["olm-nvr"],
+                "olm_builds_not_found": ["olm-builds-not-found"],
+            }
+
+        def find_or_build_bundle_builds(nvr):
+            return Spec(nvrs=["new-olm-builds"])
 
         mock_find_builds_all.side_effect = find_builds_all
+        mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
 
         def find_bugs(kind, **_):
             return {
@@ -498,6 +509,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_shipment.assert_any_call("image")
         self.assertEqual(mock_init_shipment.call_count, 2)
         self.assertEqual(mock_find_builds_all.call_count, 1)
+        self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)

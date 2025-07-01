@@ -35,6 +35,13 @@ from doozerlib.runtime import Runtime
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)
 
+"""
+Including the following commands:
+- Rebasing images (beta:images:konflux:rebase)
+- Building images (beta:images:konflux:build)
+- Rebasing and building OLM bundles (beta:images:konflux:bundle)
+"""
+
 
 class KonfluxRebaseCli:
     def __init__(
@@ -464,7 +471,7 @@ class KonfluxBundleCli:
         if failed_tasks:
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         if self.output == 'json':
-            print(json.dumps({"results": results}, indent=4))
+            click.echo(json.dumps({"results": results}, indent=4))
         LOGGER.info("Build complete")
 
 

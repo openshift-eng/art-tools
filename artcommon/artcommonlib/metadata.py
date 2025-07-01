@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Any, List, Optional, Tuple, Union
 
+import nest_asyncio
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
@@ -543,18 +544,13 @@ class MetadataBase(object):
             if basis_event:
                 kwargs['completed_before'] = basis_event
 
+            nest_asyncio.apply()
             try:
-                asyncio.get_running_loop()
+                loop = asyncio.get_running_loop()
             except RuntimeError:
                 return asyncio.run(self.get_latest_konflux_build(**kwargs))
             else:
-
-                def run_async():
-                    return asyncio.run(self.get_latest_konflux_build(**kwargs))
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(run_async)
-                    return future.result()
+                return loop.run_until_complete(self.get_latest_konflux_build(**kwargs))
 
         else:
             raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')

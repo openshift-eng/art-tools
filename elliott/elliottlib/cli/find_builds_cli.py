@@ -79,7 +79,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @click.option('--payload', required=False, is_flag=True, help='Only attach payload images')
 @click.option('--non-payload', required=False, is_flag=True, help='Only attach non-payload images')
 @click.option('--include-shipped', required=False, is_flag=True, help='Do not filter out shipped builds')
-@click.option('--all-types', required=False, is_flag=True, help='Find all types of builds')
+@click.option('--all-image-types', required=False, is_flag=True, help='Find all types of builds')
 @click.option('--member-only', is_flag=True, help='(For rpms) Only sweep member rpms')
 @click.option(
     '--clean',
@@ -105,7 +105,7 @@ async def find_builds_cli(
     payload,
     non_payload,
     include_shipped,
-    all_types: bool,
+    all_image_types: bool,
     member_only: bool,
     clean: bool,
     dry_run: bool,
@@ -176,7 +176,7 @@ async def find_builds_cli(
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
-        if all_types:
+        if all_image_types:
             payload_records, records, olm_records, olm_records_not_found = await find_builds_konflux_all_types(runtime)
             if as_json:
                 json_data = {
@@ -781,12 +781,10 @@ async def find_builds_konflux_all_types(runtime):
     runtime.konflux_db.bind(KonfluxBundleBuildRecord)
 
     operator_builds = []
-    payload_flags = []
     olm_tasks = []
     for is_olm, is_payload, record in records_with_olm:
         if is_olm:
             operator_builds.append(record)
-            payload_flags.append(is_payload)
             olm_tasks.append(
                 anext(
                     runtime.konflux_db.search_builds_by_fields(

@@ -50,7 +50,6 @@ class PrepareReleaseKonfluxPipeline:
         assembly: str,
         github_token: str,
         gitlab_token: str,
-        kubeconfig: Optional[str] = None,
         build_repo_url: Optional[str] = None,
         shipment_repo_url: Optional[str] = None,
         job_url: Optional[str] = None,
@@ -58,7 +57,6 @@ class PrepareReleaseKonfluxPipeline:
         self.runtime = runtime
         self.assembly = assembly
         self.group = group
-        self.kubeconfig = kubeconfig
         self._slack_client = slack_client
         self.github_token = github_token
         self.gitlab_token = gitlab_token
@@ -259,15 +257,9 @@ class PrepareReleaseKonfluxPipeline:
         # if builds are already set, this will overwrite them
         # in an ideal case, content should be the same
         # and any additional builds should be pinned in the assembly config
-        image_builds, extra_builds, olm_builds, olm_builds_not_found = await self.find_builds_all()
-        if olm_builds_not_found:
-            operator_spec = await self.find_or_build_bundle_builds(olm_builds_not_found)
-            olm_builds = olm_builds + operator_spec.nvrs
-        kind_to_builds = {"image": image_builds, "extras": extra_builds, "metadata": olm_builds}
-
+        kind_to_builds = await self.find_builds_all()
         for kind, shipment in shipments_by_kind.items():
-            if kind in kind_to_builds:
-                shipment.shipment.snapshot.spec = Spec(nvrs=kind_to_builds[kind])
+            shipment.shipment.snapshot.spec = Spec(nvrs=kind_to_builds[kind])
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -317,13 +309,16 @@ class PrepareReleaseKonfluxPipeline:
             if parsed_nvr["name"] in olm_operators:
                 olm_operator_nvrs.append(nvr)
 
+        kubeconfig = os.getenv("KONFLUX_SA_KUBECONFIG")
+        if not kubeconfig:
+            raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build bundle image")
         cmd = (
             self._doozer_base_command
             + [
-                '--quiet',
                 '--assembly=stream',
                 "beta:images:konflux:bundle",
-                f'--konflux-kubeconfig={self.kubeconfig}',
+                f'--konflux-kubeconfig={kubeconfig}',
+                "--output=json",
                 "--",
             ]
             + olm_operator_nvrs
@@ -496,21 +491,28 @@ class PrepareReleaseKonfluxPipeline:
                 - olm_builds: NVRs of OLM bundle builds
                 - olm_builds_not_found: NVRs of OLM operator builds for which no bundle build was found
         """
-        cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-types", "--json=-"]
+        cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-image-types", "--json=-"]
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
         if not stdout:
             _LOGGER.warning("No output received from find-builds command.")
-            return [], [], [], []
+            return {"image": [], "extras": [], "metadata": [], "olm_builds_not_found": []}
 
         out = json.loads(stdout)
         _LOGGER.info("Find image builds: \n%s", stdout)
 
-        return (
-            out.get("payload", []),
-            out.get("non_payload", []),
-            out.get("olm_builds", []),
-            out.get("olm_builds_not_found", []),
-        )
+        kind_to_builds = {
+            "image": out.get("payload", []),
+            "extras": out.get("non_payload", []),
+            "metadata": out.get("olm_builds", []),
+            "olm_builds_not_found": out.get("olm_builds_not_found", []),
+        }
+        if kind_to_builds["olm_builds_not_found"]:
+            _LOGGER.info(f"Some operator's bundle builds not found: \n {kind_to_builds["olm_builds_not_found"]}")
+            operator_spec = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            _LOGGER.info(f"Rebuild the following bundle builds: \n {operator_spec.nvrs}")
+            kind_to_builds["metadata"] = kind_to_builds["metadata"] + operator_spec.nvrs
+
+        return kind_to_builds
 
     async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
@@ -807,7 +809,6 @@ class PrepareReleaseKonfluxPipeline:
     required=True,
     help="The assembly to operate on e.g. 4.18.5",
 )
-@click.option("--kubeconfig", help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
     '--build-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
@@ -822,7 +823,6 @@ async def prepare_release(
     runtime: Runtime,
     group: str,
     assembly: str,
-    kubeconfig: Optional[str],
     build_repo_url: Optional[str],
     shipment_repo_url: Optional[str],
 ):
@@ -853,7 +853,6 @@ async def prepare_release(
             github_token=github_token,
             gitlab_token=gitlab_token,
             build_repo_url=build_repo_url,
-            kubeconfig=kubeconfig,
             shipment_repo_url=shipment_repo_url,
             job_url=job_url,
         )
