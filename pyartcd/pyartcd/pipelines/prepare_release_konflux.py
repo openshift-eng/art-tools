@@ -25,6 +25,7 @@ from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Spec
 from elliottlib.shipment_utils import get_shipment_configs_by_kind
 from ghapi.all import GhApi
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -484,6 +485,7 @@ class PrepareReleaseKonfluxPipeline:
             builds = out.get("builds", [])
         return Spec(nvrs=builds)
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def find_builds_all(self):
         """
         Run the elliott 'find-builds' command for images and return categorized build NVRs.
