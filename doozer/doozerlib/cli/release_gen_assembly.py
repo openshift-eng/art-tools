@@ -850,7 +850,7 @@ class GenAssemblyCli:
                 group_info['operator_index_mode'] = 'pre-release'
 
         if self.runtime.build_system == 'konflux':
-            self._get_shipment_info(group_info)
+            group_info['shipment'] = self._get_shipment_info()
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
@@ -929,19 +929,21 @@ class GenAssemblyCli:
 
         return image_member_overrides, rpm_member_overrides
 
-    def _get_default_shipment(self):
+    def _get_default_shipment(self, env: str = None) -> dict:
         default_shipment = {
             'advisories': [
                 {'kind': 'image'},
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
-            ]
+            ],
         }
+        if env:
+            default_shipment['env'] = env
         if self.pre_ga_mode == 'prerelease':
             default_shipment['advisories'].append({'kind': 'prerelease'})
         return default_shipment
 
-    def _get_previous_shipment_info(self):
+    def _get_previous_shipment_info(self) -> dict:
         """
         if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
         or if this assembly is rc.0 then check if there is a previously defined ec.X
@@ -952,15 +954,16 @@ class GenAssemblyCli:
         current_v = int(split[1])
 
         # For EC.0, this is the first shipment info
+        # EC and RC shipments will target stage environment
         if self.assembly_type == AssemblyTypes.PREVIEW and current_v == 0:
-            return self._get_default_shipment()
+            return self._get_default_shipment(env="stage")
 
         # For RC.0, inherit from last EC
         if current_v == 0 and self.assembly_type == AssemblyTypes.CANDIDATE:
             ec_assemblies = sorted([a for a in self.releases_config.releases if a.startswith("ec.")])
             if not ec_assemblies:
                 self.logger.warning("No matching previous assembly found")
-                return self._get_default_shipment()
+                return self._get_default_shipment(env="stage")
             previous_assembly = ec_assemblies[-1]
 
         # For other cases, inherit from previous assembly
@@ -968,29 +971,23 @@ class GenAssemblyCli:
             previous_assembly = f"{split[0]}{current_v - 1}"
             if previous_assembly not in self.releases_config.releases:
                 self.logger.warning("No matching previous assembly found")
-                return self._get_default_shipment()
+                return self._get_default_shipment(env="stage")
 
         # Return previous assembly shipment info
-        return (
-            self.releases_config.releases[previous_assembly].assembly.group.shipment.primitive()
-            or self._get_default_shipment()
-        )
+        return self.releases_config.releases[
+            previous_assembly
+        ].assembly.group.shipment.primitive() or self._get_default_shipment(env="stage")
 
-    def _get_shipment_info(self, group_info):
+    def _get_shipment_info(self) -> dict:
         """
         For konflux, we need to add shipment information to the assembly definition.
         """
         if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-            group_info['shipment'] = self._get_previous_shipment_info()
-
+            shipment = self._get_previous_shipment_info()
+            # If previous shipment has MR url, remove it
+            # as it is not relevant for the new assembly.
+            shipment.pop('url', None)
         elif self.assembly_type != AssemblyTypes.CUSTOM:
-            # for konflux, we have a shipment model
-            group_info['shipment'] = {
-                'advisories': [
-                    {'kind': 'image'},
-                    {'kind': 'extras'},
-                    {'kind': 'metadata'},
-                ]
-            }
-            if self.pre_ga_mode == 'prerelease':
-                group_info['shipment']['advisories'].append({'kind': 'prerelease'})
+            shipment = self._get_default_shipment()
+
+        return shipment
