@@ -17,6 +17,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                 )
             ),
             arches=["x86_64", "s390x", "ppc64le", "aarch64"],
+            get_major_minor_fields=lambda: ("4", "12"),
         )
         subject.image_info_cache = {}
 

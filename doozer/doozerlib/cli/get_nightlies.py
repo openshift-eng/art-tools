@@ -6,6 +6,7 @@ import aiohttp
 import click
 from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -269,7 +270,11 @@ async def find_rc_nightlies(
     if allow_rejected:
         allowed_phases.add("Rejected")
 
-    tag_base: str = f"{runtime.group_config.vars.MAJOR}.{runtime.group_config.vars.MINOR}.0-0.{'konflux-' if runtime.build_system == 'konflux' else ''}nightly"
+    major, minor = runtime.get_major_minor_fields()
+    nightly_suffix = "nightly"
+    if runtime.build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        nightly_suffix = "konflux-nightly"
+    tag_base = f"{major}.{minor}.0-0.{nightly_suffix}"
     await asyncio.gather(*(_find_nightlies(arch) for arch in arches))
 
     # make sure we found every match we expected
