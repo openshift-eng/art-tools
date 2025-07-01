@@ -69,7 +69,7 @@ def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:
     for kind, shipment_config in shipment_configs.items():
         nvrs = []
         if shipment_config.shipment.snapshot:
-            nvrs = shipment_config.shipment.snapshot.spec.nvrs
+            nvrs = shipment_config.shipment.snapshot.nvrs
             logger.info(f"Found {len(nvrs)} builds for {kind}")
         builds_by_kind[kind] = nvrs
 
