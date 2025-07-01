@@ -3,12 +3,13 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import click
@@ -18,9 +19,10 @@ from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembl
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Spec
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
 from elliottlib.shipment_utils import get_shipment_configs_by_kind
 from ghapi.all import GhApi
 
@@ -244,8 +246,7 @@ class PrepareReleaseKonfluxPipeline:
         # in an ideal case, content should be the same
         # and any additional builds should be pinned in the assembly config
         for kind, shipment in shipments_by_kind.items():
-            snapshot_spec = await self.find_builds(kind)
-            shipment.shipment.snapshot.spec = snapshot_spec
+            shipment.shipment.snapshot = await self.get_snapshot(kind)
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -393,15 +394,55 @@ class PrepareReleaseKonfluxPipeline:
         shipment = ShipmentConfig(**out)
         return shipment
 
-    async def find_builds(self, kind: str) -> Spec:
-        """Find builds for the given kind and return a snapshot Spec object containing the NVRs.
+    async def get_snapshot(self, kind: str) -> Snapshot:
+        """Get a snapshot for the given kind.
+        :param kind: The kind for which to get a snapshot
+        :return: A Snapshot object
+        """
+
+        builds = await self.find_builds(kind)
+        # store builds in a temporary file, each nvr string in a new line
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            for nvr in builds:
+                temp_file.write(nvr.encode())
+                temp_file.write(b'\n')
+            temp_file.flush()
+            temp_file_path = temp_file.name
+
+        # now call elliott snapshot new -f <temp_file_path>
+        snapshot_cmd = self._elliott_base_command + [
+            "snapshot",
+            "new",
+            f"--builds-file={temp_file_path}",
+        ]
+        rc, stdout, stderr = await exectools.cmd_gather_async(snapshot_cmd)
+        if stderr:
+            _LOGGER.info("Shipment snapshot new command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Shipment snapshot new command stdout:\n %s", stdout)
+        if rc != 0:
+            raise RuntimeError(f"cmd failed with exit code {rc}: {snapshot_cmd}")
+
+        # remove the temporary file
+        os.unlink(temp_file_path)
+
+        # parse the output of the snapshot new command, it should be valid yaml
+        new_snapshot_obj = yaml.load(stdout)
+        # make some assertions that this is a valid snapshot object
+        if new_snapshot_obj.get("apiVersion") != API_VERSION or new_snapshot_obj.get("kind") != KIND_SNAPSHOT:
+            raise ValueError(f"Snapshot object is not valid: {stdout}")
+
+        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=builds)
+
+    async def find_builds(self, kind: str) -> List[str]:
+        """Find builds for the given kind and return a list of NVRs.
         :param kind: The kind for which to find builds
-        :return: A Spec object containing the NVRs of the builds found (part of shipment definition)
+        :return: A list of NVRs of the builds found
         """
 
         if kind not in ("image", "extras"):
             _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
-            return Spec(nvrs=[])
+            return []
         payload = True if kind == "image" else False
 
         find_builds_cmd = self._elliott_base_command + [
@@ -422,7 +463,7 @@ class PrepareReleaseKonfluxPipeline:
         if stdout:
             out = json.loads(stdout)
             builds = out.get("builds", [])
-        return Spec(nvrs=builds)
+        return builds
 
     async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.

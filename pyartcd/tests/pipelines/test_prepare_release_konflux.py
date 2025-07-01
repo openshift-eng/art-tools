@@ -9,8 +9,10 @@ from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import (
+    ComponentSource,
     Data,
     Environments,
+    GitSource,
     Issue,
     Issues,
     Metadata,
@@ -19,7 +21,8 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
-    Spec,
+    SnapshotComponent,
+    SnapshotSpec,
 )
 
 from pyartcd import constants
@@ -372,12 +375,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'get_snapshot', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
-        mock_find_builds,
+        mock_get_snapshot,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_create_build_data_pr,
@@ -424,7 +427,13 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     assembly=self.assembly,
                     application="app-image",
                 ),
-                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot1"),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-image",
+                        components=[],
+                    ),
+                ),
                 environments=Environments(
                     stage=ShipmentEnv(releasePlan="rp-img-stage"), prod=ShipmentEnv(releasePlan="rp-img-prod")
                 ),
@@ -447,7 +456,13 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     assembly=self.assembly,
                     application="app-extras",
                 ),
-                snapshot=Snapshot(spec=Spec(nvrs=[]), name="snapshot2"),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-extras",
+                        components=[],
+                    ),
+                ),
                 environments=Environments(
                     stage=ShipmentEnv(releasePlan="rp-ext-stage"), prod=ShipmentEnv(releasePlan="rp-ext-prod")
                 ),
@@ -471,14 +486,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_init_shipment.side_effect = init_shipment
 
-        def find_builds(kind):
-            return {
-                "image": Spec(nvrs=["image-nvr"]),
-                "extras": Spec(nvrs=["extras-nvr"]),
-            }.get(kind)
-
-        mock_find_builds.side_effect = find_builds
-
         def find_bugs(kind, **_):
             return {
                 "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
@@ -489,28 +496,64 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
+        def get_snapshot(kind):
+            return {
+                "image": Snapshot(
+                    nvrs=["image-nvr"],
+                    spec=SnapshotSpec(
+                        application="app-image",
+                        components=[
+                            SnapshotComponent(
+                                name="test-image-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-image.git", revision="abc123")
+                                ),
+                                containerImage="test-image:latest",
+                            ),
+                        ],
+                    ),
+                ),
+                "extras": Snapshot(
+                    nvrs=["extras-nvr"],
+                    spec=SnapshotSpec(
+                        application="app-extras",
+                        components=[
+                            SnapshotComponent(
+                                name="test-extras-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-extras.git", revision="def456")
+                                ),
+                                containerImage="test-extras:latest",
+                            ),
+                        ],
+                    ),
+                ),
+            }.get(kind)
+
+        mock_get_snapshot.side_effect = get_snapshot
+
         await pipeline.prepare_shipment()
 
         # assert liveID is reserved
         mock_errata_api.assert_called_once()
         self.assertEqual(mock_errata_api_instance.reserve_live_id.call_count, 2)
 
-        # assert shipment init calls and find-builds calls
+        # assert shipment init calls and get_snapshot calls
         mock_init_shipment.assert_any_call("extras")
         mock_init_shipment.assert_any_call("image")
         self.assertEqual(mock_init_shipment.call_count, 2)
 
-        mock_find_builds.assert_any_call("extras")
-        mock_find_builds.assert_any_call("image")
-        self.assertEqual(mock_find_builds.call_count, 2)
+        mock_get_snapshot.assert_any_call("extras")
+        mock_get_snapshot.assert_any_call("image")
+        self.assertEqual(mock_get_snapshot.call_count, 2)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
         mock_shipment_extras_create = copy.deepcopy(mock_shipment_extras)
         mock_shipment_image_create.shipment.data.releaseNotes.live_id = mock_live_id
-        mock_shipment_image_create.shipment.snapshot.spec.nvrs = ["image-nvr"]
+        mock_shipment_image_create.shipment.snapshot.nvrs = ["image-nvr"]
         mock_shipment_extras_create.shipment.data.releaseNotes.live_id = mock_live_id
-        mock_shipment_extras_create.shipment.snapshot.spec.nvrs = ["extras-nvr"]
+        mock_shipment_extras_create.shipment.snapshot.nvrs = ["extras-nvr"]
 
         # assert MR is created with the right shipment configs
         mock_create_shipment_mr.assert_awaited_once()

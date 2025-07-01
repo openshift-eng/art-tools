@@ -15,8 +15,6 @@ from elliottlib.shipment_model import (
     Shipment,
     ShipmentConfig,
     ShipmentEnv,
-    Snapshot,
-    Spec,
 )
 from elliottlib.util import get_advisory_boilerplate
 
@@ -38,7 +36,6 @@ class InitShipmentCli:
         self,
         runtime: Runtime,
         application: str,
-        snapshot: str,
         stage_rpa: str,
         prod_rpa: str,
         for_fbc: bool,
@@ -46,7 +43,6 @@ class InitShipmentCli:
     ):
         self.runtime = runtime
         self.application = application or KonfluxImageBuilder.get_application_name(self.runtime.group)
-        self.snapshot = snapshot or "test-snapshot"
         self.stage_rpa = stage_rpa
         self.prod_rpa = prod_rpa
         self.for_fbc = for_fbc
@@ -109,7 +105,6 @@ class InitShipmentCli:
                     stage=ShipmentEnv(releasePlan=self.stage_rpa),
                     prod=ShipmentEnv(releasePlan=self.prod_rpa),
                 ),
-                snapshot=Snapshot(name=self.snapshot, spec=Spec(nvrs=[])),
                 data=data,
             ),
         )
@@ -119,7 +114,6 @@ class InitShipmentCli:
 
 @shipment_cli.command("init", short_help="Init a new shipment config for a Konflux release")
 @click.option("--application", help="Konflux application to use for shipment")
-@click.option("--snapshot", help="Konflux snapshot to use for shipment")
 @click.option("--stage-rpa", help="Konflux RPA to use for stage env")
 @click.option("--prod-rpa", help="Konflux RPA to use for prod env")
 @click.option("--for-fbc", is_flag=True, help="Configure shipment for an FBC release")
@@ -130,7 +124,7 @@ class InitShipmentCli:
 @click.pass_obj
 @click_coroutine
 async def init_shipment_cli(
-    runtime: Runtime, application: str, snapshot: str, stage_rpa: str, prod_rpa: str, for_fbc: bool, advisory_key: str
+    runtime: Runtime, application: str, stage_rpa: str, prod_rpa: str, for_fbc: bool, advisory_key: str
 ):
     """
     Init a new shipment config based on the given group and assembly, for a Konflux release.
@@ -139,7 +133,7 @@ async def init_shipment_cli(
 
     Init shipment config for a 4.18 microshift advisory
 
-    $ elliott -g openshift-4.18 --assembly 4.18.2 snapshot init --advisory-key microshift
+    $ elliott -g openshift-4.18 --assembly 4.18.2 shipment init --advisory-key microshift
     """
     if advisory_key and for_fbc:
         raise ValueError(
@@ -149,7 +143,6 @@ async def init_shipment_cli(
     pipeline = InitShipmentCli(
         runtime=runtime,
         application=application,
-        snapshot=snapshot,
         stage_rpa=stage_rpa,
         prod_rpa=prod_rpa,
         for_fbc=for_fbc,
