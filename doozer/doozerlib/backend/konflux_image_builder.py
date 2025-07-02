@@ -293,7 +293,7 @@ class KonfluxImageBuilder:
         name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
         # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        name = f"ose-{name.removeprefix('openshift-')}"
+        name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
         return name
 
     def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
