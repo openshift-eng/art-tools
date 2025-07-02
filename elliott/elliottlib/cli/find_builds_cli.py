@@ -183,8 +183,12 @@ async def find_builds_cli(
         return
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
+    LOGGER.info(f"replace_vars: {replace_vars}")
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
+    LOGGER.info(f"et_data: {et_data}")
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
+    LOGGER.info(f"tag_pv_map: {tag_pv_map}")
+    exit(1)
 
     if default_advisory_type is not None:
         advisory_id = find_default_advisory(runtime, default_advisory_type)
@@ -511,7 +515,7 @@ def _ensure_accepted_tags(
     for build in builds:
         accepted_tag = next(filter(lambda tag: tag in tag_pv_map, build["_tags"]), None)
         if not accepted_tag:
-            msg = f"Build {build['nvr']} has Brew tags {build['_tags']}, but none of them has an associated Errata product version."
+            msg = f"Build {build['nvr']} has Brew tags {build['_tags']}, but none of them has an associated Errata product version. Available tag_pv_map keys: {list(tag_pv_map.keys())}"
             if raise_exception:
                 raise IOError(msg)
             else:

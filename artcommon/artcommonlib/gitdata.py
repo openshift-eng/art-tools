@@ -1,6 +1,7 @@
 import io
 import os
 import shutil
+import string
 import urllib.parse
 
 import ruamel.yaml
@@ -13,6 +14,27 @@ from artcommonlib.pushd import Dir
 from future.utils import as_native_str
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
+
+
+class SafeFormatter(string.Formatter):
+    """
+    A string formatter that safely substitutes variables, leaving unfound ones as-is.
+
+    Example:
+        formatter = SafeFormatter()
+        result = formatter.format("Hello {name}, version {version}, missing {unknown}",
+                                  name="World", version="1.0")
+        # Result: "Hello World, version 1.0, missing {unknown}"
+    """
+
+    def get_value(self, key, args, kwargs):
+        if isinstance(key, str):
+            try:
+                return kwargs[key]
+            except KeyError:
+                return '{' + key + '}'
+        else:
+            return string.Formatter.get_value(key, args, kwargs)
 
 
 class GitDataException(Exception):
@@ -253,13 +275,13 @@ class GitData(object):
                     with io.open(data_file, 'r', encoding="utf-8") as f:
                         raw_text = f.read()
                         if replace_vars:
+                            # Use safe substitution - replace found vars, leave unfound ones as-is
                             try:
-                                raw_text = raw_text.format(**replace_vars)
-                            except KeyError as e:
+                                formatter = SafeFormatter()
+                                raw_text = formatter.format(raw_text, **replace_vars)
+                            except Exception as e:
                                 self.logger.warning(
-                                    '{} contains template key `{}` but no value was provided'.format(
-                                        data_file, e.args[0]
-                                    )
+                                    'Error applying template substitution to {}: {}'.format(data_file, e)
                                 )
                         try:
                             data = yaml.full_load(raw_text)
