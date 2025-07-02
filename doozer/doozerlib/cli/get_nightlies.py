@@ -271,10 +271,7 @@ async def find_rc_nightlies(
         allowed_phases.add("Rejected")
 
     major, minor = runtime.get_major_minor_fields()
-    nightly_suffix = "nightly"
-    if runtime.build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-        nightly_suffix = "konflux-nightly"
-    tag_base = f"{major}.{minor}.0-0.{nightly_suffix}"
+    tag_base = get_nightly_tag_base(major, minor, runtime.build_system)
     await asyncio.gather(*(_find_nightlies(arch) for arch in arches))
 
     # make sure we found every match we expected
@@ -283,6 +280,16 @@ async def find_rc_nightlies(
         raise NoMatchingNightlyException(f"Found no nightlies in state {allowed_phases} matching {unmatched}")
 
     return nightlies_for_arch
+
+
+def get_nightly_tag_base(major: int, minor: int, build_system: str) -> str:
+    """
+    Get the nightly tag base for the given major, minor version and build system.
+    """
+    nightly_suffix = "nightly"
+    if build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        nightly_suffix = "konflux-nightly"
+    return f"{major}.{minor}.0-0.{nightly_suffix}"
 
 
 def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
