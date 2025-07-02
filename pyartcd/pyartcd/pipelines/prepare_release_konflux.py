@@ -455,11 +455,14 @@ class PrepareReleaseKonfluxPipeline:
         shipment = ShipmentConfig(**out)
         return shipment
 
-    async def get_snapshot(self, kind: str, builds: list) -> Snapshot:
-        """Get a snapshot for the given kind.
-        :param kind: The kind for which to get a snapshot
-        :return: A Snapshot object
+    async def get_snapshot(self, kind: str, builds: list) -> Optional[Snapshot]:
+        """Construct a snapshot for the given kind, by finding builds and creating a snapshot object.
+        :param kind: The kind for which to get a snapshot e.g. "image"
+        :return: A Snapshot object comprising of all the builds found for the given kind, or None if no builds are found.
         """
+
+        if not builds:
+            return None
 
         # store builds in a temporary file, each nvr string in a new line
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:

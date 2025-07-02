@@ -135,15 +135,18 @@ class CreateReleaseCli:
         release_obj = await self.new_release(release_config)
         created_release = await self.konflux_client._create(release_obj)
         release_url = self.konflux_client.resource_url(created_release)
-        LOGGER.info("Successfully created Release %s", release_url)
+        if self.dry_run:
+            LOGGER.info("[DRY-RUN] Would have created Konflux Release at %s", release_url)
+        else:
+            LOGGER.info("Successfully created Release %s", release_url)
         return created_release
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
-        Create a snapshot object from the shipment's snapshot spec
+        Create a Konflux Snapshot manifest from the given shipment's snapshot spec.
         """
-        if not shipment.snapshot.spec.components:
-            raise ValueError("Snapshot spec must have components")
+        if not (shipment.snapshot and shipment.snapshot.spec.components):
+            raise ValueError("A valid snapshot must be provided")
 
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
