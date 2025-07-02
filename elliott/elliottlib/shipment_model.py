@@ -137,6 +137,7 @@ class Tools(StrictBaseModel):
     """Tools to use when releasing shipment to an environment"""
 
     art_tools: Optional[str] = Field(None, alias="art-tools")
+    build_data: Optional[str] = Field(None, alias="build-data")
 
 
 class Shipment(StrictBaseModel):
