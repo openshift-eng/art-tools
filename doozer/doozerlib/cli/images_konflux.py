@@ -484,7 +484,7 @@ class KonfluxBundleCli:
         if failed_tasks:
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         if self.output == 'json':
-            click.echo(json.dumps({"results": results}, indent=4))
+            click.echo(json.dumps({"nvrs": results}, indent=4))
         LOGGER.info("Build complete")
 
 

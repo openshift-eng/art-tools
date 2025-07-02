@@ -334,7 +334,7 @@ class PrepareReleaseKonfluxPipeline:
         bundle_nvrs = []
         if stdout:
             out = json.loads(stdout)
-            bundle_nvrs = out.get("results", [])
+            bundle_nvrs = out.get("nvrs", [])
 
         return bundle_nvrs
 
