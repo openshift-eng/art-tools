@@ -495,11 +495,11 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 "image": ["image-nvr"],
                 "extras": ["extras-nvr"],
                 "metadata": ["olm-nvr"],
-                "olm_builds_not_found": ["olm-builds-not-found"],
+                "olm_builds_not_found": [],
             }
 
         def find_or_build_bundle_builds(nvr):
-            return Spec(nvrs=["new-olm-builds"])
+            return ["new-olm-builds"]
 
         mock_find_builds_all.side_effect = find_builds_all
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
@@ -508,14 +508,13 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             return {
                 "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
                 "extras": Issues(fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]),
-                "metadata": Issues(fixed=[Issue(id="METADATABUG", source="issues.redhat.com")]),
             }.get(kind)
 
         mock_find_bugs.side_effect = find_bugs
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
-        def get_snapshot(kind):
+        def get_snapshot(kind, **_):
             return {
                 "image": Snapshot(
                     nvrs=["image-nvr"],

@@ -261,11 +261,11 @@ class PrepareReleaseKonfluxPipeline:
         # and any additional builds should be pinned in the assembly config
         kind_to_builds = await self.find_builds_all()
         if kind_to_builds["olm_builds_not_found"]:
-            operator_spec = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
-            kind_to_builds["metadata"] = kind_to_builds["metadata"] + operator_spec.nvrs
+            bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            kind_to_builds["metadata"] = kind_to_builds["metadata"] + bundle_nvrs
 
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind)
+            shipment.shipment.snapshot = await self.get_snapshot(kind, kind_to_builds[kind])
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -296,7 +296,7 @@ class PrepareReleaseKonfluxPipeline:
 
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
-    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> Spec:
+    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]):
         async def get_olm_operators() -> list[str]:
             cmd = self._doozer_base_command + [f'--assembly={self.assembly}', "olm-bundle:list-olm-operators"]
             rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
@@ -336,7 +336,7 @@ class PrepareReleaseKonfluxPipeline:
             out = json.loads(stdout)
             bundle_nvrs = out.get("results", [])
 
-        return Spec(nvrs=bundle_nvrs)
+        return bundle_nvrs
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -455,13 +455,12 @@ class PrepareReleaseKonfluxPipeline:
         shipment = ShipmentConfig(**out)
         return shipment
 
-    async def get_snapshot(self, kind: str) -> Snapshot:
+    async def get_snapshot(self, kind: str, builds: list) -> Snapshot:
         """Get a snapshot for the given kind.
         :param kind: The kind for which to get a snapshot
         :return: A Snapshot object
         """
 
-        builds = await self.find_builds(kind)
         # store builds in a temporary file, each nvr string in a new line
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             for nvr in builds:

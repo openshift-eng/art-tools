@@ -94,34 +94,43 @@ class TestFindBuildsKonfluxAllTypes(unittest.IsolatedAsyncioTestCase):
             base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
         )
         image_meta_1.branch_el_target.return_value = "el8"
-        image_meta_1.get_latest_build = AsyncMock(return_value={"nvr": "image1-1.0.0-1.el8"})
+        build_1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta_1.get_latest_build = AsyncMock(return_value=build_1)
 
         image_meta_2 = MagicMock(
             base_only=False, is_release=True, is_payload=False, is_olm_operator=True, distgit_key="image2"
         )
         image_meta_2.branch_el_target.return_value = "el9"
-        image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
+        build_2 = MagicMock(nvr="image2-2.0.0-1.el9")
+        image_meta_2.get_latest_build = AsyncMock(return_value=build_2)
 
         # Mock OLM bundle search
-        bundle_record = {"nvr": "image2-bundle-2.0.0-1.el9"}
-        runtime.konflux_db.should_receive("search_builds_by_fields").and_return(iter([bundle_record]))
+        build_3 = MagicMock(nvr="image2-bundle-2.0.0-1.el9")
+        runtime.konflux_db.should_receive("search_builds_by_fields").and_return(iter([build_3]))
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
 
-        (
-            payload_builds,
-            nonpayload_builds,
-            olm_bundle_builds,
-            olm_builds_not_found,
-        ) = await find_builds_konflux_all_types(runtime)
+        async def fake_anext(it, default):
+            try:
+                return next(it)
+            except StopIteration:
+                return default
+
+        with mock.patch("elliottlib.cli.find_builds_cli.anext", side_effect=fake_anext):
+            (
+                payload_builds,
+                nonpayload_builds,
+                olm_bundle_builds,
+                olm_builds_not_found,
+            ) = await find_builds_konflux_all_types(runtime)
 
         # Assertions
         self.assertEqual(len(payload_builds), 1)
-        self.assertEqual(payload_builds[0]['nvr'], "image1-1.0.0-1.el8")
+        self.assertEqual(payload_builds[0], build_1)
         self.assertEqual(len(nonpayload_builds), 1)
-        self.assertEqual(nonpayload_builds[0]['nvr'], "image2-2.0.0-1.el9")
+        self.assertEqual(nonpayload_builds[0], build_2)
         self.assertEqual(len(olm_bundle_builds), 1)
-        self.assertEqual(olm_bundle_builds[0]['nvr'], "image2-bundle-2.0.0-1.el9")
+        self.assertEqual(olm_bundle_builds[0], build_3)
         self.assertEqual(len(olm_builds_not_found), 0)
 
 
