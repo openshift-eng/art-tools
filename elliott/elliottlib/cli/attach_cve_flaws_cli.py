@@ -196,12 +196,6 @@ class AttachCveFlaws:
         release_notes.topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
         release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
 
-        # Add CVE component mapping
-        cve_component_mapping = self.get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
-        for cve_id, components in cve_component_mapping.items():
-            for component in components:
-                release_notes.cves.append(CveAssociation(key=cve_id, component=component))
-
     async def handle_brew_cve_flaws(self):
         """
         Handle attaching CVE flaws in a Brew environment.
