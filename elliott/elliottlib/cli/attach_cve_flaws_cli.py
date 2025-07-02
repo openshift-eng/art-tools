@@ -118,7 +118,7 @@ class AttachCveFlaws:
             self.logger.info(f"Found {len(flaw_bugs)} flaw bugs, updating release notes.")
 
             # Turn the advisory type into an RHSA
-            self.update_konflux_release_notes_to_rhsa(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+            self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
 
         return release_notes
 
@@ -161,7 +161,7 @@ class AttachCveFlaws:
         )
         return attached_tracker_bugs
 
-    def update_konflux_release_notes_to_rhsa(
+    def update_advisory_konflux(
         self,
         release_notes: ReleaseNotes,
         flaw_bugs: Iterable[Bug],
@@ -225,7 +225,7 @@ class AttachCveFlaws:
 
             try:
                 if flaw_bugs:
-                    self._update_advisory(advisory, self.advisory_kind, flaw_bugs, flaw_bug_tracker, self.noop)
+                    self.update_advisory_brew(advisory, self.advisory_kind, flaw_bugs, flaw_bug_tracker, self.noop)
                     # Associate builds with CVEs
                     self.logger.info('Associating CVEs with builds')
                     await self.associate_builds_with_cves(advisory, flaw_bugs, attached_trackers, tracker_flaws)
@@ -239,7 +239,7 @@ class AttachCveFlaws:
         await self.errata_api.close()
         sys.exit(exit_code)
 
-    def _update_advisory(self, advisory, advisory_kind, flaw_bugs, bug_tracker, noop):
+    def update_advisory_brew(self, advisory, advisory_kind, flaw_bugs, bug_tracker, noop):
         advisory_id = advisory.errata_id
         errata_config = self.runtime.get_errata_config()
 
