@@ -42,7 +42,6 @@ class AttachCveFlaws:
         self.noop = noop
         self.logger = logging.getLogger(__name__)
 
-        # Get the advisory kind-id mapping
         self.errata_config = self.runtime.get_errata_config()
 
         if default_advisory_type:
