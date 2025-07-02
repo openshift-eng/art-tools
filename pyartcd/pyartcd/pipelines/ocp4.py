@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os.path
 import shutil
@@ -12,7 +13,7 @@ from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import mass_rebuild_score
+from pyartcd.util import get_group_images, increment_rebase_fail_counter, mass_rebuild_score, reset_rebase_fail_counter
 
 
 class BuildPlan:
@@ -58,6 +59,7 @@ class Ocp4Pipeline:
 
         self.build_plan = BuildPlan()
         self.mass_rebuild = False
+        self.group_images = []
 
         self.version = version
         self.release = util.default_release_suffix()
@@ -112,11 +114,13 @@ class Ocp4Pipeline:
         """
 
         # build_plan.active_image_count
-        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
-        cmd = self._doozer_base_command.copy()
-        cmd.append('images:list')
-        _, out, _ = await exectools.cmd_gather_async(cmd)  # Last line looks like this: "219 images"
-        self.build_plan.active_image_count = int(out.splitlines()[-1].split(' ')[0].strip())
+        self.group_images = await get_group_images(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        self.build_plan.active_image_count = len(self.group_images)
 
         # build_plan.dry_run
         self.build_plan.dry_run = self.runtime.dry_run
@@ -407,6 +411,7 @@ class Ocp4Pipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
+            await self.update_rebase_fail_counters([])
 
         except ChildProcessError:
             # Get a list of images that failed to rebase
@@ -417,16 +422,15 @@ class Ocp4Pipeline:
                     filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
                 ).keys(),
             )
+
+            if not failed_images:
+                raise  # something else went wrong
+
+            # Some images failed to rebase: log them, and track them in Redis
             self.runtime.logger.warning(
                 'Following images failed to rebase and won\'t be built: %s', ', '.join(failed_images)
             )
-
-            # Notify about rebase failures
-            if self.assembly == 'stream':
-                self._slack_client.bind_channel(f'openshift-{self.version}')
-                await self._slack_client.say(
-                    f":alert: Following images failed to rebase in {self.version}: {','.join(failed_images)}",
-                )
+            await self.update_rebase_fail_counters(failed_images)
 
             # Remove failed images from build plan
             self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in failed_images]
@@ -445,6 +449,28 @@ class Ocp4Pipeline:
             doozer_working=self.runtime.doozer_working,
             mail_client=self._mail_client,
         )
+
+    async def update_rebase_fail_counters(self, failed_images):
+        """
+        Update rebase fail counters for images that failed to rebase.
+        """
+
+        # Reset fail counters for images that were rebased successfully
+        successful_images = []
+        if self.build_images.lower() == 'all':
+            successful_images = [image for image in self.group_images if image not in failed_images]
+        elif self.build_images.lower() == 'except':
+            successful_images = [
+                image
+                for image in self.group_images
+                if image not in self.build_plan.images_excluded and image not in failed_images
+            ]
+        elif self.build_images.lower() == 'only':
+            successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
+        await asyncio.gather(*[reset_rebase_fail_counter(image, self.version, 'brew') for image in successful_images])
+
+        # Increment fail counters for failing images.
+        await asyncio.gather(*[increment_rebase_fail_counter(image, self.version, 'brew') for image in failed_images])
 
     def _handle_image_build_failures(self):
         with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
