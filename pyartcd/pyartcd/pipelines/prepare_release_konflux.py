@@ -497,37 +497,6 @@ class PrepareReleaseKonfluxPipeline:
 
         return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=builds)
 
-    async def find_builds(self, kind: str) -> List[str]:
-        """Find builds for the given kind and return a list of NVRs.
-        :param kind: The kind for which to find builds
-        :return: A list of NVRs of the builds found
-        """
-
-        if kind not in ("image", "extras"):
-            _LOGGER.warning("Shipment kind %s is not supported for build finding", kind)
-            return []
-        payload = True if kind == "image" else False
-
-        find_builds_cmd = self._elliott_base_command + [
-            "find-builds",
-            "--kind=image",
-            "--payload" if payload else "--non-payload",
-            "--json=-",
-        ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(find_builds_cmd)
-        if stderr:
-            _LOGGER.info("Shipment find-builds command stderr:\n %s", stderr)
-        if stdout:
-            _LOGGER.info("Shipment find-builds command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_builds_cmd}")
-
-        builds = []
-        if stdout:
-            out = json.loads(stdout)
-            builds = out.get("builds", [])
-        return builds
-
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def find_builds_all(self):
         """

@@ -382,9 +382,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
+        mock_get_snapshot,
         mock_find_or_build_bundle_builds,
         mock_find_builds_all,
-        mock_get_snapshot,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_create_build_data_pr,
@@ -495,7 +495,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 "image": ["image-nvr"],
                 "extras": ["extras-nvr"],
                 "metadata": ["olm-nvr"],
-                "olm_builds_not_found": [],
+                "olm_builds_not_found": ["new-operatorm-builds"],
             }
 
         def find_or_build_bundle_builds(nvr):
@@ -514,7 +514,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
-        def get_snapshot(kind, **_):
+        def get_snapshot(kind, builds):
             return {
                 "image": Snapshot(
                     nvrs=["image-nvr"],
@@ -562,8 +562,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_init_shipment.call_count, 2)
         self.assertEqual(mock_find_builds_all.call_count, 1)
         self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
-        mock_get_snapshot.assert_any_call("extras")
-        mock_get_snapshot.assert_any_call("image")
+        mock_get_snapshot.assert_any_call("extras", ['extras-nvr'])
+        mock_get_snapshot.assert_any_call("image", ['image-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 2)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
