@@ -68,7 +68,7 @@ class AttachCveFlaws:
             if self.output == 'json':
                 click.echo(json.dumps(release_notes.model_dump(mode='json'), indent=4))
             else:
-                click.echo(YAML.dump(release_notes.model_dump(mode='python'), sys.stdout))
+                YAML.dump(release_notes.model_dump(mode='python'), sys.stdout)
 
         elif self.runtime.build_system == 'brew':
             await self.handle_brew_cve_flaws()
