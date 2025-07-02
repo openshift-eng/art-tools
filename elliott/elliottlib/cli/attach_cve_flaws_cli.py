@@ -73,7 +73,7 @@ class AttachCveFlaws:
         elif self.runtime.build_system == 'brew':
             await self.handle_brew_cve_flaws()
 
-    async def handle_konflux_cve_flaws(self):
+    async def handle_konflux_cve_flaws(self) -> ReleaseNotes:
         """
         Handle attaching CVE flaws in a Konflux environment.
         """
