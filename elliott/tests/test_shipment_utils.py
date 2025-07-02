@@ -162,9 +162,9 @@ shipment:
         """Test successful build extraction from merge request"""
         # Setup mock shipment config
         mock_shipment_config_rpm = Mock()
-        mock_shipment_config_rpm.shipment.snapshot.spec.nvrs = ["test-rpm-1.0.0-1.el8"]
+        mock_shipment_config_rpm.shipment.snapshot.nvrs = ["test-rpm-1.0.0-1.el8"]
         mock_shipment_config_image = Mock()
-        mock_shipment_config_image.shipment.snapshot.spec.nvrs = ["test-container-v1.0.0-202312010000.p0.git12345"]
+        mock_shipment_config_image.shipment.snapshot.nvrs = ["test-container-v1.0.0-202312010000.p0.git12345"]
         mock_get_configs.return_value = {'rpm': mock_shipment_config_rpm, 'image': mock_shipment_config_image}
 
         # Execute test
