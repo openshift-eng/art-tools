@@ -28,11 +28,24 @@ shipment:
     prod:
       releasePlan: "prod-plan"
   snapshot:
-    name: "test-snapshot"
+    nvrs:
+      - "test-rpm-1.0.0-1.el8"
+      - "test-container-v1.0.0-202312010000.p0.git12345"
     spec:
-      nvrs:
-        - "test-rpm-1.0.0-1.el8"
-        - "test-container-v1.0.0-202312010000.p0.git12345"
+      application: "test-app"
+      components:
+        - name: "test-rpm"
+          source:
+            git:
+              url: "https://github.com/test-rpm.git"
+              revision: "abc123"
+          containerImage: "foo"
+        - name: "test-container"
+          source:
+            git:
+              url: "https://github.com/test-container.git"
+              revision: "def456"
+          containerImage: "bar"
   data:
     releaseNotes:
       type: "RHBA"

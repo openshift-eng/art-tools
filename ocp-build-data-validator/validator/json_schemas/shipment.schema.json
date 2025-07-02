@@ -1,6 +1,20 @@
 {
-  "$comment": "Schema generated on 2025-05-16 14:39 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-06-27 16:39 UTC from elliottlib.shipment_model",
   "$defs": {
+    "ComponentSource": {
+      "additionalProperties": false,
+      "description": "Defines the source of a component",
+      "properties": {
+        "git": {
+          "$ref": "#/$defs/GitSource"
+        }
+      },
+      "required": [
+        "git"
+      ],
+      "title": "ComponentSource",
+      "type": "object"
+    },
     "CveAssociation": {
       "additionalProperties": false,
       "properties": {
@@ -34,24 +48,43 @@
       "title": "Data",
       "type": "object"
     },
+    "EnvAdvisory": {
+      "additionalProperties": false,
+      "description": "Information about the advisory that got shipped to the environment",
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "internal_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Internal Url"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "EnvAdvisory",
+      "type": "object"
+    },
     "Environments": {
       "additionalProperties": false,
       "description": "Environments to release the shipment to",
       "properties": {
         "stage": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/ShipmentEnv"
-            }
-          ],
+          "$ref": "#/$defs/ShipmentEnv",
           "description": "Config for releasing to stage environment"
         },
         "prod": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/ShipmentEnv"
-            }
-          ],
+          "$ref": "#/$defs/ShipmentEnv",
           "description": "Config for releasing to prod environment"
         }
       },
@@ -60,6 +93,26 @@
         "prod"
       ],
       "title": "Environments",
+      "type": "object"
+    },
+    "GitSource": {
+      "additionalProperties": false,
+      "description": "Defines the git source of a component",
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "revision"
+      ],
+      "title": "GitSource",
       "type": "object"
     },
     "Issue": {
@@ -194,7 +247,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "cves": {
           "anyOf": [
@@ -232,8 +286,7 @@
         "synopsis",
         "topic",
         "description",
-        "solution",
-        "issues"
+        "solution"
       ],
       "title": "ReleaseNotes",
       "type": "object"
@@ -249,7 +302,15 @@
           "$ref": "#/$defs/Environments"
         },
         "snapshot": {
-          "$ref": "#/$defs/Snapshot"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "data": {
           "anyOf": [
@@ -261,12 +322,22 @@
             }
           ],
           "default": null
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tools"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
         "metadata",
-        "environments",
-        "snapshot"
+        "environments"
       ],
       "title": "Shipment",
       "type": "object"
@@ -279,41 +350,16 @@
           "title": "Releaseplan",
           "type": "string"
         },
-        "releaseName": {
+        "advisory": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/EnvAdvisory"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Releasename"
-        },
-        "advisoryName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Advisoryname"
-        },
-        "advisoryInternalUrl": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Advisoryinternalurl"
+          "default": null
         }
       },
       "required": [
@@ -326,25 +372,9 @@
       "additionalProperties": false,
       "description": "Konflux Snapshot definition for release i.e. builds to release",
       "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
         "spec": {
-          "$ref": "#/$defs/Spec"
-        }
-      },
-      "required": [
-        "name",
-        "spec"
-      ],
-      "title": "Snapshot",
-      "type": "object"
-    },
-    "Spec": {
-      "additionalProperties": false,
-      "description": "Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot",
-      "properties": {
+          "$ref": "#/$defs/SnapshotSpec"
+        },
         "nvrs": {
           "items": {
             "type": "string"
@@ -354,9 +384,77 @@
         }
       },
       "required": [
+        "spec",
         "nvrs"
       ],
-      "title": "Spec",
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "SnapshotComponent": {
+      "additionalProperties": false,
+      "description": "Defines a component of a Konflux Snapshot",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "containerImage": {
+          "title": "Containerimage",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ComponentSource"
+        }
+      },
+      "required": [
+        "name",
+        "containerImage",
+        "source"
+      ],
+      "title": "SnapshotComponent",
+      "type": "object"
+    },
+    "SnapshotSpec": {
+      "additionalProperties": false,
+      "description": "Defines a Konflux Snapshot Object for creation",
+      "properties": {
+        "application": {
+          "title": "Application",
+          "type": "string"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/SnapshotComponent"
+          },
+          "title": "Components",
+          "type": "array"
+        }
+      },
+      "required": [
+        "application",
+        "components"
+      ],
+      "title": "SnapshotSpec",
+      "type": "object"
+    },
+    "Tools": {
+      "additionalProperties": false,
+      "description": "Tools to use when releasing shipment to an environment",
+      "properties": {
+        "art-tools": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Art-Tools"
+        }
+      },
+      "title": "Tools",
       "type": "object"
     }
   },

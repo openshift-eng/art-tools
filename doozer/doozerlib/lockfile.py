@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from functools import total_ordering
@@ -8,18 +9,20 @@ from logging import Logger
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
+import aiohttp
 import yaml
-
-# Removed unused import 'List' from aiohttp_retry
 from artcommonlib import exectools, logutil
 from artcommonlib.rpm_utils import compare_nvr
 from artcommonlib.telemetry import start_as_current_span_async
+from artcommonlib.util import download_file_from_github, split_git_url
 from opentelemetry import trace
 
+from doozerlib.image import ImageMetadata
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)
+LOCKFILE_FILENAME = 'rpms.lock.yaml'
 
 
 @total_ordering
@@ -131,7 +134,7 @@ class RpmInfoCollector:
     @start_as_current_span_async(TRACER, "lockfile.load_repos")
     async def _load_repos(self, requested_repos: set[str], arch: str):
         """
-        Load repodata synchronously for the given repositories and architecture.
+        Load repodata for the given repositories and architecture.
 
         Only repositories not already loaded in `self.loaded_repos` will be fetched.
         Logs a summary of which repos are skipped and which are loaded.
@@ -288,6 +291,158 @@ class RPMLockfileGenerator:
             distgit_key=distgit_key,
         )
 
+    async def should_generate_lockfile(
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
+    ) -> tuple[bool, set[str]]:
+        """
+        Determine if lockfile generation is needed and return RPMs to install.
+
+        Checks lockfile generation configuration, repository availability, and
+        digest optimization to avoid unnecessary regeneration.
+
+        Args:
+            image_meta: Image metadata containing configuration and distgit info
+            dest_dir: Destination directory for lockfile output
+            filename: Lockfile filename, defaults to rpms.lock.yaml
+
+        Returns:
+            tuple[bool, set[str]]: (should_generate, rpms_to_install)
+        """
+        if not image_meta.is_lockfile_generation_enabled():
+            return False, set()
+
+        enabled_repos = image_meta.get_enabled_repos()
+        if not enabled_repos:
+            self.logger.info(f"Skipping lockfile generation for {image_meta.distgit_key}: repositories set is empty")
+            return False, set()
+
+        rpms_to_install = await image_meta.fetch_rpms_from_build()
+        if not rpms_to_install:
+            self.logger.warning(
+                f'Empty RPM list to install for {image_meta.distgit_key}; all required RPMs may be inherited? Skipping lockfile generation.'
+            )
+            return False, set()
+        else:
+            self.logger.info(f'{image_meta.distgit_key} image needs to install {len(rpms_to_install)} rpms')
+
+        if image_meta.is_lockfile_force_enabled():
+            self.logger.info(
+                f"Force flag set for {image_meta.distgit_key}. Regenerating lockfile without digest check."
+            )
+            return True, rpms_to_install
+
+        fingerprint = self._compute_hash(rpms_to_install)
+        digest_path = dest_dir / f'{filename}.digest'
+
+        old_fingerprint = None
+        if digest_path.exists():
+            try:
+                with open(digest_path, 'r') as f:
+                    old_fingerprint = f.read().strip()
+            except Exception as e:
+                self.logger.info(f"Failed to read local digest file '{digest_path}': {e}")
+
+        if old_fingerprint is None:
+            old_fingerprint = await self._get_digest_from_target_branch(digest_path, image_meta)
+            if old_fingerprint:
+                self.logger.info(f"Found digest in target branch for {image_meta.distgit_key}")
+
+        if old_fingerprint == fingerprint:
+            self.logger.info(f"No changes in RPM list for {image_meta.distgit_key}. Skipping lockfile generation.")
+            return False, rpms_to_install
+        elif old_fingerprint:
+            self.logger.info(f"RPM list changed for {image_meta.distgit_key}. Regenerating lockfile.")
+
+        return True, rpms_to_install
+
+    @start_as_current_span_async(TRACER, "lockfile.ensure_repositories_loaded")
+    async def ensure_repositories_loaded(self, image_metas: list[ImageMetadata], base_dir: Path) -> None:
+        """
+        Determine which images need lockfiles and load repositories efficiently.
+
+        Performs should_generate_lockfile checks for all images, then loads
+        repository metadata only for images that actually need generation.
+
+        Args:
+            image_metas: List of image metadata objects to evaluate
+            base_dir: Base directory for lockfile generation
+        """
+        current_span = trace.get_current_span()
+        images_needing_lockfiles = []
+
+        for image_meta in image_metas:
+            dest_dir = base_dir / image_meta.distgit_key
+
+            should_generate, _ = await self.should_generate_lockfile(image_meta, dest_dir)
+            if should_generate:
+                images_needing_lockfiles.append(image_meta)
+                self.logger.info(f"Image {image_meta.distgit_key} needs lockfile generation")
+            else:
+                self.logger.info(f"Image {image_meta.distgit_key} skipping lockfile generation (digest unchanged)")
+
+        repos_by_arch = {}
+
+        for image_meta in images_needing_lockfiles:
+            enabled_repos = image_meta.get_enabled_repos()
+            arches = image_meta.get_arches()
+            for arch in arches:
+                if arch not in repos_by_arch:
+                    repos_by_arch[arch] = set()
+                repos_by_arch[arch].update(enabled_repos)
+
+        total_repo_arch_pairs = sum(len(repos) for repos in repos_by_arch.values())
+        current_span.set_attribute("lockfile.total_images", len(image_metas))
+        current_span.set_attribute("lockfile.images_needing_generation", len(images_needing_lockfiles))
+        current_span.set_attribute("lockfile.unique_repo_arch_pairs", total_repo_arch_pairs)
+
+        if images_needing_lockfiles:
+            self.logger.info(
+                f"Loading repositories for {len(images_needing_lockfiles)} images needing lockfile generation"
+            )
+
+            if repos_by_arch:
+                for arch, repos_for_arch in repos_by_arch.items():
+                    await self.builder._load_repos(repos_for_arch, arch)
+            else:
+                self.logger.info("No repositories to load for lockfile generation")
+        else:
+            self.logger.info("No images need lockfile generation - skipping repository loading")
+
+    async def _sync_from_upstream_if_needed(
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
+    ) -> None:
+        """
+        Download existing lockfile and digest from target branch if available.
+
+        Attempts to fetch both lockfile and digest from the upstream target branch
+        to enable digest optimization for unchanged RPM lists.
+
+        Args:
+            image_meta: Image metadata containing distgit information
+            dest_dir: Local directory to write downloaded files
+            filename: Lockfile filename, defaults to rpms.lock.yaml
+        """
+        lockfile_path = dest_dir / filename
+        digest_path = dest_dir / f'{filename}.digest'
+
+        upstream_digest = await self._get_digest_from_target_branch(digest_path, image_meta)
+        if upstream_digest:
+            try:
+                digest_path.write_text(upstream_digest)
+                self.logger.info(f"Downloaded digest file to {digest_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
+
+        upstream_lockfile = await self._get_lockfile_from_target_branch(lockfile_path, image_meta)
+        if upstream_lockfile:
+            try:
+                lockfile_path.write_text(upstream_lockfile)
+                self.logger.info(f"Downloaded lockfile to {lockfile_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
+        else:
+            self.logger.warning(f"Could not download lockfile from upstream branch for {image_meta.distgit_key}")
+
     @staticmethod
     def _compute_hash(rpms: set[str]) -> str:
         """
@@ -303,153 +458,108 @@ class RPMLockfileGenerator:
         joined = '\n'.join(sorted_items)
         return hashlib.sha256(joined.encode('utf-8')).hexdigest()
 
-    def _get_digest_from_target_branch(self, digest_path: Path, distgit_key: str) -> Optional[str]:
+    async def _get_digest_from_target_branch(self, digest_path: Path, image_meta: ImageMetadata) -> Optional[str]:
         """
         Fetch digest file content from the target art branch.
 
         Args:
             digest_path (Path): Path to the digest file relative to repo root.
-            distgit_key (str): Distgit key to construct the target branch name.
+            image_meta (ImageMetadata): Image metadata containing distgit information.
 
         Returns:
             Optional[str]: Digest content if found, None otherwise.
         """
-        target_branch = self._get_target_branch(distgit_key)
+        target_branch = self._get_target_branch(image_meta.distgit_key)
         if not target_branch:
             return None
 
         try:
-            # Use just the filename since the digest file is in the root of the git repo
+            git_url = str(image_meta.config.content.source.git.url)
             digest_filename = digest_path.name
 
-            # Use exectools to run git show command
-            rc, stdout, stderr = exectools.cmd_gather(['git', 'show', f'{target_branch}:{digest_filename}'])
-            if rc == 0:
-                return stdout.strip()
-            else:
-                self.logger.debug(
-                    f"Could not fetch digest file '{digest_filename}' from branch '{target_branch}': {stderr}"
-                )
+            server, org, repo_name = split_git_url(git_url)
+            if 'github.com' not in server:
+                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
                 return None
+
+            token = os.environ.get('GITHUB_TOKEN')
+            if not token:
+                self.logger.debug("GITHUB_TOKEN not available")
+                return None
+
+            async with aiohttp.ClientSession() as session:
+                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
+                    await download_file_from_github(git_url, target_branch, digest_filename, token, tmp.name, session)
+                    tmp.seek(0)
+                    return tmp.read().strip()
+
         except Exception as e:
-            self.logger.debug(f"Error fetching digest from git branch '{target_branch}': {e}")
+            self.logger.debug(f"Error fetching digest from GitHub branch '{target_branch}': {e}")
             return None
 
-    def _get_lockfile_from_target_branch(self, lockfile_path: Path, distgit_key: str) -> Optional[str]:
+    async def _get_lockfile_from_target_branch(self, lockfile_path: Path, image_meta: 'ImageMetadata') -> Optional[str]:
         """
         Fetch lockfile content from the target art branch.
 
         Args:
             lockfile_path (Path): Path to the lockfile relative to repo root.
-            distgit_key (str): Distgit key to construct the target branch name.
+            image_meta (ImageMetadata): Image metadata containing distgit information.
 
         Returns:
             Optional[str]: Lockfile content if found, None otherwise.
         """
-        target_branch = self._get_target_branch(distgit_key)
+        target_branch = self._get_target_branch(image_meta.distgit_key)
         if not target_branch:
             return None
 
         try:
-            # Use just the filename since the lockfile is in the root of the git repo
+            git_url = image_meta.distgit_remote_url()
             lockfile_filename = lockfile_path.name
 
-            # Use exectools to run git show command
-            rc, stdout, stderr = exectools.cmd_gather(['git', 'show', f'{target_branch}:{lockfile_filename}'])
-            if rc == 0:
-                return stdout
-            else:
-                self.logger.debug(
-                    f"Could not fetch lockfile '{lockfile_filename}' from branch '{target_branch}': {stderr}"
-                )
+            server, org, repo_name = split_git_url(git_url)
+            if 'github.com' not in server:
+                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
                 return None
+
+            token = os.environ.get('GITHUB_TOKEN')
+            if not token:
+                self.logger.debug("GITHUB_TOKEN not available")
+                return None
+
+            async with aiohttp.ClientSession() as session:
+                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
+                    await download_file_from_github(git_url, target_branch, lockfile_filename, token, tmp.name, session)
+                    tmp.seek(0)
+                    return tmp.read()
+
         except Exception as e:
-            self.logger.debug(f"Error fetching lockfile from git branch '{target_branch}': {e}")
+            self.logger.debug(f"Error fetching lockfile from GitHub branch '{target_branch}': {e}")
             return None
 
     async def generate_lockfile(
-        self,
-        arches: list[str],
-        repositories: set[str],
-        rpms: set[str],
-        path: Path = Path('.'),
-        filename: str = 'rpms.lock.yaml',
-        distgit_key: Optional[str] = None,
-        force: bool = False,
+        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = LOCKFILE_FILENAME
     ) -> None:
         """
-        Generate a lockfile YAML containing RPM info for specified arches and repos.
+        Generate RPM lockfile for image with resolved package metadata.
 
-        Skips generation if RPM fingerprint digest matches an existing one, unless force=True.
+        Creates YAML lockfile containing exact RPM versions, checksums, and URLs
+        for all architectures. Includes digest optimization to skip regeneration
+        when RPM lists haven't changed.
 
         Args:
-            arches (list[str]): Target architectures.
-            repositories (set[str]): Repository names.
-            rpms (set[str]): RPM names or NVRs to lock.
-            path (str): Directory path to save lockfile and digest.
-            filename (str): Lockfile filename.
-            distgit_key (Optional[str]): Distgit key for fetching digest from target branch.
-            force (bool): If True, ignore digest comparison and force regeneration.
+            image_meta: Image metadata containing configuration and RPM requirements
+            dest_dir: Output directory for lockfile and digest files
+            filename: Lockfile filename, defaults to rpms.lock.yaml
         """
-        # Defensive check: repositories must not be empty
-        if not repositories:
-            self.logger.warning("Skipping lockfile generation: repositories set is empty")
+        should_generate, rpms_to_install = await self.should_generate_lockfile(image_meta, dest_dir, filename)
+
+        if not should_generate:
+            if rpms_to_install:
+                await self._sync_from_upstream_if_needed(image_meta, dest_dir, filename)
             return
 
-        fingerprint = self._compute_hash(rpms)
-        lockfile_path = path / filename
-        digest_path = path / f'{filename}.digest'
-
-        # Skip digest check if force=True
-        if force:
-            self.logger.info("Force flag set. Regenerating lockfile without digest check.")
-        else:
-            # Check local digest file first
-            old_fingerprint = None
-            if digest_path.exists():
-                try:
-                    with open(digest_path, 'r') as f:
-                        old_fingerprint = f.read().strip()
-                except Exception as e:
-                    self.logger.warning(f"Failed to read local digest file '{digest_path}': {e}")
-
-            # If no local digest or distgit_key provided, try fetching from target branch
-            upstream_digest_found = False
-            if old_fingerprint is None and distgit_key:
-                old_fingerprint = self._get_digest_from_target_branch(digest_path, distgit_key)
-                if old_fingerprint:
-                    self.logger.info(f"Found digest in target branch for {distgit_key}")
-                    upstream_digest_found = True
-
-            # Compare fingerprints
-            if old_fingerprint == fingerprint:
-                if upstream_digest_found and distgit_key:
-                    # Download both digest and lockfile from upstream to ensure they're available locally
-                    self.logger.info("No changes in RPM list. Downloading digest and lockfile from upstream.")
-
-                    # Write the digest file locally
-                    if old_fingerprint:
-                        try:
-                            digest_path.write_text(old_fingerprint)
-                            self.logger.info(f"Downloaded digest file to {digest_path}")
-                        except Exception as e:
-                            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
-
-                    # Download and write the lockfile locally
-                    upstream_lockfile = self._get_lockfile_from_target_branch(lockfile_path, distgit_key)
-                    if upstream_lockfile:
-                        try:
-                            lockfile_path.write_text(upstream_lockfile)
-                            self.logger.info(f"Downloaded lockfile to {lockfile_path}")
-                        except Exception as e:
-                            self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
-                    else:
-                        self.logger.warning(f"Could not download lockfile from upstream branch for {distgit_key}")
-                else:
-                    self.logger.info("No changes in RPM list. Skipping lockfile generation.")
-                return
-            elif old_fingerprint:
-                self.logger.info("RPM list changed. Regenerating lockfile.")
+        arches = image_meta.get_arches()
+        enabled_repos = image_meta.get_enabled_repos()
 
         lockfile = {
             "lockfileVersion": 1,
@@ -457,7 +567,7 @@ class RPMLockfileGenerator:
             "arches": [],
         }
 
-        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, repositories, rpms)
+        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install)
         for arch, rpm_list in rpms_info_by_arch.items():
             lockfile["arches"].append(
                 {
@@ -467,8 +577,11 @@ class RPMLockfileGenerator:
                 }
             )
 
+        lockfile_path = dest_dir / filename
         self._write_yaml(lockfile, lockfile_path)
 
+        fingerprint = self._compute_hash(rpms_to_install)
+        digest_path = dest_dir / f'{filename}.digest'
         try:
             digest_path.write_text(fingerprint)
         except Exception as e:

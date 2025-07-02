@@ -117,12 +117,12 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_stream()
         else:
             # Check if microshift advisory is defined in assembly
-            if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_release:
+            if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
                 self.advisory_num = await self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
-            if not self.skip_prepare_release:
+            if not self.skip_prepare_advisory:
                 await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):

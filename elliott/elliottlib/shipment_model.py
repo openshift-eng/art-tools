@@ -22,17 +22,39 @@ class Metadata(StrictBaseModel):
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
 
 
-class Spec(StrictBaseModel):
-    """Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot"""
+class GitSource(StrictBaseModel):
+    """Defines the git source of a component"""
 
-    nvrs: List[str]
+    url: str
+    revision: str
+
+
+class ComponentSource(StrictBaseModel):
+    """Defines the source of a component"""
+
+    git: GitSource
+
+
+class SnapshotComponent(StrictBaseModel):
+    """Defines a component of a Konflux Snapshot"""
+
+    name: str
+    containerImage: str
+    source: ComponentSource
+
+
+class SnapshotSpec(StrictBaseModel):
+    """Defines a Konflux Snapshot Object for creation"""
+
+    application: str
+    components: List[SnapshotComponent]
 
 
 class Snapshot(StrictBaseModel):
     """Konflux Snapshot definition for release i.e. builds to release"""
 
-    name: str  # Name of the snapshot to release - required until we create automatically by spec
-    spec: Spec
+    spec: SnapshotSpec
+    nvrs: List[str]
 
 
 class CveAssociation(StrictBaseModel):
@@ -81,17 +103,21 @@ class Data(StrictBaseModel):
     releaseNotes: ReleaseNotes
 
 
+class EnvAdvisory(StrictBaseModel):
+    """Information about the advisory that got shipped to the environment"""
+
+    url: str
+    internal_url: Optional[str] = None
+
+
 class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
-    releaseName: Optional[str] = None
-    advisoryName: Optional[str] = None
-    advisoryInternalUrl: Optional[str] = None
+    advisory: Optional[EnvAdvisory] = None
 
     def shipped(self):
-        if self.releaseName or self.advisoryName or self.advisoryInternalUrl:
-            return True
+        return bool(self.advisory)
 
 
 class Environments(StrictBaseModel):
@@ -107,13 +133,20 @@ class Environments(StrictBaseModel):
     )
 
 
+class Tools(StrictBaseModel):
+    """Tools to use when releasing shipment to an environment"""
+
+    art_tools: Optional[str] = Field(None, alias="art-tools")
+
+
 class Shipment(StrictBaseModel):
     """Config to ship a Konflux release for a product"""
 
     metadata: Metadata
     environments: Environments
-    snapshot: Snapshot
+    snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
+    tools: Optional[Tools] = None
 
     @model_validator(mode='after')
     def make_sure_data_is_present_unless_fbc(self) -> Self:

@@ -75,6 +75,11 @@ class KonfluxRebaseCli:
         runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
         metas = runtime.ordered_image_metas()
+
+        # Update span name to include metas count
+        span = trace.get_current_span()
+        span.update_name(f"beta:images:konflux:rebase ({len(metas)}) images")
+        span.set_attribute("doozer.images.count", len(metas))
         base_dir = Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES)
         rebaser = KonfluxRebaser(
             runtime=runtime,
@@ -84,6 +89,9 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
         )
+
+        await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
+
         tasks = []
         for image_meta in metas:
             tasks.append(
@@ -202,6 +210,11 @@ class KonfluxBuildCli:
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = runtime.ordered_image_metas()
+
+        # Update span name to include metas count
+        span = trace.get_current_span()
+        span.update_name(f"images:konflux:build.{len(metas)}metas")
+        span.set_attribute("doozer.images.count", len(metas))
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=runtime.group,

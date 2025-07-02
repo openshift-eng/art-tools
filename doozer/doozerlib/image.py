@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from collections import OrderedDict
@@ -748,3 +749,58 @@ class ImageMetadata(Metadata):
             return lockfile_force
 
         return False
+
+    async def fetch_rpms_from_build(self) -> set[str]:
+        """
+        Fetch RPM packages that need to be installed for this image.
+
+        Returns difference between this image's packages and parent packages.
+        Caches result in installed_packages attribute.
+
+        Returns:
+            set[str]: RPM package names to install for this image
+        """
+        if hasattr(self, 'installed_packages') and self.installed_packages:
+            return set(self.installed_packages)
+
+        try:
+            build = await self.runtime.konflux_db.get_latest_build(name=self.distgit_key, group=self.runtime.group)
+            if not build or not build.installed_packages:
+                self.installed_packages = []
+                return set()
+            packages = set(build.installed_packages)
+        except Exception as e:
+            self.logger.error(f"Failed to fetch RPMs for {self.distgit_key}/{self.runtime.group}: {e}")
+            self.installed_packages = []
+            return set()
+
+        parents = self.get_parent_members()
+        if not parents:
+            self.logger.warning(f'No parent found for {self.distgit_key}; using full RPM set')
+            self.installed_packages = list(packages)
+            return packages
+
+        parent_name = next(iter(parents))
+        try:
+            parent_build = await self.runtime.konflux_db.get_latest_build(name=parent_name, group=self.runtime.group)
+            if not parent_build or not parent_build.installed_packages:
+                parent_packages = set()
+            else:
+                parent_packages = set(parent_build.installed_packages)
+
+            diff_packages = packages - parent_packages
+            self.installed_packages = list(diff_packages)
+            return diff_packages
+        except Exception as e:
+            self.logger.error(f"Failed to fetch parent RPMs for {parent_name}/{self.runtime.group}: {e}")
+            self.installed_packages = list(packages)
+            return packages
+
+    def get_enabled_repos(self) -> set[str]:
+        """
+        Get enabled repositories for lockfile generation.
+
+        Returns:
+            set[str]: Repository names enabled for this image
+        """
+        return set(self.config.get("enabled_repos", []))
