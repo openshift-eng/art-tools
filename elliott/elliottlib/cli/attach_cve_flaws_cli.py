@@ -192,7 +192,8 @@ class AttachCveFlaws:
             runtime=self.runtime, et_data=self.errata_config, art_advisory_key=self.advisory_kind, errata_type='RHSA'
         )
         release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
-        release_notes.topic = cve_boilerplate['topic'].format(IMPACT='Low', MINOR=self.minor, PATCH=self.patch)
+        highest_impact = get_highest_security_impact(flaw_bugs)
+        release_notes.topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
         release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
 
         # Add CVE component mapping
