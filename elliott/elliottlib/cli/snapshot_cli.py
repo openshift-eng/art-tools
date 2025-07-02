@@ -48,7 +48,7 @@ async def get_build_records_by_nvrs(
 
     nvr_record_map = {}
     records = []
-    bundle_nvrs = [n for n in nvrs if "-bundle-container" in n]
+    bundle_nvrs = [n for n in nvrs if "-bundle-container" in n or "-metadata-container" in n]
     non_bundle_nvrs = [n for n in nvrs if n not in bundle_nvrs]
 
     if bundle_nvrs:
