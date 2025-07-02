@@ -185,7 +185,7 @@ class AttachCveFlaws:
                 release_notes.cves.append(CveAssociation(key=cve_id, component=component))
 
         # Attach the flaw bugs to the release notes issues
-        release_notes.issues.fixed.extend([{'id': bug.id, 'source': "issues.redhat.com"} for bug in flaw_bugs])
+        release_notes.issues.fixed.extend([{'id': bug.id, 'source': "bugzilla.redhat.com"} for bug in flaw_bugs])
 
         # Update synopsis, topic and solution
         cve_boilerplate = get_advisory_boilerplate(
