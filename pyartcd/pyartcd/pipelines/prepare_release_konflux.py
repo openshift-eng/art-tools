@@ -258,6 +258,10 @@ class PrepareReleaseKonfluxPipeline:
         # in an ideal case, content should be the same
         # and any additional builds should be pinned in the assembly config
         kind_to_builds = await self.find_builds_all()
+        if kind_to_builds["olm_builds_not_found"]:
+            operator_spec = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            kind_to_builds["metadata"] = kind_to_builds["metadata"] + operator_spec.nvrs
+
         for kind, shipment in shipments_by_kind.items():
             shipment.shipment.snapshot.spec = Spec(nvrs=kind_to_builds[kind])
 
@@ -506,11 +510,6 @@ class PrepareReleaseKonfluxPipeline:
             "metadata": out.get("olm_builds", []),
             "olm_builds_not_found": out.get("olm_builds_not_found", []),
         }
-        if kind_to_builds["olm_builds_not_found"]:
-            _LOGGER.info(f"Some operator's bundle builds not found: \n {kind_to_builds["olm_builds_not_found"]}")
-            operator_spec = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
-            _LOGGER.info(f"Rebuild the following bundle builds: \n {operator_spec.nvrs}")
-            kind_to_builds["metadata"] = kind_to_builds["metadata"] + operator_spec.nvrs
 
         return kind_to_builds
 
