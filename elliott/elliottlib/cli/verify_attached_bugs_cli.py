@@ -5,15 +5,14 @@ import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
-from artcommonlib import arch_util, logutil
+from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
 from errata_tool import ErrataException
 
 from elliottlib import bzutil, constants
-from elliottlib.bzutil import Bug
-from elliottlib.cli.attach_cve_flaws_cli import get_flaws
+from elliottlib.bzutil import Bug, get_flaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type, get_builds_by_advisory_kind
 from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue

@@ -93,7 +93,7 @@ shipment:
         self.mock_source_project.files.get.return_value = self.mock_file_content
 
         # Execute test
-        result = shipment_utils.get_shipment_configs_by_kind(self.test_mr_url, ("rpm", "image"))
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm", "image"))
 
         # Assertions
         self.assertEqual(len(result), 2)
@@ -121,7 +121,7 @@ shipment:
         self.mock_diff.diffs = [mock_non_matching_diff]
 
         # Execute test
-        result = shipment_utils.get_shipment_configs_by_kind(self.test_mr_url, ("rpm", "image"))
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm", "image"))
 
         # Assertions
         self.assertEqual(result, {})
@@ -153,11 +153,11 @@ shipment:
 
         # Execute test and expect error
         with self.assertRaises(ValueError) as context:
-            shipment_utils.get_shipment_configs_by_kind(self.test_mr_url, ("rpm",))
+            shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
 
         self.assertIn("Multiple shipment configs found for rpm", str(context.exception))
 
-    @patch('elliottlib.shipment_utils.get_shipment_configs_by_kind')
+    @patch('elliottlib.shipment_utils.get_shipment_configs_from_mr')
     def test_get_builds_from_mr_success(self, mock_get_configs):
         """Test successful build extraction from merge request"""
         # Setup mock shipment config
@@ -181,6 +181,7 @@ shipment:
     def test_default_kinds_parameter(self):
         """Test that default kinds parameter works correctly"""
         with patch('elliottlib.shipment_utils.gitlab.Gitlab') as mock_gitlab_class:
+            os.environ['GITLAB_TOKEN'] = self.mock_gitlab_token
             mock_gitlab = mock_gitlab_class.return_value
             mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
 
@@ -195,7 +196,7 @@ shipment:
             self.mock_diff.diffs = []
 
             # Call without specifying kinds to test default
-            result = shipment_utils.get_shipment_configs_by_kind(self.test_mr_url)
+            result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url)
 
             # Should not raise an error and return empty dict since no files match
             self.assertEqual(result, {})
@@ -225,7 +226,7 @@ shipment:
 
         # Execute test and expect error
         with self.assertRaises(Exception):
-            shipment_utils.get_shipment_configs_by_kind(self.test_mr_url, ("rpm",))
+            shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
 
     @patch('elliottlib.shipment_utils.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
@@ -250,7 +251,7 @@ shipment:
         self.mock_diff.diffs = [mock_txt_diff, mock_json_diff, mock_py_diff]
 
         # Execute test
-        result = shipment_utils.get_shipment_configs_by_kind(self.test_mr_url, ("rpm", "image"))
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm", "image"))
 
         # Assertions - should return empty dict since no YAML files
         self.assertEqual(result, {})
@@ -286,7 +287,7 @@ shipment:
         self.mock_source_project.files.get.return_value = self.mock_file_content
 
         # Execute test with default kinds
-        result = shipment_utils.get_shipment_configs_by_kind(self.test_mr_url)
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url)
 
         # Assertions
         expected_kinds = {"rpm", "image", "extras", "microshift", "metadata"}
