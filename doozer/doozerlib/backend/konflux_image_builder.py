@@ -426,9 +426,9 @@ class KonfluxImageBuilder:
     @staticmethod
     async def get_installed_packages(
         image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
-    ) -> list:
+    ) -> tuple[list, list]:
         """
-        :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
+        :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
         """
 
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
@@ -467,6 +467,7 @@ class KonfluxImageBuilder:
 
             sbom_contents = await _get_sbom_with_retry(cmd, env=env)
             source_rpms = set()
+            package_nvrs = set()
 
             # we request konflux to generate sbom in spdx schema: https://spdx.dev/
             # https://github.com/openshift-eng/art-tools/blob/fb172e73df248b1dbc09c3666b5229b4db705427/doozer/doozerlib/backend/konflux_client.py#L473
@@ -484,25 +485,34 @@ class KonfluxImageBuilder:
                         purl = PackageURL.from_string(purl_string)
                         # right now, we only care about rpms
                         if purl.type == "rpm":
+                            # get the installed package (name + version)
+                            if purl.name and purl.version:
+                                package_nvrs.add(f"{purl.name}-{purl.version}")
+
                             # get the source rpm
                             source_rpm = purl.qualifiers.get("upstream", None)
                             if source_rpm:
                                 source_rpms.add(source_rpm.removesuffix(".src.rpm"))
                     except Exception as e:
-                        LOGGER.warning(f"Failed to parse purl: {x['purl']} {e}")
+                        LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
                         continue
             if not source_rpms:
                 LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
-            return source_rpms
+            return package_nvrs, source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
         for arch, result in zip(arches, results):
-            if not result:
+            package_nvrs, source_rpms = result
+            if not source_rpms:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
-        installed_packages = set()
-        for srpms in results:
-            installed_packages.update(srpms)
-        return sorted(installed_packages)
+
+        all_package_nvrs = set()
+        all_source_rpms = set()
+        for package_nvrs, source_rpms in results:
+            all_package_nvrs.update(package_nvrs)
+            all_source_rpms.update(source_rpms)
+
+        return sorted(all_package_nvrs), sorted(all_source_rpms)
 
     async def update_konflux_db(
         self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
@@ -573,14 +583,15 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            installed_packages = await self.get_installed_packages(
+            package_nvrs, source_rpms = await self.get_installed_packages(
                 image_pullspec, building_arches, self._config.registry_auth_file
             )
 
             build_record_params.update(
                 {
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                    'installed_packages': installed_packages,
+                    'installed_packages': source_rpms,
+                    'installed_package_nvrs': package_nvrs,
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )
