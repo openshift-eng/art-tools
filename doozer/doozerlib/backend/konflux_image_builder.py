@@ -321,8 +321,9 @@ class KonfluxImageBuilder:
         if required_package_managers in [Missing, None]:
             raise ValueError(f"{required_package_managers} should not be empty if cachi2 is enabled")
 
+        network_mode = metadata.get_konflux_network_mode()
         lockfile_enabled = metadata.is_lockfile_generation_enabled()
-        if lockfile_enabled:
+        if network_mode == "hermetic" and lockfile_enabled:
             lockfile_path = metadata.config.konflux.cachi2.lockfile.get("path", ".")
             data = {
                 "type": "rpm",
@@ -331,7 +332,7 @@ class KonfluxImageBuilder:
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_LOCKFILE_NAME} at path: {lockfile_path}")
         else:
-            logger.debug("RPM lockfile generation is disabled, skipping RPM prefetch")
+            logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
 
         for package_manager in ["gomod", "npm", "pip", "yarn"]:
             if package_manager in required_package_managers:

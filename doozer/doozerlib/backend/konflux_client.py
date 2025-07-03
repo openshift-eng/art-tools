@@ -478,6 +478,7 @@ class KonfluxClient:
                     _modify_param(task["params"], "sbom-type", "spdx")
                     if rpm_lockfile_prefetch_enabled:
                         _modify_param(task["params"], "dev-package-managers", "true")
+                        _modify_param(task["params"], "log-level", "debug")
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
                 case "clone-repository":
