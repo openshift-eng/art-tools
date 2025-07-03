@@ -121,11 +121,11 @@ class TestFindBuildsKonfluxAllTypes(unittest.IsolatedAsyncioTestCase):
 
         # Assertions
         self.assertEqual(len(builds_map['payload']), 1)
-        self.assertEqual(builds_map['payload'][0], build_1)
+        self.assertEqual(builds_map['payload'][0], build_1.nvr)
         self.assertEqual(len(builds_map['non_payload']), 1)
-        self.assertEqual(builds_map['non_payload'][0], build_2)
+        self.assertEqual(builds_map['non_payload'][0], build_2.nvr)
         self.assertEqual(len(builds_map['olm_builds']), 1)
-        self.assertEqual(builds_map['olm_builds'][0], build_3)
+        self.assertEqual(builds_map['olm_builds'][0], build_3.nvr)
         self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
 
 
