@@ -7,7 +7,7 @@ from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from flexmock import flexmock
 
 
-class TestGenPayloadCli(TestCase):
+class TestGenAssemblyCli(TestCase):
     def test_initialize_assembly_type(self):
         """
         Check that the correct assembly type is set, according to
@@ -360,23 +360,35 @@ class TestGenPayloadCli(TestCase):
         self.assertEqual(advisories, actual[0])
         self.assertEqual(release_jira, actual[1])
 
+    def test_get_shipment_info(self):
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='some-assembly')
+        shipment = gacli._get_shipment_info()
+        expected = {
+            'advisories': [
+                {'kind': 'image'},
+                {'kind': 'extras'},
+                {'kind': 'metadata'},
+            ],
+        }
+        self.assertEqual(expected, shipment)
+
     def test_get_shipment_info_ec0(self):
         runtime = MagicMock(build_system='konflux')
         runtime.get_releases_config.return_value = Model({'releases': {}})
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.0')
-        group_info = {}
-        gacli._get_shipment_info(group_info)
+        shipment = gacli._get_shipment_info()
         expected = {
-            'shipment': {
-                'advisories': [
-                    {'kind': 'image'},
-                    {'kind': 'extras'},
-                    {'kind': 'metadata'},
-                    {'kind': 'prerelease'},
-                ]
-            }
+            'advisories': [
+                {'kind': 'image'},
+                {'kind': 'extras'},
+                {'kind': 'metadata'},
+                {'kind': 'prerelease'},
+            ],
+            'env': 'stage',
         }
-        self.assertEqual(expected, group_info)
+        self.assertEqual(expected, shipment)
 
     def test_get_shipment_info_ec1_from_ec0(self):
         runtime = MagicMock(build_system='konflux')
@@ -391,9 +403,7 @@ class TestGenPayloadCli(TestCase):
             {'releases': {'ec.0': {'assembly': {'group': {'shipment': shipment_info}}}}}
         )
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.1')
-        group_info = {}
-        gacli._get_shipment_info(group_info)
-        self.assertEqual({'shipment': shipment_info}, group_info)
+        self.assertEqual(shipment_info, gacli._get_shipment_info())
 
     def test_get_shipment_info_rc0_from_ec4(self):
         runtime = MagicMock(build_system='konflux')
@@ -414,9 +424,7 @@ class TestGenPayloadCli(TestCase):
             }
         )
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.0')
-        group_info = {}
-        gacli._get_shipment_info(group_info)
-        self.assertEqual({'shipment': shipment_info}, group_info)
+        self.assertEqual(shipment_info, gacli._get_shipment_info())
 
     def test_get_shipment_info_rc1_from_rc0(self):
         runtime = MagicMock(build_system='konflux')
@@ -431,25 +439,20 @@ class TestGenPayloadCli(TestCase):
             {'releases': {'rc.0': {'assembly': {'group': {'shipment': shipment_info}}}}}
         )
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
-        group_info = {}
-        gacli._get_shipment_info(group_info)
-        self.assertEqual({'shipment': shipment_info}, group_info)
+        self.assertEqual(shipment_info, gacli._get_shipment_info())
 
     def test_get_shipment_info_rc1_no_rc0(self):
         runtime = MagicMock(build_system='konflux')
         runtime.get_releases_config.return_value = Model({'releases': {}})
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
-        group_info = {}
         gacli.logger = MagicMock()
-        gacli._get_shipment_info(group_info)
         expected = {
-            'shipment': {
-                'advisories': [
-                    {'kind': 'image'},
-                    {'kind': 'extras'},
-                    {'kind': 'metadata'},
-                ]
-            }
+            'advisories': [
+                {'kind': 'image'},
+                {'kind': 'extras'},
+                {'kind': 'metadata'},
+            ],
+            'env': 'stage',
         }
-        self.assertEqual(expected, group_info)
+        self.assertEqual(expected, gacli._get_shipment_info())
         gacli.logger.warning.assert_called_once_with("No matching previous assembly found")
