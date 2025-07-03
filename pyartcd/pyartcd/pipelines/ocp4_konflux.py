@@ -12,7 +12,6 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.telemetry import initialize_telemetry
 from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, jenkins, locks, util
@@ -20,7 +19,7 @@ from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import mass_rebuild_score
+from pyartcd.util import get_group_images, increment_rebase_fail_counter, mass_rebuild_score, reset_rebase_fail_counter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -102,6 +101,8 @@ class KonfluxOcp4Pipeline:
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy))
         self.image_list = [image.strip() for image in image_list.split(',')] if image_list else []
 
+        self.group_images = []
+
         self.slack_client = runtime.new_slack_client()
 
     def image_param_from_build_plan(self):
@@ -114,31 +115,30 @@ class KonfluxOcp4Pipeline:
         return image_param
 
     async def update_rebase_fail_counters(self, failed_images):
-        redis_branch = f'count:rebase-failure:konflux:{self.version}'
-
         # Reset fail counters for images that were rebased successfully
         match self.build_plan.build_strategy:
             case BuildStrategy.ALL:
-                successful_images = []  # TODO
+                successful_images = [image for image in self.group_images if image not in failed_images]
             case BuildStrategy.EXCEPT:
-                successful_images = []  # TODO
+                successful_images = [
+                    image
+                    for image in self.group_images
+                    if image not in self.build_plan.images_excluded and image not in failed_images
+                ]
             case BuildStrategy.ONLY:
                 successful_images = [image for image in self.image_list if image not in failed_images]
             case _:
                 raise ValueError(
                     f"Unknown build strategy: {self.build_plan.build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
                 )
-
-        await asyncio.gather(*[redis.delete_key(f'{redis_branch}:{image}') for image in successful_images])
+        await asyncio.gather(
+            *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in successful_images]
+        )
 
         # Increment fail counters for failing images
-        async def _update(image):
-            redis_key = f'{redis_branch}:{image}'
-            fail_count = await redis.get_value(redis_key)
-            fail_count = int(fail_count) if fail_count else 0
-            await redis.set_value(key=redis_key, value=fail_count + 1)
-
-        await asyncio.gather(*[_update(image) for image in failed_images])
+        await asyncio.gather(
+            *[increment_rebase_fail_counter(image, self.version, 'konflux') for image in failed_images]
+        )
 
     async def rebase(self, version: str, input_release: str):
         cmd = self._doozer_base_command.copy()
@@ -281,9 +281,13 @@ class KonfluxOcp4Pipeline:
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
-        _, out, _ = await exectools.cmd_gather_async([*self._doozer_base_command.copy(), 'images:list'])
-        # Last line looks like this: "219 images"
-        self.build_plan.active_image_count = int(out.splitlines()[-1].split(' ')[0].strip())
+        self.group_images = await get_group_images(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        self.build_plan.active_image_count = len(self.group_images)
 
         if self.build_plan.build_strategy == BuildStrategy.ALL:
             self.build_plan.images_included = []
