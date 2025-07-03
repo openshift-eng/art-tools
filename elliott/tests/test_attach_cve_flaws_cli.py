@@ -39,7 +39,6 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             update=Mock(),
             topic='some topic',
         )
-        versions = {'minor': '4', 'patch': '42'}
 
         flaw_bugs = [
             Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo'),
@@ -54,11 +53,12 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             output="json",
             noop=False,
         )
+        pipeline.minor = '4'
+        pipeline.patch = '42'
         pipeline.get_updated_advisory_rhsa(
             boilerplate,
             advisory,
             flaw_bugs,
-            versions,
         )
 
         advisory.update.assert_any_call(

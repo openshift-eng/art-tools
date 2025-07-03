@@ -12,7 +12,7 @@ from artcommonlib.util import new_roundtrip_yaml_handler
 from errata_tool import Erratum
 
 from elliottlib import constants
-from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, is_first_fix_any, sort_cve_bugs
+from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
@@ -195,6 +195,14 @@ class AttachCveFlaws:
         release_notes.topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
         release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
 
+        # Update description
+        formatted_cve_list = '\n'.join(
+            [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+        )
+        release_notes.description = cve_boilerplate['description'].format(
+            CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
+        )
+
     async def handle_brew_cve_flaws(self):
         """
         Handle attaching CVE flaws in a Brew environment.
@@ -247,12 +255,7 @@ class AttachCveFlaws:
             runtime=self.runtime, et_data=errata_config, art_advisory_key=advisory_kind, errata_type='RHSA'
         )
 
-        versions = {
-            'major': self.major,
-            'minor': self.minor,
-            'patch': self.patch,
-        }
-        advisory, updated = self.get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs, versions)
+        advisory, updated = self.get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
 
         if not noop and updated:
             self.logger.info("Updating advisory details %s", advisory_id)
@@ -319,7 +322,7 @@ class AttachCveFlaws:
             self.errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=self.noop
         )
 
-    def get_updated_advisory_rhsa(self, cve_boilerplate: dict, advisory: Erratum, flaw_bugs, versions):
+    def get_updated_advisory_rhsa(self, cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
         """Given an advisory object, get updated advisory to RHSA
 
         :param cve_boilerplate: cve template for rhsa
@@ -327,8 +330,7 @@ class AttachCveFlaws:
         :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
         :returns: updated advisory object and a boolean indicating if advisory was updated
         """
-        minor = versions['minor']
-        patch = versions['patch']
+
         updated = False
         if not is_security_advisory(advisory):
             self.logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
@@ -337,9 +339,9 @@ class AttachCveFlaws:
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
-                synopsis=cve_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch),
-                topic=cve_boilerplate['topic'].format(IMPACT=security_impact, MINOR=minor, PATCH=patch),
-                solution=cve_boilerplate['solution'].format(MINOR=minor),
+                synopsis=cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch),
+                topic=cve_boilerplate['topic'].format(IMPACT=security_impact, MINOR=self.minor, PATCH=self.patch),
+                solution=cve_boilerplate['solution'].format(MINOR=self.minor),
                 security_impact=security_impact,
             )
 
@@ -355,7 +357,7 @@ class AttachCveFlaws:
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
             formatted_description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=minor, PATCH=patch
+                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
             )
             advisory.update(description=formatted_description)
 
@@ -373,7 +375,7 @@ class AttachCveFlaws:
                 )
 
         if highest_impact not in advisory.topic:
-            topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=minor, PATCH=patch)
+            topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
             self.logger.info('Topic updated to include impact of {}'.format(highest_impact))
             advisory.update(topic=topic)
 
