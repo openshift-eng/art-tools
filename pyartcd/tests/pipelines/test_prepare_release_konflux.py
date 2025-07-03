@@ -514,9 +514,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
-        def get_snapshot(kind, builds):
-            return {
-                "image": Snapshot(
+        def get_snapshot(builds):
+            if "image-nvr" in builds:
+                return Snapshot(
                     nvrs=["image-nvr"],
                     spec=SnapshotSpec(
                         application="app-image",
@@ -530,8 +530,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                             ),
                         ],
                     ),
-                ),
-                "extras": Snapshot(
+                )
+            elif "extras-nvr" in builds:
+                return Snapshot(
                     nvrs=["extras-nvr"],
                     spec=SnapshotSpec(
                         application="app-extras",
@@ -545,8 +546,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                             ),
                         ],
                     ),
-                ),
-            }.get(kind)
+                )
 
         mock_get_snapshot.side_effect = get_snapshot
 
@@ -562,8 +562,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_init_shipment.call_count, 2)
         self.assertEqual(mock_find_builds_all.call_count, 1)
         self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
-        mock_get_snapshot.assert_any_call("extras", ['extras-nvr'])
-        mock_get_snapshot.assert_any_call("image", ['image-nvr'])
+        mock_get_snapshot.assert_any_call(['extras-nvr'])
+        mock_get_snapshot.assert_any_call(['image-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 2)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time

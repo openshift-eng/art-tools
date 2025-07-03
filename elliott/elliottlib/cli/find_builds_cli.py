@@ -177,15 +177,9 @@ async def find_builds_cli(
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
         if all_image_types:
-            payload_records, records, olm_records, olm_records_not_found = await find_builds_konflux_all_types(runtime)
+            builds_map = await find_builds_konflux_all_types(runtime)
             if as_json:
-                json_data = {
-                    'payload': sorted([b.nvr for b in payload_records]),
-                    'non_payload': sorted([b.nvr for b in records]),
-                    'olm_builds': sorted([b.nvr for b in olm_records]),
-                    'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
-                }
-                click.echo(json.dumps(json_data, indent=4, sort_keys=True))
+                click.echo(json.dumps(builds_map, indent=4, sort_keys=True))
                 return
         records = await find_builds_konflux(runtime, payload)
         if as_json:
@@ -722,7 +716,7 @@ async def find_builds_konflux(runtime, payload):
     return records
 
 
-async def find_builds_konflux_all_types(runtime):
+async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
     and fetch related OLM bundle builds.
@@ -732,25 +726,21 @@ async def find_builds_konflux_all_types(runtime):
     - For each image, determines if it is a payload image and collects its build record.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
-    - Returns four lists:
-        1. Build records for payload images.
-        2. Build records for non-payload images.
-        3. OLM bundle build records found.
-        4. OLM operator build records for which no bundle build was found.
+    - Returns a dictionary with four categorized lists:
+        1. 'payload': Build nvrs for payload images.
+        2. 'non_payload': Build nvrs for non-payload images.
+        3. 'olm_builds': NVRs of OLM bundle builds found.
+        4. 'olm_builds_not_found': NVRs of OLM operator builds for which no bundle build was found.
 
     Args:
         runtime: The runtime object providing access to image metadata and the Konflux database.
-        payload: Boolean flag indicating whether to process payload images.
 
     Returns:
-        Tuple of four lists:
-            - List of build records for payload images.
-            - List of build records for non-payload images.
-            - List of OLM bundle build records found.
-            - List of OLM operator build records for which no bundle build was found.
-
-    Raises:
-        ElliottFatalError: If any image build records could not be found.
+        Dict[str, List]: A dictionary containing four lists:
+            - 'payload': List of build nvrs for payload images.
+            - 'non_payload': List of build nvrs for non-payload images.
+            - 'olm_builds': List of NVRs for OLM bundle builds found.
+            - 'olm_builds_not_found': List of NVRs for OLM operator builds with no bundle build.
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
@@ -798,9 +788,10 @@ async def find_builds_konflux_all_types(runtime):
     olm_records_not_found = [operator_build for operator_build, r in zip(operator_builds, olm_records) if r is None]
     olm_records = [record for record in olm_records if record is not None]
 
-    return (
-        [record for _, is_payload, record in records_with_olm if is_payload],
-        [record for _, is_payload, record in records_with_olm if not is_payload],
-        olm_records,
-        olm_records_not_found,
-    )
+    builds_tuple = {
+        'payload': sorted([record.nvr for _, is_payload, record in records_with_olm if is_payload]),
+        'non_payload': sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
+        'olm_builds': sorted([b.nvr for b in olm_records]),
+        'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+    }
+    return builds_tuple

@@ -117,21 +117,16 @@ class TestFindBuildsKonfluxAllTypes(unittest.IsolatedAsyncioTestCase):
                 return default
 
         with mock.patch("elliottlib.cli.find_builds_cli.anext", side_effect=fake_anext):
-            (
-                payload_builds,
-                nonpayload_builds,
-                olm_bundle_builds,
-                olm_builds_not_found,
-            ) = await find_builds_konflux_all_types(runtime)
+            builds_map = await find_builds_konflux_all_types(runtime)
 
         # Assertions
-        self.assertEqual(len(payload_builds), 1)
-        self.assertEqual(payload_builds[0], build_1)
-        self.assertEqual(len(nonpayload_builds), 1)
-        self.assertEqual(nonpayload_builds[0], build_2)
-        self.assertEqual(len(olm_bundle_builds), 1)
-        self.assertEqual(olm_bundle_builds[0], build_3)
-        self.assertEqual(len(olm_builds_not_found), 0)
+        self.assertEqual(len(builds_map['payload']), 1)
+        self.assertEqual(builds_map['payload'][0], build_1)
+        self.assertEqual(len(builds_map['non_payload']), 1)
+        self.assertEqual(builds_map['non_payload'][0], build_2)
+        self.assertEqual(len(builds_map['olm_builds']), 1)
+        self.assertEqual(builds_map['olm_builds'][0], build_3)
+        self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
 
 
 if __name__ == "__main__":

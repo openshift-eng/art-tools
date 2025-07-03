@@ -35,13 +35,6 @@ from doozerlib.runtime import Runtime
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)
 
-"""
-Including the following commands:
-- Rebasing images (beta:images:konflux:rebase)
-- Building images (beta:images:konflux:build)
-- Rebasing and building OLM bundles (beta:images:konflux:bundle)
-"""
-
 
 class KonfluxRebaseCli:
     def __init__(

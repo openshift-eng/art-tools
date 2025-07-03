@@ -262,10 +262,10 @@ class PrepareReleaseKonfluxPipeline:
         kind_to_builds = await self.find_builds_all()
         if kind_to_builds["olm_builds_not_found"]:
             bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
-            kind_to_builds["metadata"] = kind_to_builds["metadata"] + bundle_nvrs
+            kind_to_builds["metadata"] += bundle_nvrs
 
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind, kind_to_builds[kind])
+            shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
 
         # now that we have basic shipment configs setup, we can commit them to shipment MR
         if not shipment_url:
@@ -296,16 +296,21 @@ class PrepareReleaseKonfluxPipeline:
 
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
-    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]):
+    async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> list[str]:
+        """
+        For the given list of operator NVRs, determine which are OLM operators and trigger bundle builds for them if needed.
+        This function runs the doozer beta:images:konflux:bundle command for the relevant operators and returns the resulting bundle NVRs.
+
+        Args:
+            operator_nvrs (list[str]): List of operator NVRs to check and build bundles for.
+
+        Returns:
+            list[str]: List of bundle NVRs that were found or built.
+        """
+
         async def get_olm_operators() -> list[str]:
             cmd = self._doozer_base_command + [f'--assembly={self.assembly}', "olm-bundle:list-olm-operators"]
-            rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
-            if stderr:
-                _LOGGER.info("stderr:\n %s", stderr)
-            if stdout:
-                _LOGGER.info("stdout:\n %s", stdout)
-            if rc != 0:
-                raise RuntimeError(f"cmd failed with exit code {rc}: {cmd}")
+            stdout = await self.execute_command_with_logging(cmd)
             return [line.strip() for line in stdout.splitlines() if line.strip()]
 
         olm_operators = await get_olm_operators()
@@ -329,13 +334,8 @@ class PrepareReleaseKonfluxPipeline:
             ]
             + olm_operator_nvrs
         )
-        await exectools.cmd_assert_async(cmd)
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
-        bundle_nvrs = []
-        if stdout:
-            out = json.loads(stdout)
-            bundle_nvrs = out.get("nvrs", [])
-
+        stdout = await self.execute_command_with_logging(cmd)
+        bundle_nvrs = json.loads(stdout).get("nvrs", []) if stdout else []
         return bundle_nvrs
 
     def validate_shipment_config(self, shipment_config: dict):
@@ -455,12 +455,16 @@ class PrepareReleaseKonfluxPipeline:
         shipment = ShipmentConfig(**out)
         return shipment
 
-    async def get_snapshot(self, kind: str, builds: list) -> Optional[Snapshot]:
-        """Construct a snapshot for the given kind, by finding builds and creating a snapshot object.
-        :param kind: The kind for which to get a snapshot e.g. "image"
-        :return: A Snapshot object comprising of all the builds found for the given kind, or None if no builds are found.
+    async def get_snapshot(self, builds: list) -> Optional[Snapshot]:
         """
+        Construct a snapshot object from a list of build NVRs by invoking the elliott snapshot new command.
 
+        Args:
+            builds (list): List of build NVRs to include in the snapshot.
+
+        Returns:
+            Optional[Snapshot]: A Snapshot object containing the builds, or None if the builds list is empty.
+        """
         if not builds:
             return None
 
@@ -478,13 +482,7 @@ class PrepareReleaseKonfluxPipeline:
             "new",
             f"--builds-file={temp_file_path}",
         ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(snapshot_cmd)
-        if stderr:
-            _LOGGER.info("Shipment snapshot new command stderr:\n %s", stderr)
-        if stdout:
-            _LOGGER.info("Shipment snapshot new command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {snapshot_cmd}")
+        stdout = await self.execute_command_with_logging(snapshot_cmd)
 
         # remove the temporary file
         os.unlink(temp_file_path)
@@ -497,26 +495,38 @@ class PrepareReleaseKonfluxPipeline:
 
         return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=builds)
 
+    async def execute_command_with_logging(self, cmd):
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        if stderr:
+            _LOGGER.info("Command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Command stdout:\n %s", stdout)
+        if rc != 0:
+            raise RuntimeError(f"Command failed with exit code {rc}: {cmd}")
+        return stdout
+
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def find_builds_all(self):
+    async def find_builds_all(self) -> Dict[str, List[str]]:
         """
         Run the elliott 'find-builds' command for images and return categorized build NVRs.
+
+        This function executes the elliott find-builds command with --all-image-types flag
+        to retrieve all types of image builds (payload, non-payload, OLM bundles) and
+        categorizes them into separate lists.
+
         Returns:
-            tuple: Four lists containing:
-                - payload_builds: NVRs of payload image builds
-                - non_payload_builds: NVRs of non-payload image builds
-                - olm_builds: NVRs of OLM bundle builds
-                - olm_builds_not_found: NVRs of OLM operator builds for which no bundle build was found
+            Dict[str, List[str]]: A dictionary containing four lists of NVRs:
+                - 'image': NVRs of payload image builds
+                - 'extras': NVRs of non-payload image builds
+                - 'metadata': NVRs of OLM bundle builds
+                - 'olm_builds_not_found': NVRs of OLM operator builds for which no bundle build was found
         """
         cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-image-types", "--json=-"]
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        stdout = await self.execute_command_with_logging(cmd)
         if not stdout:
             _LOGGER.warning("No output received from find-builds command.")
             return {"image": [], "extras": [], "metadata": [], "olm_builds_not_found": []}
-
         out = json.loads(stdout)
-        _LOGGER.info("Find image builds: \n%s", stdout)
-
         kind_to_builds = {
             "image": out.get("payload", []),
             "extras": out.get("non_payload", []),
