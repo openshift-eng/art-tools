@@ -930,6 +930,17 @@ class GenAssemblyCli:
         return image_member_overrides, rpm_member_overrides
 
     def _get_default_shipment(self, env: str = None) -> dict:
+        """
+        Get the default assembly.group.shipment template for an assembly.
+        """
+
+        # Note: env=prod means shipment will be pushed to stage and prod
+        # env=stage means shipment will be pushed to stage only
+        # We do not want to set 'prod' env explicitly, as it is the default environment
+        # and mentioning it in every assembly definition is redundant
+        if env and env not in ['stage', 'prod']:
+            raise ValueError(f"Invalid environment: {env}")
+
         default_shipment = {
             'advisories': [
                 {'kind': 'image'},
