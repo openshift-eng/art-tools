@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-06-27 16:39 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-07-02 21:01 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -452,6 +452,18 @@
           ],
           "default": null,
           "title": "Art-Tools"
+        },
+        "build-data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Build-Data"
         }
       },
       "title": "Tools",
