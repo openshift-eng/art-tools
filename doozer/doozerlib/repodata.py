@@ -175,7 +175,7 @@ class Repodata:
     primary_rpms: List[Rpm] = field(default_factory=list)
     modules: List[RpmModule] = field(default_factory=list)
 
-    def get_rpms(self, items: Union[str, Iterable[str]]) -> Tuple[list[Rpm], list[str]]:
+    def get_rpms(self, items: Union[str, Iterable[str]], arch: Optional[str] = None) -> Tuple[list[Rpm], list[str]]:
         if isinstance(items, str):
             items = {items}
         else:
@@ -185,11 +185,24 @@ class Repodata:
         not_found: list[str] = []
 
         for item in items:
-            rpm = next((rpm for rpm in self.primary_rpms if rpm.name == item or rpm.nvr == item), None)
-            if rpm is not None:
-                found_rpms.append(rpm)
-            else:
+            matching_rpms = [rpm for rpm in self.primary_rpms if rpm.name == item or rpm.nvr == item]
+
+            if not matching_rpms:
                 not_found.append(item)
+                continue
+
+            if arch:
+                arch_match = next((rpm for rpm in matching_rpms if rpm.arch == arch), None)
+                if arch_match:
+                    found_rpms.append(arch_match)
+                    continue
+
+                noarch_match = next((rpm for rpm in matching_rpms if rpm.arch == 'noarch'), None)
+                if noarch_match:
+                    found_rpms.append(noarch_match)
+                    continue
+
+            found_rpms.append(matching_rpms[0])
 
         return found_rpms, sorted(not_found)
 

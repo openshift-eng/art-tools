@@ -310,6 +310,73 @@ data:
         self.assertEqual(found[0].name, "foo")
         self.assertEqual(not_found, [])
 
+    def test_get_rpms_with_arch_matching(self):
+        # Add RPMs with different architectures for testing
+        rpms_with_arch = [
+            Rpm(
+                name="multiarch",
+                epoch=1,
+                version="1.0.0",
+                checksum="abc1",
+                size=100,
+                location="multiarch-x86_64.rpm",
+                sourcerpm="multiarch-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="multiarch",
+                epoch=1,
+                version="1.0.0",
+                checksum="abc2",
+                size=100,
+                location="multiarch-aarch64.rpm",
+                sourcerpm="multiarch-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="aarch64",
+            ),
+            Rpm(
+                name="noarch-pkg",
+                epoch=1,
+                version="1.0.0",
+                checksum="abc3",
+                size=100,
+                location="noarch-pkg.rpm",
+                sourcerpm="noarch-pkg-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="noarch",
+            ),
+        ]
+        repodata_with_arch = Repodata(name="testrepo", primary_rpms=self.rpms + rpms_with_arch, modules=[])
+
+        # Test exact architecture match
+        found, not_found = repodata_with_arch.get_rpms("multiarch", arch="x86_64")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].arch, "x86_64")
+        self.assertEqual(not_found, [])
+
+        # Test fallback to noarch when exact match not found
+        found, not_found = repodata_with_arch.get_rpms("noarch-pkg", arch="x86_64")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].arch, "noarch")
+        self.assertEqual(not_found, [])
+
+        # Test no arch specified (original behavior)
+        found, not_found = repodata_with_arch.get_rpms("multiarch")
+        self.assertEqual(len(found), 1)
+        # Should return first matching RPM (x86_64 comes first in the list)
+        self.assertEqual(found[0].arch, "x86_64")
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_with_arch_no_match(self):
+        # Test when no RPM matches the requested architecture
+        found, not_found = self.repodata.get_rpms("foo", arch="s390x")
+        self.assertEqual(len(found), 1)
+        # Should fallback to first matching RPM regardless of arch
+        self.assertEqual(found[0].name, "foo")
+        self.assertEqual(found[0].arch, "x86_64")
+        self.assertEqual(not_found, [])
+
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
