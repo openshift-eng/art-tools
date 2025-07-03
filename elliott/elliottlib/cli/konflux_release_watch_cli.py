@@ -38,7 +38,7 @@ class WatchReleaseCli:
         :return: A tuple of (success: bool, release_obj: dict)
         """
 
-        self.runtime.initialize(no_group=True)
+        self.runtime.initialize(no_group=True, build_system='konflux')
         release_obj = await self.konflux_client.wait_for_release(
             self.release, overall_timeout_timedelta=timedelta(hours=self.timeout)
         )

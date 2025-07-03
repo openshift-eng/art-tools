@@ -61,7 +61,7 @@ class CreateReleaseCli:
         self.release_env = release_env
 
     async def run(self):
-        self.runtime.initialize(with_shipment=True)
+        self.runtime.initialize(build_system='konflux', with_shipment=True)
 
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
