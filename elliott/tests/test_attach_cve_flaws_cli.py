@@ -1,13 +1,29 @@
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from typing import Dict, Iterable, List, cast
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 from elliottlib import constants
-from elliottlib.bzutil import BugzillaBug
-from elliottlib.cli import attach_cve_flaws_cli
+from elliottlib.bzutil import Bug, BugzillaBug
+from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.errata_async import AsyncErrataAPI
 
 
 class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Provide a minimal mock runtime for AttachCveFlaws
+        self.mock_runtime = Mock()
+        self.mock_runtime.get_errata_config.return_value = {}
+        self.mock_runtime.get_major_minor_patch.return_value = (4, 4, 42)
+        self.mock_runtime.get_bug_tracker.return_value = Mock()
+        self.mock_runtime.group_config.advisories = {}
+        self.mock_runtime.build_system = 'brew'
+        self.mock_runtime.assembly = None
+        self.mock_runtime.get_releases_config.return_value = {}
+        self.mock_runtime.get_bug_tracker.side_effect = lambda t: Mock(
+            type=t, get_tracker_bugs=Mock(return_value=[]), advisory_bug_ids=Mock(return_value=[]), attach_bugs=Mock()
+        )
+        self.mock_runtime.build_retrying_koji_client.return_value = Mock()
+
     def test_get_updated_advisory_rhsa(self):
         boilerplate = {
             'security_reviewer': 'some reviewer',
@@ -23,18 +39,26 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             update=Mock(),
             topic='some topic',
         )
-        versions = {'minor': '4', 'patch': '42'}
 
         flaw_bugs = [
             Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo'),
             Mock(alias=['CVE-2022-456'], severity='high', summary='CVE-2022-456 bar'),
         ]
 
-        attach_cve_flaws_cli.get_updated_advisory_rhsa(
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
+        pipeline.minor = '4'
+        pipeline.patch = '42'
+        pipeline.get_updated_advisory_rhsa(
             boilerplate,
             advisory,
             flaw_bugs,
-            versions,
         )
 
         advisory.update.assert_any_call(
@@ -108,8 +132,20 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             103: BugzillaBug(Mock(id=103, keywords=["Security"], alias=["CVE-2099-3"])),
         }
         flaw_bugs = list(flaw_id_bugs.values())
-        actual = await attach_cve_flaws_cli.associate_builds_with_cves(
-            errata_api, advisory, flaw_bugs, attached_tracker_bugs, tracker_flaws, dry_run=False
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
+        pipeline.errata_api = errata_api
+        actual = await pipeline.associate_builds_with_cves(
+            advisory,
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws),
         )
         expected_builds = [
             'a-1.0.0-1.el8',
@@ -129,6 +165,119 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             errata_api, 12345, expected_builds, expected_cve_component_mapping, dry_run=False
         )
         self.assertEqual(actual, None)
+
+    def test_get_cve_component_mapping_simple_case(self):
+        # Create flaw bugs
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=["CVE-2022-1"])),
+            BugzillaBug(Mock(id=102, alias=["CVE-2022-2"])),
+        ]
+
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard="component: component-a")),
+            BugzillaBug(Mock(id=2, whiteboard="component: component-b")),
+        ]
+
+        tracker_flaws = {
+            1: [101, 102],  # Tracker 1 → CVE-2022-1, CVE-2022-2
+            2: [102],  # Tracker 2 → CVE-2022-2
+        }
+
+        result = AttachCveFlaws.get_cve_component_mapping(
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws),
+        )
+
+        expected = {
+            "CVE-2022-1": {"component-a"},
+            "CVE-2022-2": {"component-a", "component-b"},
+        }
+
+        self.assertEqual(result, expected)
+
+    def test_get_cve_component_mapping_rhcos(self):
+        with patch("artcommonlib.arch_util.RHCOS_BREW_COMPONENTS", {"rhcos-x86_64", "rhcos-aarch64"}):
+            flaw_bugs = [
+                BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+            ]
+            attached_tracker_bugs = [
+                BugzillaBug(Mock(id=1, whiteboard='component: rhcos')),
+            ]
+            tracker_flaws = {
+                1: [101],
+            }
+            attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
+
+            result = AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws),
+                attached_components,
+            )
+            expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
+            self.assertEqual(result, expected)
+
+    def test_get_cve_component_non_attached_flaw(self):
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+        ]
+        tracker_flaws = {
+            1: [101, 102],  # 102 is not in flaw_bugs, so it gets ignored
+        }
+        result = AttachCveFlaws.get_cve_component_mapping(
+            cast(Iterable[Bug], flaw_bugs),
+            cast(List[Bug], attached_tracker_bugs),
+            cast(Dict[int, Iterable], tracker_flaws),
+        )
+        expected = {'CVE-2022-1': {'component-a'}}
+        self.assertEqual(result, expected)
+
+    def test_get_cve_component_invalid_alias(self):
+        flaw_bugs_no_alias = [
+            BugzillaBug(Mock(id=101, alias=[])),
+        ]
+        flaw_bugs_multiple_aliases = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1', 'CVE-2022-2'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+        ]
+        tracker_flaws = {
+            1: [101],
+        }
+        with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs_no_alias),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws),
+            )
+        with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs_multiple_aliases),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws),
+            )
+
+    def test_get_cve_component_mapping_missing_whiteboard(self):
+        flaw_bugs = [
+            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+        ]
+        attached_tracker_bugs = [
+            BugzillaBug(Mock(id=1, whiteboard='component: ')),
+        ]
+        tracker_flaws = {
+            1: [101],
+        }
+        with self.assertRaisesRegex(ValueError, "Bug 1 doesn't have a valid whiteboard component."):
+            AttachCveFlaws.get_cve_component_mapping(
+                cast(Iterable[Bug], flaw_bugs),
+                cast(List[Bug], attached_tracker_bugs),
+                cast(Dict[int, Iterable], tracker_flaws),
+            )
 
 
 if __name__ == '__main__':

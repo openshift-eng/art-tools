@@ -1,4 +1,5 @@
 import io
+import json
 import pathlib
 import subprocess
 import sys
@@ -38,9 +39,14 @@ def images_clone(runtime, clone_upstreams):
 
 
 @cli.command("images:list", help="List of distgits being selected.")
+@click.option("--json", "is_json", is_flag=True, default=False, help="Output the list in JSON format.")
 @pass_runtime
-def images_list(runtime):
+def images_list(runtime, is_json):
     runtime.initialize(clone_distgits=False)
+    if is_json:
+        click.echo(json.dumps({"images": [image.distgit_key for image in runtime.image_metas()]}))
+        return
+
     click.echo("------------------------------------------")
     for image in runtime.image_metas():
         click.echo(image.qualified_name)

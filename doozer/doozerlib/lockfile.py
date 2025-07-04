@@ -201,7 +201,7 @@ class RpmInfoCollector:
                 self.logger.error(f'repo {repo_name} not found')
                 continue
 
-            found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms)
+            found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
             rpm_info_list.extend(
                 [
                     RpmInfo.from_rpm(

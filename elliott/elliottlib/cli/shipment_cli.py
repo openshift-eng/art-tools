@@ -49,7 +49,7 @@ class InitShipmentCli:
         self.advisory_key = advisory_key
 
     async def run(self):
-        self.runtime.initialize(with_shipment=True)
+        self.runtime.initialize(build_system='konflux', with_shipment=True)
 
         # if stage/prod rpa are not given in cli, try to load them from shipment repo config
         # where defaults are set per application

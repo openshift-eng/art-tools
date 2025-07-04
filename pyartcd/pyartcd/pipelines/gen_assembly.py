@@ -18,7 +18,7 @@ from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     split_git_url,
 )
-from doozerlib.cli.get_nightlies import rc_api_url
+from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
 from ghapi.all import GhApi
 
 from pyartcd import constants, jenkins
@@ -172,7 +172,7 @@ class GenAssemblyPipeline:
     async def _get_latest_accepted_nightly(self):
         self._logger.info('Retrieving most recent accepted amd64 nightly...')
         major, minor = isolate_major_minor_in_group(self.group)
-        tag_base = f'{major}.{minor}.0-0.nightly'
+        tag_base = get_nightly_tag_base(major, minor, self.build_system)
         rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/latest"
         async with aiohttp.ClientSession() as session:
             async with session.get(rc_endpoint) as response:

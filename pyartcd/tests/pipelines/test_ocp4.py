@@ -33,7 +33,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
             comment_on_pr=False,
         )
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan(self, _):
         await self.ocp4._initialize_build_plan()
 
@@ -46,7 +46,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.images_included, [])
         self.assertEqual(self.ocp4.build_plan.images_excluded, [])
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan_no_images_no_rpms(self, _):
         self.ocp4.build_rpms = 'none'
         self.ocp4.build_images = 'none'
@@ -56,7 +56,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.build_rpms, False)
         self.assertEqual(self.ocp4.build_plan.build_images, False)
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan_include_rpm_list(self, _):
         # RPM list not allowed when build_rpms == "all"
         self.ocp4.rpm_list = 'rpm1, rpm2'
@@ -69,7 +69,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
         self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan_exclude_rpm_list(self, _):
         # RPM list not allowed when build_rpms == "all"
         self.ocp4.rpm_list = 'rpm1, rpm2'
@@ -82,7 +82,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.rpms_included, [])
         self.assertEqual(self.ocp4.build_plan.rpms_excluded, ['rpm1', 'rpm2'])
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan_include_image_list(self, _):
         # Image list not allowed when build_images == "all"
         self.ocp4.image_list = 'image1, image2'
@@ -95,7 +95,7 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2'])
         self.assertEqual(self.ocp4.build_plan.images_excluded, [])
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initial_build_plan_exclude_image_list(self, _):
         # Image list not allowed when build_images == "all"
         self.ocp4.image_list = 'image1, image2'
@@ -157,7 +157,7 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.ocp4._check_assembly()
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initialize_build_plan_default(self, *_):
         # Default ocp4 pipeline
         await self.ocp4._initialize_build_plan()
@@ -165,7 +165,7 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.build_images, True)
         self.assertEqual(self.ocp4.build_plan.build_rpms, True)
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initialize_build_plan_no_images_no_rpms(self, *_):
         # No images, rpms
         self.ocp4.build_images = 'none'
@@ -174,7 +174,7 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.build_images, False)
         self.assertEqual(self.ocp4.build_plan.build_rpms, False)
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initialize_build_plan_include_images_rpms(self, *_):
         # Include images/rpms, empty lists
         self.ocp4.build_images = 'only'
@@ -195,7 +195,7 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.images_excluded, [])
         self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
 
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
+    @patch("pyartcd.pipelines.ocp4.get_group_images", autospec=True, return_value=[''] * 219)
     async def test_initialize_build_plan_exclude_images_rpms(self, *_):
         # Exclude images/rpms, empty lists
         self.ocp4.build_images = 'except'

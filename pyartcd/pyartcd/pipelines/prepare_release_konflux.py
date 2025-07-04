@@ -25,7 +25,7 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
-from elliottlib.shipment_utils import get_shipment_configs_by_kind
+from elliottlib.shipment_utils import get_shipment_configs_from_mr
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -240,7 +240,7 @@ class PrepareReleaseKonfluxPipeline:
         # if shipment MR exists, load the shipment configs from it
         # assume advisory content and liveIDs are already set
         if shipment_url:
-            shipments_by_kind = get_shipment_configs_by_kind(shipment_url)
+            shipments_by_kind = get_shipment_configs_from_mr(shipment_url)
         else:
             shipments_by_kind = {}
             for shipment_advisory_config in shipment_config.get("advisories", []):

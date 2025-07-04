@@ -58,6 +58,7 @@ class Runtime(GroupRuntime):
         self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
+        self.disable_gssapi = False
         self._logger = None
         self.use_jira = True
         if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
@@ -487,8 +488,9 @@ class Runtime(GroupRuntime):
         with self.koji_lock:
             if self._koji_client_session is None:
                 self._koji_client_session = self.build_retrying_koji_client()
-                self._logger.info("Authenticating to Brew...")
-                self._koji_client_session.gssapi_login()
+                if not self.disable_gssapi:
+                    self._logger.info("Authenticating to Brew...")
+                    self._koji_client_session.gssapi_login()
             yield self._koji_client_session
 
     @contextmanager

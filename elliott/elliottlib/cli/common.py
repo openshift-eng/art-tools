@@ -40,6 +40,9 @@ context_settings = dict(help_option_names=['-h', '--help'])
     f" {SHIPMENT_DATA_URL_TEMPLATE.format('ocp')}. Defaults to `main` branch for a repo - to point to a "
     "different branch/commit use repo@commitish",
 )
+@click.option(
+    '--disable-gssapi', default=False, is_flag=True, help='Disable gssapi for requests that do not require keytab'
+)
 @click.option('--group', '-g', default=None, metavar='NAME', help='The group of images on which to operate.')
 @click.option(
     "--assembly",

@@ -305,7 +305,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         result = await cli.run()
 
         # Verify runtime was initialized with shipment
-        self.runtime.initialize.assert_called_once_with(with_shipment=True)
+        self.runtime.initialize.assert_called_once_with(build_system='konflux', with_shipment=True)
 
         # Verify resource existence was checked
         self.konflux_client._get.assert_any_call(

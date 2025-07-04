@@ -12,9 +12,10 @@ from typing import Dict, Iterable, List, Optional, Union, cast
 
 import artcommonlib
 import yaml
-from artcommonlib import exectools
+from artcommonlib import exectools, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
 from doozerlib import util as doozerutil
@@ -755,3 +756,54 @@ def mass_rebuild_score(version: str) -> int:
     Higher the score, higher the priority
     """
     return round(float(version) * 100)  # '4.16' -> 416
+
+
+async def get_group_images(
+    group: str,
+    assembly: str,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> List[str]:
+    """
+    Get the list of images for a given group and assembly.
+    """
+
+    with TemporaryDirectory() as doozer_working:
+        group_param = f'--group={group}'
+        if doozer_data_gitref:
+            group_param += f'@{doozer_data_gitref}'
+        command = [
+            'doozer',
+            f'--working-dir={doozer_working}',
+            f'--data-path={doozer_data_path}',
+            group_param,
+            '--assembly',
+            assembly,
+            'images:list',
+            '--json',
+        ]
+        _, out, _ = await exectools.cmd_gather_async(command)
+        return json.loads(out)['images']
+
+
+async def increment_rebase_fail_counter(image, version, build_system):
+    """
+    Increment the fail counter for a given image in Redis.
+    """
+
+    redis_branch = f'count:rebase-failure:{build_system}:{version}'
+    redis_key = f'{redis_branch}:{image}'
+    fail_count = await redis.get_value(redis_key)
+    fail_count = int(fail_count) if fail_count else 0
+    await redis.set_value(key=redis_key, value=fail_count + 1)
+
+
+@limit_concurrency(50)
+async def reset_rebase_fail_counter(image, version, build_system):
+    """
+    Reset the fail counter for a given image in Redis.
+    Limit concurrency as we might have a lot of images to reset
+    """
+
+    redis_branch = f'count:rebase-failure:{build_system}:{version}'
+    await redis.delete_key(f'{redis_branch}:{image}')
