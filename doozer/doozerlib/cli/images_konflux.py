@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import traceback
@@ -300,6 +301,7 @@ class KonfluxBundleCli:
         skip_checks: bool,
         release: Optional[str],
         plr_template: str,
+        output: str,
     ):
         self.runtime = runtime
         self.operator_nvrs = list(operator_nvrs)
@@ -311,6 +313,7 @@ class KonfluxBundleCli:
         self.image_repo = image_repo
         self.skip_checks = skip_checks
         self.release = release
+        self.output = output
         self.plr_template = plr_template
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -395,7 +398,7 @@ class KonfluxBundleCli:
                 logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
                 if not self.force:
                     logger.info("Skipping because --force is not set")
-                    return
+                    return bundle_build.nvr
                 input_release = str(int(bundle_build.release) + 1)
                 logger.info("Force rebuild requested because --force is set; release string will be %s", input_release)
             else:
@@ -406,10 +409,11 @@ class KonfluxBundleCli:
                 )
 
         logger.info("Rebasing OLM bundle...")
-        await rebaser.rebase(image_meta, operator_build, input_release)
+        nvr = await rebaser.rebase(image_meta, operator_build, input_release)
         logger.info("Building OLM bundle...")
         await builder.build(image_meta)
         logger.info("Bundle build complete")
+        return nvr
 
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):
@@ -472,6 +476,8 @@ class KonfluxBundleCli:
                 LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
         if failed_tasks:
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
+        if self.output == 'json':
+            click.echo(json.dumps({"nvrs": results}, indent=4))
         LOGGER.info("Build complete")
 
 
@@ -513,6 +519,13 @@ class KonfluxBundleCli:
     default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
     help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
 )
+@click.option(
+    '--output',
+    '-o',
+    type=click.Choice(['json'], case_sensitive=False),
+    default='json',
+    help='Output format for the build records.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_bundle(
@@ -527,6 +540,7 @@ async def images_konflux_bundle(
     skip_checks: bool,
     release: Optional[str],
     plr_template: str,
+    output: str,
 ):
     cli = KonfluxBundleCli(
         runtime=runtime,
@@ -540,5 +554,6 @@ async def images_konflux_bundle(
         skip_checks=skip_checks,
         release=release,
         plr_template=plr_template,
+        output=output,
     )
     await cli.run()

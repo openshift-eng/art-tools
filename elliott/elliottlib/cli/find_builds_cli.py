@@ -13,7 +13,7 @@ from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -79,6 +79,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @click.option('--payload', required=False, is_flag=True, help='Only attach payload images')
 @click.option('--non-payload', required=False, is_flag=True, help='Only attach non-payload images')
 @click.option('--include-shipped', required=False, is_flag=True, help='Do not filter out shipped builds')
+@click.option('--all-image-types', required=False, is_flag=True, help='Find all types of builds')
 @click.option('--member-only', is_flag=True, help='(For rpms) Only sweep member rpms')
 @click.option(
     '--clean',
@@ -104,6 +105,7 @@ async def find_builds_cli(
     payload,
     non_payload,
     include_shipped,
+    all_image_types: bool,
     member_only: bool,
     clean: bool,
     dry_run: bool,
@@ -174,6 +176,11 @@ async def find_builds_cli(
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
+        if all_image_types:
+            builds_map = await find_builds_konflux_all_types(runtime)
+            if as_json:
+                click.echo(json.dumps(builds_map, indent=4, sort_keys=True))
+                return
         records = await find_builds_konflux(runtime, payload)
         if as_json:
             _json_dump(as_json, records, kind)
@@ -707,3 +714,84 @@ async def find_builds_konflux(runtime, payload):
     if len(records) != len(image_metas):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
     return records
+
+
+async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
+    """
+    Find Konflux builds for a group/assembly, separating payload and non-payload images,
+    and fetch related OLM bundle builds.
+
+    This function:
+    - Iterates over image metadata from the runtime, filtering out base-only and non-release images.
+    - For each image, determines if it is a payload image and collects its build record.
+    - Separates the results into payload and non-payload image builds.
+    - For OLM operator images, fetches the related bundle build records from the database.
+    - Returns a dictionary with four categorized lists:
+        1. 'payload': Build nvrs for payload images.
+        2. 'non_payload': Build nvrs for non-payload images.
+        3. 'olm_builds': NVRs of OLM bundle builds found.
+        4. 'olm_builds_not_found': NVRs of OLM operator builds for which no bundle build was found.
+
+    Args:
+        runtime: The runtime object providing access to image metadata and the Konflux database.
+
+    Returns:
+        Dict[str, List]: A dictionary containing four lists:
+            - 'payload': List of build nvrs for payload images.
+            - 'non_payload': List of build nvrs for non-payload images.
+            - 'olm_builds': List of NVRs for OLM bundle builds found.
+            - 'olm_builds_not_found': List of NVRs for OLM operator builds with no bundle build.
+    """
+    runtime.konflux_db.bind(KonfluxBuildRecord)
+
+    image_metas: list[tuple[bool, ImageMetadata]] = []
+    for image in runtime.image_metas():
+        if image.base_only or not image.is_release:
+            continue
+        image_metas.append((image.is_payload, image))
+
+    LOGGER.info("Fetching NVRs from DB...")
+    # find build result (is_olm_operator, build_Record, is_payload)
+    olm_flags = []
+    payload_flags = []
+    tasks = []
+    for is_payload, image in image_metas:
+        olm_flags.append(image.is_olm_operator)
+        payload_flags.append(is_payload)
+        tasks.append(image.get_latest_build(el_target=image.branch_el_target()))
+    results = await asyncio.gather(*[task for task in tasks])
+    records_with_olm = [
+        (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None
+    ]
+    if len(records_with_olm) != len(image_metas):
+        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records_with_olm)} images")
+
+    # get related bundle records in KonfluxBundleBuildRecord
+    LOGGER.info("Fetching bundle build from DB ...")
+    runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+
+    operator_builds = []
+    olm_tasks = []
+    for is_olm, is_payload, record in records_with_olm:
+        if is_olm:
+            operator_builds.append(record)
+            olm_tasks.append(
+                anext(
+                    runtime.konflux_db.search_builds_by_fields(
+                        where={"operator_nvr": record.nvr, "outcome": "success"}, limit=1
+                    ),
+                    None,
+                )
+            )
+    # find olm result (olm_operator build, olm build, is_payload)
+    olm_records = await asyncio.gather(*[task for task in olm_tasks])
+    olm_records_not_found = [operator_build for operator_build, r in zip(operator_builds, olm_records) if r is None]
+    olm_records = [record for record in olm_records if record is not None]
+
+    builds_tuple = {
+        'payload': sorted([record.nvr for _, is_payload, record in records_with_olm if is_payload]),
+        'non_payload': sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
+        'olm_builds': sorted([b.nvr for b in olm_records]),
+        'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+    }
+    return builds_tuple

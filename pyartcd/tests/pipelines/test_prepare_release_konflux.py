@@ -375,12 +375,16 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'get_snapshot', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
         mock_get_snapshot,
+        mock_find_or_build_bundle_builds,
+        mock_find_builds_all,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_create_build_data_pr,
@@ -486,6 +490,20 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_init_shipment.side_effect = init_shipment
 
+        def find_builds_all():
+            return {
+                "image": ["image-nvr"],
+                "extras": ["extras-nvr"],
+                "metadata": ["olm-nvr"],
+                "olm_builds_not_found": ["new-operatorm-builds"],
+            }
+
+        def find_or_build_bundle_builds(nvr):
+            return ["new-olm-builds"]
+
+        mock_find_builds_all.side_effect = find_builds_all
+        mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
+
         def find_bugs(kind, **_):
             return {
                 "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
@@ -496,9 +514,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
-        def get_snapshot(kind):
-            return {
-                "image": Snapshot(
+        def get_snapshot(builds):
+            if "image-nvr" in builds:
+                return Snapshot(
                     nvrs=["image-nvr"],
                     spec=SnapshotSpec(
                         application="app-image",
@@ -512,8 +530,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                             ),
                         ],
                     ),
-                ),
-                "extras": Snapshot(
+                )
+            elif "extras-nvr" in builds:
+                return Snapshot(
                     nvrs=["extras-nvr"],
                     spec=SnapshotSpec(
                         application="app-extras",
@@ -527,8 +546,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                             ),
                         ],
                     ),
-                ),
-            }.get(kind)
+                )
 
         mock_get_snapshot.side_effect = get_snapshot
 
@@ -542,9 +560,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_shipment.assert_any_call("extras")
         mock_init_shipment.assert_any_call("image")
         self.assertEqual(mock_init_shipment.call_count, 2)
-
-        mock_get_snapshot.assert_any_call("extras")
-        mock_get_snapshot.assert_any_call("image")
+        self.assertEqual(mock_find_builds_all.call_count, 1)
+        self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
+        mock_get_snapshot.assert_any_call(['extras-nvr'])
+        mock_get_snapshot.assert_any_call(['image-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 2)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time

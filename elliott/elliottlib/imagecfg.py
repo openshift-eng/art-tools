@@ -32,3 +32,7 @@ class ImageMetadata(Metadata):
     @property
     def is_payload(self):
         return self.config.get('for_payload', False)
+
+    @property
+    def is_olm_operator(self):
+        return self.config.get('update-csv', False)
