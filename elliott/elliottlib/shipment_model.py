@@ -136,18 +136,24 @@ class Environments(StrictBaseModel):
 class Tools(StrictBaseModel):
     """Tools to use when releasing shipment to an environment"""
 
-    art_tools: Optional[str] = Field(None, alias="art-tools")
-    build_data: Optional[str] = Field(None, alias="build-data")
+    art_tools: Optional[str] = Field(
+        None,
+        description='art-tools repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift-eng@main',
+    )
+    build_data: Optional[str] = Field(
+        None,
+        description='ocp-build-data repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift@openshift-{MAJOR}.{MINOR}',
+    )
 
 
 class Shipment(StrictBaseModel):
     """Config to ship a Konflux release for a product"""
 
     metadata: Metadata
+    tools: Optional[Tools] = None
     environments: Environments
     snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
-    tools: Optional[Tools] = None
 
     @model_validator(mode='after')
     def make_sure_data_is_present_unless_fbc(self) -> Self:
