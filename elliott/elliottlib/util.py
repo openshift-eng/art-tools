@@ -593,7 +593,7 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     if not boilerplate:
         raise ValueError("`boilerplates` is required in erratatool.yml")
     if art_advisory_key not in boilerplate:
-        raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
+        raise ValueError(f"Boilerplate {art_advisory_key} not found in {boilerplate}")
 
     # Get the boilerplate for a type of errata and advisory type
     try:
