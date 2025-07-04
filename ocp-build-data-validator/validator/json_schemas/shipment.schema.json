@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-07-02 21:01 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-07-04 02:42 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -298,6 +298,17 @@
         "metadata": {
           "$ref": "#/$defs/Metadata"
         },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tools"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "environments": {
           "$ref": "#/$defs/Environments"
         },
@@ -316,17 +327,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/Data"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "tools": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Tools"
             },
             {
               "type": "null"
@@ -441,7 +441,7 @@
       "additionalProperties": false,
       "description": "Tools to use when releasing shipment to an environment",
       "properties": {
-        "art-tools": {
+        "art_tools": {
           "anyOf": [
             {
               "type": "string"
@@ -451,9 +451,10 @@
             }
           ],
           "default": null,
-          "title": "Art-Tools"
+          "description": "art-tools repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift-eng@main",
+          "title": "Art Tools"
         },
-        "build-data": {
+        "build_data": {
           "anyOf": [
             {
               "type": "string"
@@ -463,7 +464,8 @@
             }
           ],
           "default": null,
-          "title": "Build-Data"
+          "description": "ocp-build-data repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift@openshift-{MAJOR}.{MINOR}",
+          "title": "Build Data"
         }
       },
       "title": "Tools",
