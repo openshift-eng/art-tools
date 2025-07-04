@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
+from json import JSONDecodeError
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
@@ -526,8 +527,12 @@ class PrepareReleaseKonfluxPipeline:
             if rc != 0:
                 raise RuntimeError(f"cmd failed with exit code {rc}: {attach_cve_flaws_command}")
 
-        updated_release_notes = json.loads(stdout)
-        shipment.shipment.data.releaseNotes = updated_release_notes
+        try:
+            updated_release_notes = json.loads(stdout)
+            shipment.shipment.data.releaseNotes = updated_release_notes
+
+        except JSONDecodeError as e:
+            _LOGGER.warning('Failed parsing elliott output: %s', e)
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
