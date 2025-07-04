@@ -394,11 +394,9 @@ class PrepareReleaseKonfluxPipeline:
             f"--application={self.application}",
         ]
         _LOGGER.info('Running elliott shipment init...')
-        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=False, stderr=None)
+        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=True, stderr=None)
         if stdout:
             _LOGGER.info("Shipment init command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {create_cmd}")
 
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
@@ -432,8 +430,6 @@ class PrepareReleaseKonfluxPipeline:
         rc, stdout, stderr = await exectools.cmd_gather_async(snapshot_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment snapshot new command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {snapshot_cmd}")
 
         # remove the temporary file
         os.unlink(temp_file_path)
@@ -467,8 +463,6 @@ class PrepareReleaseKonfluxPipeline:
         rc, stdout, stderr = await exectools.cmd_gather_async(find_builds_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment find-builds command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_builds_cmd}")
 
         builds = []
         if stdout:
@@ -498,8 +492,6 @@ class PrepareReleaseKonfluxPipeline:
         rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_bugs_cmd}")
 
         self._issues_by_kind = {}
         if stdout:
@@ -524,8 +516,6 @@ class PrepareReleaseKonfluxPipeline:
             rc, stdout, stderr = await exectools.cmd_gather_async(attach_cve_flaws_command, stderr=None)
             if stdout:
                 _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
-            if rc != 0:
-                raise RuntimeError(f"cmd failed with exit code {rc}: {attach_cve_flaws_command}")
 
         try:
             updated_release_notes = json.loads(stdout)
