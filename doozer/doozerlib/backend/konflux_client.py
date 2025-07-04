@@ -13,7 +13,6 @@ from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
 from doozerlib import constants
-from doozerlib.image import ImageMetadata
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -301,6 +300,31 @@ class KonfluxClient:
         }
         return obj
 
+    async def get_application(self, name: str, strict: bool = True) -> Optional[resource.ResourceInstance]:
+        """Get an application by name.
+
+        :param name: The name of the application.
+        :param strict: Whether to raise an exception if the application is not found.
+        :return: The application resource, or None if not found.
+        :raises exceptions.NotFoundError: If the application is not found and strict is True.
+        """
+        try:
+            return await self._get(API_VERSION, KIND_APPLICATION, name, strict=strict)
+        except exceptions.NotFoundError as e:
+            if strict:
+                raise e
+            return None
+
+    async def get_application__caching(self, name: str, strict: bool = True) -> Optional[resource.ResourceInstance]:
+        """Get an application by name with caching.
+
+        :param name: The name of the application.
+        :param strict: Whether to raise an exception if the application is not found.
+        :return: The application resource, or None if not found.
+        :raises exceptions.NotFoundError: If the application is not found and strict is True.
+        """
+        return await self._get__caching(API_VERSION, KIND_APPLICATION, name, strict=strict)
+
     async def ensure_application(self, name: str, display_name: str) -> resource.ResourceInstance:
         application = self._new_application(name, display_name)
         return await self._create_or_patch(application)
@@ -321,9 +345,11 @@ class KonfluxClient:
                 "name": name,
                 "annotations": {
                     "build.appstudio.openshift.io/pipeline": '{"name":"docker-build-multi-platform-oci-ta","bundle":"latest"}',
-                    "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',  # will raise PRs to upstream repos (openshift-priv) if this is not set to false
+                    # will raise PRs to upstream repos (openshift-priv) if this is not set to false
+                    "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',
                     # "build.appstudio.openshift.io/request": "configure-pac",
-                    "mintmaker.appstudio.redhat.com/disabled": "true",  # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
+                    # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
+                    "mintmaker.appstudio.redhat.com/disabled": "true",
                 },
             },
             "spec": {
@@ -344,6 +370,31 @@ class KonfluxClient:
         if revision:
             obj["spec"].setdefault("source", {}).setdefault("git", {})["revision"] = revision
         return obj
+
+    async def get_component(self, name: str, strict: bool = True) -> Optional[resource.ResourceInstance]:
+        """Get a component by name.
+
+        :param name: The name of the component.
+        :param strict: Whether to raise an exception if the component is not found.
+        :return: The component resource, or None if not found.
+        :raises exceptions.NotFoundError: If the component is not found and strict is True.
+        """
+        try:
+            return await self._get(API_VERSION, KIND_COMPONENT, name, strict=strict)
+        except exceptions.NotFoundError as e:
+            if strict:
+                raise e
+            return None
+
+    async def get_component__caching(self, name: str, strict: bool = True) -> Optional[resource.ResourceInstance]:
+        """Get a component by name with caching.
+
+        :param name: The name of the component.
+        :param strict: Whether to raise an exception if the component is not found.
+        :return: The component resource, or None if not found.
+        :raises exceptions.NotFoundError: If the component is not found and strict is True.
+        """
+        return await self._get__caching(API_VERSION, KIND_COMPONENT, name, strict=strict)
 
     async def ensure_component(
         self,
@@ -434,7 +485,8 @@ class KonfluxClient:
             :param value: The value of the parameter.
             """
             if isinstance(value, bool):
-                value = "true" if value else "false"  # boolean value should be converted to string
+                # boolean value should be converted to string
+                value = "true" if value else "false"
             for param in params:
                 if param["name"] == name:
                     param["value"] = value
@@ -757,7 +809,8 @@ class KonfluxClient:
                         for pod_instance in pods.items:
                             pod_name = pod_instance.metadata.name
                             try:
-                                pod_history[pod_name] = pod_instance.to_dict()  # Convert to normal dict for pod_history
+                                # Convert to normal dict for pod_history
+                                pod_history[pod_name] = pod_instance.to_dict()
                                 pod_phase = pod_instance.status.phase
                                 if pod_phase == 'Succeeded':
                                     # Cut down on log output. No need to see successful pods again and again.
@@ -805,7 +858,8 @@ class KonfluxClient:
                         )
 
                         if succeeded_status not in ["Unknown", "Not Found"]:
-                            time.sleep(5)  # allow final pods to update their status if they can
+                            # allow final pods to update their status if they can
+                            time.sleep(5)
                             pods_instances = pod_resource.get(
                                 namespace=namespace,
                                 label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
@@ -820,7 +874,8 @@ class KonfluxClient:
                                 pod_name = pod.get('metadata').get('name')
                                 pod_status = pod.get('status', {})
                                 pod_phase = pod_status.get('phase')
-                                pod_history[pod_name] = pod  # Update pod history with the final snapshot
+                                # Update pod history with the final snapshot
+                                pod_history[pod_name] = pod
                                 if pod_phase != 'Succeeded':
                                     self._logger.warning(
                                         f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}'

@@ -613,6 +613,22 @@ class KonfluxOlmBundleBuilder:
                 self._record_logger.add_record("build_olm_bundle_konflux", **record)
         return pipelinerun_name, pipelinerun
 
+    @staticmethod
+    def get_application_name(group_name: str):
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        # "openshift-4.18" -> "openshift-4-18"
+        return group_name.replace(".", "-")
+
+    @staticmethod
+    def get_component_name(application_name: str, bundle_name: str):
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        name = f"{application_name}-{bundle_name}".replace(".", "-").replace("_", "-")
+        # Remove the 'openshift-' prefix and replace it with 'ose-'
+        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
+        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
+        name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
+        return name
+
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def _start_build(
         self,
@@ -632,14 +648,13 @@ class KonfluxOlmBundleBuilder:
         target_branch = bundle_build_repo.branch or bundle_build_repo.commit_hash
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         # Ensure the Application resource exists
-        app_name = self.group.replace(".", "-")
+        app_name = self.get_application_name(metadata.runtime.group)
         logger.info(f"Using Konflux application: {app_name}")
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists
         bundle_name = metadata.get_olm_bundle_short_name()
-        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        component_name = f"{app_name}-{bundle_name}".replace(".", "-").replace("_", "-")
+        component_name = self.get_component_name(app_name, bundle_name)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
         await konflux_client.ensure_component(

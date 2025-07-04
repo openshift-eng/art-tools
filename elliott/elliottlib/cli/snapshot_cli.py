@@ -1,6 +1,10 @@
 import asyncio
 import os
 import sys
+from collections import defaultdict
+from functools import lru_cache
+from itertools import chain
+from typing import List
 
 import click
 from artcommonlib import logutil
@@ -11,10 +15,10 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
     KonfluxRecord,
 )
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
-from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT, KonfluxClient
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.util import oc_image_info_for_arch_async
 from kubernetes.dynamic import exceptions
@@ -24,20 +28,29 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
+yaml.explicit_start = True
+yaml.default_flow_style = False
 
 LOGGER = logutil.get_logger(__name__)
 
 
-async def get_build_records_by_nvrs(
-    runtime: Runtime, nvrs: list[str], for_fbc: bool = False, strict: bool = True
-) -> dict[str, KonfluxRecord]:
-    assert runtime.konflux_db is not None, "Konflux DB must be initialized in the runtime"
+@lru_cache
+def _get_konflux_db(record_cls: type[KonfluxRecord]):
+    """
+    Get the Konflux DB instance for the given record class.
+    This is a helper function to ensure that the correct record class is bound to the Konflux DB.
+    """
+    db = KonfluxDb()
+    db.bind(record_cls)
+    return db
 
+
+async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str], strict: bool = True) -> dict[str, KonfluxRecord]:
     where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
 
-    async def _get(nvrs) -> list[KonfluxRecord]:
+    async def _get(db: KonfluxDb, nvrs: list[str]) -> list[KonfluxRecord]:
         try:
-            records = await runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=strict)
+            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=strict)
         except IOError as e:
             LOGGER.warning(
                 "A snapshot is expected to exclusively contain ART built image builds "
@@ -46,25 +59,27 @@ async def get_build_records_by_nvrs(
             raise e
         return records
 
-    nvr_record_map = {}
-    records = []
-    bundle_nvrs = [n for n in nvrs if "-bundle-container" in n]
-    non_bundle_nvrs = [n for n in nvrs if n not in bundle_nvrs]
-
-    if bundle_nvrs:
-        runtime.konflux_db.bind(KonfluxBundleBuildRecord)
-        bundle_records = await _get(bundle_nvrs)
-        records.extend(bundle_records)
-    if non_bundle_nvrs:
-        if for_fbc:
-            runtime.konflux_db.bind(KonfluxFbcBuildRecord)
+    # Group NVRs by their type to fetch them in parallel
+    type_nvrs = defaultdict(list)
+    for nvr in nvrs:
+        nvr_dict = parse_nvr(nvr)
+        if nvr_dict['name'].endswith('-bundle-container'):
+            type_nvrs[KonfluxBundleBuildRecord].append(nvr)
+        elif nvr_dict['name'].endswith('-fbc'):
+            type_nvrs[KonfluxFbcBuildRecord].append(nvr)
+        elif nvr_dict['name'].endswith('-container'):
+            type_nvrs[KonfluxBuildRecord].append(nvr)
         else:
-            runtime.konflux_db.bind(KonfluxBuildRecord)
-        non_bundle_records = await _get(non_bundle_nvrs)
-        records.extend(non_bundle_records)
+            raise ValueError(f"Unknown NVR type for {nvr}. Expected bundle-container, fbc, or container.")
+    build_records = await asyncio.gather(
+        *(_get(_get_konflux_db(record_cls), nvrs) for record_cls, nvrs in type_nvrs.items())
+    )
 
-    for record in records:
-        nvr_record_map[record.nvr] = record
+    # Flatten the list of records
+    build_records = chain.from_iterable(build_records)
+
+    # Create a mapping of NVR to record
+    nvr_record_map = {str(record.nvr): record for record in build_records}
     return nvr_record_map
 
 
@@ -74,13 +89,11 @@ class CreateSnapshotCli:
         runtime: Runtime,
         konflux_config: dict,
         image_repo_pull_secret: str,
-        for_fbc: bool,
         builds: list,
         dry_run: bool,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
-        self.for_fbc = for_fbc
         if not builds:
             raise ValueError("builds must be provided")
         self.builds = builds
@@ -112,16 +125,17 @@ class CreateSnapshotCli:
         # make sure pullspec is live for each build
         await self.get_pullspecs([b.image_pullspec for b in build_records], self.image_repo_pull_secret)
 
-        snapshot_obj = await self.new_snapshot(build_records)
-        snapshot_obj = await self.konflux_client._create(snapshot_obj)
-
-        snapshot_url = self.konflux_client.resource_url(snapshot_obj)
+        snapshot_objs = await self.new_snapshots(build_records)
+        # TODO: `_create` is a private method, should be replaced with a public method in the future
+        snapshot_objs = await asyncio.gather(
+            *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
+        )
+        snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
         if self.dry_run:
-            LOGGER.info("[DRY-RUN] Would have created Konflux Snapshot at %s", snapshot_url)
+            LOGGER.info("[DRY-RUN] Would have created Konflux Snapshots: %s", ", ".join(snapshot_urls))
         else:
-            LOGGER.info("Created Konflux Snapshot %s", snapshot_url)
-
-        return snapshot_obj
+            LOGGER.info("Created Konflux Snapshot(s): %s", ", ".join(snapshot_urls))
+        return snapshot_objs
 
     @staticmethod
     async def get_pullspecs(pullspecs: list, image_repo_pull_secret: str):
@@ -145,19 +159,19 @@ class CreateSnapshotCli:
             raise RuntimeError("Failed to inspect build pullspecs")
         return image_infos
 
-    async def new_snapshot(self, build_records) -> dict:
+    async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
-        application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
-        # make sure application exists
-        await self.konflux_client._get(API_VERSION, KIND_APPLICATION, application_name)
+        async def _comp(record: KonfluxRecord):
+            app_name = record.get_konflux_application_name()
+            comp_name = record.get_konflux_component_name()
 
-        async def _comp(record):
-            comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)
-
-            # make sure component exists
-            await self.konflux_client._get(API_VERSION, KIND_COMPONENT, comp_name)
+            # make sure application and component exist
+            await asyncio.gather(
+                self.konflux_client.get_application__caching(app_name, strict=True),
+                self.konflux_client.get_component__caching(comp_name, strict=True),
+            )
 
             source_url = record.rebase_repo_url
             revision = record.rebase_commitish
@@ -175,24 +189,36 @@ class CreateSnapshotCli:
                     },
                 },
                 "containerImage": record.image_pullspec,
+            }, app_name
+
+        # Collect components and their applications
+        app_components: dict[str, list] = defaultdict(list)
+        for component, app in await asyncio.gather(*(_comp(record) for record in build_records)):
+            app_components[app].append(component)
+
+        # Sort components by application name and then by component name
+        # This is to ensure that the snapshot objects are created in a consistent order
+        snapshot_objs: list[dict] = []
+        for index, (application_name, components) in enumerate(sorted(app_components.items()), start=1):
+            components = sorted(components, key=lambda c: c['name'])
+            snapshot_obj = {
+                "apiVersion": API_VERSION,
+                "kind": KIND_SNAPSHOT,
+                "metadata": {
+                    "name": f"{snapshot_name}-{index}",
+                    "namespace": self.konflux_config['namespace'],
+                    "labels": {
+                        "test.appstudio.openshift.io/type": "override",
+                        "appstudio.openshift.io/application": application_name,
+                    },
+                },
+                "spec": {
+                    "application": application_name,
+                    "components": components,
+                },
             }
-
-        components = [await _comp(record) for record in build_records]
-
-        snapshot_obj = {
-            "apiVersion": API_VERSION,
-            "kind": KIND_SNAPSHOT,
-            "metadata": {
-                "name": snapshot_name,
-                "namespace": self.konflux_config['namespace'],
-                "labels": {"test.appstudio.openshift.io/type": "override"},
-            },
-            "spec": {
-                "application": application_name,
-                "components": components,
-            },
-        }
-        return snapshot_obj
+            snapshot_objs.append(snapshot_obj)
+        return snapshot_objs
 
     async def fetch_build_records(self) -> list[KonfluxRecord]:
         LOGGER.info("Validating given NVRs...")
@@ -206,7 +232,7 @@ class CreateSnapshotCli:
             components.add(nvr['name'])
 
         LOGGER.info("Fetching NVRs from DB...")
-        records = await get_build_records_by_nvrs(self.runtime, self.builds, for_fbc=self.for_fbc, strict=True)
+        records = await get_build_records_by_nvrs(self.runtime, self.builds, strict=True)
         return list(records.values())
 
 
@@ -216,7 +242,7 @@ def snapshot_cli():
 
 
 @snapshot_cli.command(
-    "new", short_help="Create a new Konflux Snapshot in the given namespace for the given builds (NVRs)"
+    "new", short_help="Create new Konflux Snapshot(s) in the given namespace for the given builds (NVRs)"
 )
 @click.option(
     '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
@@ -237,7 +263,6 @@ def snapshot_cli():
     metavar='PATH',
     help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
 )
-@click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
 @click.argument('builds', metavar='<NVR>', nargs=-1, required=False, default=None)
 @click.option(
     "--builds-file",
@@ -256,12 +281,13 @@ async def new_snapshot_cli(
     konflux_namespace,
     pull_secret,
     builds_file,
-    for_fbc,
     builds,
     apply,
 ):
     """
-    Create a new Konflux Snapshot in the given namespace for the given builds
+    Create new Konflux Snapshot(s) in the given namespace for the given builds
+
+    If builds are from multiple Konflux applications, multiple snapshots will be created, one for each application.
 
     \b
     $ elliott -g openshift-4.18 snapshot new --builds-file builds.txt
@@ -293,12 +319,11 @@ async def new_snapshot_cli(
         runtime=runtime,
         konflux_config=konflux_config,
         image_repo_pull_secret=pull_secret,
-        for_fbc=for_fbc,
         builds=builds,
         dry_run=not apply,
     )
-    snapshot = await pipeline.run()
-    yaml.dump(snapshot.to_dict(), sys.stdout)
+    snapshots = await pipeline.run()
+    yaml.dump_all([snapshot.to_dict() for snapshot in snapshots], sys.stdout)
 
 
 class GetSnapshotCli:
@@ -350,7 +375,7 @@ class GetSnapshotCli:
             LOGGER.info("[DRY-RUN] Skipped DB validation")
             return nvrs
 
-        await get_build_records_by_nvrs(self.runtime, nvrs, for_fbc=self.for_fbc, strict=True)
+        await get_build_records_by_nvrs(self.runtime, nvrs, strict=True)
         return nvrs
 
     async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:
