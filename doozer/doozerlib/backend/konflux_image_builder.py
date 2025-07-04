@@ -7,7 +7,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Union, cast
+from typing import Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
@@ -426,7 +426,7 @@ class KonfluxImageBuilder:
     @staticmethod
     async def get_installed_packages(
         image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
-    ) -> tuple[list, list]:
+    ) -> Tuple[Set[str], Set[str]]:
         """
         :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
         """
@@ -512,7 +512,7 @@ class KonfluxImageBuilder:
             all_package_nvrs.update(package_nvrs)
             all_source_rpms.update(source_rpms)
 
-        return sorted(all_package_nvrs), sorted(all_source_rpms)
+        return all_package_nvrs, all_source_rpms
 
     async def update_konflux_db(
         self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
@@ -590,8 +590,8 @@ class KonfluxImageBuilder:
             build_record_params.update(
                 {
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                    'installed_packages': source_rpms,
-                    'installed_package_nvrs': package_nvrs,
+                    'installed_packages': sorted(source_rpms),
+                    'installed_package_nvrs': sorted(package_nvrs),
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )
