@@ -8,7 +8,9 @@ import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
+from json import JSONDecodeError
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -275,7 +277,16 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
 
+        # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+        # Attach CVE flaws
+        if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
+            tasks = [self.attach_cve_flaws(kind, shipment) for kind, shipment in shipments_by_kind.items()]
+            await asyncio.gather(*tasks)
+
+            # Update shipment MR with found CVE flaws
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -382,13 +393,10 @@ class PrepareReleaseKonfluxPipeline:
             f"--advisory-key={kind}",
             f"--application={self.application}",
         ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=False)
-        if stderr:
-            _LOGGER.info("Shipment init command stderr:\n %s", stderr)
+        _LOGGER.info('Running elliott shipment init...')
+        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=True, stderr=None)
         if stdout:
             _LOGGER.info("Shipment init command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {create_cmd}")
 
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
@@ -397,7 +405,7 @@ class PrepareReleaseKonfluxPipeline:
     async def get_snapshot(self, kind: str) -> Optional[Snapshot]:
         """Construct a snapshot for the given kind, by finding builds and creating a snapshot object.
         :param kind: The kind for which to get a snapshot e.g. "image"
-        :return: A Snapshot object comprising of all the builds found for the given kind, or None if no builds are found.
+        :return: A Snapshot object consisting of all the builds found for the given kind, or None if no builds are found.
         """
 
         builds = await self.find_builds(kind)
@@ -418,13 +426,10 @@ class PrepareReleaseKonfluxPipeline:
             "new",
             f"--builds-file={temp_file_path}",
         ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(snapshot_cmd)
-        if stderr:
-            _LOGGER.info("Shipment snapshot new command stderr:\n %s", stderr)
+        _LOGGER.info('Running elliott snapshot new...')
+        rc, stdout, stderr = await exectools.cmd_gather_async(snapshot_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment snapshot new command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {snapshot_cmd}")
 
         # remove the temporary file
         os.unlink(temp_file_path)
@@ -454,13 +459,10 @@ class PrepareReleaseKonfluxPipeline:
             "--payload" if payload else "--non-payload",
             "--json=-",
         ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(find_builds_cmd)
-        if stderr:
-            _LOGGER.info("Shipment find-builds command stderr:\n %s", stderr)
+        _LOGGER.info('Running elliott find-builds...')
+        rc, stdout, stderr = await exectools.cmd_gather_async(find_builds_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment find-builds command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_builds_cmd}")
 
         builds = []
         if stdout:
@@ -468,9 +470,10 @@ class PrepareReleaseKonfluxPipeline:
             builds = out.get("builds", [])
         return builds
 
-    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
+    async def find_bugs(self, kind: str, shipment: ShipmentConfig, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
         :param kind: The kind for which to find bugs
+        :param shipment: The shipment config to be updated
         :param permissive: Ignore invalid bugs that are found and continue
         :return: An Issues object containing the bugs found
         """
@@ -484,13 +487,11 @@ class PrepareReleaseKonfluxPipeline:
         ]
         if permissive:
             find_bugs_cmd.append("--permissive")
-        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd)
-        if stderr:
-            _LOGGER.info("Shipment find bugs command stderr:\n %s", stderr)
+
+        _LOGGER.info('Running elliott find-bugs...')
+        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
         if stdout:
             _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_bugs_cmd}")
 
         self._issues_by_kind = {}
         if stdout:
@@ -500,7 +501,28 @@ class PrepareReleaseKonfluxPipeline:
                 issues = Issues(fixed=[Issue(id=b, source="issues.redhat.com") for b in bugs])
                 self._issues_by_kind[advisory_kind] = issues
 
-        return self._issues_by_kind.get(kind)
+        shipment.shipment.data.releaseNotes.issues = self._issues_by_kind.get(kind)
+
+    async def attach_cve_flaws(self, kind, shipment):
+        with TemporaryDirectory() as elliott_working:
+            # Replace the elliott working dir to allow concurrent commands execution
+            attach_cve_flaws_command = [
+                arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
+                for arg in self._elliott_base_command
+            ]
+            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
+
+            _LOGGER.info('Running elliott attach-cve-flaws...')
+            rc, stdout, stderr = await exectools.cmd_gather_async(attach_cve_flaws_command, stderr=None)
+            if stdout:
+                _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
+
+        try:
+            updated_release_notes = json.loads(stdout)
+            shipment.shipment.data.releaseNotes = updated_release_notes
+
+        except JSONDecodeError as e:
+            _LOGGER.warning('Failed parsing elliott output: %s', e)
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
