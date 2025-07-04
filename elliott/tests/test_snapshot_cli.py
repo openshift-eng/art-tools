@@ -3,6 +3,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli
 
 
@@ -36,6 +37,12 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         mock_konflux_client_init.return_value = self.konflux_client
         mock_oc_image_info.return_value = AsyncMock()
 
+        # Mock the necessary async methods that will be called
+        self.konflux_client._get_api = AsyncMock()
+        self.konflux_client._get = AsyncMock()
+        self.konflux_client._create = AsyncMock()
+        self.konflux_client.resource_url = Mock(return_value="http://test-url")
+
         build_records = [
             Mock(
                 nvr='test-nvr-1',
@@ -43,6 +50,9 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
                 rebase_commitish='foobar',
+                component='',  # Empty string to trigger fallback
+                bundle_component='',
+                fbc_component='',
             ),
             Mock(
                 nvr='test-nvr-2',
@@ -50,6 +60,9 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 image_tag='tag2',
                 rebase_repo_url='https://github.com/test/repo2',
                 rebase_commitish='test',
+                component='',  # Empty string to trigger fallback
+                bundle_component='',
+                fbc_component='',
             ),
         ]
         # `name` attribute is special so set it after creation
@@ -57,7 +70,10 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         build_records[0].name = 'component1'
         build_records[1].name = 'component2'
 
-        with patch.object(CreateSnapshotCli, 'fetch_build_records', return_value=build_records):
+        with (
+            patch.object(CreateSnapshotCli, 'fetch_build_records', return_value=build_records),
+            patch.object(KonfluxImageBuilder, 'get_component_name', side_effect=lambda app, name: f"{app}-{name}"),
+        ):
             cli = CreateSnapshotCli(
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
@@ -85,12 +101,12 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                         'components': [
                             {
                                 'containerImage': 'registry/image@sha256:digest1',
-                                'name': 'ose-4-18-component1',
+                                'name': 'openshift-4-18-component1',
                                 'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
                             },
                             {
                                 'containerImage': 'registry/image@sha256:digest2',
-                                'name': 'ose-4-18-component2',
+                                'name': 'openshift-4-18-component2',
                                 'source': {'git': {'revision': 'test', 'url': 'https://github.com/test/repo2'}},
                             },
                         ],
@@ -203,3 +219,135 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             registry_config=self.image_repo_pull_secret,
         )
         self.assertEqual(expected_nvrs, actual_nvrs)
+
+
+class TestCompFunction(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.runtime.group = "openshift-4.18"
+        self.runtime.get_major_minor.return_value = (4, 18)
+        self.application_name = "openshift-4-18"
+
+        # Mock the konflux client before creating the CLI
+        self.mock_konflux_client = AsyncMock()
+        self.mock_konflux_client.verify_connection = Mock(return_value=True)
+        self.mock_konflux_client._get_api = AsyncMock()
+        self.mock_konflux_client._get = AsyncMock()
+
+        with patch(
+            "doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig", return_value=self.mock_konflux_client
+        ):
+            self.cli = CreateSnapshotCli(
+                runtime=self.runtime,
+                konflux_config={"namespace": "test-ns", "kubeconfig": "/fake/path", "context": None},
+                image_repo_pull_secret="",
+                for_fbc=False,
+                builds=["test-build"],
+                dry_run=True,
+            )
+
+    async def test_comp_priority_order_all_fields_present(self):
+        """Test component name prioritization when all fields are present"""
+        # Create record with all component name fields
+        record = Mock()
+        record.component = "primary-component"
+        record.bundle_component = "bundle-component"
+        record.fbc_component = "fbc-component"
+        record.name = "base-name"
+        record.rebase_repo_url = "https://github.com/test/repo"
+        record.rebase_commitish = "abc123"
+        record.image_tag = "latest"
+        record.image_pullspec = "registry/image@sha256:digest"
+
+        # Call the _comp function directly
+        comp_result = await self.cli.new_snapshot([record])
+        component = comp_result["spec"]["components"][0]
+
+        # Should prioritize 'component' field first
+        self.assertEqual(component["name"], "primary-component")
+        self.assertEqual(component["containerImage"], "registry/image@sha256:digest")
+        self.assertEqual(component["source"]["git"]["url"], "https://github.com/test/repo")
+        self.assertEqual(component["source"]["git"]["revision"], "abc123")
+
+    async def test_comp_priority_order_bundle_fallback(self):
+        """Test component name falls back to bundle_component when component is empty"""
+        record = Mock()
+        record.component = ""  # Empty primary component
+        record.bundle_component = "my-bundle-component"
+        record.fbc_component = "fbc-component"
+        record.name = "base-name"
+        record.rebase_repo_url = "https://github.com/test/repo"
+        record.rebase_commitish = "def456"
+        record.image_tag = "v1.0"
+        record.image_pullspec = "registry/bundle@sha256:digest"
+
+        comp_result = await self.cli.new_snapshot([record])
+        component = comp_result["spec"]["components"][0]
+
+        # Should use bundle_component since component is empty
+        self.assertEqual(component["name"], "my-bundle-component")
+
+    async def test_comp_priority_order_fbc_fallback(self):
+        """Test component name falls back to fbc_component when component and bundle_component are empty"""
+        record = Mock()
+        record.component = ""
+        record.bundle_component = ""  # Empty bundle component
+        record.fbc_component = "my-fbc-component"
+        record.name = "base-name"
+        record.rebase_repo_url = "https://github.com/test/repo"
+        record.rebase_commitish = "ghi789"
+        record.image_tag = "v2.0"
+        record.image_pullspec = "registry/fbc@sha256:digest"
+
+        comp_result = await self.cli.new_snapshot([record])
+        component = comp_result["spec"]["components"][0]
+
+        # Should use fbc_component since both component and bundle_component are empty
+        self.assertEqual(component["name"], "my-fbc-component")
+
+    async def test_comp_backward_compatibility_missing_attributes(self):
+        """Test backward compatibility when build record lacks component name attributes"""
+
+        # Create a more realistic record that doesn't have component attributes
+        class LegacyRecord:
+            def __init__(self):
+                self.name = "legacy-component"
+                self.rebase_repo_url = "https://github.com/legacy/repo"
+                self.rebase_commitish = "legacy123"
+                self.image_tag = "legacy-tag"
+                self.image_pullspec = "registry/legacy@sha256:digest"
+                # Intentionally don't set component, bundle_component, fbc_component
+
+        record = LegacyRecord()
+
+        with patch.object(
+            KonfluxImageBuilder, 'get_component_name', return_value="openshift-4-18-legacy-component"
+        ) as mock_get_component:
+            comp_result = await self.cli.new_snapshot([record])
+            component = comp_result["spec"]["components"][0]
+
+            # Should fall back to default component name generation
+            self.assertEqual(component["name"], "openshift-4-18-legacy-component")
+            mock_get_component.assert_called_once_with(self.application_name, "legacy-component")
+
+    async def test_comp_backward_compatibility_empty_strings(self):
+        """Test backward compatibility when component fields exist but are empty strings"""
+        record = Mock()
+        record.component = ""
+        record.bundle_component = ""
+        record.fbc_component = ""
+        record.name = "empty-component"
+        record.rebase_repo_url = "https://github.com/empty/repo"
+        record.rebase_commitish = "empty456"
+        record.image_tag = "empty-tag"
+        record.image_pullspec = "registry/empty@sha256:digest"
+
+        with patch.object(
+            KonfluxImageBuilder, 'get_component_name', return_value="openshift-4-18-empty-component"
+        ) as mock_get_component:
+            comp_result = await self.cli.new_snapshot([record])
+            component = comp_result["spec"]["components"][0]
+
+            # Should fall back to default when all fields are empty strings
+            self.assertEqual(component["name"], "openshift-4-18-empty-component")
+            mock_get_component.assert_called_once_with(self.application_name, "empty-component")

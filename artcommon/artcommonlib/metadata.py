@@ -60,6 +60,11 @@ class MetadataBase(object):
 
         self._distgit_repo = None
 
+    @property
+    def konflux(self):
+        """Access to konflux configuration section."""
+        return self.config.get('konflux', Model())
+
     def __repr__(self):
         return f'<{self.__class__.__name__} - {self.distgit_key}>'
 
