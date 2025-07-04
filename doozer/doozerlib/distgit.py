@@ -1487,6 +1487,7 @@ class ImageDistGitRepo(DistGitRepo):
                 build_record_params.update(
                     {
                         'installed_packages': self.get_installed_packages(image_pullspec),
+                        'installed_package_nvrs': [],
                         'parent_images': [
                             build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()
                         ],
