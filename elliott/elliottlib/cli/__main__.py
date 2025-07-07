@@ -16,12 +16,10 @@ import logging
 import sys
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
-from typing import Dict, List
 
 # 3rd party
 import click
-from artcommonlib import rhcos
-from artcommonlib.format_util import green_prefix, green_print, red_prefix, red_print, yellow_prefix, yellow_print
+from artcommonlib.format_util import green_prefix, red_prefix, red_print, yellow_prefix
 from errata_tool import ErrataException
 
 import elliottlib.brew
@@ -31,15 +29,14 @@ import elliottlib.errata
 import elliottlib.exceptions
 
 # ours
-from elliottlib import Runtime, util
-from elliottlib.cli import konflux_release_watch_cli
+from elliottlib import Runtime
 from elliottlib.cli.advisory_commons_cli import advisory_commons_cli
 from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
 from elliottlib.cli.advisory_images_cli import advisory_images_cli
 from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
 from elliottlib.cli.attach_cve_flaws_cli import attach_cve_flaws_cli
 from elliottlib.cli.change_state_cli import change_state_cli
-from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.cli.create_cli import create_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.create_textonly_cli import create_textonly_cli
@@ -72,6 +69,7 @@ from elliottlib.cli.validate_rhsa import validate_rhsa_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
+from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import pbar_header, progress_func
 
@@ -168,134 +166,9 @@ def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory
 
 
 #
-# Verify images in a payload match the corresponding advisory
-# verify-payload
-#
-
-
-@cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
-@click.argument("payload_or_imagestream")
-@click.argument('advisory', type=int)
-@click.pass_obj
-@click_coroutine
-async def verify_payload(runtime, payload_or_imagestream, advisory):
-    """Cross-check that the builds present in PAYLOAD or Imagestream match the builds
-    attached to ADVISORY. The payload is treated as the source of
-    truth. If something is absent or different in the advisory it is
-    treated as an error with the advisory.
-
-    \b
-        PAYLOAD_OR_IMAGESTREAM - Full pullspec of the payload or imagestream to verify
-        ADVISORY - Numerical ID of the advisory
-
-    Two checks are made:
-
-    \b
-     1. Missing in Advisory - No payload/imagestream components are absent from the given advisory
-
-     2. Payload/imagestream Advisory Mismatch - The version-release of each payload/imagestream item match what is in the advisory
-
-    Results are summarily printed at the end of the run. They are also
-    written out to summary_results.json.
-
-         Verify builds in the given payload/imagestream match the builds attached to advisory 41567
-
-     \b
-        $ for paylaod: elliott -g openshift-1 verify-payload quay.io/openshift-release-dev/ocp-release:4.1.0-rc.6 41567
-     \b
-        $ for imagestream: elliott -g openshift-1 verify-payload 4.1-art-assembly-rc.6 41567
-
-    """
-    runtime.initialize()
-    rhcos_images = {c['name'] for c in rhcos.get_container_configs(runtime)}
-    all_advisory_nvrs = elliottlib.errata.get_advisory_nvrs(advisory)
-
-    click.echo("Found {} builds".format(len(all_advisory_nvrs)))
-
-    all_payload_nvrs = await util.get_nvrs_from_release(payload_or_imagestream, rhcos_images, LOGGER)
-
-    missing_in_errata = {}
-    payload_doesnt_match_errata = {}
-    in_pending_advisory = []
-    in_shipped_advisory = []
-    output = {
-        'missing_in_advisory': missing_in_errata,
-        'payload_advisory_mismatch': payload_doesnt_match_errata,
-        "in_pending_advisory": in_pending_advisory,
-        "in_shipped_advisory": in_shipped_advisory,
-    }
-
-    green_prefix("Analyzing data: ")
-    click.echo("{} images to consider from payload".format(len(all_payload_nvrs)))
-
-    for image, vr_tuple in all_payload_nvrs.items():
-        vr = f"{vr_tuple[0]}-{vr_tuple[1]}"
-        imagevr = f"{image}-{vr}"
-        yellow_prefix("Cross-checking from payload: ")
-        click.echo(imagevr)
-        if image not in all_advisory_nvrs:
-            missing_in_errata[image] = imagevr
-            click.echo(f"{imagevr} in payload not found in advisory")
-        elif image in all_advisory_nvrs and vr != all_advisory_nvrs[image]:
-            click.echo(
-                f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory"
-            )
-            payload_doesnt_match_errata[image] = {
-                'payload': vr,
-                'errata': all_advisory_nvrs[image],
-            }
-
-    if missing_in_errata:  # check if missing images are already shipped or pending to ship
-        advisory_nvrs: Dict[int, List[str]] = {}  # a dict mapping advisory numbers to lists of NVRs
-        green_print(f"Checking if {len(missing_in_errata)} missing images are shipped...")
-        for nvr in missing_in_errata.copy().values():
-            # get the list of advisories that this build has been attached to
-            build = elliottlib.errata.get_brew_build(nvr)
-            # filter out dropped advisories
-            advisories = [ad for ad in build.all_errata if ad["status"] != "DROPPED_NO_SHIP"]
-            if not advisories:
-                red_print(f"Build {nvr} is not attached to any advisories.")
-                continue
-            for advisory in advisories:
-                if advisory["status"] == "SHIPPED_LIVE":
-                    green_print(f"Missing build {nvr} has been shipped with advisory {advisory}.")
-                else:
-                    yellow_print(f"Missing build {nvr} is in another pending advisory.")
-                advisory_nvrs.setdefault(advisory["id"], []).append(nvr)
-            name = nvr.rsplit("-", 2)[0]
-            del missing_in_errata[name]
-        if advisory_nvrs:
-            click.echo(f"Getting information of {len(advisory_nvrs)} advisories...")
-            for advisory, nvrs in advisory_nvrs.items():
-                advisory_obj = elliottlib.errata.get_raw_erratum(advisory)
-                adv_type, adv_info = next(iter(advisory_obj["errata"].items()))
-                item = {
-                    "id": advisory,
-                    "type": adv_type.upper(),
-                    "url": elliottlib.constants.errata_url + f"/{advisory}",
-                    "summary": adv_info["synopsis"],
-                    "state": adv_info["status"],
-                    "nvrs": nvrs,
-                }
-                if adv_info["status"] == "SHIPPED_LIVE":
-                    in_shipped_advisory.append(item)
-                else:
-                    in_pending_advisory.append(item)
-
-    green_print("Summary results:")
-    click.echo(json.dumps(output, indent=4))
-    with open('summary_results.json', 'w') as fp:
-        json.dump(output, fp, indent=4)
-    green_prefix("Wrote out summary results: ")
-    click.echo("summary_results.json")
-
-
-#
 # Poll for rpm-signed state change
 # poll-signed
 #
-
-
 @cli.command("poll-signed", short_help="Poll for RPM build 'signed' status")
 @click.option("--minutes", "-m", required=False, default=15, type=int, help="How long to poll before quitting")
 @click.option("--advisory", "-a", type=int, metavar='ADVISORY', help="Advisory to watch")
@@ -416,6 +289,7 @@ cli.add_command(tarball_sources_cli)
 cli.add_command(verify_cvp_cli)
 cli.add_command(advisory_drop_cli)
 cli.add_command(verify_attached_operators_cli)
+cli.add_command(verify_payload)
 cli.add_command(verify_attached_bugs_cli)
 cli.add_command(attach_cve_flaws_cli)
 cli.add_command(create_textonly_cli)
