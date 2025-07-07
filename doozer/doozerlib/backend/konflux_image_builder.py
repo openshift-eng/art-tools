@@ -591,7 +591,7 @@ class KonfluxImageBuilder:
                 {
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
                     'installed_packages': sorted(source_rpms),
-                    'installed_package_nvrs': sorted(package_nvrs),
+                    'installed_rpms': sorted(package_nvrs),
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )

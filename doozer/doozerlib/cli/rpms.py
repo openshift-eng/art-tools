@@ -377,7 +377,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             el_target=el_target,
             arches=rpm.get_arches(),
             installed_packages=[],
-            installed_package_nvrs=[],
+            installed_rpms=[],
             parent_images=[],
             source_repo=rpm.public_upstream_url,
             commitish=rpm.pre_init_sha,

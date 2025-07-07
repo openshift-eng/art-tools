@@ -411,7 +411,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('el_target', 'STRING', 'REQUIRED'),
             SchemaField('arches', 'STRING', 'REPEATED'),
             SchemaField('installed_packages', 'STRING', 'REPEATED'),
-            SchemaField('installed_package_nvrs', 'STRING', 'REPEATED'),
+            SchemaField('installed_rpms', 'STRING', 'REPEATED'),
             SchemaField('parent_images', 'STRING', 'REPEATED'),
             SchemaField('source_repo', 'STRING', 'REQUIRED'),
             SchemaField('commitish', 'STRING', 'REQUIRED'),

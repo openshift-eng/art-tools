@@ -605,27 +605,27 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
     async def test_fetch_rpms_from_build_cached_packages(self):
         """Test fetch_rpms_from_build returns cached packages"""
         metadata = self._create_image_metadata('openshift/test-cached')
-        metadata.installed_package_nvrs = ['pkg1', 'pkg2', 'pkg3']
+        metadata.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
 
         result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
         # Should not call konflux_db when cached
         metadata.runtime.konflux_db.get_latest_build.assert_not_called()
-        self.logger.debug.assert_called_with("Using cached installed_package_nvrs for test-image: 3 RPMs")
+        self.logger.debug.assert_called_with("Using cached installed_rpms for test-image: 3 RPMs")
         self.logger.error.assert_not_called()
         self.logger.warning.assert_not_called()
 
     async def test_fetch_rpms_from_build_cached_empty_packages(self):
         """Test fetch_rpms_from_build returns cached empty packages"""
         metadata = self._create_image_metadata('openshift/test-cached-empty')
-        metadata.installed_package_nvrs = []
+        metadata.installed_rpms = []
 
         result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, set())
         metadata.runtime.konflux_db.get_latest_build.assert_not_called()
-        self.logger.debug.assert_called_with("Using cached installed_package_nvrs for test-image: 0 RPMs")
+        self.logger.debug.assert_called_with("Using cached installed_rpms for test-image: 0 RPMs")
         self.logger.error.assert_not_called()
         self.logger.warning.assert_not_called()
 
@@ -638,26 +638,26 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, set())
-        self.assertEqual(metadata.installed_package_nvrs, [])
+        self.assertEqual(metadata.installed_rpms, [])
         metadata.runtime.konflux_db.get_latest_build.assert_called_once_with(name='test-image', group='test-group')
         self.logger.debug.assert_called_with("No build record found for test-image/test-group")
         self.logger.error.assert_not_called()
 
     async def test_fetch_rpms_from_build_build_no_packages(self):
-        """Test fetch_rpms_from_build when build has no installed_package_nvrs"""
+        """Test fetch_rpms_from_build when build has no installed_rpms"""
         metadata = self._create_image_metadata('openshift/test-no-packages')
 
         mock_build = MagicMock()
-        mock_build.installed_package_nvrs = None
+        mock_build.installed_rpms = None
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
 
         result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, set())
-        self.assertEqual(metadata.installed_package_nvrs, [])
+        self.assertEqual(metadata.installed_rpms, [])
         self.logger.debug.assert_called_with(
-            "Build record for test-image has no installed_package_nvrs, skipping parent calculation"
+            "Build record for test-image has no installed_rpms, skipping parent calculation"
         )
         self.logger.error.assert_not_called()
 
@@ -666,10 +666,10 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         metadata = self._create_image_metadata('openshift/test-no-parent')
 
         # Ensure no cached packages
-        metadata.installed_package_nvrs = None
+        metadata.installed_rpms = None
 
         mock_build = MagicMock()
-        mock_build.installed_package_nvrs = ['pkg1', 'pkg2', 'pkg3']
+        mock_build.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
 
@@ -678,7 +678,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
-        self.assertEqual(set(metadata.installed_package_nvrs), {'pkg1', 'pkg2', 'pkg3'})
+        self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2', 'pkg3'})
         self.logger.warning.assert_called_with('No parent found for test-image; using full RPM set')
 
     async def test_fetch_rpms_from_build_with_parent_difference(self):
@@ -687,11 +687,11 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         # Mock image build
         mock_build = MagicMock()
-        mock_build.installed_package_nvrs = ['pkg1', 'pkg2', 'pkg3', 'pkg4']
+        mock_build.installed_rpms = ['pkg1', 'pkg2', 'pkg3', 'pkg4']
 
         # Mock parent build
         mock_parent_build = MagicMock()
-        mock_parent_build.installed_package_nvrs = ['pkg1', 'pkg2']
+        mock_parent_build.installed_rpms = ['pkg1', 'pkg2']
 
         async def mock_get_latest_build(name, group):
             if name == 'test-image':
@@ -707,7 +707,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg3', 'pkg4'})  # Difference: image packages - parent packages
-        self.assertEqual(set(metadata.installed_package_nvrs), {'pkg3', 'pkg4'})
+        self.assertEqual(set(metadata.installed_rpms), {'pkg3', 'pkg4'})
 
         # Verify both builds were fetched
         expected_calls = [
@@ -725,11 +725,11 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         # Mock image build
         mock_build = MagicMock()
-        mock_build.installed_package_nvrs = ['pkg1', 'pkg2']
+        mock_build.installed_rpms = ['pkg1', 'pkg2']
 
         # Mock parent build with no packages
         mock_parent_build = MagicMock()
-        mock_parent_build.installed_package_nvrs = None
+        mock_parent_build.installed_rpms = None
 
         async def mock_get_latest_build(name, group):
             if name == 'test-image':
@@ -745,7 +745,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg1', 'pkg2'})  # All packages since parent has none
-        self.assertEqual(set(metadata.installed_package_nvrs), {'pkg1', 'pkg2'})
+        self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2'})
         # Should not log errors when parent has no packages (normal case)
         self.logger.error.assert_not_called()
 
@@ -758,7 +758,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, set())
-        self.assertEqual(metadata.installed_package_nvrs, [])
+        self.assertEqual(metadata.installed_rpms, [])
         self.logger.error.assert_called_with("Failed to fetch RPMs for test-image/test-group: Database error")
 
     async def test_fetch_rpms_from_build_parent_exception_uses_full_set(self):
@@ -767,7 +767,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         # Mock image build
         mock_build = MagicMock()
-        mock_build.installed_package_nvrs = ['pkg1', 'pkg2', 'pkg3']
+        mock_build.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
 
         async def mock_get_latest_build(name, group):
             if name == 'test-image':
@@ -783,7 +783,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})  # Full set due to parent error
-        self.assertEqual(set(metadata.installed_package_nvrs), {'pkg1', 'pkg2', 'pkg3'})
+        self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2', 'pkg3'})
         self.logger.error.assert_called_with(
             "Failed to fetch parent RPMs for parent-image/test-group: Parent database error"
         )
