@@ -170,6 +170,7 @@ class PrepareReleaseKonfluxPipeline:
         self.setup_working_dir()
         await self.setup_repos()
         await self.validate_assembly()
+        await self.check_blockers()
         await self.prepare_shipment()
 
     def setup_working_dir(self):
@@ -219,6 +220,20 @@ class PrepareReleaseKonfluxPipeline:
         if group_product != self.product:
             raise ValueError(
                 f"Product mismatch: {group_product} != {self.product}. This pipeline only supports {self.product}."
+            )
+
+    async def check_blockers(self):
+        if self.assembly_type != AssemblyTypes.STANDARD:
+            _LOGGER.warning("No need to check Blocker Bugs for assembly %s", self.assembly)
+            return
+        else:
+            _LOGGER.info("Checking Blocker Bugs for release %s...", self.assembly)
+        cmd = self._elliott_base_command + ["find-bugs:blocker", "--exclude-status=ON_QA"]
+        stdout = await self.execute_command_with_logging(cmd)
+        match = re.search(r"Found ([0-9]+) bugs", str(stdout))
+        if match and int(match[1]) != 0:
+            _LOGGER.info(
+                f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 
     async def prepare_shipment(self):
