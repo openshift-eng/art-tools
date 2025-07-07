@@ -9,7 +9,9 @@ import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
+from json import JSONDecodeError
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -39,7 +41,6 @@ from pyartcd.util import (
     get_release_name_for_assembly,
 )
 
-_LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 
 
@@ -56,6 +57,7 @@ class PrepareReleaseKonfluxPipeline:
         shipment_repo_url: Optional[str] = None,
         job_url: Optional[str] = None,
     ) -> None:
+        self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.group = group
@@ -273,7 +275,7 @@ class PrepareReleaseKonfluxPipeline:
             await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
             shipment_config["url"] = shipment_url
         else:
-            _LOGGER.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
+            self.logger.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
             updated = await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
             if updated:
                 await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
@@ -294,7 +296,16 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
 
+        # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+        # Attach CVE flaws
+        if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
+            tasks = [self.attach_cve_flaws(kind, shipment) for kind, shipment in shipments_by_kind.items()]
+            await asyncio.gather(*tasks)
+
+            # Update shipment MR with found CVE flaws
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
     async def find_or_build_bundle_builds(self, operator_nvrs: list[str]) -> list[str]:
         """
@@ -405,7 +416,7 @@ class PrepareReleaseKonfluxPipeline:
         if mr.target_branch != "main":
             raise ValueError(f"MR target branch {mr.target_branch} is not main. This is not supported.")
 
-        _LOGGER.info("Shipment MR is valid: %s", shipment_url)
+        self.logger.info("Shipment MR is valid: %s", shipment_url)
 
     async def reserve_live_id(self, shipment_advisory_config: dict, env: str) -> Optional[str]:
         """Reserve a live ID for the shipment advisory.
@@ -419,9 +430,9 @@ class PrepareReleaseKonfluxPipeline:
         kind = shipment_advisory_config.get("kind")
         live_id = shipment_advisory_config.get("live_id")
         if env == "prod" and not live_id:
-            _LOGGER.info("Requesting liveID for %s advisory", kind)
+            self.logger.info("Requesting liveID for %s advisory", kind)
             if self.dry_run:
-                _LOGGER.info("[DRY-RUN] Would've reserved liveID for %s advisory", kind)
+                self.logger.info("[DRY-RUN] Would've reserved liveID for %s advisory", kind)
                 live_id = "DRY_RUN_LIVE_ID"
             else:
                 live_id = await self._errata_api.reserve_live_id()
@@ -443,13 +454,9 @@ class PrepareReleaseKonfluxPipeline:
             f"--advisory-key={kind}",
             f"--application={self.application}",
         ]
-        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=False)
-        if stderr:
-            _LOGGER.info("Shipment init command stderr:\n %s", stderr)
+        rc, stdout, stderr = await exectools.cmd_gather_async(create_cmd, check=True, stderr=None)
         if stdout:
-            _LOGGER.info("Shipment init command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {create_cmd}")
+            self.logger.info("Shipment init command stdout:\n %s", stdout)
 
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
@@ -496,13 +503,14 @@ class PrepareReleaseKonfluxPipeline:
         return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=builds)
 
     async def execute_command_with_logging(self, cmd):
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
-        if stderr:
-            _LOGGER.info("Command stderr:\n %s", stderr)
+        """
+        Execute a command asynchronously and log its output. Stream stderr in real-time.
+        Throws a RuntimeError if the command fails.
+        """
+
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, stderr=None)
         if stdout:
-            _LOGGER.info("Command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"Command failed with exit code {rc}: {cmd}")
+            self.logger.info("Command stdout:\n %s", stdout)
         return stdout
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -524,7 +532,7 @@ class PrepareReleaseKonfluxPipeline:
         cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-image-types", "--json=-"]
         stdout = await self.execute_command_with_logging(cmd)
         if not stdout:
-            _LOGGER.warning("No output received from find-builds command.")
+            self.logger.warning("No output received from find-builds command.")
             return {"image": [], "extras": [], "metadata": [], "olm_builds_not_found": []}
         out = json.loads(stdout)
         kind_to_builds = {
@@ -536,9 +544,10 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
+    async def find_bugs(self, kind: str, shipment: ShipmentConfig, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
         :param kind: The kind for which to find bugs
+        :param shipment: The shipment config to be updated
         :param permissive: Ignore invalid bugs that are found and continue
         :return: An Issues object containing the bugs found
         """
@@ -552,13 +561,10 @@ class PrepareReleaseKonfluxPipeline:
         ]
         if permissive:
             find_bugs_cmd.append("--permissive")
-        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd)
-        if stderr:
-            _LOGGER.info("Shipment find bugs command stderr:\n %s", stderr)
+
+        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
         if stdout:
-            _LOGGER.info("Shipment find bugs command stdout:\n %s", stdout)
-        if rc != 0:
-            raise RuntimeError(f"cmd failed with exit code {rc}: {find_bugs_cmd}")
+            self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
 
         self._issues_by_kind = {}
         if stdout:
@@ -568,7 +574,28 @@ class PrepareReleaseKonfluxPipeline:
                 issues = Issues(fixed=[Issue(id=b, source="issues.redhat.com") for b in bugs])
                 self._issues_by_kind[advisory_kind] = issues
 
-        return self._issues_by_kind.get(kind)
+        shipment.shipment.data.releaseNotes.issues = self._issues_by_kind.get(kind)
+
+    async def attach_cve_flaws(self, kind, shipment):
+        with TemporaryDirectory() as elliott_working:
+            # Replace the elliott working dir to allow concurrent commands execution
+            attach_cve_flaws_command = [
+                arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
+                for arg in self._elliott_base_command
+            ]
+            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
+
+            self.logger.info('Running elliott attach-cve-flaws...')
+            rc, stdout, stderr = await exectools.cmd_gather_async(attach_cve_flaws_command, stderr=None)
+            if stdout:
+                self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
+
+        try:
+            updated_release_notes = json.loads(stdout)
+            shipment.shipment.data.releaseNotes = updated_release_notes
+
+        except JSONDecodeError as e:
+            self.logger.warning('Failed parsing elliott output: %s', e)
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
@@ -577,7 +604,7 @@ class PrepareReleaseKonfluxPipeline:
         :return: The URL of the created MR
         """
 
-        _LOGGER.info("Creating shipment MR...")
+        self.logger.info("Creating shipment MR...")
 
         # Create branch name
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -606,7 +633,7 @@ class PrepareReleaseKonfluxPipeline:
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else commit_message
 
         if self.dry_run:
-            _LOGGER.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
+            self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
             mr_url = f"{self.gitlab_url}/placeholder/placeholder/-/merge_requests/placeholder"
         else:
             mr = source_project.mergerequests.create(
@@ -620,7 +647,7 @@ class PrepareReleaseKonfluxPipeline:
                 }
             )
             mr_url = mr.web_url
-            _LOGGER.info("Created Merge Request: %s", mr_url)
+            self.logger.info("Created Merge Request: %s", mr_url)
 
         return mr_url
 
@@ -634,7 +661,7 @@ class PrepareReleaseKonfluxPipeline:
         :return: True if the MR was updated successfully, False otherwise.
         """
 
-        _LOGGER.info("Updating shipment MR: %s", shipment_url)
+        self.logger.info("Updating shipment MR: %s", shipment_url)
 
         # Parse the shipment URL to extract project and MR details
         parsed_url = urlparse(shipment_url)
@@ -653,7 +680,7 @@ class PrepareReleaseKonfluxPipeline:
         commit_message = f"Update shipment configurations for {self.release_name}"
         updated = await self.update_shipment_data(shipments_by_kind, env, commit_message, source_branch)
         if not updated:
-            _LOGGER.info("No changes in shipment data. MR will not be updated.")
+            self.logger.info("No changes in shipment data. MR will not be updated.")
             return False
 
         # Update the MR description
@@ -661,10 +688,10 @@ class PrepareReleaseKonfluxPipeline:
         mr.description = f"{mr.description}\n\n{description_update}"
 
         if self.dry_run:
-            _LOGGER.info("[DRY-RUN] Would have updated MR description: %s", mr.description)
+            self.logger.info("[DRY-RUN] Would have updated MR description: %s", mr.description)
         else:
             mr.save()
-            _LOGGER.info("Shipment MR updated: %s", shipment_url)
+            self.logger.info("Shipment MR updated: %s", shipment_url)
 
         return True
 
@@ -692,7 +719,7 @@ class PrepareReleaseKonfluxPipeline:
         for advisory_kind, shipment_config in shipments_by_kind.items():
             filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
             filepath = relative_target_dir / filename
-            _LOGGER.info("Updating shipment file: %s", filename)
+            self.logger.info("Updating shipment file: %s", filename)
             shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
             out = StringIO()
             yaml.dump(shipment_dump, out)
@@ -733,7 +760,7 @@ class PrepareReleaseKonfluxPipeline:
                 pr_body += f"\n\nCreated by job: {self.job_url}"
 
             if self.dry_run:
-                _LOGGER.info("[DRY-RUN] Would have created a new PR with title '%s'", pr_title)
+                self.logger.info("[DRY-RUN] Would have created a new PR with title '%s'", pr_title)
                 return True
 
             result = api.pulls.create(
@@ -743,15 +770,15 @@ class PrepareReleaseKonfluxPipeline:
                 body=pr_body,
                 maintainer_can_modify=True,
             )
-            _LOGGER.info("PR to update shipment created: %s", result.html_url)
+            self.logger.info("PR to update shipment created: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update shipment created: {result.html_url}")
             pull_number = result.number
         else:
-            _LOGGER.info("Existing PR to update shipment found: %s", existing_prs.items[0].html_url)
+            self.logger.info("Existing PR to update shipment found: %s", existing_prs.items[0].html_url)
             pull_number = existing_prs.items[0].number
 
             if self.dry_run:
-                _LOGGER.info("[DRY-RUN] Would have updated PR with number %s", pull_number)
+                self.logger.info("[DRY-RUN] Would have updated PR with number %s", pull_number)
                 return True
 
             pr_body = existing_prs.items[0].body
@@ -761,7 +788,7 @@ class PrepareReleaseKonfluxPipeline:
                 pull_number=pull_number,
                 body=pr_body,
             )
-            _LOGGER.info("PR to update shipment updated: %s", result.html_url)
+            self.logger.info("PR to update shipment updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update shipment updated: {result.html_url}")
 
         await self._slack_client.say_in_thread(f"Waiting for PR to update shipment to be merged: {result.html_url}")
@@ -775,12 +802,12 @@ class PrepareReleaseKonfluxPipeline:
             await asyncio.sleep(10)
             pr = api.pulls.get(pull_number)
             if pr.merged:
-                _LOGGER.info("PR to update shipment was merged: %s", pr.html_url)
+                self.logger.info("PR to update shipment was merged: %s", pr.html_url)
                 break
             if pr.state == "closed":
-                _LOGGER.info("PR to update shipment was closed: %s", pr.html_url)
+                self.logger.info("PR to update shipment was closed: %s", pr.html_url)
                 raise RuntimeError(f"PR to update shipment was closed: {pr.html_url}")
-            _LOGGER.info("Waiting for PR to update shipment to be merged: %s", pr.html_url)
+            self.logger.info("Waiting for PR to update shipment to be merged: %s", pr.html_url)
 
         return True
 

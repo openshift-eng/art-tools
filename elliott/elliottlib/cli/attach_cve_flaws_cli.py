@@ -108,7 +108,7 @@ class AttachCveFlaws:
 
         if not bug_ids:
             self.logger.info("No fixed issues found in the release notes, exiting.")
-            sys.exit(0)
+            return release_notes
 
         # Get the bug trackers
         tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira'))
@@ -119,6 +119,9 @@ class AttachCveFlaws:
 
             # Turn the advisory type into an RHSA
             self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+
+        else:
+            self.logger.info('No flaw bugs found, leaving release notes unchanged')
 
         return release_notes
 
