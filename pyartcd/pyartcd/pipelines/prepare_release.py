@@ -814,7 +814,7 @@ class PrepareReleasePipeline:
         cmd = self._elliott_base_command + [
             "verify-payload",
             f"{pullspec_or_imagestream}",
-            f"{advisory}",
+            f"--advisory={advisory}",
         ]
         if self.dry_run:
             _LOGGER.info("Would have run: %s", cmd)
