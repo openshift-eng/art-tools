@@ -85,6 +85,7 @@ class KonfluxRecord:
         pipeline_commit: str = '',
         schema_level: int = 0,
         ingestion_time: datetime = None,
+        konflux_component: str = '',
     ):
         """
         All fields default to None to facilitate testing
@@ -109,6 +110,7 @@ class KonfluxRecord:
         self.build_pipeline_url = build_pipeline_url
         self.pipeline_commit = pipeline_commit
         self.schema_level = schema_level
+        self.konflux_component = konflux_component
 
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
@@ -225,6 +227,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         pipeline_commit: str = '',
         schema_level: int = 0,
         ingestion_time: datetime = None,
+        konflux_component: str = '',
         record_id: str = '',
         build_id: str = None,
         nvr: str = None,
@@ -250,6 +253,7 @@ class KonfluxBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            konflux_component,
         )
 
         self.el_target = el_target
@@ -292,6 +296,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         operator_nvr: str = '',
         bundle_package_name: str = None,
         bundle_csv_name: str = None,
+        konflux_component: str = '',
         record_id: str = '',
         build_id: str = None,
         nvr: str = None,
@@ -317,6 +322,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            konflux_component,
         )
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
@@ -352,6 +358,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         ingestion_time: datetime = None,
         bundle_nvrs: List[str] = [],
         arches: List[str] = [],
+        konflux_component: str = '',
         record_id: str = '',
         build_id: str = '',
         nvr: str = '',
@@ -377,6 +384,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            konflux_component,
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches

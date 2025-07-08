@@ -154,7 +154,12 @@ class CreateSnapshotCli:
         await self.konflux_client._get(API_VERSION, KIND_APPLICATION, application_name)
 
         async def _comp(record):
-            comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)
+            # Use stored component name from build record if available, otherwise generate default
+            if hasattr(record, 'konflux_component') and record.konflux_component:
+                comp_name = record.konflux_component
+            else:
+                # Fallback to default component name generation
+                comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)
 
             # make sure component exists
             await self.konflux_client._get(API_VERSION, KIND_COMPONENT, comp_name)
