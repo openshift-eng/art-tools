@@ -77,6 +77,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 LABEL foo="bar baz"
@@ -91,6 +92,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 USER 2000
@@ -138,6 +140,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 LABEL foo="bar baz"
@@ -152,6 +155,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 USER 2000
@@ -244,6 +248,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 LABEL foo="bar baz"
@@ -257,6 +262,7 @@ ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
 COPY .oit/unsigned.repo /etc/yum.repos.d/
+RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
 RUN commands
