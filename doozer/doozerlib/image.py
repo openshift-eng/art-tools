@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import json
 from collections import OrderedDict
@@ -752,49 +751,58 @@ class ImageMetadata(Metadata):
 
     async def fetch_rpms_from_build(self) -> set[str]:
         """
-        Fetch RPM packages that need to be installed for this image.
+        Fetch RPM packages from database installed_rpms field.
 
         Returns difference between this image's packages and parent packages.
-        Caches result in installed_packages attribute.
+        Caches result in installed_rpms attribute.
 
         Returns:
-            set[str]: RPM package names to install for this image
+            set[str]: Source RPM package names to install for this image
         """
-        if hasattr(self, 'installed_packages') and self.installed_packages:
-            return set(self.installed_packages)
+        if hasattr(self, 'installed_rpms') and self.installed_rpms is not None:
+            self.logger.debug(f"Using cached installed_rpms for {self.distgit_key}: {len(self.installed_rpms)} RPMs")
+            return set(self.installed_rpms)
 
         try:
             build = await self.runtime.konflux_db.get_latest_build(name=self.distgit_key, group=self.runtime.group)
-            if not build or not build.installed_packages:
-                self.installed_packages = []
+            if not build:
+                self.logger.debug(f"No build record found for {self.distgit_key}/{self.runtime.group}")
+                self.installed_rpms = []
                 return set()
-            packages = set(build.installed_packages)
+
+            rpms = set(build.installed_rpms or [])
+
+            if not rpms:
+                self.logger.debug(
+                    f"Build record for {self.distgit_key} has no installed_rpms, skipping parent calculation"
+                )
+                self.installed_rpms = []
+                return set()
+
+            parents = self.get_parent_members()
+            if not parents:
+                self.logger.warning(f'No parent found for {self.distgit_key}; using full RPM set')
+                self.installed_rpms = list(rpms)
+                return rpms
+
+            parent_name = next(iter(parents))
+            try:
+                parent_build = await self.runtime.konflux_db.get_latest_build(
+                    name=parent_name, group=self.runtime.group
+                )
+                parent_rpms = set(parent_build.installed_rpms or []) if parent_build else set()
+
+                diff_rpms = rpms - parent_rpms
+                self.installed_rpms = list(diff_rpms)
+                return diff_rpms
+            except Exception as e:
+                self.logger.error(f"Failed to fetch parent RPMs for {parent_name}/{self.runtime.group}: {e}")
+                self.installed_rpms = list(rpms)
+                return rpms
         except Exception as e:
             self.logger.error(f"Failed to fetch RPMs for {self.distgit_key}/{self.runtime.group}: {e}")
-            self.installed_packages = []
+            self.installed_rpms = []
             return set()
-
-        parents = self.get_parent_members()
-        if not parents:
-            self.logger.warning(f'No parent found for {self.distgit_key}; using full RPM set')
-            self.installed_packages = list(packages)
-            return packages
-
-        parent_name = next(iter(parents))
-        try:
-            parent_build = await self.runtime.konflux_db.get_latest_build(name=parent_name, group=self.runtime.group)
-            if not parent_build or not parent_build.installed_packages:
-                parent_packages = set()
-            else:
-                parent_packages = set(parent_build.installed_packages)
-
-            diff_packages = packages - parent_packages
-            self.installed_packages = list(diff_packages)
-            return diff_packages
-        except Exception as e:
-            self.logger.error(f"Failed to fetch parent RPMs for {parent_name}/{self.runtime.group}: {e}")
-            self.installed_packages = list(packages)
-            return packages
 
     def get_enabled_repos(self) -> set[str]:
         """
