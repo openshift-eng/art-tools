@@ -555,7 +555,7 @@ class KonfluxImageBuilder:
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
-            'component': metadata.konflux.get('component', ''),
+            'konflux_component': metadata.konflux.get('component', ''),
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:

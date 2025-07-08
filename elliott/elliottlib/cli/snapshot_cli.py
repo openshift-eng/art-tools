@@ -155,12 +155,8 @@ class CreateSnapshotCli:
 
         async def _comp(record):
             # Use stored component name from build record if available, otherwise generate default
-            if hasattr(record, 'component') and record.component:
-                comp_name = record.component
-            elif hasattr(record, 'bundle_component') and record.bundle_component:
-                comp_name = record.bundle_component
-            elif hasattr(record, 'fbc_component') and record.fbc_component:
-                comp_name = record.fbc_component
+            if hasattr(record, 'konflux_component') and record.konflux_component:
+                comp_name = record.konflux_component
             else:
                 # Fallback to default component name generation
                 comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)

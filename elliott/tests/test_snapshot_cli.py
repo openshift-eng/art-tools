@@ -50,9 +50,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
                 rebase_commitish='foobar',
-                component='',  # Empty string to trigger fallback
-                bundle_component='',
-                fbc_component='',
+                konflux_component='',  # Empty string to trigger fallback
             ),
             Mock(
                 nvr='test-nvr-2',
@@ -60,9 +58,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 image_tag='tag2',
                 rebase_repo_url='https://github.com/test/repo2',
                 rebase_commitish='test',
-                component='',  # Empty string to trigger fallback
-                bundle_component='',
-                fbc_component='',
+                konflux_component='',  # Empty string to trigger fallback
             ),
         ]
         # `name` attribute is special so set it after creation
@@ -246,13 +242,11 @@ class TestCompFunction(IsolatedAsyncioTestCase):
                 dry_run=True,
             )
 
-    async def test_comp_priority_order_all_fields_present(self):
-        """Test component name prioritization when all fields are present"""
+    async def test_comp_uses_konflux_component_when_present(self):
+        """Test component name is used from konflux_component field when present"""
         # Create record with all component name fields
         record = Mock()
-        record.component = "primary-component"
-        record.bundle_component = "bundle-component"
-        record.fbc_component = "fbc-component"
+        record.konflux_component = "primary-component"
         record.name = "base-name"
         record.rebase_repo_url = "https://github.com/test/repo"
         record.rebase_commitish = "abc123"
@@ -263,18 +257,16 @@ class TestCompFunction(IsolatedAsyncioTestCase):
         comp_result = await self.cli.new_snapshot([record])
         component = comp_result["spec"]["components"][0]
 
-        # Should prioritize 'component' field first
+        # Should use konflux_component field
         self.assertEqual(component["name"], "primary-component")
         self.assertEqual(component["containerImage"], "registry/image@sha256:digest")
         self.assertEqual(component["source"]["git"]["url"], "https://github.com/test/repo")
         self.assertEqual(component["source"]["git"]["revision"], "abc123")
 
-    async def test_comp_priority_order_bundle_fallback(self):
-        """Test component name falls back to bundle_component when component is empty"""
+    async def test_comp_uses_konflux_component_for_bundle(self):
+        """Test component name is used from konflux_component field for bundle builds"""
         record = Mock()
-        record.component = ""  # Empty primary component
-        record.bundle_component = "my-bundle-component"
-        record.fbc_component = "fbc-component"
+        record.konflux_component = "my-bundle-component"
         record.name = "base-name"
         record.rebase_repo_url = "https://github.com/test/repo"
         record.rebase_commitish = "def456"
@@ -284,15 +276,13 @@ class TestCompFunction(IsolatedAsyncioTestCase):
         comp_result = await self.cli.new_snapshot([record])
         component = comp_result["spec"]["components"][0]
 
-        # Should use bundle_component since component is empty
+        # Should use konflux_component field
         self.assertEqual(component["name"], "my-bundle-component")
 
-    async def test_comp_priority_order_fbc_fallback(self):
-        """Test component name falls back to fbc_component when component and bundle_component are empty"""
+    async def test_comp_uses_konflux_component_for_fbc(self):
+        """Test component name is used from konflux_component field for FBC builds"""
         record = Mock()
-        record.component = ""
-        record.bundle_component = ""  # Empty bundle component
-        record.fbc_component = "my-fbc-component"
+        record.konflux_component = "my-fbc-component"
         record.name = "base-name"
         record.rebase_repo_url = "https://github.com/test/repo"
         record.rebase_commitish = "ghi789"
@@ -302,7 +292,7 @@ class TestCompFunction(IsolatedAsyncioTestCase):
         comp_result = await self.cli.new_snapshot([record])
         component = comp_result["spec"]["components"][0]
 
-        # Should use fbc_component since both component and bundle_component are empty
+        # Should use konflux_component field
         self.assertEqual(component["name"], "my-fbc-component")
 
     async def test_comp_backward_compatibility_missing_attributes(self):
@@ -316,7 +306,7 @@ class TestCompFunction(IsolatedAsyncioTestCase):
                 self.rebase_commitish = "legacy123"
                 self.image_tag = "legacy-tag"
                 self.image_pullspec = "registry/legacy@sha256:digest"
-                # Intentionally don't set component, bundle_component, fbc_component
+                # Intentionally don't set konflux_component
 
         record = LegacyRecord()
 
@@ -331,11 +321,9 @@ class TestCompFunction(IsolatedAsyncioTestCase):
             mock_get_component.assert_called_once_with(self.application_name, "legacy-component")
 
     async def test_comp_backward_compatibility_empty_strings(self):
-        """Test backward compatibility when component fields exist but are empty strings"""
+        """Test backward compatibility when konflux_component field exists but is empty string"""
         record = Mock()
-        record.component = ""
-        record.bundle_component = ""
-        record.fbc_component = ""
+        record.konflux_component = ""
         record.name = "empty-component"
         record.rebase_repo_url = "https://github.com/empty/repo"
         record.rebase_commitish = "empty456"

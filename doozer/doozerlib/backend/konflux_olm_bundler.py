@@ -722,7 +722,7 @@ class KonfluxOlmBundleBuilder:
                 'bundle_csv_name': bundle_csv_name,
                 'operator_nvr': operator_nvr,
                 'operand_nvrs': operand_nvrs,
-                'bundle_component': metadata.konflux.get('bundle_component', ''),
+                'konflux_component': metadata.konflux.get('bundle_component', ''),
             }
 
             match outcome:

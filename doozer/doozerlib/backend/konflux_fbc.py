@@ -894,7 +894,7 @@ class KonfluxFbcBuilder:
                 'pipeline_commit': 'n/a',  # TODO: populate this
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
-                'fbc_component': metadata.konflux.get('fbc_component', ''),
+                'konflux_component': metadata.konflux.get('fbc_component', ''),
             }
 
             match outcome:
