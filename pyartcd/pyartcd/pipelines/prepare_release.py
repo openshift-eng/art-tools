@@ -404,7 +404,7 @@ class PrepareReleasePipeline:
             ]
             for is_namespace_and_name in imagestreams_per_arch:
                 is_str = f"{is_namespace_and_name[0]}/{is_namespace_and_name[1]}"
-                self.verify_payload(is_str)
+                await self.verify_payload(is_str)
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
@@ -810,7 +810,7 @@ class PrepareReleasePipeline:
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def verify_payload(self, pullspec_or_imagestream: str):
+    async def verify_payload(self, pullspec_or_imagestream: str):
         cmd = self._elliott_base_command + [
             "verify-payload",
             f"{pullspec_or_imagestream}",
@@ -819,20 +819,13 @@ class PrepareReleasePipeline:
             _LOGGER.info("Would have run: %s", cmd)
             return
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
-        # elliott verify-payload always writes results to $cwd/"summary_results.json".
-        # move it to a different location to avoid overwritting the result.
-        results_path = self.working_dir / "summary_results.json"
-        new_path = (
-            self.working_dir / f"verify-payload-results-{pullspec_or_imagestream.split(':')[-1].replace('/', '_')}.json"
-        )
-        shutil.move(results_path, new_path)
-        with open(new_path, "r") as f:
-            results = json.load(f)
-            if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
-                raise ValueError(f"""Failed to verify payload for nightly {pullspec_or_imagestream}.
-Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
-update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        results = json.loads(out)
+        _LOGGER.info("Summary results for %s:\n%s", pullspec_or_imagestream, json.dumps(results, indent=4))
+        if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
+            raise ValueError(f"""Failed to verify payload for nightly {pullspec_or_imagestream}.
+        Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
+        update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
 
     def create_release_jira(self, template_vars: Dict):
         template_issue_key = self.runtime.config["jira"]["templates"][f"ocp{self.release_version[0]}"]

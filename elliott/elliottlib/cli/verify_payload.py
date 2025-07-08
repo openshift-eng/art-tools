@@ -5,12 +5,14 @@ from typing import Dict, List, Optional
 import click
 from artcommonlib import rhcos
 from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.model import Missing
 
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.constants import errata_url
 from elliottlib.errata import get_advisory_nvrs, get_brew_build, get_raw_erratum
-from elliottlib.util import get_nvrs_from_release
+from elliottlib.shipment_utils import get_builds_from_mr
+from elliottlib.util import get_nvrs_from_release, parse_nvr
 
 
 class VerifyPayloadPipeline:
@@ -20,35 +22,45 @@ class VerifyPayloadPipeline:
         self.payload_or_imagestream = payload_or_imagestream
         self.to_file = to_file
 
+        self.assembly_group_config = {}
         self.all_payload_nvrs: Dict[str, tuple] = {}
         self.all_advisory_nvrs = {}
 
     async def run(self):
+        # Get the assembly group config
+        releases_config = self.runtime.get_releases_config()
+        self.assembly_group_config = assembly_config_struct(releases_config, self.runtime.assembly, "group", {})
+
+        # Get rhcos images from the assembly group config
         rhcos_images = {c['name'] for c in rhcos.get_container_configs(self.runtime)}
+
+        # Get the payload or imagestream NVRs
         self.all_payload_nvrs = await get_nvrs_from_release(self.payload_or_imagestream, rhcos_images, self.logger)
 
-        if self.runtime.build_system == 'brew':
-            results = await self.check_brew_payload()
-        else:
+        # Check if the payload or imagestream is a Konflux assembly or a Brew assembly
+        assembly_basis = assembly_config_struct(releases_config, self.runtime.assembly, "basis", {})
+        if assembly_basis.time is not Missing:
+            # We're dealing with a Konflux assembly
             results = await self.check_konflux_payload()
 
-        self.logger.info("Summary results:")
+        else:
+            # We're dealing with a Brew assembly
+            results = await self.check_brew_payload()
+
         click.echo(json.dumps(results, indent=4))
 
+        # Write results to file if requested
         if self.to_file:
             with open('summary_results.json', 'w') as fp:
                 json.dump(results, fp, indent=4)
             self.logger.info("Wrote out summary results to summary_results.json")
 
-    def _get_image_advisory_id(self):
+    def _get_image_advisory_id(self) -> Optional[int]:
         """
         Get the image advisory ID from the assembly definition.
         """
 
-        assembly_group_config = assembly_config_struct(
-            self.runtime.get_releases_config(), self.runtime.assembly, "group", {}
-        )
-        return assembly_group_config.get('advisories', {}).get('image', None)
+        return self.assembly_group_config.get('advisories', {}).get('image', None)
 
     async def check_brew_payload(self):
         # Get the advisory ID from the assembly definition
@@ -78,6 +90,10 @@ class VerifyPayloadPipeline:
         return results
 
     def _check_payload_match_errata(self, payload_doesnt_match_errata, missing_in_errata):
+        """
+        Check if the payload matches the advisory builds.
+        """
+
         for image, vr_tuple in self.all_payload_nvrs.items():
             vr = f"{vr_tuple[0]}-{vr_tuple[1]}"
             imagevr = f"{image}-{vr}"
@@ -87,7 +103,7 @@ class VerifyPayloadPipeline:
                 missing_in_errata[image] = imagevr
                 self.logger.warning(f"{imagevr} in payload not found in advisory")
 
-            elif image in self.all_advisory_nvrs and vr != self.all_advisory_nvrs[image]:
+            elif image in self.all_advisory_nvrs and vr != self.all_advisory_nvrs[image].replace(f'{image}-', ''):
                 self.logger.warning(
                     f"{image} from payload has version {vr} which does not match {self.all_advisory_nvrs[image]} from advisory"
                 )
@@ -97,6 +113,10 @@ class VerifyPayloadPipeline:
                 }
 
     def _check_missing_in_errata(self, missing_in_errata, in_shipped_advisory, in_pending_advisory):
+        """
+        Check if the missing images are already shipped or pending to ship.
+        """
+
         if missing_in_errata:  # check if missing images are already shipped or pending to ship
             advisory_nvrs: Dict[int, List[str]] = {}  # a dict mapping advisory numbers to lists of NVRs
             self.logger.info(f"Checking if {len(missing_in_errata)} missing images are shipped...")
@@ -139,8 +159,39 @@ class VerifyPayloadPipeline:
                     else:
                         in_pending_advisory.append(item)
 
+    async def get_shipment_nvrs(self) -> Dict[str, str]:
+        """
+        Get the NVRs of the builds in the shipment merge request.
+        """
+
+        shipment = self.assembly_group_config.get("shipment", {})
+        mr_url = shipment.get("url")
+        if not mr_url:
+            raise click.UsageError("Shipment block does not contain a 'url' field for the merge request")
+
+        builds_by_kind = get_builds_from_mr(mr_url)
+        return {parse_nvr(nvr)['name']: nvr for nvr in builds_by_kind['image']}
+
     async def check_konflux_payload(self):
-        return {}
+        self.all_advisory_nvrs = await self.get_shipment_nvrs()
+        self.logger.info("Found {} builds".format(len(self.all_advisory_nvrs)))
+
+        missing_in_errata = {}
+        payload_doesnt_match_errata = {}
+        in_pending_advisory = []
+        in_shipped_advisory = []
+        results = {
+            'missing_in_advisory': missing_in_errata,
+            'payload_advisory_mismatch': payload_doesnt_match_errata,
+            "in_pending_advisory": in_pending_advisory,
+            "in_shipped_advisory": in_shipped_advisory,
+        }
+
+        self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))
+
+        self._check_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
+
+        return results
 
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
