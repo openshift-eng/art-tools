@@ -41,7 +41,7 @@ class ImagesHealthPipeline:
 
     def send_for_engine(self, engine):
         if engine == "konflux":
-            return self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            return True
         if engine == "brew":
             return self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
         raise ValueError(f'Engine {self.engine} not recognized')
