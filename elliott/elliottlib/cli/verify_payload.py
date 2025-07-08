@@ -84,12 +84,12 @@ class VerifyPayloadPipeline:
 
         self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))
 
-        self._check_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
-        self._check_missing_in_errata(missing_in_errata, in_shipped_advisory, in_pending_advisory)
+        self._populate_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
+        self._populate_missing_in_errata(missing_in_errata, in_shipped_advisory, in_pending_advisory)
 
         return results
 
-    def _check_payload_match_errata(self, payload_doesnt_match_errata, missing_in_errata):
+    def _populate_payload_match_errata(self, payload_doesnt_match_errata, missing_in_errata):
         """
         Check if the payload matches the advisory builds.
         """
@@ -112,7 +112,7 @@ class VerifyPayloadPipeline:
                     'errata': self.all_advisory_nvrs[image],
                 }
 
-    def _check_missing_in_errata(self, missing_in_errata, in_shipped_advisory, in_pending_advisory):
+    def _populate_missing_in_errata(self, missing_in_errata, in_shipped_advisory, in_pending_advisory):
         """
         Check if the missing images are already shipped or pending to ship.
         """
@@ -189,7 +189,7 @@ class VerifyPayloadPipeline:
 
         self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))
 
-        self._check_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
+        self._populate_payload_match_errata(payload_doesnt_match_errata, missing_in_errata)
 
         return results
 
