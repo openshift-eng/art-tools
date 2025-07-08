@@ -404,7 +404,7 @@ class PrepareReleasePipeline:
             ]
             for is_namespace_and_name in imagestreams_per_arch:
                 is_str = f"{is_namespace_and_name[0]}/{is_namespace_and_name[1]}"
-                self.verify_payload(is_str, advisories["image"])
+                self.verify_payload(is_str)
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
@@ -810,11 +810,10 @@ class PrepareReleasePipeline:
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def verify_payload(self, pullspec_or_imagestream: str, advisory: int):
+    def verify_payload(self, pullspec_or_imagestream: str):
         cmd = self._elliott_base_command + [
             "verify-payload",
             f"{pullspec_or_imagestream}",
-            f"--advisory={advisory}",
         ]
         if self.dry_run:
             _LOGGER.info("Would have run: %s", cmd)

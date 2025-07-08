@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 import click
 from artcommonlib import rhcos
+from artcommonlib.assembly import assembly_config_struct
 
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
@@ -13,13 +14,10 @@ from elliottlib.util import get_nvrs_from_release
 
 
 class VerifyPayloadPipeline:
-    def __init__(
-        self, runtime: Runtime, payload_or_imagestream: str, advisory: Optional[int] = None, to_file: bool = False
-    ):
+    def __init__(self, runtime: Runtime, payload_or_imagestream: str, to_file: bool = False):
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.payload_or_imagestream = payload_or_imagestream
-        self.advisory = advisory
         self.to_file = to_file
 
         self.all_payload_nvrs: Dict[str, tuple] = {}
@@ -42,8 +40,23 @@ class VerifyPayloadPipeline:
                 json.dump(results, fp, indent=4)
             self.logger.info("Wrote out summary results to summary_results.json")
 
+    def _get_image_advisory_id(self):
+        """
+        Get the image advisory ID from the assembly definition.
+        """
+
+        assembly_group_config = assembly_config_struct(
+            self.runtime.get_releases_config(), self.runtime.assembly, "group", {}
+        )
+        return assembly_group_config.get('advisories', {}).get('image', None)
+
     async def check_brew_payload(self):
-        self.all_advisory_nvrs = get_advisory_nvrs(self.advisory)
+        # Get the advisory ID from the assembly definition
+        advisory = self._get_image_advisory_id()
+        if not advisory:
+            raise click.UsageError("No image advisory ID found in assembly definition.")
+
+        self.all_advisory_nvrs = get_advisory_nvrs(advisory)
         self.logger.info("Found {} builds".format(len(self.all_advisory_nvrs)))
 
         missing_in_errata = {}
@@ -132,11 +145,10 @@ class VerifyPayloadPipeline:
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
 @click.argument("payload_or_imagestream")
-@click.option('--advisory', required=False, type=int)
 @click.option('--to-file', default=False, is_flag=True, help='Write results to file.')
 @click.pass_obj
 @click_coroutine
-async def verify_payload(runtime, payload_or_imagestream, advisory, to_file):
+async def verify_payload(runtime, payload_or_imagestream, to_file):
     """Cross-check that the builds present in PAYLOAD or Imagestream match the builds
     attached to ADVISORY. The payload is treated as the source of
     truth. If something is absent or different in the advisory it is
@@ -165,8 +177,5 @@ async def verify_payload(runtime, payload_or_imagestream, advisory, to_file):
 
     """
 
-    if runtime.build_system == 'brew' and not advisory:
-        raise click.UsageError("Advisory ID is required for brew builds.")
-
     runtime.initialize()
-    await VerifyPayloadPipeline(runtime, payload_or_imagestream, advisory, to_file).run()
+    await VerifyPayloadPipeline(runtime, payload_or_imagestream, to_file).run()
