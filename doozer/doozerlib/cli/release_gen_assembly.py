@@ -259,6 +259,11 @@ class GenAssemblyCli:
         if self.assembly_type == AssemblyTypes.PREVIEW:
             self.pre_ga_mode = 'prerelease'
 
+        # Microshift should always be built and its advisory prepared for preview and candidate assemblies
+        # which will eventually go out at GA time
+        if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            self.gen_microshift = True
+
         # Bind Konflux DB to the "builds" table
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
