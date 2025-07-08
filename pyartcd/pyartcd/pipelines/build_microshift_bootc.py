@@ -98,7 +98,7 @@ class BuildMicroShiftBootcPipeline:
             'login',
             '--registry',
             'quay.io/redhat-user-workloads',
-            f'--auth-basic={os.environ["KONFLUX_ART_IMAGES_USERNAME"]}:{os.environ["KONFLUX_ART_IMAGES_PASSWORD"]}',
+            f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}',
         ]
         await exectools.cmd_assert_async(cmd)
 
