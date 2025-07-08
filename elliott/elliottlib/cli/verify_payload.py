@@ -16,11 +16,10 @@ from elliottlib.util import get_nvrs_from_release, parse_nvr
 
 
 class VerifyPayloadPipeline:
-    def __init__(self, runtime: Runtime, payload_or_imagestream: str, to_file: bool = False):
+    def __init__(self, runtime: Runtime, payload_or_imagestream: str):
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.payload_or_imagestream = payload_or_imagestream
-        self.to_file = to_file
 
         self.assembly_group_config = {}
         self.all_payload_nvrs: Dict[str, tuple] = {}
@@ -47,13 +46,8 @@ class VerifyPayloadPipeline:
             # We're dealing with a Brew assembly
             results = await self.check_brew_payload()
 
+        # Dump results to standard output
         click.echo(json.dumps(results, indent=4))
-
-        # Write results to file if requested
-        if self.to_file:
-            with open('summary_results.json', 'w') as fp:
-                json.dump(results, fp, indent=4)
-            self.logger.info("Wrote out summary results to summary_results.json")
 
     def _get_image_advisory_id(self) -> Optional[int]:
         """
@@ -196,10 +190,9 @@ class VerifyPayloadPipeline:
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
 @click.argument("payload_or_imagestream")
-@click.option('--to-file', default=False, is_flag=True, help='Write results to file.')
 @click.pass_obj
 @click_coroutine
-async def verify_payload(runtime, payload_or_imagestream, to_file):
+async def verify_payload(runtime, payload_or_imagestream):
     """Cross-check that the builds present in PAYLOAD or Imagestream match the builds
     attached to ADVISORY. The payload is treated as the source of
     truth. If something is absent or different in the advisory it is
@@ -229,4 +222,4 @@ async def verify_payload(runtime, payload_or_imagestream, to_file):
     """
 
     runtime.initialize()
-    await VerifyPayloadPipeline(runtime, payload_or_imagestream, to_file).run()
+    await VerifyPayloadPipeline(runtime, payload_or_imagestream).run()
