@@ -172,13 +172,9 @@ class VerifyPayloadPipeline:
 
         missing_in_errata = {}
         payload_doesnt_match_errata = {}
-        in_pending_advisory = []
-        in_shipped_advisory = []
         results = {
             'missing_in_advisory': missing_in_errata,
             'payload_advisory_mismatch': payload_doesnt_match_errata,
-            "in_pending_advisory": in_pending_advisory,
-            "in_shipped_advisory": in_shipped_advisory,
         }
 
         self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))
