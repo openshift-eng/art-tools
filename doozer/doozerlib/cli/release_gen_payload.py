@@ -35,6 +35,7 @@ from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import BuildRecordInspector, ImageInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.constants import KONFLUX_PUBLIC_QUAY_REPO
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.rhcos import RHCOSBuildInspector
@@ -1045,6 +1046,7 @@ class GenPayloadCli:
 
         # Prevents writing the same destination twice (not supported by oc if in the same mirroring file):
         mirror_src_for_dest: Dict[str, str] = dict()
+        mirror_art_images_public: Dict[str, str] = dict()
 
         # Login to the konflux registry
         if self.runtime.build_system == 'konflux':
@@ -1058,10 +1060,19 @@ class GenPayloadCli:
             ]
             await exectools.cmd_assert_async(cmd)
 
+        def _get_art_images_public_pullspec(_pullspec):
+            _tag = _pullspec.split(':')[-1]
+            return f"{KONFLUX_PUBLIC_QUAY_REPO}:{_tag}"
+
         for payload_entry in payload_entries.values():
             if not payload_entry.image_inspector:
                 continue  # Nothing to mirror (e.g. RHCOS)
             mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
+
+            if not private and self.runtime.build_system == 'konflux':
+                source_pullspec = payload_entry.image_inspector.get_pullspec()
+                mirror_art_images_public[_get_art_images_public_pullspec(source_pullspec)] = source_pullspec
+
             if payload_entry.dest_manifest_list_pullspec:
                 # For heterogeneous release payloads, if a component builds for all arches
                 # (without using -alt images), we can use the manifest list for the images directly from OSBS.
@@ -1069,6 +1080,10 @@ class GenPayloadCli:
                 mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = (
                     payload_entry.build_record_inspector.get_build_pullspec()
                 )
+
+                if not private and self.runtime.build_system == 'konflux':
+                    source_pullspec = payload_entry.image_inspector.get_pullspec()
+                    mirror_art_images_public[_get_art_images_public_pullspec(source_pullspec)] = source_pullspec
 
         @exectools.limit_concurrency(500)
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
@@ -1079,24 +1094,30 @@ class GenPayloadCli:
                     await out_file.write(f"{src_pullspec}={dest_pullspec}\n")
 
             if self.apply or self.apply_multi_arch:
-                self.logger.info(f"Mirroring images from {str(src_dest_path)}")
+                self.logger.info(f"Mirroring images from {str(file_path)}")
                 cmd = [
                     'oc',
                     'image',
                     'mirror',
                     '--keep-manifest-list',
                     '--continue-on-error',
-                    f'--filename={str(src_dest_path)}',
+                    f'--filename={str(file_path)}',
                 ]
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
-        # Mirror the images in chunks to avoid erroring out due to possible registry issues
-        image_chunk_size = 50
-        i = 0
-        for pullspec_pair_chunk in chunk(list(mirror_src_for_dest.items()), image_chunk_size):
-            src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}-{i}.txt")
-            await _mirror(src_dest_path, pullspec_pair_chunk)
-            i += 1
+        async def _mirror_chunks(_mirror_src_for_dest):
+            # Mirror the images in chunks to avoid erroring out due to possible registry issues
+            _image_chunk_size = 50
+            i = 0
+            for _pullspec_pair_chunk in chunk(list(_mirror_src_for_dest.items()), _image_chunk_size):
+                _src_dest_path = self.output_path.joinpath(
+                    f"src_dest.{arch}-{'private' if private else 'public'}-{i}.txt"
+                )
+                await _mirror(_src_dest_path, _pullspec_pair_chunk)
+                i += 1
+
+        await _mirror_chunks(mirror_src_for_dest)
+        await _mirror_chunks(mirror_art_images_public)
 
     async def generate_specific_payload_imagestreams(
         self,

@@ -38,6 +38,7 @@ KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekt
 KONFLUX_DEFAULT_IMAGE_REPO = (
     "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"  # FIXME: If we change clusters this URL will change
 )
+KONFLUX_PUBLIC_QUAY_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-public"
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 ART_PROD_PRIV_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-priv"
