@@ -7,13 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
-import aiohttp
 import requests
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import RELEASE_SCHEDULES
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
-from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
@@ -174,49 +173,33 @@ def is_future_release_date(date_str):
         return False
 
 
-def get_assembly_release_date(assembly, group):
+def get_assembly_release_date(assembly_name: str, assembly_type: AssemblyTypes, group: str) -> Optional[datetime]:
     """
-    Get assembly release release date from release schedule API.
+    Get assembly release date from release schedule API.
 
-    :raises ValueError: If the assembly release date is not found
+    :param assembly_name: The assembly name (e.g. "4.18.5")
+    :param assembly_type: The assembly type (e.g. AssemblyTypes.STANDARD)
+    :param group: The group name (e.g. "openshift-4.18")
+    :return: The assembly release date or None if not found in the release schedule API
     """
-    release_schedules = requests.get(
-        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+    stream = f'{group}.0' if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] else f'{group}.z'
+    response = requests.get(
+        f'{RELEASE_SCHEDULES}/{stream}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
     )
-    try:
-        for release in release_schedules.json()['all_ga_tasks']:
-            if assembly in release['name']:
-                # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    except KeyError:
-        pass
-    raise ValueError(f'Assembly release date not found for {assembly}')
+    response.raise_for_status()
+
+    for release in response.json()['all_ga_tasks']:
+        if assembly_name in release['name']:
+            return datetime.strptime(release['date_start'], "%Y-%m-%d")
+
+    return None
 
 
-async def get_assembly_release_date_async(release_name: str):
+def is_release_next_week(group: str) -> bool:
     """
-    Get assembly release release date from release schedule API.
-
-    :raises ValueError: If the assembly release date is not found
-    """
-    version = VersionInfo.parse(release_name)
-    release_train = f'openshift-{version.major}.{version.minor}.z'
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
-            for release in data['all_ga_tasks']:
-                if release_name in release['name']:
-                    # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                    return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    raise ValueError(f'Assembly release date not found for {release_name}')
-
-
-def is_release_next_week(group):
-    """
-    Check if there release of group need to release in the near week
+    Check if there is a release of the group in the next 7 days
+    :param group: The group name (e.g. "openshift-4.18")
+    :return: True if there is a release in the next 7 days, False otherwise
     """
     release_schedules = requests.get(
         f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
@@ -228,34 +211,38 @@ def is_release_next_week(group):
     return False
 
 
-def get_inflight(assembly, group):
+def get_in_flight(group: str, release_date: datetime) -> Optional[str]:
     """
-    Get inflight release name from current assembly release
+    Get an in_flight release for a given group and release date.
+    An in_flight release is a release of the previous version, that is scheduled to be released in the next 5 days.
+    e.g if 4.18.5 and 4.17.12 are schedule to be released in the same week, then 4.17.12 is an in_flight release for 4.18.5
+
+    :param group: The group name (e.g. "openshift-4.18")
+    :param release_date: The release date for the 4.18 assembly
+    :return: The in_flight release name e.g 4.17.12 or None if not found
     """
-    inflight_release = None
-    assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    release_schedules = requests.get(
+    response = requests.get(
         f'{RELEASE_SCHEDULES}/openshift-{major}.{minor - 1}.z/?fields=all_ga_tasks',
         headers={'Accept': 'application/json'},
     )
-    for release in release_schedules.json()['all_ga_tasks']:
-        is_future = is_future_release_date(release['date_start'])
-        if is_future:
-            days_diff = abs(
-                (
-                    datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                    - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                ).days
-            )
-            if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                if match:
-                    inflight_release = match.group()
-                    break
-                else:
-                    raise ValueError(f"Didn't find in_inflight release in {release['name']}")
-    return inflight_release
+    response.raise_for_status()
+    for release in response.json()['all_ga_tasks']:
+        # do not consider releases in the past
+        if not is_future_release_date(release['date_start']):
+            continue
+
+        days_diff = abs((release_date - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
+        # do not consider releases more than 5 days apart
+        if days_diff > 5:
+            continue
+
+        match = re.search(r'\d+\.\d+\.\d+', release['name'])
+        if match:
+            return match.group()
+        else:
+            raise ValueError(f"Could not find in_flight release in {release['name']}. Please investigate")
+    return None
 
 
 def isolate_rhel_major_from_version(version: str) -> Optional[int]:

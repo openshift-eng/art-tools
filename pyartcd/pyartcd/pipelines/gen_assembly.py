@@ -4,6 +4,7 @@ import os
 import re
 import traceback
 from collections import namedtuple
+from datetime import datetime
 from io import StringIO
 from typing import Iterable, Optional, OrderedDict, Tuple
 
@@ -12,7 +13,6 @@ import click
 from artcommonlib import exectools
 from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import (
-    get_inflight,
     isolate_major_minor_in_group,
     merge_objects,
     new_roundtrip_yaml_handler,
@@ -55,6 +55,7 @@ class GenAssemblyPipeline:
         ignore_non_x86_nightlies: Optional[bool] = False,
         logger: Optional[logging.Logger] = None,
         gen_microshift: bool = False,
+        ship_date: Optional[datetime] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -71,20 +72,14 @@ class GenAssemblyPipeline:
         self.arches = arches
         self.skip_get_nightlies = skip_get_nightlies
         self.gen_microshift = gen_microshift
-        if in_flight:
-            self.in_flight = in_flight
-        elif not custom and not pre_ga_mode and build_system == 'brew':
-            self.in_flight = get_inflight(assembly, group)
-        else:
-            self.in_flight = None
-
+        self.in_flight = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.pre_ga_mode = pre_ga_mode
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
-
+        self.ship_date = ship_date
         self._github_token = os.environ.get('GITHUB_TOKEN')
         if not self._github_token and not self.runtime.dry_run:
             raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request.")
@@ -244,6 +239,8 @@ class GenAssemblyPipeline:
         if self.custom:
             cmd.append("--custom")
         else:
+            if self.ship_date:
+                cmd.append(f"--date={self.ship_date.strftime('%Y-%b-%d')}")
             if self.in_flight:
                 cmd.append(f"--in-flight={self.in_flight}")
             for previous in self.previous_list:
@@ -352,9 +349,10 @@ class GenAssemblyPipeline:
 @click.option(
     "--build-system",
     metavar="BUILD_SYSTEM",
+    type=click.Choice(['brew', 'konflux']),
     required=False,
     default='brew',
-    help="What build system we're operating on ('brew'|'konflux')",
+    help="What build system we're operating on",
 )
 @click.option(
     "--nightly",
@@ -424,6 +422,11 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
+@click.option(
+    '--ship-date',
+    type=click.DateTime(formats=['%Y-%b-%d']),
+    help='The shipping date of the assembly release (YYYY-Mon-DD)',
+)
 @pass_runtime
 @click_coroutine
 async def gen_assembly(
@@ -446,6 +449,7 @@ async def gen_assembly(
     skip_get_nightlies: bool,
     ignore_non_x86_nightlies: bool,
     gen_microshift: bool,
+    date: Optional[datetime.datetime],
 ):
     pipeline = GenAssemblyPipeline(
         runtime=runtime,
@@ -467,5 +471,6 @@ async def gen_assembly(
         skip_get_nightlies=skip_get_nightlies,
         ignore_non_x86_nightlies=ignore_non_x86_nightlies,
         gen_microshift=gen_microshift,
+        date=date,
     )
     await pipeline.run()

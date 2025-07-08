@@ -13,7 +13,7 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_assembly_release_date, get_ocp_version_from_group, new_roundtrip_yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import isolate_nightly_name_components
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
@@ -65,7 +65,6 @@ class BuildMicroShiftPipeline:
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
-        date: Optional[str] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -75,7 +74,7 @@ class BuildMicroShiftPipeline:
         self.no_rebase = no_rebase
         self.force = force
         self.skip_prepare_advisory = skip_prepare_advisory
-        self.date = date
+        self.date = None
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -103,6 +102,7 @@ class BuildMicroShiftPipeline:
 
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})
+        self.date = group_config.get("ship_date")
         self.releases_config = await load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
@@ -154,7 +154,6 @@ class BuildMicroShiftPipeline:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         release_version = VersionInfo.parse(release_name)
         advisory_type = "RHEA" if release_version.patch == 0 else "RHBA"
-        release_date = self.date if self.date else get_assembly_release_date(self.assembly, self.group)
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
         boilerplate = get_advisory_boilerplate(
             runtime=self, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
@@ -172,11 +171,16 @@ class BuildMicroShiftPipeline:
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
             self._logger.info("[DRY-RUN] Would have created microshift %s advisory 0", advisory_type)
+            self._logger.info("[DRY-RUN] Release date: %s", self.date)
             self._logger.info("[DRY-RUN] Synopsis: %s", synopsis)
             self._logger.info("[DRY-RUN] Topic: %s", advisory_topic)
             self._logger.info("[DRY-RUN] Description: %s", advisory_description)
             self._logger.info("[DRY-RUN] Solution: %s", advisory_solution)
             return 0
+
+        if not self.date:
+            raise ValueError("Shipping date is not set. Please set it in the group config.")
+
         try:
             created_advisory = await errata_api.create_advisory(
                 product=et_data['product'],
@@ -190,7 +194,7 @@ class BuildMicroShiftPipeline:
                 advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
                 advisory_manager_email=self.runtime.config['advisory']['manager'],
                 advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
-                advisory_publish_date_override=release_date,
+                advisory_publish_date_override=self.date,
                 batch_id=0,
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
@@ -647,7 +651,6 @@ class BuildMicroShiftPipeline:
     is_flag=True,
     help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
-@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
 @click_coroutine
 async def build_microshift(
@@ -659,7 +662,6 @@ async def build_microshift(
     no_rebase: bool,
     force: bool,
     skip_prepare_advisory: bool,
-    date: Optional[str],
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -675,7 +677,6 @@ async def build_microshift(
             skip_prepare_advisory=skip_prepare_advisory,
             data_path=data_path,
             slack_client=slack_client,
-            date=date,
         )
         await pipeline.run()
     except Exception as err:
