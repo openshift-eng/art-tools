@@ -19,6 +19,9 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
+from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.util import oc_image_info_for_arch_async
 from kubernetes.dynamic import exceptions
@@ -165,7 +168,16 @@ class CreateSnapshotCli:
 
         async def _comp(record: KonfluxRecord):
             app_name = record.get_konflux_application_name()
-            comp_name = record.get_konflux_component_name()
+
+            # note: this will be change once we have component name stored in the DB
+            if isinstance(record, KonfluxBuildRecord):
+                comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
+            elif isinstance(record, KonfluxBundleBuildRecord):
+                comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
+            elif isinstance(record, KonfluxFbcBuildRecord):
+                # fbc component name is determined from the image it builds for, which is not stored in the DB
+                # rather than hack something up, call the generic method and let it fail in the worst case
+                comp_name = record.get_konflux_component_name()
 
             # make sure application and component exist
             await asyncio.gather(

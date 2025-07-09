@@ -252,12 +252,16 @@ class KonfluxFbcRebaser:
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
+    @staticmethod
+    def get_fbc_name(image_name: str):
+        return f"{image_name}-fbc"
+
     async def rebase(self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
 
-        name = metadata.distgit_key + "-fbc"
+        name = self.get_fbc_name(metadata.distgit_key)
         nvr = f"{name}-{version}-{release}"
         record = {
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
@@ -511,7 +515,8 @@ class KonfluxFbcRebaser:
         dfp.labels['io.openshift.build.commit.id'] = bundle_build.commitish
 
         # The following label is used internally by ART's shipment pipeline
-        dfp.labels['com.redhat.art.nvr'] = f'{metadata.distgit_key}-fbc-{version}-{release}'
+        name = self.get_fbc_name(metadata.distgit_key)
+        dfp.labels['com.redhat.art.nvr'] = f'{name}-{version}-{release}'
 
     def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.
@@ -667,6 +672,17 @@ class KonfluxFbcBuilder:
             konflux_namespace, konflux_kubeconfig, konflux_context, dry_run=self.dry_run
         )
 
+    @staticmethod
+    def get_application_name(group_name: str, image_name: str):
+        # Note: for now, we use a different application for each image
+        # In future, we might change it to one application per group for all images
+        return f"fbc-{group_name.replace('openshift-', 'ocp-')}-{image_name}".replace(".", "-").replace("_", "-")
+
+    @staticmethod
+    def get_component_name(group_name: str, image_name: str):
+        # Note: since application name is per image, we use the same name for the application and the component
+        return KonfluxFbcBuilder.get_application_name(group_name, image_name)
+
     async def build(self, metadata: ImageMetadata):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
@@ -723,7 +739,7 @@ class KonfluxFbcBuilder:
             # Start FBC build
             logger.info("Starting FBC build...")
             retries = 3
-            name = metadata.distgit_key + "-fbc"
+            name = KonfluxFbcRebaser.get_fbc_name(metadata.distgit_key)
             nvr = f"{name}-{version}-{release}"
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
@@ -794,15 +810,13 @@ class KonfluxFbcBuilder:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         # Ensure the Application resource exists
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        app_name = f"fbc-{self.group.replace('openshift-', 'ocp-')}-{metadata.distgit_key}".replace(".", "-").replace(
-            "_", "-"
-        )
+        app_name = self.get_application_name(self.group, metadata.distgit_key)
         logger.info(f"Using Konflux application: {app_name}")
         konflux_client = self._konflux_client
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists
-        component_name = app_name  # Use the same name as the application
+        component_name = self.get_component_name(self.group, metadata.distgit_key)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
         await konflux_client.ensure_component(
@@ -859,7 +873,7 @@ class KonfluxFbcBuilder:
             df_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
             dfp = DockerfileParser(str(df_path))
 
-            name = metadata.distgit_key + "-fbc"
+            name = self.get_fbc_name(metadata.distgit_key)
             version = dfp.envs.get("__doozer_version")
             release = dfp.envs.get("__doozer_release")
             assert version and release, "Version and release not found in the catalog.Dockerfile. Did you rebase?"
