@@ -127,6 +127,7 @@ def releases_gen_assembly(ctx, name):
 )
 @click.option(
     '--date',
+    'release_date',
     type=click.DateTime(formats=['%Y-%b-%d']),
     help='The shipping date of the assembly release (YYYY-Mon-DD)',
 )
