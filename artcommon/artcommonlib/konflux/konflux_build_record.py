@@ -205,6 +205,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         el_target: str = '',
         arches: list = [],
         installed_packages: list = [],
+        installed_rpms: list = [],
         parent_images: list = [],
         source_repo: str = '',
         commitish: str = '',
@@ -254,6 +255,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.el_target = el_target
         self.arches = arches
         self.installed_packages = installed_packages
+        self.installed_rpms = installed_rpms
         self.parent_images = parent_images
         self.embargoed = embargoed
         self.hermetic = hermetic

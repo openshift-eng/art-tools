@@ -370,6 +370,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
 
+    @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
@@ -390,6 +391,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_create_build_data_pr,
         mock_update_shipment_mr,
         mock_errata_api,
+        *_,
     ):
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
@@ -601,7 +603,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_bugs.assert_any_call("image", permissive=False)
         self.assertEqual(mock_find_bugs.call_count, 2)
 
-        mock_update_shipment_mr.assert_awaited_once()
+        self.assertEqual(mock_update_shipment_mr.call_count, 2)
         updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
 
         mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
