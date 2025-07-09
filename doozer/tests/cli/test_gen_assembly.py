@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
@@ -456,3 +457,202 @@ class TestGenAssemblyCli(TestCase):
         }
         self.assertEqual(expected, gacli._get_shipment_info())
         gacli.logger.warning.assert_called_once_with("No matching previous assembly found")
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_custom(self, mock_get_in_flight, mock_get_assembly_release_date):
+        """
+        Test that for custom assemblies, the method returns early without doing anything
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=True, gen_assembly_name='custom-assembly', release_date=None, in_flight=None
+        )
+
+        # Method should return early and not call external functions
+        gacli._set_release_date_and_in_flight()
+
+        mock_get_assembly_release_date.assert_not_called()
+        mock_get_in_flight.assert_not_called()
+
+        # Values should remain unchanged
+        self.assertIsNone(gacli.release_date)
+        self.assertIsNone(gacli.in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_no_release_date(self, mock_get_in_flight, mock_get_assembly_release_date):
+        """
+        Test that when no release date is provided, it fetches from schedule
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        fetched_date = datetime(2023, 12, 15)
+        determined_in_flight = '4.12.45'
+
+        mock_get_assembly_release_date.return_value = fetched_date
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=False, gen_assembly_name='4.13.5', release_date=None, in_flight=None
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should fetch release date from schedule
+        mock_get_assembly_release_date.assert_called_once_with('4.13.5', gacli.assembly_type, 'openshift-4.13')
+
+        # Should determine in-flight release
+        mock_get_in_flight.assert_called_once_with('openshift-4.13', fetched_date)
+
+        # Should set the fetched values
+        self.assertEqual(gacli.release_date, fetched_date)
+        self.assertEqual(gacli.in_flight, determined_in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_with_release_date(self, mock_get_in_flight, mock_get_assembly_release_date):
+        """
+        Test that when release date is provided, it uses it without fetching from schedule
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        provided_date = datetime(2023, 11, 20)
+        determined_in_flight = '4.12.30'
+
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=False, gen_assembly_name='4.13.3', release_date=provided_date, in_flight=None
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should NOT fetch release date from schedule
+        mock_get_assembly_release_date.assert_not_called()
+
+        # Should determine in-flight release using provided date
+        mock_get_in_flight.assert_called_once_with('openshift-4.13', provided_date)
+
+        # Should keep the provided date
+        self.assertEqual(gacli.release_date, provided_date)
+        self.assertEqual(gacli.in_flight, determined_in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_matching_in_flight(
+        self, mock_get_in_flight, mock_get_assembly_release_date
+    ):
+        """
+        Test that when provided in-flight matches determined in-flight, it uses it without warning
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        release_date = datetime(2023, 12, 1)
+        provided_in_flight = '4.12.35'
+        determined_in_flight = '4.12.35'  # Same as provided
+
+        mock_get_assembly_release_date.return_value = release_date
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=False, gen_assembly_name='4.13.4', release_date=None, in_flight=provided_in_flight
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should keep the provided in-flight release
+        self.assertEqual(gacli.in_flight, provided_in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_mismatched_in_flight(
+        self, mock_get_in_flight, mock_get_assembly_release_date
+    ):
+        """
+        Test that when provided in-flight doesn't match determined in-flight, it logs warning but keeps provided
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        release_date = datetime(2023, 12, 1)
+        provided_in_flight = '4.12.30'
+        determined_in_flight = '4.12.35'  # Different from provided
+
+        mock_get_assembly_release_date.return_value = release_date
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=False, gen_assembly_name='4.13.4', release_date=None, in_flight=provided_in_flight
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should keep the provided in-flight release (not the determined one)
+        self.assertEqual(gacli.in_flight, provided_in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_no_in_flight_provided(
+        self, mock_get_in_flight, mock_get_assembly_release_date
+    ):
+        """
+        Test that when no in-flight is provided, it uses the determined one
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.13'
+
+        release_date = datetime(2023, 12, 1)
+        determined_in_flight = '4.12.40'
+
+        mock_get_assembly_release_date.return_value = release_date
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime, custom=False, gen_assembly_name='4.13.6', release_date=None, in_flight=None
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should use the determined in-flight release
+        self.assertEqual(gacli.in_flight, determined_in_flight)
+
+    @patch('doozerlib.cli.release_gen_assembly.get_assembly_release_date')
+    @patch('doozerlib.cli.release_gen_assembly.get_in_flight')
+    def test_set_release_date_and_in_flight_all_provided(self, mock_get_in_flight, mock_get_assembly_release_date):
+        """
+        Test the complete flow when both release date and in-flight are provided
+        """
+        runtime = MagicMock()
+        runtime.group = 'openshift-4.14'
+
+        provided_date = datetime(2024, 1, 15)
+        provided_in_flight = '4.13.10'
+        determined_in_flight = '4.13.12'  # Different from provided
+
+        mock_get_in_flight.return_value = determined_in_flight
+
+        gacli = GenAssemblyCli(
+            runtime=runtime,
+            custom=False,
+            gen_assembly_name='4.14.1',
+            release_date=provided_date,
+            in_flight=provided_in_flight,
+        )
+
+        gacli._set_release_date_and_in_flight()
+
+        # Should not fetch release date from schedule
+        mock_get_assembly_release_date.assert_not_called()
+
+        # Should determine in-flight using provided date
+        mock_get_in_flight.assert_called_once_with('openshift-4.14', provided_date)
+
+        # Should keep both provided values
+        self.assertEqual(gacli.release_date, provided_date)
+        self.assertEqual(gacli.in_flight, provided_in_flight)

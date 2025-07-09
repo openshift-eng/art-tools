@@ -74,7 +74,7 @@ class BuildMicroShiftPipeline:
         self.no_rebase = no_rebase
         self.force = force
         self.skip_prepare_advisory = skip_prepare_advisory
-        self.date = None
+        self.release_date = None
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -102,7 +102,7 @@ class BuildMicroShiftPipeline:
 
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})
-        self.date = group_config.get("ship_date")
+        self.release_date = group_config.get("release_date")
         self.releases_config = await load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
@@ -171,15 +171,15 @@ class BuildMicroShiftPipeline:
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
             self._logger.info("[DRY-RUN] Would have created microshift %s advisory 0", advisory_type)
-            self._logger.info("[DRY-RUN] Release date: %s", self.date)
+            self._logger.info("[DRY-RUN] Release date: %s", self.release_date)
             self._logger.info("[DRY-RUN] Synopsis: %s", synopsis)
             self._logger.info("[DRY-RUN] Topic: %s", advisory_topic)
             self._logger.info("[DRY-RUN] Description: %s", advisory_description)
             self._logger.info("[DRY-RUN] Solution: %s", advisory_solution)
             return 0
 
-        if not self.date:
-            raise ValueError("Shipping date is not set. Please set it in the group config.")
+        if not self.release_date:
+            raise ValueError("Release date is not set. Please set it in the group config.")
 
         try:
             created_advisory = await errata_api.create_advisory(
@@ -194,7 +194,7 @@ class BuildMicroShiftPipeline:
                 advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
                 advisory_manager_email=self.runtime.config['advisory']['manager'],
                 advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
-                advisory_publish_date_override=self.date,
+                advisory_publish_date_override=self.release_date,
                 batch_id=0,
             )
             advisory_info = next(iter(created_advisory["errata"].values()))

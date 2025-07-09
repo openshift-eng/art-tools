@@ -105,7 +105,7 @@ class PrepareReleasePipeline:
             if default_advisories:
                 raise ValueError("default_advisories cannot be set for a non-stream assembly.")
 
-        self.ship_date = None
+        self.release_date = None
         self.package_owner = package_owner or self.runtime.config["advisory"]["package_owner"]
         self._slack_client = slack_client
         self.working_dir = self.runtime.working_dir.absolute()
@@ -166,8 +166,8 @@ class PrepareReleasePipeline:
             )
         group_config = assembly_group_config(Model(releases_config), self.assembly, Model(group_config)).primitive()
 
-        self.ship_date = release_config.get("ship_date")
-        if not self.ship_date:
+        self.release_date = release_config.get("release_date")
+        if not self.release_date:
             raise ValueError(f"Shipping date not found for assembly {self.assembly}")
 
         nightlies = get_assembly_basis(releases_config, self.assembly).get("reference_releases", {}).values()
@@ -195,7 +195,7 @@ class PrepareReleasePipeline:
                 batch_name = f"OCP {self.release_name}"
                 errata_config = await self.load_errata_config()
                 batch = await self._ensure_batch(
-                    self._errata_api, errata_config['release'], batch_name, self.ship_date, dry_run=self.dry_run
+                    self._errata_api, errata_config['release'], batch_name, self.release_date, dry_run=self.dry_run
                 )
 
             is_ga = self.release_version[2] == 0
@@ -208,7 +208,7 @@ class PrepareReleasePipeline:
                     if ad == "advance":
                         # Set release date of advance advisory to one week before GA
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
-                        ga_date = datetime.strptime(self.ship_date, "%Y-%b-%d")
+                        ga_date = datetime.strptime(self.release_date, "%Y-%b-%d")
                         one_week_before = ga_date - timedelta(days=7)
                         release_date = one_week_before.strftime("%Y-%b-%d")
                     elif ad == "prerelease":
@@ -233,9 +233,9 @@ class PrepareReleasePipeline:
                     # Ensure that the batch is unlocked
                     batch = await self._ensure_batch_status(self._errata_api, batch, lock=False, dry_run=self.dry_run)
                 advisories[ad] = self.create_advisory(
-                    advisory_type=advisory_type, art_advisory_key=ad, release_date=self.ship_date, batch_id=batch_id
+                    advisory_type=advisory_type, art_advisory_key=ad, release_date=self.release_date, batch_id=batch_id
                 )
-            await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.ship_date}")
+            await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
 
         jira_issue_key = group_config.get("release_jira")
         jira_issue = None
@@ -244,7 +244,7 @@ class PrepareReleasePipeline:
             "x": self.release_version[0],
             "y": self.release_version[1],
             "z": self.release_version[2],
-            "release_date": self.ship_date,
+            "release_date": self.release_date,
             "advisories": advisories,
             "candidate_nightlies": self.candidate_nightlies,
         }

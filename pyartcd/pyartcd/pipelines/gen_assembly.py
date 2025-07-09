@@ -55,7 +55,7 @@ class GenAssemblyPipeline:
         ignore_non_x86_nightlies: Optional[bool] = False,
         logger: Optional[logging.Logger] = None,
         gen_microshift: bool = False,
-        ship_date: Optional[datetime] = None,
+        release_date: Optional[datetime] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -79,7 +79,7 @@ class GenAssemblyPipeline:
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
-        self.ship_date = ship_date
+        self.release_date = release_date
         self._github_token = os.environ.get('GITHUB_TOKEN')
         if not self._github_token and not self.runtime.dry_run:
             raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request.")
@@ -239,8 +239,8 @@ class GenAssemblyPipeline:
         if self.custom:
             cmd.append("--custom")
         else:
-            if self.ship_date:
-                cmd.append(f"--date={self.ship_date.strftime('%Y-%b-%d')}")
+            if self.release_date:
+                cmd.append(f"--date={self.release_date.strftime('%Y-%b-%d')}")
             if self.in_flight:
                 cmd.append(f"--in-flight={self.in_flight}")
             for previous in self.previous_list:
@@ -423,9 +423,9 @@ class GenAssemblyPipeline:
     help="Create microshift entry for assembly release.",
 )
 @click.option(
-    '--ship-date',
+    '--date',
     type=click.DateTime(formats=['%Y-%b-%d']),
-    help='The shipping date of the assembly release (YYYY-Mon-DD)',
+    help='The release date of the assembly release (YYYY-Mon-DD)',
 )
 @pass_runtime
 @click_coroutine
@@ -449,7 +449,7 @@ async def gen_assembly(
     skip_get_nightlies: bool,
     ignore_non_x86_nightlies: bool,
     gen_microshift: bool,
-    date: Optional[datetime.datetime],
+    release_date: Optional[datetime],
 ):
     pipeline = GenAssemblyPipeline(
         runtime=runtime,
@@ -471,6 +471,6 @@ async def gen_assembly(
         skip_get_nightlies=skip_get_nightlies,
         ignore_non_x86_nightlies=ignore_non_x86_nightlies,
         gen_microshift=gen_microshift,
-        date=date,
+        release_date=release_date,
     )
     await pipeline.run()
