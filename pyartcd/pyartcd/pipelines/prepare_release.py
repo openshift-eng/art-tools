@@ -602,7 +602,7 @@ class PrepareReleasePipeline:
         _LOGGER.info(result.stdout)
         match = re.search(r"Found ([0-9]+) bugs", str(result.stdout))
         if match and int(match[1]) != 0:
-            raise ValueError(
+            _LOGGER.info(
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 

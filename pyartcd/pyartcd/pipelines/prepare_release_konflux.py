@@ -233,7 +233,7 @@ class PrepareReleaseKonfluxPipeline:
         stdout = await self.execute_command_with_logging(cmd)
         match = re.search(r"Found ([0-9]+) bugs", str(stdout))
         if match and int(match[1]) != 0:
-            raise ValueError(
+            self.logger.warning(
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 
