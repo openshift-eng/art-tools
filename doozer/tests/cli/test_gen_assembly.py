@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
 from artcommonlib.assembly import AssemblyTypes
@@ -9,7 +9,7 @@ from flexmock import flexmock
 from semver import VersionInfo
 
 
-class TestGenAssemblyCli(TestCase):
+class TestGenAssemblyCli(IsolatedAsyncioTestCase):
     def test_initialize_assembly_type(self):
         """
         Check that the correct assembly type is set, according to
@@ -688,7 +688,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {'x86_64': 'test-release'},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Nov-15',
                         },
@@ -817,7 +817,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Dec-15',
                         },
@@ -859,7 +859,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Oct-20',
                             'upgrades': '4.13.1,4.13.0',
@@ -904,14 +904,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {
-                                'image': -1,
-                                'rpm': -1,
-                                'extras': -1,
-                                'metadata': -1,
-                                'prerelease': -1,
-                                'microshift': -1,
-                            },
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'prerelease': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Sep-10',
                             'operator_index_mode': 'pre-release',
@@ -923,3 +916,93 @@ class TestGenAssemblyCli(TestCase):
             }
         }
         self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_microshift_enabled(self):
+        """Test microshift advisory is added when gen_microshift=True"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', gen_microshift=True)
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 11, 15)
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                '4.14.1': {
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {},
+                        },
+                        'group': {
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Nov-15',
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_microshift_disabled(self):
+        """Test microshift advisory is NOT added when gen_microshift=False"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', gen_microshift=False)
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 11, 15)
+
+        result = gacli._generate_assembly_definition()
+
+        advisories = result['releases']['4.14.1']['assembly']['group']['advisories']
+        self.assertNotIn('microshift', advisories)
+        self.assertEqual(advisories, {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1})
+
+    def test_generate_assembly_definition_microshift_pre_414(self):
+        """Test microshift advisory is NOT added for versions < 4.14"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 13)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.13.1', gen_microshift=True)
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 11, 15)
+
+        result = gacli._generate_assembly_definition()
+
+        advisories = result['releases']['4.13.1']['assembly']['group']['advisories']
+        self.assertNotIn('microshift', advisories)
+        self.assertEqual(advisories, {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1})
