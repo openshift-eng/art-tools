@@ -63,7 +63,7 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str], strict: b
     type_nvrs = defaultdict(list)
     for nvr in nvrs:
         nvr_dict = parse_nvr(nvr)
-        if nvr_dict['name'].endswith('-bundle-container'):
+        if nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
             type_nvrs[KonfluxBundleBuildRecord].append(nvr)
         elif nvr_dict['name'].endswith('-fbc'):
             type_nvrs[KonfluxFbcBuildRecord].append(nvr)

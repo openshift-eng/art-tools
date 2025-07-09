@@ -54,11 +54,21 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 get_konflux_application_name=Mock(return_value='openshift-4-18'),
                 get_konflux_component_name=Mock(return_value='ose-4-18-component2'),
             ),
+            Mock(
+                nvr='component3-container-v1.0.0-1',
+                image_pullspec='registry/image@sha256:digest3',
+                image_tag='tag3',
+                rebase_repo_url='https://github.com/test/repo3',
+                rebase_commitish='deadbeef',
+                get_konflux_application_name=Mock(return_value='fbc-openshift-4-18'),
+                get_konflux_component_name=Mock(return_value='fbc-ose-4-18-component3'),
+            ),
         ]
         # `name` attribute is special so set it after creation
         # https://docs.python.org/3/library/unittest.mock.html#mock-names-and-the-name-attribute
         build_records[0].name = 'component1'
         build_records[1].name = 'component2'
+        build_records[2].name = 'component3'
 
         self.konflux_client._create.side_effect = lambda data: data
         self.konflux_client.resource_url = MagicMock(return_value="https://whatever")
@@ -68,13 +78,36 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
                 image_repo_pull_secret=self.image_repo_pull_secret,
-                builds=['test-nvr-1', 'test-nvr-2'],
+                builds=['test-nvr-1', 'test-nvr-2', 'test-nvr-3'],
                 dry_run=self.dry_run,
             )
 
             await cli.run()
-
-            self.konflux_client._create.assert_called_once_with(
+            self.konflux_client._create.assert_any_await(
+                {
+                    'apiVersion': 'appstudio.redhat.com/v1alpha1',
+                    'kind': 'Snapshot',
+                    'metadata': {
+                        'labels': {
+                            'test.appstudio.openshift.io/type': 'override',
+                            'appstudio.openshift.io/application': 'fbc-openshift-4-18',
+                        },
+                        'name': 'ose-4-18-timestamp-1',
+                        'namespace': 'test-namespace',
+                    },
+                    'spec': {
+                        'application': 'fbc-openshift-4-18',
+                        'components': [
+                            {
+                                'containerImage': 'registry/image@sha256:digest3',
+                                'name': 'fbc-ose-4-18-component3',
+                                'source': {'git': {'revision': 'deadbeef', 'url': 'https://github.com/test/repo3'}},
+                            },
+                        ],
+                    },
+                }
+            )
+            self.konflux_client._create.assert_any_await(
                 {
                     'apiVersion': 'appstudio.redhat.com/v1alpha1',
                     'kind': 'Snapshot',
@@ -83,7 +116,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             'test.appstudio.openshift.io/type': 'override',
                             'appstudio.openshift.io/application': 'openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp-1',
+                        'name': 'ose-4-18-timestamp-2',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
