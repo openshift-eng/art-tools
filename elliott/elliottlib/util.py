@@ -511,6 +511,10 @@ def all_same(items: Iterable[Any]):
 
 
 async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=None):
+    """
+    Get all payload NVRs from a release pullspec or imagestream.
+    """
+
     def log(msg):
         if logger:
             logger.info(msg)
