@@ -688,7 +688,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {'x86_64': 'test-release'},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Nov-15',
                         },
@@ -817,7 +817,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Dec-15',
                         },
@@ -859,7 +859,7 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'microshift': -1},
                             'release_jira': 'ART-0',
                             'release_date': '2023-Oct-20',
                             'upgrades': '4.13.1,4.13.0',
@@ -904,7 +904,14 @@ class TestGenAssemblyCli(TestCase):
                             'reference_releases': {},
                         },
                         'group': {
-                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'prerelease': -1},
+                            'advisories': {
+                                'image': -1,
+                                'rpm': -1,
+                                'extras': -1,
+                                'metadata': -1,
+                                'prerelease': -1,
+                                'microshift': -1,
+                            },
                             'release_jira': 'ART-0',
                             'release_date': '2023-Sep-10',
                             'operator_index_mode': 'pre-release',
