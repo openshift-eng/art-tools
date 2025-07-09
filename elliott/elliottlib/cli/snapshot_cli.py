@@ -187,7 +187,7 @@ class CreateSnapshotCli:
                     comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
                     try:
                         await self.konflux_client.get_component__caching(comp_name, strict=True)
-                    except Exception as e:
+                    except Exception:
                         # if we still can't find the component, use the old component name
                         comp_name = KonfluxOlmBundleBuilder.get_old_component_name(app_name, record.name)
                         await self.konflux_client.get_component__caching(comp_name, strict=True)

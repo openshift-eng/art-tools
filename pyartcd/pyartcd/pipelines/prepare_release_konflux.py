@@ -314,7 +314,7 @@ class PrepareReleaseKonfluxPipeline:
         if self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
             permissive = True
         for kind, shipment in shipments_by_kind.items():
-            await self.find_and_attach_bugs(kind, shipment, permissive=permissive)
+            shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
 
         # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -564,7 +564,7 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_and_attach_bugs(self, kind: str, shipment: ShipmentConfig, permissive: bool = False) -> Optional[Issues]:
+    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
         :param kind: The kind for which to find bugs
         :param shipment: The shipment config to be updated
@@ -582,19 +582,17 @@ class PrepareReleaseKonfluxPipeline:
         if permissive:
             find_bugs_cmd.append("--permissive")
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
+        _, stdout, _ = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
         if stdout:
             self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
 
         self._issues_by_kind = {}
         if stdout:
             for advisory_kind, bugs in json.loads(stdout).items():
-                if not bugs:
-                    continue
-                issues = Issues(fixed=[Issue(id=b, source="issues.redhat.com") for b in bugs])
-                self._issues_by_kind[advisory_kind] = issues
+                fixed = [Issue(id=b, source="issues.redhat.com") for b in bugs] if bugs else []
+                self._issues_by_kind[advisory_kind] = Issues(fixed=fixed)
 
-        shipment.shipment.data.releaseNotes.issues = self._issues_by_kind.get(kind)
+        return self._issues_by_kind.get(kind)
 
     async def attach_cve_flaws(self, kind, shipment):
         # Create base path if it does not exist
