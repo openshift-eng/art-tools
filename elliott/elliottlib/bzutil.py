@@ -10,6 +10,7 @@ import re
 import urllib.parse
 import xmlrpc.client
 from datetime import datetime, timezone
+from functools import cached_property
 from time import sleep
 from typing import Dict, Iterable, List, Optional
 
@@ -422,7 +423,10 @@ class JIRABug(Bug):
         # TODO: See usage. this can be correct or incorrect based in usage.
         return self.bug.fields.labels
 
-    @property
+    _ART_PSCOMPONENT_RE = re.compile(r'art:pscomponent:\s*(\S+)')
+    _PSCOMPONENT_RE = re.compile(r'pscomponent:\s*(\S+)')
+
+    @cached_property
     def whiteboard_component(self):
         """Get whiteboard component value of a bug.
 
@@ -437,17 +441,21 @@ class JIRABug(Bug):
         """
         # If label "art:pscomponent:<component_name>" is set,
         # return the component name from the label
-        p = re.compile(r'art:pscomponent:\s*(\S+)')
-        pscomponent = next((m.group(1) for label in self.bug.fields.labels if (m := p.match(label))), None)
+        pscomponent = next(
+            (m.group(1) for label in self.bug.fields.labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None
+        )
         if pscomponent:
             return pscomponent
         # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
-        if self.is_type_vulnerability():
-            return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
-        # If label "pscomponent:<component_name>" is set,
-        # return the component name from the label.
-        p = re.compile(r'pscomponent:\s*(\S+)')
-        return next((m.group(1) for label in self.bug.fields.labels if (m := p.match(label))), None)
+        if self.is_type_vulnerability() and (
+            pscomponent := getattr(self.bug.fields, JIRABugTracker.field_cve_component)
+        ):
+            return pscomponent
+        # Fall back to the label "pscomponent:<component_name>"
+        pscomponent = next(
+            (m.group(1) for label in self.bug.fields.labels if (m := self._PSCOMPONENT_RE.match(label))), None
+        )
+        return pscomponent
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']

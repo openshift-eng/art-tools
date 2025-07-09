@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Union
+from urllib.parse import unquote, urlparse
 
 from artcommonlib import constants
 from artcommonlib import util as artlib_util
@@ -174,6 +175,42 @@ class KonfluxRecord:
             )
             for key, value in self.__dict__.items()
         }
+
+    def get_konflux_application_name(self) -> str:
+        """
+        Returns the application name for the Konflux record.
+        This is used to identify the application in Konflux.
+        """
+        # Konflux application name can be extracted from the build pipeline URL.
+        # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18'
+        # TODO: This is a temporary solution. We may want to change the way we store the application name in the future.
+        if self.engine is not Engine.KONFLUX:
+            raise ValueError("This method is only applicable for Konflux builds")
+        if not self.build_pipeline_url:
+            raise ValueError("build_pipeline_url is not set, cannot extract application name")
+        plr_url = urlparse(self.build_pipeline_url)
+        # Extract the namespace from the URL path
+        ns = unquote(plr_url.path.split('/')[4])
+        return ns
+
+    def get_konflux_component_name(self) -> str:
+        """
+        Returns the component name for the Konflux record.
+        This is used to identify the component in Konflux.
+        """
+        # Konflux component name can be extracted from the build pipeline URL.
+        # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18-helloworld-operator-bundle'
+        # TODO: This is a temporary solution. We may want to change the way we store the component name in the future.
+        if self.engine is not Engine.KONFLUX:
+            raise ValueError("This method is only applicable for Konflux builds")
+        if not self.build_pipeline_url:
+            raise ValueError("build_pipeline_url is not set, cannot extract component name")
+        plr_url = urlparse(self.build_pipeline_url)
+        # Extract the last part of the URL path. e.g. openshift-4-18-helloworld-operator-bundle-prdtg
+        plr_name = unquote(plr_url.path.split('/')[-1])
+        # openshift-4-18-helloworld-operator-bundle-prdtg -> openshift-4-18-helloworld-operator-bundle
+        component_name = plr_name[: plr_name.rindex("-")]
+        return component_name
 
 
 class KonfluxBuildRecord(KonfluxRecord):

@@ -16,7 +16,6 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
             context=None,
         )
         self.image_repo_pull_secret = "/path/to/pull-secret"
-        self.for_fbc = False
         self.dry_run = False
 
         self.runtime.konflux_db.bind.return_value = None
@@ -38,46 +37,86 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
         build_records = [
             Mock(
-                nvr='test-nvr-1',
+                nvr='component1-container-v1.0.0-1',
                 image_pullspec='registry/image@sha256:digest1',
                 image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
                 rebase_commitish='foobar',
+                get_konflux_application_name=Mock(return_value='openshift-4-18'),
+                get_konflux_component_name=Mock(return_value='ose-4-18-component1'),
             ),
             Mock(
-                nvr='test-nvr-2',
+                nvr='component2-container-v1.0.0-1',
                 image_pullspec='registry/image@sha256:digest2',
                 image_tag='tag2',
                 rebase_repo_url='https://github.com/test/repo2',
                 rebase_commitish='test',
+                get_konflux_application_name=Mock(return_value='openshift-4-18'),
+                get_konflux_component_name=Mock(return_value='ose-4-18-component2'),
+            ),
+            Mock(
+                nvr='component3-container-v1.0.0-1',
+                image_pullspec='registry/image@sha256:digest3',
+                image_tag='tag3',
+                rebase_repo_url='https://github.com/test/repo3',
+                rebase_commitish='deadbeef',
+                get_konflux_application_name=Mock(return_value='fbc-openshift-4-18'),
+                get_konflux_component_name=Mock(return_value='fbc-ose-4-18-component3'),
             ),
         ]
         # `name` attribute is special so set it after creation
         # https://docs.python.org/3/library/unittest.mock.html#mock-names-and-the-name-attribute
         build_records[0].name = 'component1'
         build_records[1].name = 'component2'
+        build_records[2].name = 'component3'
+
+        self.konflux_client._create.side_effect = lambda data: data
+        self.konflux_client.resource_url = MagicMock(return_value="https://whatever")
 
         with patch.object(CreateSnapshotCli, 'fetch_build_records', return_value=build_records):
             cli = CreateSnapshotCli(
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
                 image_repo_pull_secret=self.image_repo_pull_secret,
-                for_fbc=self.for_fbc,
-                builds=['test-nvr-1', 'test-nvr-2'],
+                builds=['test-nvr-1', 'test-nvr-2', 'test-nvr-3'],
                 dry_run=self.dry_run,
             )
 
             await cli.run()
-
-            self.konflux_client._create.assert_called_once_with(
+            self.konflux_client._create.assert_any_await(
                 {
                     'apiVersion': 'appstudio.redhat.com/v1alpha1',
                     'kind': 'Snapshot',
                     'metadata': {
                         'labels': {
                             'test.appstudio.openshift.io/type': 'override',
+                            'appstudio.openshift.io/application': 'fbc-openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp',
+                        'name': 'ose-4-18-timestamp-1',
+                        'namespace': 'test-namespace',
+                    },
+                    'spec': {
+                        'application': 'fbc-openshift-4-18',
+                        'components': [
+                            {
+                                'containerImage': 'registry/image@sha256:digest3',
+                                'name': 'fbc-ose-4-18-component3',
+                                'source': {'git': {'revision': 'deadbeef', 'url': 'https://github.com/test/repo3'}},
+                            },
+                        ],
+                    },
+                }
+            )
+            self.konflux_client._create.assert_any_await(
+                {
+                    'apiVersion': 'appstudio.redhat.com/v1alpha1',
+                    'kind': 'Snapshot',
+                    'metadata': {
+                        'labels': {
+                            'test.appstudio.openshift.io/type': 'override',
+                            'appstudio.openshift.io/application': 'openshift-4-18',
+                        },
+                        'name': 'ose-4-18-timestamp-2',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
@@ -98,28 +137,29 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 }
             )
 
+    @patch("elliottlib.cli.snapshot_cli.KonfluxDb")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch('elliottlib.runtime.Runtime')
-    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client_init):
+    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client_init, MockKonfluxDb):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
+        db = MockKonfluxDb.return_value
 
-        builds = ['openshift-v4.18.0-4.el9', 'openshift-clients-v4.18.0-4.el8']
+        builds = ['openshift-container-v4.18.0-4.el9', 'openshift-clientst-container-v4.18.0-4.el8']
         mock_records = [Mock(nvr=builds[0]), Mock(nvr=builds[1])]
-        self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
+        db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
 
         cli = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
-            for_fbc=self.for_fbc,
             builds=builds,
             dry_run=self.dry_run,
         )
 
         records = await cli.fetch_build_records()
         self.assertEqual(records, mock_records)
-        self.runtime.konflux_db.get_build_records_by_nvrs.assert_called_once_with(builds, where=ANY, strict=True)
+        db.get_build_records_by_nvrs.assert_called_once_with(builds, where=ANY, strict=True)
 
 
 class TestGetSnapshotCli(IsolatedAsyncioTestCase):
@@ -145,13 +185,14 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         # Patch verify_connection to be a regular Mock, not AsyncMock
         self.konflux_client.verify_connection = Mock(return_value=True)
 
+    @patch("elliottlib.cli.snapshot_cli.KonfluxDb")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_run_happy_path(self, mock_runtime, mock_konflux_client_init, mock_oc_image_info):
+    async def test_run_happy_path(self, mock_runtime, mock_konflux_client_init, mock_oc_image_info, MockKonfluxDb):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
-        self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock()
+        MockKonfluxDb.return_value = AsyncMock()
 
         snapshot = {
             'apiVersion': 'appstudio.redhat.com/v1alpha1',
@@ -180,14 +221,14 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             "config": {
                 "config": {
                     "Labels": {
-                        "com.redhat.component": "test-component",
+                        "com.redhat.component": "test-component-container",
                         "version": f"v{self.major}.{self.minor}.0",
                         "release": "assembly.test.el8",
                     },
                 },
             },
         }
-        expected_nvrs = [f"test-component-v{self.major}.{self.minor}.0-assembly.test.el8"]
+        expected_nvrs = [f"test-component-container-v{self.major}.{self.minor}.0-assembly.test.el8"]
         cli = GetSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
