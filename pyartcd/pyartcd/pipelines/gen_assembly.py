@@ -424,6 +424,7 @@ class GenAssemblyPipeline:
 )
 @click.option(
     '--date',
+    'release_date',
     type=click.DateTime(formats=['%Y-%b-%d']),
     help='The release date of the assembly release (YYYY-Mon-DD)',
 )
