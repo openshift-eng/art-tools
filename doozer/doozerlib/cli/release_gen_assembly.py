@@ -879,6 +879,7 @@ class GenAssemblyCli:
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
+            group_info['release_date'] = self.release_date.strftime('%Y-%b-%d')
             if self.pre_ga_mode == 'prerelease':
                 group_info['operator_index_mode'] = 'pre-release'
 

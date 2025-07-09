@@ -6,6 +6,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from flexmock import flexmock
+from semver import VersionInfo
 
 
 class TestGenAssemblyCli(TestCase):
@@ -656,3 +657,258 @@ class TestGenAssemblyCli(TestCase):
         # Should keep both provided values
         self.assertEqual(gacli.release_date, provided_date)
         self.assertEqual(gacli.in_flight, provided_in_flight)
+
+    def test_generate_assembly_definition_basic_structure(self):
+        """Test basic structure of assembly definition"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {'x86_64': 'test-release'}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 11, 15)
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                '4.14.1': {
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {'x86_64': 'test-release'},
+                        },
+                        'group': {
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Nov-15',
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_custom_assembly(self):
+        """Test custom assembly doesn't include advisories or release_date"""
+        runtime = MagicMock(build_system='brew')
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='custom-test', custom=True)
+        gacli.assembly_type = AssemblyTypes.CUSTOM
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.primary_rhcos_tag = 'machine-os'
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                'custom-test': {
+                    'assembly': {
+                        'type': 'custom',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {},
+                        },
+                        'group': {'arches!': ['x86_64']},
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_konflux_build_system(self):
+        """Test Konflux build system uses 'time' instead of 'brew_event'"""
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        test_time = datetime(2023, 12, 15, 10, 30, 0)
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.assembly_basis_time = test_time
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 12, 15)
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                '4.14.1': {
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {
+                            'time': test_time,
+                            'reference_releases': {},
+                        },
+                        'group': {
+                            'advisories': {'rpm': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Dec-15',
+                            'shipment': {
+                                'advisories': [
+                                    {'kind': 'image'},
+                                    {'kind': 'extras'},
+                                    {'kind': 'metadata'},
+                                ],
+                            },
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_release_date_formatting(self):
+        """Test release_date is formatted correctly"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        test_date = datetime(2023, 12, 15)
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', release_date=test_date)
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                '4.14.1': {
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {},
+                        },
+                        'group': {
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Dec-15',
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_previous_list(self):
+        """Test previous list is included as upgrades"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.STANDARD
+        gacli.final_previous_list = [VersionInfo.parse('4.13.1'), VersionInfo.parse('4.13.0')]
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 10, 20)
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                '4.14.1': {
+                    'assembly': {
+                        'type': 'standard',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {},
+                        },
+                        'group': {
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Oct-20',
+                            'upgrades': '4.13.1,4.13.0',
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
+
+    def test_generate_assembly_definition_prerelease_mode(self):
+        """Test prerelease mode sets operator_index_mode"""
+        runtime = MagicMock(build_system='brew')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.0', pre_ga_mode='prerelease')
+        gacli.releases_config = MagicMock()
+        gacli.releases_config.releases = {}
+        gacli.assembly_type = AssemblyTypes.PREVIEW
+        gacli.final_previous_list = []
+        gacli.basis_event = 12345
+        gacli.reference_releases_by_arch = {}
+        gacli.rhcos_by_tag = {'machine-os': {'x86_64': 'test-rhcos'}}
+        gacli.force_is = set()
+        gacli.component_image_builds = {}
+        gacli.component_rpm_builds = {}
+        gacli.release_date = datetime(2023, 9, 10)
+
+        result = gacli._generate_assembly_definition()
+
+        expected = {
+            'releases': {
+                'ec.0': {
+                    'assembly': {
+                        'type': 'preview',
+                        'basis': {
+                            'brew_event': 12345,
+                            'reference_releases': {},
+                        },
+                        'group': {
+                            'advisories': {'image': -1, 'rpm': -1, 'extras': -1, 'metadata': -1, 'prerelease': -1},
+                            'release_jira': 'ART-0',
+                            'release_date': '2023-Sep-10',
+                            'operator_index_mode': 'pre-release',
+                        },
+                        'rhcos': {'machine-os': {'images': {'x86_64': 'test-rhcos'}}},
+                        'members': {'rpms': [], 'images': []},
+                    }
+                }
+            }
+        }
+        self.assertEqual(result, expected)
