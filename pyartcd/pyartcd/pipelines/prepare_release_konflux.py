@@ -314,7 +314,7 @@ class PrepareReleaseKonfluxPipeline:
         if self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
             permissive = True
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
+            await self.find_and_attach_bugs(kind, shipment, permissive=permissive)
 
         # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -564,7 +564,7 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_bugs(self, kind: str, shipment: ShipmentConfig, permissive: bool = False) -> Optional[Issues]:
+    async def find_and_attach_bugs(self, kind: str, shipment: ShipmentConfig, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
         :param kind: The kind for which to find bugs
         :param shipment: The shipment config to be updated
