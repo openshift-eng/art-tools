@@ -4,6 +4,7 @@ from typing import Optional
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -103,11 +104,18 @@ class Ocp4ScanPipeline:
                 return
 
             self.logger.info('Triggering a %s build-sync to pick up latest RHCOS', self.version)
-            jenkins.start_build_sync(
-                build_version=self.version,
-                assembly="stream",
-                build_system="brew",
-            )
+
+            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                self.runtime.logger.info(
+                    f'Skipping Brew build-sync for streams updated by konflux builds {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}'
+                )
+            else:
+                jenkins.start_build_sync(
+                    build_version=self.version,
+                    assembly="stream",
+                    build_system="brew",
+                )
+
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
