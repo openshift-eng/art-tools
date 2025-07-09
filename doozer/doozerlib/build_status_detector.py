@@ -2,8 +2,9 @@ from logging import Logger
 from multiprocessing import Lock
 from typing import Dict, Iterable, List, Optional, Set
 
-from doozerlib import brew, util
-from doozerlib.build_visibility import is_release_embargoed
+from artcommonlib.build_visibility import is_release_embargoed
+
+from doozerlib import brew
 
 
 class BuildStatusDetector:

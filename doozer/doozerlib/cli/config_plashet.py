@@ -1,7 +1,6 @@
 import itertools
 import logging
 import os
-import re
 import ssl
 import sys
 import time
@@ -15,6 +14,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type
 from artcommonlib.build_util import find_latest_builds
+from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
@@ -23,7 +23,6 @@ from elliottlib import errata
 from requests_kerberos import HTTPKerberosAuth
 
 from doozerlib.brew import get_builds_tags
-from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix
 from doozerlib.cli import cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder

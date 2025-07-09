@@ -10,8 +10,9 @@ from typing import Optional, Tuple
 import click
 import yaml
 from artcommonlib import exectools, redis
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.build_visibility import is_release_embargoed
+from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay
 from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, jenkins, locks, util
@@ -409,6 +410,38 @@ class KonfluxOcp4Pipeline:
             version_queue_name=queue,
         )
 
+    async def mirror_images(self):
+        """
+        Mirror non embargoed builds to quay.io/redhat-user-workloads/ocp-art-tenant/art-images-public
+        """
+        if self.runtime.dry_run:
+            LOGGER.info('Not mirroring images in dry run mode')
+            return
+
+        LOGGER.info(f'Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...')
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            LOGGER.error('record.log not found!')
+            return
+
+        # Get the list of successful builds
+        builds_to_mirror = [entry for entry in record_log['image_build_konflux'] if not int(entry['status'])]
+
+        for build in builds_to_mirror:
+            release = build["nvrs"].split("-")[-1]
+            image_pullspec = build["image_pullspec"]
+
+            if self.assembly != "stream":
+                LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
+                continue
+
+            if is_release_embargoed(release=release, build_system="konflux"):
+                LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
+                continue
+
+            await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE)
+
     async def run(self):
         await self.initialize()
 
@@ -440,6 +473,7 @@ class KonfluxOcp4Pipeline:
                 await self.build()
 
         finally:
+            await self.mirror_images()
             await self.sync_images()
             self.trigger_bundle_build()
             await self.clean_up()
