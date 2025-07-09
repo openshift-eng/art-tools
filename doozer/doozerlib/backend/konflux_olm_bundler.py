@@ -629,6 +629,11 @@ class KonfluxOlmBundleBuilder:
         name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
         return name
 
+    @staticmethod
+    def get_old_component_name(application_name: str, bundle_name: str):
+        # TODO: (2025-Jul-09) remove this once we have new builds using the new component name
+        return f"{application_name}-{bundle_name}".replace(".", "-").replace("_", "-")
+
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def _start_build(
         self,
