@@ -663,7 +663,7 @@ class TestGenAssemblyCli(TestCase):
         runtime = MagicMock(build_system='brew')
         runtime.get_major_minor_fields.return_value = (4, 14)
 
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', gen_microshift=False)
         gacli.releases_config = MagicMock()
         gacli.releases_config.releases = {}
         gacli.assembly_type = AssemblyTypes.STANDARD
@@ -741,7 +741,7 @@ class TestGenAssemblyCli(TestCase):
         runtime.get_major_minor_fields.return_value = (4, 14)
 
         test_time = datetime(2023, 12, 15, 10, 30, 0)
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', gen_microshift=False)
         gacli.releases_config = MagicMock()
         gacli.releases_config.releases = {}
         gacli.assembly_type = AssemblyTypes.STANDARD
@@ -791,7 +791,9 @@ class TestGenAssemblyCli(TestCase):
         runtime.get_major_minor_fields.return_value = (4, 14)
 
         test_date = datetime(2023, 12, 15)
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', release_date=test_date)
+        gacli = GenAssemblyCli(
+            runtime=runtime, gen_assembly_name='4.14.1', release_date=test_date, gen_microshift=False
+        )
         gacli.releases_config = MagicMock()
         gacli.releases_config.releases = {}
         gacli.assembly_type = AssemblyTypes.STANDARD
@@ -832,7 +834,7 @@ class TestGenAssemblyCli(TestCase):
         runtime = MagicMock(build_system='brew')
         runtime.get_major_minor_fields.return_value = (4, 14)
 
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1')
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.1', gen_microshift=False)
         gacli.releases_config = MagicMock()
         gacli.releases_config.releases = {}
         gacli.assembly_type = AssemblyTypes.STANDARD
@@ -875,7 +877,9 @@ class TestGenAssemblyCli(TestCase):
         runtime = MagicMock(build_system='brew')
         runtime.get_major_minor_fields.return_value = (4, 14)
 
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='ec.0', pre_ga_mode='prerelease')
+        gacli = GenAssemblyCli(
+            runtime=runtime, gen_assembly_name='ec.0', pre_ga_mode='prerelease', gen_microshift=False
+        )
         gacli.releases_config = MagicMock()
         gacli.releases_config.releases = {}
         gacli.assembly_type = AssemblyTypes.PREVIEW
