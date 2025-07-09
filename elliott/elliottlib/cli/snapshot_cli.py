@@ -174,7 +174,7 @@ class CreateSnapshotCli:
                 comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
             elif isinstance(record, KonfluxBundleBuildRecord):
                 comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
-            elif isinstance(record, KonfluxFbcBuildRecord):
+            else:
                 # fbc component name is determined from the image it builds for, which is not stored in the DB
                 # rather than hack something up, call the generic method and let it fail in the worst case
                 comp_name = record.get_konflux_component_name()
