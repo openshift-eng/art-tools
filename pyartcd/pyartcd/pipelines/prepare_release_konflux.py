@@ -226,15 +226,14 @@ class PrepareReleaseKonfluxPipeline:
 
     async def check_blockers(self):
         if self.assembly_type != AssemblyTypes.STANDARD:
-            _LOGGER.warning("No need to check Blocker Bugs for assembly %s", self.assembly)
+            self.logger.info(f"Skipping Blocker Bugs check for non-standard assembly {self.assembly}")
             return
-        else:
-            _LOGGER.info("Checking Blocker Bugs for release %s...", self.assembly)
+        self.logger.info(f"Checking Blocker Bugs for release {self.assembly}")
         cmd = self._elliott_base_command + ["find-bugs:blocker", "--exclude-status=ON_QA"]
         stdout = await self.execute_command_with_logging(cmd)
         match = re.search(r"Found ([0-9]+) bugs", str(stdout))
         if match and int(match[1]) != 0:
-            _LOGGER.info(
+            raise ValueError(
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 
