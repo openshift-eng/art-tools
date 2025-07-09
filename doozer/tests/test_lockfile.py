@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
-from doozerlib.lockfile import RpmInfo, RpmInfoCollector, RPMLockfileGenerator
+from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME, RpmInfo, RpmInfoCollector, RPMLockfileGenerator
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repo, Repos
 

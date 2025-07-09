@@ -176,10 +176,11 @@ USER 3000
 
     def test_add_build_repos_3(self):
         """
-        Test with network_mode hermetic
+        Test with network_mode hermetic but lockfile disabled
         """
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.is_lockfile_generation_enabled.return_value = False
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
@@ -219,6 +220,56 @@ USER 3000
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
         dfp.content.strip()
+        self.assertEqual(expected.strip(), dfp.content.strip())
+
+    def test_add_build_repos_hermetic_with_lockfile(self):
+        """
+        Test with network_mode hermetic and lockfile generation enabled
+        """
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.get_arches.return_value = ["x86_64", "aarch64"]
+        metadata.config.konflux.cachito.mode = Missing
+        metadata.config.final_stage_user = "3000"
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM base1
+LABEL foo="bar baz"
+USER 1000
+FROM base2
+USER 2000
+RUN commands
+               """
+        expected = """
+FROM base1
+
+# Start Konflux-specific steps
+ENV ART_BUILD_ENGINE=konflux
+ENV ART_BUILD_DEPS_METHOD=cachi2
+ENV ART_BUILD_NETWORK=hermetic
+ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+LABEL foo="bar baz"
+USER 1000
+FROM base2
+
+# Start Konflux-specific steps
+ENV ART_BUILD_ENGINE=konflux
+ENV ART_BUILD_DEPS_METHOD=cachi2
+ENV ART_BUILD_NETWORK=hermetic
+ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+USER 2000
+RUN commands
+
+USER 3000
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+        dfp.content.strip()
+        self.maxDiff = None
         self.assertEqual(expected.strip(), dfp.content.strip())
 
     def test_add_build_repos_4(self):
