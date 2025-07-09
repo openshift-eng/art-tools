@@ -597,7 +597,11 @@ class PrepareReleaseKonfluxPipeline:
         shipment.shipment.data.releaseNotes.issues = self._issues_by_kind.get(kind)
 
     async def attach_cve_flaws(self, kind, shipment):
-        with TemporaryDirectory() as elliott_working:
+        # Create base path if it does not exist
+        base_path = self.elliott_working_dir / 'attach_cve_flaws'
+        base_path.mkdir(parents=True, exist_ok=True)
+
+        with TemporaryDirectory(prefix=str(base_path / kind)) as elliott_working:
             # Replace the elliott working dir to allow concurrent commands execution
             attach_cve_flaws_command = [
                 arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
@@ -606,9 +610,14 @@ class PrepareReleaseKonfluxPipeline:
             attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
 
             self.logger.info('Running elliott attach-cve-flaws...')
-            rc, stdout, stderr = await exectools.cmd_gather_async(attach_cve_flaws_command, stderr=None)
+            _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
             if stdout:
                 self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
+
+            # Move debug.log to elliott working directory to allow Jenkins archive it
+            debug_log_path = Path(self.elliott_working_dir) / 'attach-cve-flaws'  # destination dir
+            debug_log_path.mkdir(parents=True, exist_ok=True)
+            shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/{kind}-debug.log')
 
         try:
             updated_release_notes = json.loads(stdout)
@@ -870,8 +879,12 @@ class PrepareReleaseKonfluxPipeline:
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
         async def _verify(imagestream):
+            # Create base path if it does not exist
+            base_path = self.elliott_working_dir / 'verify_payload' / imagestream
+            base_path.mkdir(parents=True, exist_ok=True)
+
             self.logger.info("Verifying payload against imagestream %s", imagestream)
-            with TemporaryDirectory() as elliott_working:
+            with TemporaryDirectory(prefix=str(base_path)) as elliott_working:
                 # Replace the elliott working dir to allow concurrent commands execution
                 verify_payload_command = [
                     arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
@@ -883,7 +896,7 @@ class PrepareReleaseKonfluxPipeline:
                     self.logger.info("[DRY-RUN] Would have run command: %s", ' '.join(verify_payload_command))
                     return
 
-                stdout = await self.execute_command_with_logging(verify_payload_command)
+                _, stdout, _ = await exectools.cmd_gather_async(verify_payload_command)
                 results = json.loads(stdout)
 
                 self.logger.info("Summary results for %s:\n%s", imagestream, json.dumps(results, indent=4))
@@ -892,6 +905,11 @@ class PrepareReleaseKonfluxPipeline:
                                 Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
                                 update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
                 self.logger.info("Payload verification succeeded for imagestream %s", imagestream)
+
+                # Move debug.log to elliott working directory to allow Jenkins archive it
+                debug_log_path = Path(self.elliott_working_dir) / 'verify-payload'  # destination dir
+                debug_log_path.mkdir(parents=True, exist_ok=True)
+                shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/{imagestream.split("/")[-1]}-debug.log')
 
         major, minor = self.release_name.split('.')[:2]
         image_stream_version = f'{major}.{minor}'
