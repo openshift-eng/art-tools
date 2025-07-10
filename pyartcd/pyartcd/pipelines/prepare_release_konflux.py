@@ -25,6 +25,11 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.cli.release_gen_payload import (
+    assembly_imagestream_base_name_generic,
+    default_imagestream_namespace_base_name,
+    payload_imagestream_namespace_and_name,
+)
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
@@ -174,6 +179,7 @@ class PrepareReleaseKonfluxPipeline:
         await self.validate_assembly()
         await self.check_blockers()
         await self.prepare_shipment()
+        await self.verify_payload()
 
     def setup_working_dir(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -591,7 +597,11 @@ class PrepareReleaseKonfluxPipeline:
         shipment.shipment.data.releaseNotes.issues = self._issues_by_kind.get(kind)
 
     async def attach_cve_flaws(self, kind, shipment):
-        with TemporaryDirectory() as elliott_working:
+        # Create base path if it does not exist
+        base_path = self.elliott_working_dir / 'attach_cve_flaws'
+        base_path.mkdir(parents=True, exist_ok=True)
+
+        with TemporaryDirectory(prefix=str(base_path / kind)) as elliott_working:
             # Replace the elliott working dir to allow concurrent commands execution
             attach_cve_flaws_command = [
                 arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
@@ -600,9 +610,14 @@ class PrepareReleaseKonfluxPipeline:
             attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
 
             self.logger.info('Running elliott attach-cve-flaws...')
-            rc, stdout, stderr = await exectools.cmd_gather_async(attach_cve_flaws_command, stderr=None)
+            _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
             if stdout:
                 self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
+
+            # Move debug.log to elliott working directory to allow Jenkins archive it
+            debug_log_path = Path(self.elliott_working_dir) / 'attach-cve-flaws'  # destination dir
+            debug_log_path.mkdir(parents=True, exist_ok=True)
+            shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/{kind}-debug.log')
 
         try:
             updated_release_notes = json.loads(stdout)
@@ -856,6 +871,65 @@ class PrepareReleaseKonfluxPipeline:
 
         commit_message = f"Update shipment for assembly {self.assembly}"
         return await self.build_data_repo.commit_push(commit_message, safe=True)
+
+    async def verify_payload(self):
+        """
+        Verify that the swept builds match the imagestreams that were updated during build-sync.
+        """
+
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+        async def _verify(imagestream):
+            # Create base path if it does not exist
+            base_path = self.elliott_working_dir / 'verify_payload' / imagestream
+            base_path.mkdir(parents=True, exist_ok=True)
+
+            self.logger.info("Verifying payload against imagestream %s", imagestream)
+            with TemporaryDirectory(prefix=str(base_path)) as elliott_working:
+                # Replace the elliott working dir to allow concurrent commands execution
+                verify_payload_command = [
+                    arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
+                    for arg in self._elliott_base_command
+                ]
+                verify_payload_command += ['verify-payload', imagestream]
+
+                if self.dry_run:
+                    self.logger.info("[DRY-RUN] Would have run command: %s", ' '.join(verify_payload_command))
+                    return
+
+                _, stdout, _ = await exectools.cmd_gather_async(verify_payload_command)
+                results = json.loads(stdout)
+
+                self.logger.info("Summary results for %s:\n%s", imagestream, json.dumps(results, indent=4))
+                if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
+                    raise ValueError(f"""Failed to verify payload for nightly {imagestream}.
+                                Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
+                                update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
+                self.logger.info("Payload verification succeeded for imagestream %s", imagestream)
+
+                # Move debug.log to elliott working directory to allow Jenkins archive it
+                debug_log_path = Path(self.elliott_working_dir) / 'verify-payload'  # destination dir
+                debug_log_path.mkdir(parents=True, exist_ok=True)
+                shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/{imagestream.split("/")[-1]}-debug.log')
+
+        major, minor = self.release_name.split('.')[:2]
+        image_stream_version = f'{major}.{minor}'
+
+        assembly_is_base_name = assembly_imagestream_base_name_generic(
+            image_stream_version, self.assembly, self.assembly_type, build_system='konflux'
+        )
+        arches = self.group_config.get("arches", [])
+        imagestreams_per_arch = [
+            payload_imagestream_namespace_and_name(
+                default_imagestream_namespace_base_name(), assembly_is_base_name, arch, private=False
+            )
+            for arch in arches
+        ]
+        await asyncio.gather(
+            *[
+                _verify(f"{is_namespace_and_name[0]}/{is_namespace_and_name[1]}")
+                for is_namespace_and_name in imagestreams_per_arch
+            ]
+        )
 
 
 @cli.command("prepare-release-konflux")
