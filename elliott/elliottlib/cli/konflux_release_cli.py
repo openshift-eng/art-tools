@@ -44,6 +44,7 @@ class CreateReleaseCli:
         image_repo_pull_secret: dict,
         dry_run: bool,
         force: bool,
+        job_url: str = None,
     ):
         self.runtime = runtime
         self.config_path = config_path
@@ -51,6 +52,7 @@ class CreateReleaseCli:
         self.image_repo_pull_secret = image_repo_pull_secret
         self.dry_run = dry_run
         self.force = force
+        self.job_url = job_url
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
             config_file=self.konflux_config['kubeconfig'],
@@ -123,7 +125,10 @@ class CreateReleaseCli:
         created_snapshot = await self.konflux_client._create(snapshot_obj)
         snapshot_name = created_snapshot.metadata.name
         snapshot_url = self.konflux_client.resource_url(created_snapshot)
-        LOGGER.info("Successfully created Snapshot %s", snapshot_url)
+        if self.dry_run:
+            LOGGER.info("[DRY-RUN] Would have created Konflux Snapshot at %s", snapshot_url)
+        else:
+            LOGGER.info("Successfully created Snapshot %s", snapshot_url)
 
         # Create release config using the created snapshot name
         release_config = self.get_release_config(config.shipment, self.release_env, release_name, snapshot_name)
@@ -151,17 +156,26 @@ class CreateReleaseCli:
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 
+        # Prepare metadata with labels and optional annotations
+        metadata = {
+            "name": snapshot_name,
+            "namespace": self.konflux_config['namespace'],
+            "labels": {
+                "test.appstudio.openshift.io/type": "override",
+                "appstudio.openshift.io/application": shipment.metadata.application,
+            },
+        }
+
+        # Add annotation if job URL is provided
+        if self.job_url:
+            metadata["annotations"] = {
+                "art.redhat.com/job-url": self.job_url,
+            }
+
         snapshot_obj = {
             "apiVersion": API_VERSION,
             "kind": KIND_SNAPSHOT,
-            "metadata": {
-                "name": snapshot_name,
-                "namespace": self.konflux_config['namespace'],
-                "labels": {
-                    "test.appstudio.openshift.io/type": "override",
-                    "appstudio.openshift.io/application": shipment.metadata.application,
-                },
-            },
+            "metadata": metadata,
             "spec": shipment.snapshot.spec.model_dump(exclude_none=True),
         }
         return snapshot_obj
@@ -202,14 +216,23 @@ class CreateReleaseCli:
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {snapshot} in the cluster. Does it exist?")
 
+        # Prepare metadata with labels and optional annotations
+        metadata = {
+            "name": release_config.release_name,
+            "namespace": self.konflux_config['namespace'],
+            "labels": {"appstudio.openshift.io/application": release_config.application},
+        }
+
+        # Add annotation if job URL is provided
+        if self.job_url:
+            metadata["annotations"] = {
+                "art.redhat.com/job-url": self.job_url,
+            }
+
         release_obj = {
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
-            "metadata": {
-                "name": release_config.release_name,
-                "namespace": self.konflux_config['namespace'],
-                "labels": {"appstudio.openshift.io/application": release_config.application},
-            },
+            "metadata": metadata,
             "spec": {
                 "releasePlan": release_plan,
                 "snapshot": snapshot,
@@ -266,10 +289,24 @@ def konflux_release_cli():
 )
 @click.option('--apply', is_flag=True, default=False, help='Create the release in cluster (False by default)')
 @click.option('--force', is_flag=True, default=False, help='Proceed even if an associated release/advisory detected')
+@click.option(
+    '--job-url',
+    metavar='URL',
+    help='The URL of the job that created this release. This will be added as an annotation to both the snapshot and release objects.',
+)
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(
-    runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace, pull_secret, config, env, apply, force
+    runtime: Runtime,
+    konflux_kubeconfig,
+    konflux_context,
+    konflux_namespace,
+    pull_secret,
+    config,
+    env,
+    apply,
+    force,
+    job_url,
 ):
     """
     Create a new Konflux Release in the given namespace based on the config provided
@@ -298,6 +335,7 @@ async def new_release_cli(
         image_repo_pull_secret=pull_secret,
         dry_run=not apply,
         force=force,
+        job_url=job_url,
     )
     release = await pipeline.run()
     yaml.dump(release.to_dict(), sys.stdout)
