@@ -19,6 +19,9 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
+from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.util import oc_image_info_for_arch_async
 from kubernetes.dynamic import exceptions
@@ -164,14 +167,34 @@ class CreateSnapshotCli:
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord):
+            # get application and component names from PLR url
+            # note: this will change once we have component name stored in the DB
             app_name = record.get_konflux_application_name()
             comp_name = record.get_konflux_component_name()
 
-            # make sure application and component exist
-            await asyncio.gather(
-                self.konflux_client.get_application__caching(app_name, strict=True),
-                self.konflux_client.get_component__caching(comp_name, strict=True),
-            )
+            # make sure application exists
+            await self.konflux_client.get_application__caching(app_name, strict=True)
+
+            # make sure component exists, if not, try to get it from the relevant Builder class
+            # note: this will change once we have component name stored in the DB
+            try:
+                await self.konflux_client.get_component__caching(comp_name, strict=True)
+            except Exception as e:
+                if isinstance(record, KonfluxBuildRecord):
+                    comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
+                    await self.konflux_client.get_component__caching(comp_name, strict=True)
+                elif isinstance(record, KonfluxBundleBuildRecord):
+                    comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
+                    try:
+                        await self.konflux_client.get_component__caching(comp_name, strict=True)
+                    except Exception:
+                        # if we still can't find the component, use the old component name
+                        comp_name = KonfluxOlmBundleBuilder.get_old_component_name(app_name, record.name)
+                        await self.konflux_client.get_component__caching(comp_name, strict=True)
+                else:
+                    # fbc component name is determined from the image it builds for, which is not stored in the DB
+                    # rather than hack something up, let it fail for now
+                    raise e
 
             source_url = record.rebase_repo_url
             revision = record.rebase_commitish

@@ -208,8 +208,14 @@ class KonfluxRecord:
         plr_url = urlparse(self.build_pipeline_url)
         # Extract the last part of the URL path. e.g. openshift-4-18-helloworld-operator-bundle-prdtg
         plr_name = unquote(plr_url.path.split('/')[-1])
+
         # openshift-4-18-helloworld-operator-bundle-prdtg -> openshift-4-18-helloworld-operator-bundle
-        component_name = plr_name[: plr_name.rindex("-")]
+        # sometimes the component name is too long, so there is no hyphen in the end
+        # first remove the last 5 chars (unique identifier)
+        component_name = plr_name[:-5]
+        # now check if the last char is a hyphen and if so, remove it
+        if component_name.endswith('-'):
+            component_name = component_name[:-1]
         return component_name
 
 
