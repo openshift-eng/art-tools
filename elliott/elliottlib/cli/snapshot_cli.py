@@ -94,6 +94,7 @@ class CreateSnapshotCli:
         image_repo_pull_secret: str,
         builds: list,
         dry_run: bool,
+        job_url: str = None,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
@@ -101,6 +102,7 @@ class CreateSnapshotCli:
             raise ValueError("builds must be provided")
         self.builds = builds
         self.dry_run = dry_run
+        self.job_url = job_url
         self.image_repo_pull_secret = image_repo_pull_secret
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
@@ -224,17 +226,27 @@ class CreateSnapshotCli:
         snapshot_objs: list[dict] = []
         for index, (application_name, components) in enumerate(sorted(app_components.items()), start=1):
             components = sorted(components, key=lambda c: c['name'])
+
+            # Prepare metadata with labels and optional annotations
+            metadata = {
+                "name": f"{snapshot_name}-{index}",
+                "namespace": self.konflux_config['namespace'],
+                "labels": {
+                    "test.appstudio.openshift.io/type": "override",
+                    "appstudio.openshift.io/application": application_name,
+                },
+            }
+
+            # Add annotation if job URL is provided
+            if self.job_url:
+                metadata["annotations"] = {
+                    "art.redhat.com/job-url": self.job_url,
+                }
+
             snapshot_obj = {
                 "apiVersion": API_VERSION,
                 "kind": KIND_SNAPSHOT,
-                "metadata": {
-                    "name": f"{snapshot_name}-{index}",
-                    "namespace": self.konflux_config['namespace'],
-                    "labels": {
-                        "test.appstudio.openshift.io/type": "override",
-                        "appstudio.openshift.io/application": application_name,
-                    },
-                },
+                "metadata": metadata,
                 "spec": {
                     "application": application_name,
                     "components": components,
@@ -295,6 +307,11 @@ def snapshot_cli():
     type=click.File("rt"),
 )
 @click.option('--apply', is_flag=True, default=False, help='Create the snapshot in cluster (False by default)')
+@click.option(
+    '--job-url',
+    metavar='URL',
+    help='The URL of the job that created this snapshot. This will be added as an annotation to the snapshot.',
+)
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(
@@ -306,6 +323,7 @@ async def new_snapshot_cli(
     builds_file,
     builds,
     apply,
+    job_url,
 ):
     """
     Create new Konflux Snapshot(s) in the given namespace for the given builds
@@ -344,6 +362,7 @@ async def new_snapshot_cli(
         image_repo_pull_secret=pull_secret,
         builds=builds,
         dry_run=not apply,
+        job_url=job_url,
     )
     snapshots = await pipeline.run()
     yaml.dump_all([snapshot.to_dict() for snapshot in snapshots], sys.stdout)
