@@ -14,7 +14,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import aiofiles
 import click
-import jinja2
 import semver
 from artcommonlib import exectools, git_helper
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
@@ -841,7 +840,7 @@ class PrepareReleasePipeline:
                 return fields  # no need to modify fields of non-template issue
             # remove "template" label
             fields["labels"] = list(labels - {"template"})
-            return self._render_jira_template(fields, template_vars)
+            return self._jira_client.render_jira_template(fields, template_vars)
 
         if self.dry_run:
             fields = fields_transform(template_issue.raw["fields"].copy())
@@ -850,19 +849,6 @@ class PrepareReleasePipeline:
         new_issues = self._jira_client.clone_issue_with_subtasks(template_issue, fields_transform=fields_transform)
         _LOGGER.info("Created release JIRA: %s", new_issues[0].permalink())
         return new_issues
-
-    @staticmethod
-    def _render_jira_template(fields: Dict, template_vars: Dict):
-        fields.copy()
-        try:
-            fields["summary"] = jinja2.Template(fields["summary"], autoescape=True).render(template_vars)
-        except jinja2.TemplateSyntaxError as ex:
-            _LOGGER.warning("Failed to render JIRA template text: %s", ex)
-        try:
-            fields["description"] = jinja2.Template(fields["description"], autoescape=True).render(template_vars)
-        except jinja2.TemplateSyntaxError as ex:
-            _LOGGER.warning("Failed to render JIRA template text: %s", ex)
-        return fields
 
     async def set_advisory_dependencies(self, advisories):
         # dict keys should ship after values.
@@ -908,7 +894,7 @@ class PrepareReleasePipeline:
             "description": template_issue.fields.description,
         }
         if "template" in template_issue.fields.labels:
-            fields = self._render_jira_template(fields, template_vars)
+            fields = self._jira_client.render_jira_template(fields, template_vars)
         jira_changed = fields != old_fields
         if not self.dry_run:
             issue.update(fields)
@@ -929,7 +915,7 @@ class PrepareReleasePipeline:
             if template_subtask.fields.description:
                 fields["description"] = template_subtask.fields.description
             if "template" in template_subtask.fields.labels:
-                fields = self._render_jira_template(fields, template_vars)
+                fields = self._jira_client.render_jira_template(fields, template_vars)
             if not self.dry_run:
                 subtask.update(fields)
             else:
