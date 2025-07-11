@@ -99,8 +99,15 @@ class Bug:
         """
 
         expected_suffix = f"[openshift-{major_version}.{minor_version}]"
-        if self.summary.endswith(expected_suffix):
-            return self.summary
+
+        accepted_suffixes = [
+            expected_suffix,
+            f"[openshift-{major_version}.{minor_version}.z]",
+            f"[openshift-{major_version}.{minor_version}.0]",
+        ]
+        for suffix in accepted_suffixes:
+            if self.summary.endswith(suffix):
+                return self.summary
 
         version_suffix_pattern = r"\[openshift[^\]]*\]$"
         if re.search(version_suffix_pattern, self.summary):
