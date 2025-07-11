@@ -78,6 +78,7 @@ tests = [
     "virtualenv>=20.2.2",
     "pytest>=6.2.1",
     "mypy>=0.812",
+    "parameterized",
     "pylint",
     "ruff",
 ]
