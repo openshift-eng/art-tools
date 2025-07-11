@@ -14,7 +14,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, sync_to_quay
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, oc
@@ -116,9 +116,9 @@ class BuildMicroShiftBootcPipeline:
 
         if not self.runtime.dry_run:
             if bootc_build.embargoed:
-                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
+                await sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
-                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
                 # sync per-arch bootc-pullspec.txt to mirror
                 await asyncio.gather(
                     *(
@@ -130,19 +130,6 @@ class BuildMicroShiftBootcPipeline:
             self._logger.warning(
                 "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
             )
-
-    async def sync_to_quay(self, source_pullspec, destination_repo):
-        """
-        Microshift team needs the image on quay.io/openshift-release-dev/ocp-v4.0-art-dev as well.
-        """
-        # extract tag
-        # e.g.'ose-baremetal-installer-rhel9-v4.19.0-20250210.224515' from
-        # quay.io/redhat-user-workloads/ocp-art-tenant/art-images:ose-baremetal-installer-rhel9-v4.19.0-20250210.224515
-        tag = source_pullspec.split(':')[-1]
-        destination_pullspec = f"{destination_repo}:{tag}"
-        self._logger.info(f"Syncing bootc image from {source_pullspec} to {destination_pullspec}")
-        cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', source_pullspec, destination_pullspec]
-        await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
