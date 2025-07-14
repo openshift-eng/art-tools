@@ -8,7 +8,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from functools import cached_property
-from io import StringIO
+from io import BytesIO, StringIO
 from json import JSONDecodeError
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -30,10 +30,12 @@ from doozerlib.cli.release_gen_payload import (
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
+from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
 from ghapi.all import GhApi
+from github import Github, GithubException
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
@@ -178,6 +180,7 @@ class PrepareReleaseKonfluxPipeline:
         await self.setup_repos()
         await self.validate_assembly()
         await self.check_blockers()
+        await self.prepare_rpm_advisory()
         await self.prepare_shipment()
         await self.verify_payload()
 
@@ -242,6 +245,134 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.warning(
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
+
+    async def prepare_rpm_advisory(self):
+        """
+        Prepare and manage the RPM advisory for the current assembly.
+
+        This function performs the following steps:
+        1. Checks if an RPM advisory exists for the assembly; if not, creates one and updates the build data.
+        2. Sweeps RPM builds into the advisory.
+        3. Sweeps bugs into the advisory.
+        4. Attaches CVE flaw bugs to the advisory.
+        5. Attempts to change the advisory state to QE.
+        6. Attempts to trigger a push of the advisory to the CDN stage.
+
+        Raises:
+            ValueError: If the release date is missing from the assembly config.
+        """
+        rpm_advisory_num = self.assembly_group_config.get("advisories", {}).get("rpm", -1)
+        if rpm_advisory_num < 0:
+            # create rpm advisory
+            release_date = self.assembly_group_config.get("release_date", "")
+            if not release_date:
+                raise ValueError("Can't find release date in assembly config")
+            is_ga = self.release_version[2] == 0
+            advisory_type = "RHEA" if is_ga else "RHBA"
+            rpm_advisory_num = await self.create_advisory(advisory_type, "rpm", release_date)
+            await self._slack_client.say_in_thread(
+                f"RPM advisory {rpm_advisory_num} created with release date {release_date}"
+            )
+            # update ocp-build-data
+            await self.update_rpm_in_ocp_build_data(rpm_advisory_num)
+        # sweep builds
+        self.logger.info("Sweep builds into the the rpm advisory ...")
+        operate_cmd = ["find-builds", "--kind=rpm", f"--attach={rpm_advisory_num}", "--clean"]
+        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        # sweep bugs
+        self.logger.info("Sweep bugs into the the rpm advisory ...")
+        operate_cmd = ["find-bugs:sweep", "--use-default-advisory=rpm"]
+        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        # attach cve flaws
+        self.logger.info("Processing attached Security Trackers")
+        operate_cmd = ["attach-cve-flaws", f"--advisory={rpm_advisory_num}"]
+        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        # change status to qe
+        try:
+            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(rpm_advisory_num)]
+            await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        except Exception as ex:
+            self.logger.warning(f"Unable to move rpm advisory {rpm_advisory_num} to QE: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Unable to move rpm advisory {rpm_advisory_num} to QE. Details in log."
+            )
+        try:
+            push_cdn_stage(rpm_advisory_num)
+        except Exception as ex:
+            self.logger.warning(f"Unable to trigger push rpm advisory {rpm_advisory_num} to CDN stage: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Unable to trigger push rpm advisory {rpm_advisory_num} to CDN stage. Details in log."
+            )
+
+    def update_rpm_in_ocp_build_data(self, rpm_advisory_num):
+        github_client = Github(self.github_token)
+        upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
+        fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
+        update_message = f"Add rpm advisory for release {self.release_name}"
+        branch_name = f"update_rpm_advisory_{self.release_name}"
+        file_path = "releases.yml"
+        self.logger.info("Updating rpm advisory in ocp-build-data repo")
+        # create branch
+        for branch in fork_repo.get_branches():
+            if branch.name == branch_name:
+                fork_repo.get_git_ref(f"heads/{branch_name}").delete()
+        fork_branch = fork_repo.create_git_ref(
+            f"refs/heads/{branch_name}", upstream_repo.get_branch(self.group).commit.sha
+        )
+        self.logger.info("Created fork branch ref %s", fork_branch.ref)
+        # get release file content
+        try:
+            release_content = upstream_repo.get_contents(file_path, ref=self.group)
+            file_content = yaml.load(release_content.decoded_content)
+            file_content['releases'][self.release_name]['assembly']['group']['advisories']['rpm'] = rpm_advisory_num
+        except GithubException as e:
+            raise ValueError(f"Load release file failed from ocp-build-data repo: {e}")
+        # update release file
+        output = BytesIO()
+        yaml.dump(file_content, output)
+        output.seek(0)
+        fork_file = fork_repo.get_contents(file_path, ref=branch_name)
+        fork_repo.update_file(file_path, update_message, output.read(), fork_file.sha, branch=branch_name)
+        # create pr
+        try:
+            pr = upstream_repo.create_pull(
+                title=update_message, body=update_message, base=self.group, head=f"openshift-bot:{branch_name}"
+            )
+            pr.merge()
+            self._logger.info(f"PR {pr.html_url} merged into ocp-build-data repo")
+        except GithubException as e:
+            self._logger.warning(f"Failed to update upstream repo: {e}")
+
+    async def create_advisory(
+        self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0
+    ) -> int:
+        self.logger.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
+        create_cmd = self._elliott_base_command + [
+            "create",
+            f"--type={advisory_type}",
+            f"--art-advisory-key={art_advisory_key}",
+            f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
+            f"--manager={self.runtime.config['advisory']['manager']}",
+            f"--package-owner={self.self.runtime.config['advisory']['package_owner']}",
+        ]
+        if batch_id:
+            create_cmd.append(f"--batch-id={batch_id}")
+        else:
+            create_cmd.append(f"--date={release_date}")
+        if not self.dry_run:
+            create_cmd.append("--yes")
+        stdout = await self.execute_command_with_logging(create_cmd)
+        match = re.search(
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)",
+            stdout,
+        )
+        advisory_num = int(match[1])
+        self.logger.info("Created %s advisory %s", art_advisory_key, advisory_num)
+        return advisory_num
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    async def run_cmd_with_retry(self, base_cmd: list[str], cmd: list[str]):
+        await self.execute_command_with_logging(base_cmd + cmd)
 
     async def prepare_shipment(self):
         """Prepare the shipment for the assembly.
