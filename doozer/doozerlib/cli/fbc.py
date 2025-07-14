@@ -36,7 +36,6 @@ class FbcImportCli:
         self,
         runtime: Runtime,
         index_image: str | None,
-        keep_templates: bool,
         push: bool,
         registry_auth: Optional[str],
         fbc_repo: str,
@@ -45,7 +44,6 @@ class FbcImportCli:
     ):
         self.runtime = runtime
         self.index_image = index_image
-        self.keep_templates = keep_templates
         self.push = push
         self.registry_auth = registry_auth
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
@@ -95,7 +93,6 @@ class FbcImportCli:
             group=runtime.group,
             assembly=str(runtime.assembly),
             ocp_version=(major, minor),
-            keep_templates=self.keep_templates,
             upcycle=runtime.upcycle,
             push=self.push,
             commit_message=self.message,
@@ -124,11 +121,6 @@ class FbcImportCli:
     metavar='INDEX_IMAGE',
     help="The index image to import from. If not set, the production index image will be used.",
 )
-@click.option(
-    "--keep-templates",
-    is_flag=True,
-    help="Keep the generated templates. If not set, the templates will be deleted after rendering the final catalogs.",
-)
 @click.option("--push", is_flag=True, help="Push the generated FBC to the git repository.")
 @click.option(
     "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
@@ -141,7 +133,6 @@ class FbcImportCli:
 async def fbc_import(
     runtime: Runtime,
     from_index: Optional[str],
-    keep_templates: bool,
     push: bool,
     fbc_repo: str,
     registry_auth: Optional[str],
@@ -158,7 +149,6 @@ async def fbc_import(
     cli = FbcImportCli(
         runtime=runtime,
         index_image=from_index,
-        keep_templates=keep_templates,
         push=push,
         fbc_repo=fbc_repo,
         registry_auth=registry_auth,
