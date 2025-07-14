@@ -39,6 +39,7 @@ KONFLUX_DEFAULT_IMAGE_REPO = (
     "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"  # FIXME: If we change clusters this URL will change
 )
 KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
+KONFLUX_DEFAULT_REBASE_REMOTE = "openshift-priv"
 ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 ART_PROD_PRIV_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-priv"
 DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"

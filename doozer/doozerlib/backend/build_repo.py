@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import List, Optional, Sequence, Union, cast
@@ -195,9 +196,17 @@ class BuildRepo:
         await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag])
 
     @start_as_current_span_async(TRACER, "build_repo.push")
-    async def push(self):
+    async def push(self, prod=True):
         """Push changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
+
+        if prod:
+            # By default, we always want to push to openshift-priv
+            pattern = r"(git@[^:]+:)[^/]+(/.*)"
+            replacement = rf"\1{constants.KONFLUX_DEFAULT_REBASE_REMOTE}\2"
+            remote_url = re.sub(pattern, replacement, self.url)
+            await self.set_remote_url(url=remote_url, remote_name="origin")
+
         await git_helper.run_git_async(["-C", local_dir, "push", "origin", "HEAD"])
         try:
             await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"])

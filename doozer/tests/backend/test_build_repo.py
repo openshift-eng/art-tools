@@ -38,7 +38,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_push(self, run_git: AsyncMock):
-        await self.repo.push()
+        await self.repo.push(prod=False)
         run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD"])
         run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"])
 
