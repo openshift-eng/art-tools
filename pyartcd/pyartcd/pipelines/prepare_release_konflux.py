@@ -8,7 +8,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from functools import cached_property
-from io import BytesIO, StringIO
+from io import StringIO
 from json import JSONDecodeError
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -35,7 +35,6 @@ from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
 from ghapi.all import GhApi
-from github import Github, GithubException
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
@@ -95,6 +94,7 @@ class PrepareReleaseKonfluxPipeline:
         self.releases_config = None
         self.group_config = None
         self._issues_by_kind = None
+        self.rpm_advisory_num = None
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -261,87 +261,62 @@ class PrepareReleaseKonfluxPipeline:
         Raises:
             ValueError: If the release date is missing from the assembly config.
         """
-        rpm_advisory_num = self.assembly_group_config.get("advisories", {}).get("rpm", -1)
-        if rpm_advisory_num < 0:
+        rpm_num = self.assembly_group_config.get("advisories", {}).get("rpm", 0)
+        if rpm_num < 0:
             # create rpm advisory
-            release_date = self.assembly_group_config.get("release_date", "")
-            if not release_date:
-                raise ValueError("Can't find release date in assembly config")
-            is_ga = self.release_version[2] == 0
-            advisory_type = "RHEA" if is_ga else "RHBA"
-            rpm_advisory_num = await self.create_advisory(advisory_type, "rpm", release_date)
-            await self._slack_client.say_in_thread(
-                f"RPM advisory {rpm_advisory_num} created with release date {release_date}"
+            if not self.release_date:
+                self.logger.warning("Can't find release date in assembly config, skip prepare rpm advisory.")
+                return
+            else:
+                self.logger.warning(f"Get release date from assembly {self.release_date}")
+            advisory_type = (
+                "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
             )
-            # update ocp-build-data
-            await self.update_rpm_in_ocp_build_data(rpm_advisory_num)
+            rpm_num = await self.create_advisory(advisory_type, "rpm", self.release_date)
+            await self._slack_client.say_in_thread(f"RPM advisory {rpm_num} created with release date {self.release_date}")
+            self.rpm_advisory_num = rpm_num
+        elif rpm_num == 0:
+            self.logger.info("Can't find rpm entry in assembly config, skip prepare rpm advisory.")
+            return
+        base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
         # sweep builds
         self.logger.info("Sweep builds into the the rpm advisory ...")
-        operate_cmd = ["find-builds", "--kind=rpm", f"--attach={rpm_advisory_num}", "--clean"]
-        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        operate_cmd = ["find-builds", "--kind=rpm", f"--attach={rpm_num}", "--clean"]
+        await self.run_cmd_with_retry(base_command, operate_cmd)
+
+        self.logger.info("Find bugs for rpm advisory ...")
+        bug_ids = []
+        operate_cmd = base_command + ["find-bugs", "--permissive", "--output=json"]
+        stdout = await self.execute_command_with_logging(operate_cmd)
+        if stdout:
+            bug_ids = json.loads(stdout).get("rpm", [])
         # sweep bugs
-        self.logger.info("Sweep bugs into the the rpm advisory ...")
-        operate_cmd = ["find-bugs:sweep", "--use-default-advisory=rpm"]
-        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
-        # attach cve flaws
-        self.logger.info("Processing attached Security Trackers")
-        operate_cmd = ["attach-cve-flaws", f"--advisory={rpm_advisory_num}"]
-        await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+        self.logger.info(f"Attach bugs for advisory ...")
+        if bug_ids:
+            self.logger.info(f"Find {len(bug_ids)} rpm bugs: {bug_ids}")
+            operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={rpm_num}"]
+            await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+            # attach cve flaws
+            self.logger.info("Processing attached Security Trackers ...")
+            operate_cmd = ["attach-cve-flaws", f"--advisory={rpm_num}"]
+            await self.run_cmd_with_retry(base_command, operate_cmd)
+        else:
+            self.logger.info("No rpm bugs found for rpm advisory.")
         # change status to qe
         try:
-            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(rpm_advisory_num)]
-            await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(rpm_num)]
+            await self.run_cmd_with_retry(base_command, operate_cmd)
         except Exception as ex:
-            self.logger.warning(f"Unable to move rpm advisory {rpm_advisory_num} to QE: {ex}")
-            await self._slack_client.say_in_thread(
-                f"Unable to move rpm advisory {rpm_advisory_num} to QE. Details in log."
-            )
+            self.logger.warning(f"Unable to move rpm advisory {rpm_num} to QE: {ex}")
+            await self._slack_client.say_in_thread(f"Unable to move rpm advisory {rpm_num} to QE. Details in log.")
+            return
         try:
-            push_cdn_stage(rpm_advisory_num)
+            push_cdn_stage(rpm_num)
         except Exception as ex:
-            self.logger.warning(f"Unable to trigger push rpm advisory {rpm_advisory_num} to CDN stage: {ex}")
+            self.logger.warning(f"Unable to trigger push rpm advisory {rpm_num} to CDN stage: {ex}")
             await self._slack_client.say_in_thread(
-                f"Unable to trigger push rpm advisory {rpm_advisory_num} to CDN stage. Details in log."
+                f"Unable to trigger push rpm advisory {rpm_num} to CDN stage. Details in log."
             )
-
-    def update_rpm_in_ocp_build_data(self, rpm_advisory_num):
-        github_client = Github(self.github_token)
-        upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
-        fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
-        update_message = f"Add rpm advisory for release {self.release_name}"
-        branch_name = f"update_rpm_advisory_{self.release_name}"
-        file_path = "releases.yml"
-        self.logger.info("Updating rpm advisory in ocp-build-data repo")
-        # create branch
-        for branch in fork_repo.get_branches():
-            if branch.name == branch_name:
-                fork_repo.get_git_ref(f"heads/{branch_name}").delete()
-        fork_branch = fork_repo.create_git_ref(
-            f"refs/heads/{branch_name}", upstream_repo.get_branch(self.group).commit.sha
-        )
-        self.logger.info("Created fork branch ref %s", fork_branch.ref)
-        # get release file content
-        try:
-            release_content = upstream_repo.get_contents(file_path, ref=self.group)
-            file_content = yaml.load(release_content.decoded_content)
-            file_content['releases'][self.release_name]['assembly']['group']['advisories']['rpm'] = rpm_advisory_num
-        except GithubException as e:
-            raise ValueError(f"Load release file failed from ocp-build-data repo: {e}")
-        # update release file
-        output = BytesIO()
-        yaml.dump(file_content, output)
-        output.seek(0)
-        fork_file = fork_repo.get_contents(file_path, ref=branch_name)
-        fork_repo.update_file(file_path, update_message, output.read(), fork_file.sha, branch=branch_name)
-        # create pr
-        try:
-            pr = upstream_repo.create_pull(
-                title=update_message, body=update_message, base=self.group, head=f"openshift-bot:{branch_name}"
-            )
-            pr.merge()
-            self._logger.info(f"PR {pr.html_url} merged into ocp-build-data repo")
-        except GithubException as e:
-            self._logger.warning(f"Failed to update upstream repo: {e}")
 
     async def create_advisory(
         self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0
@@ -353,7 +328,7 @@ class PrepareReleaseKonfluxPipeline:
             f"--art-advisory-key={art_advisory_key}",
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
-            f"--package-owner={self.self.runtime.config['advisory']['package_owner']}",
+            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
         ]
         if batch_id:
             create_cmd.append(f"--batch-id={batch_id}")
@@ -986,6 +961,8 @@ class PrepareReleaseKonfluxPipeline:
         # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
         shipment_key = next(k for k in group_config.keys() if k.startswith("shipment"))
         group_config[shipment_key] = shipment_config
+        if self.rpm_advisory_num:
+            group_config["advisories"]["rpm"] = self.rpm_advisory_num
 
         if await self.build_data_repo.does_branch_exist_on_remote(branch, remote="origin"):
             await self.build_data_repo.fetch_switch_branch(branch, remote="origin")
