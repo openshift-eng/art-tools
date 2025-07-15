@@ -787,3 +787,115 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.logger.error.assert_called_with(
             "Failed to fetch parent RPMs for parent-image/test-group: Parent database error"
         )
+
+    def _setup_mock_config(self, metadata, lockfile_rpms=None):
+        """Helper to setup mock config with lockfile RPMs."""
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = lockfile_rpms or []
+        metadata.config = mock_config
+        return mock_config
+
+    async def test_get_lockfile_rpms_union_of_build_and_config(self):
+        """Test that method returns union of RPMs from build and config."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['config-rpm-1', 'config-rpm-2'])
+
+        # Mock fetch_rpms_from_build to return different RPMs
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1', 'build-rpm-2'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1', 'build-rpm-2', 'config-rpm-1', 'config-rpm-2'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 2 RPMs from lockfile config')
+
+    async def test_get_lockfile_rpms_build_only(self):
+        """Test when only build has RPMs (empty config)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=[])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1', 'build-rpm-2'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1', 'build-rpm-2'}
+        self.assertEqual(result, expected)
+        # Should not log when config is empty
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_config_only(self):
+        """Test when only config has RPMs (empty build)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['config-rpm-1', 'config-rpm-2'])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value=set())
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'config-rpm-1', 'config-rpm-2'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 2 RPMs from lockfile config')
+
+    async def test_get_lockfile_rpms_empty_both_sources(self):
+        """Test when both build and config are empty."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=[])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value=set())
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        self.assertEqual(result, set())
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_missing_config_field(self):
+        """Test when config field is Missing."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = Missing
+        metadata.config = mock_config
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_none_config_field(self):
+        """Test when config field is None."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = None
+        metadata.config = mock_config
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_duplicate_handling(self):
+        """Test that duplicates are handled correctly (set union deduplication)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['rpm-1', 'rpm-2', 'rpm-3'])
+
+        # Same RPM in both sources
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'rpm-1', 'rpm-2', 'rpm-4'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        # Should deduplicate automatically (set union)
+        expected = {'rpm-1', 'rpm-2', 'rpm-3', 'rpm-4'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 3 RPMs from lockfile config')

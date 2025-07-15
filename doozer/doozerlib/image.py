@@ -804,6 +804,36 @@ class ImageMetadata(Metadata):
             self.installed_rpms = []
             return set()
 
+    async def get_lockfile_rpms_to_install(self) -> set[str]:
+        """
+        Get the union of RPMs from build and lockfile configuration for lockfile generation.
+
+        This method returns the union of RPMs from two sources:
+        1. RPMs from the build database (via fetch_rpms_from_build)
+        2. RPMs defined in meta.config.konflux.cachi2.lockfile.rpms
+
+        The method follows the same pattern as other lockfile-related methods,
+        checking if lockfile generation is enabled before proceeding.
+
+        Returns:
+            set[str]: Union of RPM package names from both sources, or empty set if
+                     lockfile generation is not enabled
+        """
+
+        # Get RPMs from build
+        rpms_from_build = await self.fetch_rpms_from_build()
+
+        # Get RPMs from lockfile config
+        rpms_from_config = set()
+        lockfile_rpms = self.config.konflux.cachi2.lockfile.get('rpms', [])
+        if lockfile_rpms not in [Missing, None]:
+            rpms_from_config = set(lockfile_rpms)
+            if rpms_from_config:  # Only log if there are actually RPMs
+                self.logger.info(f'{self.distgit_key} adding {len(rpms_from_config)} RPMs from lockfile config')
+
+        # Return union of both sources
+        return rpms_from_build.union(rpms_from_config)
+
     def get_enabled_repos(self) -> set[str]:
         """
         Get enabled repositories for lockfile generation.
