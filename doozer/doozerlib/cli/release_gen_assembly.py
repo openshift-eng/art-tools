@@ -835,6 +835,12 @@ class GenAssemblyCli:
             f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {advisories}, {release_jira}"
         )
 
+        # As a final check, make sure Konflux advisories do not contain image, extras and metadata
+        if self.runtime.build_system == 'konflux':
+            advisories.pop('image', None)
+            advisories.pop('extras', None)
+            advisories.pop('metadata', None)
+
         return advisories, release_jira
 
     def _generate_assembly_definition(self) -> dict:
