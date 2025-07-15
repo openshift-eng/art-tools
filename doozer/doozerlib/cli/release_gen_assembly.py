@@ -13,7 +13,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
@@ -990,9 +990,11 @@ class GenAssemblyCli:
                 return self._get_default_shipment(env="stage")
 
         # Return previous assembly shipment info
-        return self.releases_config.releases[
-            previous_assembly
-        ].assembly.group.shipment.primitive() or self._get_default_shipment(env="stage")
+        previous_shipment = self.releases_config.releases[previous_assembly].assembly.group.shipment
+        if previous_shipment is not Missing:
+            return previous_shipment.primitive()
+        else:
+            return self._get_default_shipment(env="stage")
 
     def _get_shipment_info(self) -> dict:
         """
