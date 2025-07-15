@@ -67,7 +67,7 @@ class PrepareReleaseKonfluxPipeline:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
-        self.release_date = date
+        self.date = date
         self.group = group
 
         self._slack_client = slack_client
@@ -172,6 +172,10 @@ class PrepareReleaseKonfluxPipeline:
     def release_name(self) -> str:
         return get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
 
+    @cached_property
+    def release_date(self):
+        return self.date or self.group_config.get("release_date")
+
     @property
     def assembly_group_config(self) -> dict:
         return assembly_config_struct(Model(self.releases_config), self.assembly, "group", {})
@@ -185,7 +189,6 @@ class PrepareReleaseKonfluxPipeline:
         self.setup_working_dir()
         await self.setup_repos()
         await self.validate_assembly()
-        await self.get_release_date()
 
         self.jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=self.jira_token)
 
@@ -263,18 +266,6 @@ class PrepareReleaseKonfluxPipeline:
             raise ValueError(
                 f"Product mismatch: {group_product} != {self.product}. This pipeline only supports {self.product}."
             )
-
-    async def get_release_date(self):
-        # Fetch the release date if not provided
-        if not self.release_date:
-            self.logger.info("Release date not provided. Fetching release date from release schedule...")
-            try:
-                self.release_date = await get_assembly_release_date_async(self.release_name)
-
-            except Exception as ex:
-                raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
-
-            self.logger.info("Release date: %s", self.release_date)
 
     async def check_blockers(self):
         if self.assembly_type != AssemblyTypes.STANDARD:
