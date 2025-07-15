@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
+import jinja2
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -124,3 +125,16 @@ class JIRAClient:
         }
         new_issue = self._client.create_issue(fields=fields)
         return new_issue
+
+    @staticmethod
+    def render_jira_template(fields: Dict, template_vars: Dict):
+        fields.copy()
+        try:
+            fields["summary"] = jinja2.Template(fields["summary"], autoescape=True).render(template_vars)
+        except jinja2.TemplateSyntaxError as ex:
+            _LOGGER.warning("Failed to render JIRA template text: %s", ex)
+        try:
+            fields["description"] = jinja2.Template(fields["description"], autoescape=True).render(template_vars)
+        except jinja2.TemplateSyntaxError as ex:
+            _LOGGER.warning("Failed to render JIRA template text: %s", ex)
+        return fields
