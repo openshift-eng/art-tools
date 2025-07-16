@@ -179,7 +179,7 @@ class KonfluxImageBuilder:
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
-                record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
+                record["task_url"] = self._konflux_client.resource_url(pipelinerun)
                 await self.update_konflux_db(
                     metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
                 )
@@ -434,7 +434,7 @@ class KonfluxImageBuilder:
             annotations={"art-network-mode": metadata.get_konflux_network_mode()},
         )
 
-        logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
+        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
         return pipelinerun
 
     @staticmethod
@@ -553,8 +553,9 @@ class KonfluxImageBuilder:
         pipelinerun_name = pipelinerun['metadata']['name']
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
         pipelinerun_uid = pipelinerun['metadata']['uid']
-        build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
+        build_pipeline_url = self._konflux_client.resource_url(pipelinerun)
         build_component = pipelinerun['metadata']['labels']['appstudio.openshift.io/component']
+
         build_record_params = {
             'name': metadata.distgit_key,
             'version': version,

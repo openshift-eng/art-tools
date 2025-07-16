@@ -848,7 +848,7 @@ class KonfluxFbcBuilder:
             dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
         )
-        url = konflux_client.build_pipeline_url(pipelinerun)
+        url = konflux_client.resource_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
         return pipelinerun, url
 
@@ -885,7 +885,7 @@ class KonfluxFbcBuilder:
             nvr = "-".join([name, version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
             build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
 
             build_record_params = {

@@ -689,7 +689,7 @@ class KonfluxOlmBundleBuilder:
             pipelinerun_template_url=self.pipelinerun_template_url,
             artifact_type="operatorbundle",
         )
-        url = konflux_client.build_pipeline_url(pipelinerun)
+        url = konflux_client.resource_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
         return pipelinerun, url
 
@@ -725,8 +725,9 @@ class KonfluxOlmBundleBuilder:
             nvr = "-".join([component_name, version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
             build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),
                 'version': version,
