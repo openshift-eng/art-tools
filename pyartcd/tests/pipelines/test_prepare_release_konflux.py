@@ -61,9 +61,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
+
         self.assertEqual(pipeline.build_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
@@ -79,9 +80,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
+
         self.assertEqual(pipeline.build_repo_pull_url, constants.OCP_BUILD_DATA_URL)
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, constants.OCP_BUILD_DATA_URL)
@@ -94,11 +96,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
             build_repo_url="https://github.com/foo/build-repo@branch",
             shipment_repo_url="https://gitlab.com/bar/shipment-repo",
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
+
         self.assertEqual(pipeline.build_repo_pull_url, "https://github.com/foo/build-repo")
         self.assertEqual(pipeline.build_data_gitref, "branch")
         self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
@@ -126,9 +129,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
+
         await pipeline.setup_repos()
 
         # Verify GitRepository instantiation
@@ -160,9 +164,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -179,9 +183,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model({"releases": {}})
         with self.assertRaises(ValueError) as context:
             await pipeline.validate_assembly()
@@ -193,9 +197,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {"releases": {self.assembly: {"assembly": {"type": AssemblyTypes.STREAM.value}}}}
         )
@@ -209,9 +213,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -253,9 +257,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -283,9 +287,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -313,9 +317,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -346,9 +350,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
@@ -398,9 +402,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            github_token=self.github_token,
-            gitlab_token=self.gitlab_token,
         )
+        pipeline.github_token = self.github_token
+        pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
