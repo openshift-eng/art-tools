@@ -5,6 +5,8 @@ click == 8.1.8
 dockerfile-parse >= 0.0.13
 defusedxml
 future
+httpx
+httpx_gssapi
 importlib-resources
 koji
 kubernetes ~= 28.0
@@ -20,6 +22,7 @@ requests
 requests_kerberos
 semver
 tenacity ~= 8.4, != 8.4.0  # https://github.com/jd/tenacity/issues/471
+truststore
 wrapt
 mysql-connector-python >= 8.0.21
 python-dateutil >= 2.8.1
