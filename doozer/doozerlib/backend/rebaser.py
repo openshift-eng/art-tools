@@ -1086,6 +1086,8 @@ class KonfluxRebaser:
                 # Cachito makes application source code and dependencies available inside the app/ directory. We only make the
                 # repo source code available there.
                 "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
+                # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
+                f"RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
                 # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
                 "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
             ]
