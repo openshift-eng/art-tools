@@ -73,7 +73,7 @@ class KonfluxClient:
         config_file: Optional[str],
         context: Optional[str],
         dry_run: bool = False,
-        logger: logging.Logger = LOGGER,
+        logger: logging.Logger | None = None,
     ) -> "KonfluxClient":
         """Create a KonfluxClient from a kubeconfig file.
 
@@ -88,7 +88,7 @@ class KonfluxClient:
         config.load_kube_config(
             config_file=config_file, context=context, persist_config=False, client_configuration=cfg
         )
-        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger)
+        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger or LOGGER)
 
     @alru_cache
     async def _get_api(self, api_version: str, kind: str):
@@ -444,6 +444,8 @@ class KonfluxClient:
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
         artifact_type: Optional[str] = None,
+        service_account: Optional[str] = None,
+        rebuild: Optional[bool] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -509,10 +511,13 @@ class KonfluxClient:
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
+        if rebuild is not None:
+            _modify_param(params, "rebuild", rebuild)
+
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
-        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = f"build-pipeline-{component_name}"
+        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = service_account or f"build-pipeline-{component_name}"
 
         # Check if RPM lockfile prefetch is being used
         rpm_lockfile_prefetch_enabled = prefetch and any(item.get("type") == "rpm" for item in prefetch)
@@ -624,6 +629,8 @@ class KonfluxClient:
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
         artifact_type: Optional[str] = None,
+        service_account: Optional[str] = None,
+        rebuild: Optional[bool] = None,
     ):
         """
         Start a PipelineRun for building an image.
@@ -648,6 +655,8 @@ class KonfluxClient:
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :param annotations: Optional PLR annotations
         :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
+        :param service_account: The service account to use for the PipelineRun.
+        :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -680,6 +689,8 @@ class KonfluxClient:
             sast=sast,
             annotations=annotations,
             artifact_type=artifact_type,
+            service_account=service_account,
+            rebuild=rebuild,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
