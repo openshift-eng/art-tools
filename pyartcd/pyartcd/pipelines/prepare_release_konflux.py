@@ -310,7 +310,9 @@ class PrepareReleaseKonfluxPipeline:
                 "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
             )
             rpm_num = await self.create_advisory(advisory_type, "rpm", self.release_date)
-            await self._slack_client.say_in_thread(f"RPM advisory {rpm_num} created with release date {self.release_date}")
+            await self._slack_client.say_in_thread(
+                f"RPM advisory {rpm_num} created with release date {self.release_date}"
+            )
             self.rpm_advisory_num = rpm_num
         elif rpm_num == 0:
             self.logger.info("Can't find rpm entry in assembly config, skip prepare rpm advisory.")
@@ -328,7 +330,7 @@ class PrepareReleaseKonfluxPipeline:
         if stdout:
             bug_ids = json.loads(stdout).get("rpm", [])
         # sweep bugs
-        self.logger.info(f"Attach bugs for advisory ...")
+        self.logger.info("Attach bugs for advisory ...")
         if bug_ids:
             self.logger.info(f"Find {len(bug_ids)} rpm bugs: {bug_ids}")
             operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={rpm_num}"]
