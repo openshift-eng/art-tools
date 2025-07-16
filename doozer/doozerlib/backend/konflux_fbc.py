@@ -886,6 +886,7 @@ class KonfluxFbcBuilder:
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
+            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': name,
@@ -908,6 +909,7 @@ class KonfluxFbcBuilder:
                 'pipeline_commit': 'n/a',  # TODO: populate this
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
+                'build_component': build_component,
             }
 
             match outcome:

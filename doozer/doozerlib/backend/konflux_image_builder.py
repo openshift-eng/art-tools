@@ -554,7 +554,7 @@ class KonfluxImageBuilder:
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
         pipelinerun_uid = pipelinerun['metadata']['uid']
         build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
-
+        build_component = pipelinerun['metadata']['labels']['appstudio.openshift.io/component']
         build_record_params = {
             'name': metadata.distgit_key,
             'version': version,
@@ -579,6 +579,7 @@ class KonfluxImageBuilder:
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
+            'build_component': build_component,
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:

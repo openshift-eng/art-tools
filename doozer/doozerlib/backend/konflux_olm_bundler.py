@@ -726,7 +726,7 @@ class KonfluxOlmBundleBuilder:
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
-
+            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),
                 'version': version,
@@ -750,6 +750,7 @@ class KonfluxOlmBundleBuilder:
                 'bundle_csv_name': bundle_csv_name,
                 'operator_nvr': operator_nvr,
                 'operand_nvrs': operand_nvrs,
+                'build_component': build_component,
             }
 
             match outcome:
