@@ -169,16 +169,16 @@ class CreateSnapshotCli:
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord):
-            # get application and component names from PLR url
-            # note: this will change once we have component name stored in the DB
+            # get application name and make sure it exists in cluster
             app_name = record.get_konflux_application_name()
-            comp_name = record.get_konflux_component_name()
-
-            # make sure application exists
             await self.konflux_client.get_application__caching(app_name, strict=True)
 
-            # make sure component exists, if not, try to get it from the relevant Builder class
-            # note: this will change once we have component name stored in the DB
+            # get component name and make sure it exists in cluster
+            comp_name = record.get_konflux_component_name()
+
+            # if not found, fallback to getting it from the record's Builder class
+            # TODO: (2025-07-16) now that we have started storing component name in DB, we can remove this fallback
+            # in a couple of weeks
             try:
                 await self.konflux_client.get_component__caching(comp_name, strict=True)
             except Exception as e:

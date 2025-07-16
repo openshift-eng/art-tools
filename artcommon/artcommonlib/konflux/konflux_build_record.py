@@ -199,6 +199,12 @@ class KonfluxRecord:
         Returns the component name for the Konflux record.
         This is used to identify the component in Konflux.
         """
+        if self.build_component:
+            return self.build_component
+
+        # TODO: (2025-07-16) now that we have started storing component name in DB,
+        # we can remove the below fallback (parse the component from url) in a couple of weeks
+
         # Konflux component name can be extracted from the build pipeline URL.
         # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18-helloworld-operator-bundle'
         # TODO: This is a temporary solution. We may want to change the way we store the component name in the future.
