@@ -547,7 +547,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.metadata.name = "test-pipelinerun"
         self.konflux_client.start_pipeline_run_for_image_build.return_value = pipelinerun
-        self.konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipelinerun")
+        self.konflux_client.resource_url = MagicMock(return_value="https://example.com/pipelinerun")
 
         pipelinerun, url = await self.builder._start_build(
             metadata,
@@ -598,8 +598,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
     @patch("aiofiles.open")
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.build_pipeline_url")
-    async def test_update_konflux_db_success(self, mock_build_pipeline_url, mock_dockerfile_parser, mock_open):
+    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.resource_url")
+    async def test_update_konflux_db_success(self, mock_resource_url, mock_dockerfile_parser, mock_open):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
@@ -624,7 +624,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
         pipelinerun.metadata.name = "test-pipelinerun"
 
-        mock_build_pipeline_url.return_value = "https://example.com/pipelinerun"
+        mock_resource_url.return_value = "https://example.com/pipelinerun"
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
@@ -687,8 +687,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
     @patch("aiofiles.open")
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.build_pipeline_url")
-    async def test_update_konflux_db_failure(self, mock_build_pipeline_url, mock_dockerfile_parser, mock_open):
+    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.resource_url")
+    async def test_update_konflux_db_failure(self, mock_resource_url, mock_dockerfile_parser, mock_open):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
@@ -705,7 +705,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
         pipelinerun.metadata.name = "test-pipelinerun"
 
-        mock_build_pipeline_url.return_value = "https://example.com/pipelinerun"
+        mock_resource_url.return_value = "https://example.com/pipelinerun"
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
@@ -763,8 +763,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
     @patch("aiofiles.open")
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.build_pipeline_url")
-    async def test_update_konflux_db_no_db_connection(self, mock_build_pipeline_url, mock_dockerfile_parser, mock_open):
+    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.resource_url")
+    async def test_update_konflux_db_no_db_connection(self, mock_resource_url, mock_dockerfile_parser, mock_open):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
@@ -788,7 +788,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
         pipelinerun.metadata.name = "test-pipelinerun"
 
-        mock_build_pipeline_url.return_value = "https://example.com/pipelinerun"
+        mock_resource_url.return_value = "https://example.com/pipelinerun"
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
@@ -830,8 +830,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
     @patch("aiofiles.open")
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.build_pipeline_url")
-    async def test_update_konflux_db_exception(self, mock_build_pipeline_url, mock_dockerfile_parser, mock_open):
+    @patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient.resource_url")
+    async def test_update_konflux_db_exception(self, mock_resource_url, mock_dockerfile_parser, mock_open):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
@@ -855,7 +855,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
         pipelinerun.metadata.name = "test-pipelinerun"
 
-        mock_build_pipeline_url.return_value = "https://example.com/pipelinerun"
+        mock_resource_url.return_value = "https://example.com/pipelinerun"
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
