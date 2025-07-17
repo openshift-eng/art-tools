@@ -1006,7 +1006,7 @@ class PrepareReleaseKonfluxPipeline:
         # to indicate special inheritance rules. So respect those
         # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
         shipment_key = next(k for k in group_config.keys() if k.startswith("shipment"))
-        group_config[shipment_key] = self.shipment_config
+        group_config[shipment_key] = self.prepared_shipment_config
         if self.rpm_advisory_num:
             group_config["advisories"]["rpm"] = self.rpm_advisory_num
 
