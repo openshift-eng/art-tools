@@ -1871,7 +1871,7 @@ class PromotePipeline:
         parent_jira = self._jira_client.get_issue(release_jira)
         self._logger.info("Sending a notification to QE and multi-arch QE...")
         jira_issue_link = parent_jira.permalink()
-        self._send_release_email(release_name, impetus_advisories)
+        self._send_release_email(release_name, impetus_advisories, jira_issue_link)
         self._logger.info("Update QE's release tests repo...")
         self._update_qe_repo(release_name, release_jira, impetus_advisories)
 
