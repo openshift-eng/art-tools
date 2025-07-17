@@ -86,6 +86,7 @@ class KonfluxRecord:
         pipeline_commit: str = '',
         schema_level: int = 0,
         ingestion_time: datetime = None,
+        build_component: str = '',
     ):
         """
         All fields default to None to facilitate testing
@@ -110,7 +111,7 @@ class KonfluxRecord:
         self.build_pipeline_url = build_pipeline_url
         self.pipeline_commit = pipeline_commit
         self.schema_level = schema_level
-
+        self.build_component = build_component
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
         # Two records for the same build will share the same build_id, but will have different record_ids
@@ -198,6 +199,12 @@ class KonfluxRecord:
         Returns the component name for the Konflux record.
         This is used to identify the component in Konflux.
         """
+        if self.build_component:
+            return self.build_component
+
+        # TODO: (2025-07-16) now that we have started storing component name in DB,
+        # we can remove the below fallback (parse the component from url) in a couple of weeks
+
         # Konflux component name can be extracted from the build pipeline URL.
         # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18-helloworld-operator-bundle'
         # TODO: This is a temporary solution. We may want to change the way we store the component name in the future.
@@ -271,6 +278,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         record_id: str = '',
         build_id: str = None,
         nvr: str = None,
+        build_component: str = '',
     ):
         super().__init__(
             name,
@@ -293,6 +301,7 @@ class KonfluxBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            build_component,
         )
 
         self.el_target = el_target
@@ -338,6 +347,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         record_id: str = '',
         build_id: str = None,
         nvr: str = None,
+        build_component: str = '',
     ):
         super().__init__(
             name,
@@ -360,6 +370,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            build_component,
         )
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
@@ -398,6 +409,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         record_id: str = '',
         build_id: str = '',
         nvr: str = '',
+        build_component: str = '',
     ):
         super().__init__(
             name,
@@ -420,6 +432,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
             pipeline_commit,
             schema_level,
             ingestion_time,
+            build_component,
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches

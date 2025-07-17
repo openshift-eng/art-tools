@@ -631,7 +631,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
         kube_client = self.kube_client
-        kube_client.build_pipeline_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
         pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
             **{"metadata.name": "test-pipeline-run-name"},
         )
@@ -681,7 +681,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo = MockBuildRepo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
-        mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
         mock_start_build.return_value = (
             MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
             "https://example.com/pipeline",
@@ -756,7 +756,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo = MockBuildRepo.from_local_dir.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
-        mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
         mock_start_build.return_value = (
             MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
             "https://example.com/pipeline",

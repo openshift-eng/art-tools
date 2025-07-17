@@ -688,24 +688,8 @@ class KonfluxClient:
             return fake_pipelinerun
 
         pipelinerun = await self._create(pipelinerun_manifest, async_req=True)
-        LOGGER.debug(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")
+        LOGGER.debug(f"Created PipelineRun: {self.resource_url(pipelinerun)}")
         return pipelinerun
-
-    @staticmethod
-    def build_pipeline_url(pipelinerun):
-        """Returns the URL to the Konflux UI for the given PipelineRun.
-
-        :param pipelinerun: The PipelineRun.
-        :return: The URL.
-        """
-        pipelinerun_name = pipelinerun['metadata']['name']
-        application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
-        return (
-            f"{constants.KONFLUX_UI_HOST}/ns/"
-            f"{constants.KONFLUX_DEFAULT_NAMESPACE}/"
-            f"applications/{application}/"
-            f"pipelineruns/{pipelinerun_name}"
-        )
 
     @staticmethod
     def resource_url(resource_instance: resource.ResourceInstance) -> str:

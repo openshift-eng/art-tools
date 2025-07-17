@@ -17,12 +17,13 @@ from urllib.parse import urlparse
 
 import click
 import gitlab
+import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
+from artcommonlib.util import convert_remote_git_to_ssh, get_assembly_release_date_async, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.cli.release_gen_payload import (
@@ -39,11 +40,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
+from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 from pyartcd.util import (
+    get_assembly_basis,
     get_assembly_type,
     get_release_name_for_assembly,
+    nightlies_with_pullspecs,
 )
 
 yaml = new_roundtrip_yaml_handler()
@@ -56,19 +60,17 @@ class PrepareReleaseKonfluxPipeline:
         runtime: Runtime,
         group: str,
         assembly: str,
-        github_token: str,
-        gitlab_token: str,
+        date: Optional[str] = None,
         build_repo_url: Optional[str] = None,
         shipment_repo_url: Optional[str] = None,
-        job_url: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
+        self.date = date
         self.group = group
+
         self._slack_client = slack_client
-        self.github_token = github_token
-        self.gitlab_token = gitlab_token
 
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
         self.application = KonfluxImageBuilder.get_application_name(self.group)
@@ -77,7 +79,6 @@ class PrepareReleaseKonfluxPipeline:
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
         self._shipment_repo_dir = self.working_dir / "shipment-data-push"
-        self.job_url = job_url
         self.dry_run = self.runtime.dry_run
         self.product = 'ocp'  # assume that product is ocp for now
 
@@ -91,8 +92,14 @@ class PrepareReleaseKonfluxPipeline:
         # these will be initialized later
         self.assembly_type = None
         self.releases_config = None
+        self.release_version = None
         self.group_config = None
         self._issues_by_kind = None
+        self.github_token = None
+        self.gitlab_token = None
+        self.jira_token = None
+        self.job_url = None
+        self.jira_client = None
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -161,9 +168,13 @@ class PrepareReleaseKonfluxPipeline:
         gl.auth()
         return gl
 
-    @property
+    @cached_property
     def release_name(self) -> str:
         return get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
+
+    @cached_property
+    def release_date(self):
+        return self.date or self.group_config.get("release_date")
 
     @property
     def assembly_group_config(self) -> dict:
@@ -171,15 +182,41 @@ class PrepareReleaseKonfluxPipeline:
 
     @property
     def shipment_config(self) -> dict:
-        return self.assembly_group_config.get("shipment", [])
+        return self.assembly_group_config.get("shipment", {})
 
-    async def run(self):
+    async def initialize(self):
+        self.check_env_vars()
         self.setup_working_dir()
         await self.setup_repos()
         await self.validate_assembly()
+
+        self.jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=self.jira_token)
+
+    async def run(self):
+        await self.initialize()
         await self.check_blockers()
         await self.prepare_shipment()
         await self.verify_payload()
+        await self.handle_jira_ticket()
+
+    def check_env_vars(self):
+        github_token = os.getenv('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
+        self.github_token = github_token
+
+        gitlab_token = os.getenv("GITLAB_TOKEN")
+        if not gitlab_token:
+            raise ValueError("GITLAB_TOKEN environment variable is required to create a merge request")
+        self.gitlab_token = gitlab_token
+
+        jira_token = os.environ.get("JIRA_TOKEN")
+        if not self.runtime.dry_run and not jira_token:
+            raise ValueError("JIRA_TOKEN environment variable is not set")
+        self.jira_token = jira_token
+
+        # Get the Jenkins job URL from environment variable
+        self.job_url = os.getenv('BUILD_URL')
 
     def setup_working_dir(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -567,7 +604,6 @@ class PrepareReleaseKonfluxPipeline:
     async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
         """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
         :param kind: The kind for which to find bugs
-        :param shipment: The shipment config to be updated
         :param permissive: Ignore invalid bugs that are found and continue
         :return: An Issues object containing the bugs found
         """
@@ -929,6 +965,92 @@ class PrepareReleaseKonfluxPipeline:
             ]
         )
 
+    async def handle_jira_ticket(self):
+        self.release_version = semver.VersionInfo.parse(self.release_name).to_tuple()
+        jira_issue_key = self.group_config.get("release_jira")
+        jira_template_vars = self.get_jira_template_vars()
+
+        if jira_issue_key and jira_issue_key != "ART-0":
+            self.logger.info("Reusing existing release JIRA %s", jira_issue_key)
+            jira_issue = self.jira_client.get_issue(jira_issue_key)
+            self.update_release_jira(jira_issue, jira_template_vars)
+
+        else:
+            self.logger.info("Creating a release JIRA...")
+            jira_issue = self.create_release_jira(jira_template_vars)
+            if jira_issue and jira_issue.key:
+                self.logger.info("Release JIRA created: %s", jira_issue.permalink())
+
+        # TODO update build-data with the JIRA issue key
+
+    def get_jira_template_vars(self):
+        nightlies = get_assembly_basis(self.releases_config, self.assembly).get("reference_releases", {}).values()
+        candidate_nightlies = nightlies_with_pullspecs(nightlies)
+
+        return {
+            "release_name": self.release_name,
+            "x": self.release_version[0],
+            "y": self.release_version[1],
+            "z": self.release_version[2],
+            "release_date": self.release_date,
+            "candidate_nightlies": candidate_nightlies,
+        }
+
+    def create_release_jira(self, template_vars: Dict) -> Optional[Issue]:
+        template_issue_key = self.runtime.config["jira"]["templates"]["ocp4-konflux"]
+        template_issue = self.jira_client.get_issue(template_issue_key)
+
+        def fields_transform(fields):
+            labels = set(fields.get("labels", []))
+            # change summary title for security
+            if "template" not in labels:
+                return fields  # no need to modify fields of non-template issue
+            # remove "template" label
+            fields["labels"] = list(labels - {"template"})
+            return self.jira_client.render_jira_template(fields, template_vars)
+
+        if self.dry_run:
+            jira_fields = fields_transform(template_issue.raw["fields"].copy())
+            self.logger.warning("[DRY RUN] Would have created release JIRA: %s", jira_fields["summary"])
+            return None
+
+        self.logger.info("Creating release JIRA from template %s...", template_issue_key)
+        new_issue = self.jira_client.clone_issue(template_issue, fields_transform=fields_transform)
+        self.logger.info("Created release JIRA: %s", new_issue.permalink())
+
+        jira_issue_key = new_issue.key if new_issue else None
+        if jira_issue_key:
+            if not self.runtime.dry_run:
+                self.logger.info("Updating Jira ticket status...")
+                self.jira_client.start_task(new_issue)
+
+            else:
+                self.logger.warning("[DRY RUN] Would have updated Jira ticket status")
+
+        return new_issue
+
+    def update_release_jira(self, issue: Issue, template_vars: Dict[str, int]):
+        template_issue_key = self.runtime.config["jira"]["templates"][f"ocp{self.release_version[0]}"]
+        self.logger.info("Updating release JIRA %s from template %s...", issue.key, template_issue_key)
+        template_issue = self.jira_client.get_issue(template_issue_key)
+        old_fields = {
+            "summary": issue.fields.summary,
+            "description": issue.fields.description,
+        }
+        fields = {
+            "summary": template_issue.fields.summary,
+            "description": template_issue.fields.description,
+        }
+        if "template" in template_issue.fields.labels:
+            fields = self.jira_client.render_jira_template(fields, template_vars)
+        jira_changed = fields != old_fields
+        if not self.dry_run:
+            issue.update(fields)
+        else:
+            self.logger.warning("Would have updated JIRA ticket %s with summary %s", issue.key, fields["summary"])
+
+        return jira_changed
+
 
 @cli.command("prepare-release-konflux")
 @click.option(
@@ -945,6 +1067,9 @@ class PrepareReleaseKonfluxPipeline:
     help="The assembly to operate on e.g. 4.18.5",
 )
 @click.option(
+    "--date", metavar="YYYY-MMM-DD", required=False, default=None, help="Expected release date (e.g. 2020-Nov-25)"
+)
+@click.option(
     '--build-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
@@ -958,19 +1083,11 @@ async def prepare_release(
     runtime: Runtime,
     group: str,
     assembly: str,
+    date: str,
     build_repo_url: Optional[str],
     shipment_repo_url: Optional[str],
 ):
-    job_url = os.getenv('BUILD_URL')
-
-    github_token = os.getenv('GITHUB_TOKEN')
-    if not github_token:
-        raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
-
-    gitlab_token = os.getenv("GITLAB_TOKEN")
-    if not gitlab_token:
-        raise ValueError("GITLAB_TOKEN environment variable is required to create a merge request")
-
+    # Check if assembly is valid
     if assembly == "stream":
         raise click.BadParameter("Release cannot be prepared from stream assembly.")
 
@@ -985,14 +1102,13 @@ async def prepare_release(
             runtime=runtime,
             group=group,
             assembly=assembly,
-            github_token=github_token,
-            gitlab_token=gitlab_token,
+            date=date,
             build_repo_url=build_repo_url,
             shipment_repo_url=shipment_repo_url,
-            job_url=job_url,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")
+
     except Exception as e:
         await slack_client.say_in_thread(f":warning: prepare-release-konflux for {assembly} has result FAILURE.")
         raise e
