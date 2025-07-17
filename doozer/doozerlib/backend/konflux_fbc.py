@@ -516,6 +516,7 @@ class KonfluxFbcRebaser:
 
         # The following label is used internally by ART's shipment pipeline
         name = self.get_fbc_name(metadata.distgit_key)
+        dfp.labels['com.redhat.art.name'] = name
         dfp.labels['com.redhat.art.nvr'] = f'{name}-{version}-{release}'
 
     def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
@@ -673,15 +674,20 @@ class KonfluxFbcBuilder:
         )
 
     @staticmethod
-    def get_application_name(group_name: str, image_name: str):
+    def get_application_name(group_name: str, _: str):
         # Note: for now, we use a different application for each image
         # In future, we might change it to one application per group for all images
-        return f"fbc-{group_name.replace('openshift-', 'ocp-')}-{image_name}".replace(".", "-").replace("_", "-")
+        return f"fbc-{group_name}".replace(".", "-").replace("_", "-")
 
     @staticmethod
     def get_component_name(group_name: str, image_name: str):
-        # Note: since application name is per image, we use the same name for the application and the component
-        return KonfluxFbcBuilder.get_application_name(group_name, image_name)
+        application_name = KonfluxFbcBuilder.get_application_name(group_name, image_name)
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
+        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
+        # 'fbc-openshift-4-18-ose-installer-terraform' -> 'fbc-ose-4-18-ose-installer-terraform'
+        name = name.replace('openshift-', 'ose-')
+        return name
 
     async def build(self, metadata: ImageMetadata):
         bundle_short_name = metadata.get_olm_bundle_short_name()
@@ -739,7 +745,9 @@ class KonfluxFbcBuilder:
             # Start FBC build
             logger.info("Starting FBC build...")
             retries = 3
-            name = KonfluxFbcRebaser.get_fbc_name(metadata.distgit_key)
+            name = dfp.labels.get('com.redhat.art.name')
+            if not name:
+                raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
             nvr = f"{name}-{version}-{release}"
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
@@ -809,7 +817,6 @@ class KonfluxFbcBuilder:
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         # Ensure the Application resource exists
-        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         app_name = self.get_application_name(self.group, metadata.distgit_key)
         logger.info(f"Using Konflux application: {app_name}")
         konflux_client = self._konflux_client
@@ -873,10 +880,12 @@ class KonfluxFbcBuilder:
             df_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
             dfp = DockerfileParser(str(df_path))
 
-            name = self.get_fbc_name(metadata.distgit_key)
+            name = dfp.labels.get('com.redhat.art.name')
             version = dfp.envs.get("__doozer_version")
             release = dfp.envs.get("__doozer_release")
-            assert version and release, "Version and release not found in the catalog.Dockerfile. Did you rebase?"
+            assert name and version and release, (
+                "Name, version, or release not found in the catalog.Dockerfile. Did you rebase?"
+            )
 
             bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs", "").split(",")
             source_repo = dfp.labels.get('io.openshift.build.source-location')

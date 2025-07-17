@@ -639,12 +639,10 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         result = await self.builder._start_build(
             metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
         )
-        kube_client.ensure_application.assert_awaited_once_with(
-            name="fbc-test-group-foo", display_name="fbc-test-group-foo"
-        )
+        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
         kube_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
-            application="fbc-test-group-foo",
+            application="fbc-test-group",
             component_name="fbc-test-group-foo",
             image_repo="test-image-pullspec",
             source_url=build_repo.https_url,
@@ -653,7 +651,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
             generate_name='fbc-test-group-foo-',
             namespace='test-namespace',
-            application_name='fbc-test-group-foo',
+            application_name='fbc-test-group',
             component_name='fbc-test-group-foo',
             git_url='https://example.com/foo.git',
             commit_sha="deadbeef",
@@ -700,7 +698,9 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "__doozer_release": "1",
             "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
         }
-        mock_dfp.labels = {}
+        mock_dfp.labels = {
+            'com.redhat.art.name': 'test-distgit-key-fbc',
+        }
 
         await self.builder.build(metadata)
         MockBuildRepo.assert_called_once_with(
@@ -773,7 +773,9 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "__doozer_release": "1",
             "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
         }
-        mock_dfp.labels = {}
+        mock_dfp.labels = {
+            'com.redhat.art.name': 'test-distgit-key-fbc',
+        }
 
         await self.builder.build(metadata)
         MockBuildRepo.assert_not_called()
