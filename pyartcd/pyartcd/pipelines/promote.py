@@ -1861,7 +1861,6 @@ class PromotePipeline:
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int]):
         """
-        Check release jira subtask for task status
         Send a notification email to QEs if it hasn't been done yet
         Update QE release repo with release info if hasn't been done yet
         """
@@ -1870,18 +1869,11 @@ class PromotePipeline:
             return
 
         parent_jira = self._jira_client.get_issue(release_jira)
-
         self._logger.info("Sending a notification to QE and multi-arch QE...")
         jira_issue_link = parent_jira.permalink()
-        self._send_release_email(release_name, impetus_advisories, jira_issue_link)
+        self._send_release_email(release_name, impetus_advisories)
         self._logger.info("Update QE's release tests repo...")
         self._update_qe_repo(release_name, release_jira, impetus_advisories)
-        if not self.runtime.dry_run:
-            self._jira_client.assign_to_me(subtask)
-            self._jira_client.close_task(subtask)
-            self._logger.info("Closed subtask %s", subtask.key)
-        else:
-            self._logger.info("Would've closed subtask %s", subtask.key)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
