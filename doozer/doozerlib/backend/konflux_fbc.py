@@ -545,14 +545,14 @@ class KonfluxFbcRebaser:
         ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
-        mirrored_repos = {
+        dest_repos = {
             p_split[1]: p_split[0]
             for bundle_blob in olm_bundle_blobs
             for related_image in bundle_blob.get("relatedImages", [])
             if (p_split := related_image["image"].split('@', 1))
         }
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
-        if not mirrored_repos:
+        if not dest_repos:
             return None
         image_digest_mirror_set = {
             "apiVersion": "config.openshift.io/v1",
@@ -564,12 +564,12 @@ class KonfluxFbcRebaser:
             "spec": {
                 "imageDigestMirrors": [
                     {
-                        "source": dest,
+                        "source": dest_repos[sha],
                         "mirrors": [
-                            mirrored_repos[sha],
+                            source_repo,
                         ],
                     }
-                    for sha, dest in source_repos.items()
+                    for sha, source_repo in source_repos.items()
                 ],
             },
         }
