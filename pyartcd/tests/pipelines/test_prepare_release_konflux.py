@@ -651,3 +651,15 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
         self.assertEqual(mock_update_shipment_mr.call_args[0][1], "prod")
+
+        self.assertEqual(
+            pipeline.prepared_shipment_config,
+            {
+                'env': 'prod',
+                'advisories': [
+                    {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                    {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                ],
+                'url': 'https://gitlab.example.com/mr/1',
+            },
+        )
