@@ -1869,17 +1869,7 @@ class PromotePipeline:
         if not release_jira:
             return
 
-        self._logger.info("Checking notify QE release subtask in release_jira: %s", release_jira)
         parent_jira = self._jira_client.get_issue(release_jira)
-        title = "Notify QE of release advisories"
-        subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
-        if not subtask:
-            raise ValueError("Notify QE release subtask not found in release_jira: %s", release_jira)
-
-        self._logger.info("Found subtask in release_jira: %s with status %s", subtask.key, subtask.fields.status.name)
-
-        if subtask.fields.status.name == "Closed":
-            return
 
         self._logger.info("Sending a notification to QE and multi-arch QE...")
         jira_issue_link = parent_jira.permalink()
