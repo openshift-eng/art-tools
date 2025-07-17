@@ -1146,7 +1146,7 @@ class PrepareReleaseKonfluxPipeline:
 
         return new_issue
 
-    def update_release_jira(self, issue: Issue, template_vars: Dict[str, int]):
+    def update_release_jira(self, issue: Issue, template_vars: Dict[str, int]) -> bool:
         self.logger.info("Updating release JIRA %s from template %s...", issue.key, self.template_issue.key)
         old_fields = {
             "summary": issue.fields.summary,
