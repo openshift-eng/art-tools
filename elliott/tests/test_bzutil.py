@@ -120,6 +120,96 @@ class TestJIRABugTracker(unittest.TestCase):
         expected = {'foo': 1, 'bar': 2}
         self.assertEqual(actual, expected)
 
+    def test_security_filtering_in_query(self):
+        """Test that security filtering is included in JQL query when enabled"""
+        # Create a minimal tracker for testing
+        config = {'project': 'OCPBUGS', 'server': 'https://issues.redhat.com'}
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        tracker = JIRABugTracker(config)
+
+        # Test with security filtering enabled
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = True
+        query = tracker._query(status=["NEW"], search_filter="default")
+        self.assertIn(' and ("level" in', query)
+        self.assertIn(' or "level" is EMPTY)', query)
+
+        # Test with security filtering disabled
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = False
+        query = tracker._query(status=["NEW"], search_filter="default")
+        self.assertNotIn(' and ("level" in', query)
+        self.assertNotIn(' or "level" is EMPTY)', query)
+
+    def test_search_with_security_filtering(self):
+        """Test that search results respect security filtering"""
+        # Mock configuration
+        config = {'project': 'OCPBUGS', 'server': 'https://issues.redhat.com', 'token_auth': 'mock_token'}
+
+        # Create mock issues with different security levels
+        mock_security_allowed = flexmock(name="Red Hat Employee")
+        mock_security_disallowed = flexmock(name="Special Public")
+
+        mock_issue_allowed = flexmock(
+            key='OCPBUGS-11111',
+            fields=flexmock(
+                summary='Allowed security bug',
+                status=flexmock(name='NEW'),
+                components=[flexmock(name='Test Component')],
+                labels=['Security', 'SecurityTracking'],
+                security=mock_security_allowed,
+                project=flexmock(key='OCPBUGS'),
+            ),
+            permalink=lambda: 'https://issues.redhat.com/browse/OCPBUGS-11111',
+        )
+
+        mock_issue_disallowed = flexmock(
+            key='OCPBUGS-22222',
+            fields=flexmock(
+                summary='Disallowed security bug',
+                status=flexmock(name='NEW'),
+                components=[flexmock(name='Test Component')],
+                labels=['Security', 'SecurityTracking'],
+                security=mock_security_disallowed,
+                project=flexmock(key='OCPBUGS'),
+            ),
+            permalink=lambda: 'https://issues.redhat.com/browse/OCPBUGS-22222',
+        )
+
+        # Mock JIRA client search - should only return allowed bugs when filtering is enabled
+        mock_jira_client = flexmock()
+
+        # When security filtering is enabled, only return the allowed bug
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = True
+        mock_jira_client.should_receive("search_issues").and_return([mock_issue_allowed])
+
+        # Mock the login method
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        # Create tracker and perform search
+        tracker = JIRABugTracker(config)
+        bugs = tracker.search(['NEW'], 'default')
+
+        # Verify we only got the allowed bug
+        self.assertEqual(len(bugs), 1)
+        self.assertEqual(bugs[0].id, 'OCPBUGS-11111')
+        self.assertEqual(bugs[0].security_level.name, 'Red Hat Employee')
+        self.assertIn(bugs[0].security_level.name, constants.JIRA_SECURITY_ALLOWLIST)
+
+        # Test with security filtering disabled - should return both bugs
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = False
+        mock_jira_client.should_receive("search_issues").and_return([mock_issue_allowed, mock_issue_disallowed])
+
+        bugs = tracker.search(['NEW'], 'default')
+
+        # Verify we got both bugs when filtering is disabled
+        self.assertEqual(len(bugs), 2)
+        bug_ids = [bug.id for bug in bugs]
+        self.assertIn('OCPBUGS-11111', bug_ids)
+        self.assertIn('OCPBUGS-22222', bug_ids)
+
 
 class TestBugzillaBugTracker(unittest.TestCase):
     def test_get_config(self):

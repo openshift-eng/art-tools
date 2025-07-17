@@ -702,6 +702,12 @@ class BugTracker:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
+    # Enable security level filtering in JIRA queries
+    # If set to True, the JIRA queries will filter out bugs that have "Security" field value and does not match
+    # the security level defined in the config.
+    # If set to False, the JIRA queries will not filter by security level.
+    ENABLE_SECURITY_LEVEL_FILTERING = True
+
     # There are several @property function defined, which requires the values to be available at compile time
     # We later override them at runtime, so that if the field name changes, we'll still get the updated one
     field_target_version = 'customfield_12319940'  # "Target Version"
@@ -711,6 +717,7 @@ class JIRABugTracker(BugTracker):
     field_cve_id = 'customfield_12324749'  # "CVE ID"
     field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
     field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
+    field_security_levels = 'level'  # "Security Levels"
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -865,6 +872,11 @@ class JIRABugTracker(BugTracker):
             # https://docs.adaptavist.com/sr4js/6.55.1/features/jql-functions/included-jql-functions/calculations
             val = ','.join(f'componentMatch("{c}*")' for c in exclude_components)
             query += f" and component not in ({val})"
+        # if security filtering is enabled, add the security level filter is empty or in the allowlist
+        # this is to ensure that we return bugs with security levels that are allowed.
+        if self.ENABLE_SECURITY_LEVEL_FILTERING and constants.JIRA_SECURITY_ALLOWLIST:
+            val = ','.join(f'"{level}"' for level in constants.JIRA_SECURITY_ALLOWLIST)
+            query += f' and ("{self.field_security_levels}" in ({val}) or "{self.field_security_levels}" is EMPTY)'
         if custom_query:
             query += custom_query
         return query
