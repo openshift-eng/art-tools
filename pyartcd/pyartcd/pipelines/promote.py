@@ -1874,7 +1874,7 @@ class PromotePipeline:
         self._send_release_email(release_name, impetus_advisories, jira_issue_link)
         self._logger.info("Update QE's release tests repo...")
         self._update_qe_repo(release_name, release_jira, impetus_advisories)
- 
+
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
