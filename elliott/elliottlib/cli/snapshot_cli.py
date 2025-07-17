@@ -113,7 +113,7 @@ class CreateSnapshotCli:
         self.konflux_client.verify_connection()
 
     async def run(self):
-        self.runtime.initialize(build_system='konflux')
+        self.runtime.initialize(build_system='konflux', mode='images')
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
@@ -168,7 +168,7 @@ class CreateSnapshotCli:
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 
-        async def _comp(record: KonfluxRecord):
+        async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster
             app_name = record.get_konflux_application_name()
             await self.konflux_client.get_application__caching(app_name, strict=True)
@@ -205,21 +205,29 @@ class CreateSnapshotCli:
             if not (source_url or revision or digest):
                 raise ValueError(f"Could not find all required nvr details {source_url=} {revision=} {digest=}")
 
-            return {
-                "name": comp_name,
-                "source": {
-                    "git": {
-                        "url": source_url,
-                        "revision": revision,
+            image_metadata = self.runtime.image_map[record.name]
+            delivery_repos = image_metadata.config.delivery.delivery_repo_names or []
+            component_names = [comp_name] + [f"{comp_name}-alt-{i - 1}" for i in range(1, len(delivery_repos))]
+            components = [
+                {
+                    "name": comp_name,
+                    "source": {
+                        "git": {
+                            "url": source_url,
+                            "revision": revision,
+                        },
                     },
-                },
-                "containerImage": record.image_pullspec,
-            }, app_name
+                    "containerImage": record.image_pullspec,
+                }
+                for comp_name in component_names
+            ]
+
+            return components, app_name
 
         # Collect components and their applications
         app_components: dict[str, list] = defaultdict(list)
-        for component, app in await asyncio.gather(*(_comp(record) for record in build_records)):
-            app_components[app].append(component)
+        for components, app in await asyncio.gather(*(_comp(record) for record in build_records)):
+            app_components[app].extend(components)
 
         # Sort components by application name and then by component name
         # This is to ensure that the snapshot objects are created in a consistent order
