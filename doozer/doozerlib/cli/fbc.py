@@ -313,7 +313,7 @@ class FbcRebaseCli:
     @staticmethod
     async def get_bundle_builds(
         db_for_bundles: KonfluxDb, group: str, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True
-    ) -> List[Optional[KonfluxBundleBuildRecord]]:
+    ) -> Optional[Dict[str, KonfluxBundleBuildRecord]]:
         """Get bundle build records for the given operator builds.
 
         :param db_for_bundles: Database instance for bundle queries
@@ -322,6 +322,8 @@ class FbcRebaseCli:
         :param strict: Whether to fail if bundle build is not found
         :return: A list of bundle build records.
         """
+        dgk_operator_builds = [operator_build.name for operator_build in operator_builds]
+
         LOGGER.info("Fetching bundle builds from Konflux DB...")
         builds = await asyncio.gather(
             *(
@@ -329,7 +331,10 @@ class FbcRebaseCli:
                 for operator_build in operator_builds
             )
         )
-        return builds
+        dgk_bundle_builds = {}
+        for dgk, bundle_build in zip(dgk_operator_builds, builds):
+            dgk_bundle_builds[dgk] = bundle_build
+        return dgk_bundle_builds
 
     @staticmethod
     async def get_bundle_build_for(
@@ -503,7 +508,7 @@ class FbcRebaseAndBuildCli:
 
     async def run(self):
         """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
-        LOGGER.info("Starting FBC rebase and build process...")
+        self._logger.info("Starting FBC rebase and build process...")
 
         runtime = self.runtime
         runtime.initialize(config_only=True)
@@ -516,20 +521,17 @@ class FbcRebaseAndBuildCli:
 
         # Get operator builds and corresponding bundle builds
         dgk_operator_builds = await FbcRebaseCli.get_operator_builds(runtime, self.operator_nvrs)
-        bundle_builds = await FbcRebaseCli.get_bundle_builds(
+        dgk_bundle_builds = await FbcRebaseCli.get_bundle_builds(
             self._db_for_bundles, runtime.group, list(dgk_operator_builds.values()), strict=False
         )
-        not_found = [
-            dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None
-        ]
+        not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
         if not_found:
             raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
-        bundle_builds = cast(List[KonfluxBundleBuildRecord], bundle_builds)
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
 
-        LOGGER.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
+        self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
 
         # Set up rebase and build components once
         rebaser = KonfluxFbcRebaser(
@@ -561,37 +563,31 @@ class FbcRebaseAndBuildCli:
             record_logger=runtime.record_logger,
         )
 
+        async def _rebase_and_build(operator_meta: ImageMetadata, bundle_build: KonfluxBundleBuildRecord):
+            self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
+            await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+            self._logger.info(f"Building fbc for {operator_meta.name}...")
+            await builder.build(operator_meta)
+
+        tasks = [
+            _rebase_and_build(self.runtime.image_map[dgk], bundle_build)
+            for dgk, bundle_build in dgk_bundle_builds.items()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Check for failures
         failed_operators = []
-
-        # Process each operator individually: rebase then build
-        for i, (dgk, (operator_build, bundle_build)) in enumerate(
-            zip(dgk_operator_builds.keys(), zip(dgk_operator_builds.values(), bundle_builds)), 1
-        ):
-            operator_meta = runtime.image_map[dgk]
-            LOGGER.info(f"Processing operator {i}/{len(dgk_operator_builds)}: {dgk}")
-
-            try:
-                # Step 1: Rebase this specific operator
-                LOGGER.info(f"Step 1: Rebasing {dgk}...")
-                await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
-                LOGGER.info(f"Rebase completed for {dgk}")
-
-                # Step 2: Build this specific operator
-                LOGGER.info(f"Step 2: Building {dgk}...")
-                await builder.build(operator_meta)
-                LOGGER.info(f"Build completed for {dgk}")
-
-            except Exception as e:
-                failed_operators.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(e).format())
-                LOGGER.error(f"Failed to process {dgk}: {e}; {stack_trace}")
-                # Continue with the next operator rather than failing entirely
-                continue
+        for result in results:
+            if isinstance(result, Exception):
+                failed_operators.append("unknown")
+            elif result is not None:
+                # result is the dgk of a failed operator
+                failed_operators.append(result)
 
         if failed_operators:
             raise DoozerFatalError(f"Failed to process operators: {', '.join(failed_operators)}")
 
-        LOGGER.info("FBC rebase and build process completed successfully for all operators")
+        self._logger.info("FBC rebase and build process completed successfully for all operators")
 
 
 @cli.command("beta:fbc:build", short_help="Build the FBC source content")
