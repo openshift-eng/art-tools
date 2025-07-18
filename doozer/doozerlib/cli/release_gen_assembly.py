@@ -15,6 +15,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import get_assembly_release_date, get_in_flight
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -124,6 +125,12 @@ def releases_gen_assembly(ctx, name):
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
+@click.option(
+    '--date',
+    'release_date',
+    type=click.DateTime(formats=['%Y-%b-%d']),
+    help='The shipping date of the assembly release (YYYY-Mon-DD)',
+)
 @pass_runtime
 @click_coroutine
 @click.pass_context
@@ -143,6 +150,7 @@ async def gen_assembly_from_releases(
     suggestions_url: Optional[str],
     output_file: Optional[str],
     gen_microshift: bool,
+    release_date: Optional[datetime],
 ):
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
@@ -167,6 +175,7 @@ async def gen_assembly_from_releases(
         graph_content_candidate=graph_content_candidate,
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
+        release_date=release_date,
     ).run()
 
     # ruamel.yaml configuration
@@ -205,6 +214,7 @@ class GenAssemblyCli:
         graph_content_candidate: Optional[str] = None,
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
+        release_date: Optional[datetime] = None,
     ):
         self.runtime = runtime
         # The name of the assembly we are going to output
@@ -223,6 +233,8 @@ class GenAssemblyCli:
         self.logger = self.runtime.logger
         self.release_pullspecs: Dict[str, str] = dict()
         self.gen_microshift = gen_microshift
+        self.release_date = release_date
+
         # Maps brew arch name to nightly name
         self.reference_releases_by_arch: Dict[str, str] = dict()
         # Maps RHCOS container name(s) to brew arch name to pullspec(s) from nightly
@@ -271,6 +283,7 @@ class GenAssemblyCli:
 
     async def run(self):
         self._validate_params()
+        self._set_release_date_and_in_flight()
         self._get_release_pullspecs()
         await self._select_images()
         self._get_rhcos_container()
@@ -310,6 +323,27 @@ class GenAssemblyCli:
                 self._exit_with_error(
                     f"Invalid assembly name: {self.gen_assembly_name}. Has to include release field. Eg: 4.18.0-0"
                 )
+
+    def _set_release_date_and_in_flight(self):
+        if self.custom:
+            return
+
+        if not self.release_date:
+            self.logger.info("Release date not provided. Fetching from release schedule...")
+            self.release_date = get_assembly_release_date(
+                self.gen_assembly_name, self.assembly_type, self.runtime.group
+            )
+        self.logger.info("Using release date: %s", self.release_date)
+
+        determined_in_flight = get_in_flight(self.runtime.group, self.release_date)
+        if self.in_flight:
+            if self.in_flight != determined_in_flight:
+                self.logger.warning(
+                    f"In-flight release {self.in_flight} does not match determined in-flight release {determined_in_flight}"
+                )
+        else:
+            self.in_flight = determined_in_flight
+        self.logger.info("Using in-flight release: %s", self.in_flight)
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
@@ -857,6 +891,7 @@ class GenAssemblyCli:
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
+            group_info['release_date'] = self.release_date.strftime('%Y-%b-%d')
             if self.pre_ga_mode == 'prerelease':
                 group_info['operator_index_mode'] = 'pre-release'
 
