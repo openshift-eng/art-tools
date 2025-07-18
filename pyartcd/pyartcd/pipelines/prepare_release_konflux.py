@@ -31,6 +31,7 @@ from doozerlib.cli.release_gen_payload import (
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
+from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
 from elliottlib.shipment_utils import get_shipment_configs_from_mr
@@ -95,6 +96,7 @@ class PrepareReleaseKonfluxPipeline:
         self.release_version = None
         self.group_config = None
         self._issues_by_kind = None
+        self.rpm_advisory_num = None
         self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
@@ -195,6 +197,7 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
         await self.check_blockers()
+        await self.prepare_rpm_advisory()
         await self.prepare_shipment()
         await self.verify_payload()
         await self.handle_jira_ticket()
@@ -279,6 +282,111 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.warning(
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
+
+    async def prepare_rpm_advisory(self):
+        """
+        Prepare and manage the RPM advisory for the current assembly.
+
+        This function performs the following steps:
+        1. Checks if an RPM advisory exists for the assembly; if not, creates one and updates the build data.
+        2. Sweeps RPM builds into the advisory.
+        3. Sweeps bugs into the advisory.
+        4. Attaches CVE flaw bugs to the advisory.
+        5. Attempts to change the advisory state to QE.
+        6. Attempts to trigger a push of the advisory to the CDN stage.
+
+        Raises:
+            ValueError: If the release date is missing from the assembly config.
+        """
+        rpm_num = self.assembly_group_config.get("advisories", {}).get("rpm", 0)
+        if rpm_num < 0:
+            # create rpm advisory
+            if not self.release_date:
+                self.logger.warning("Can't find release date in assembly config, skip prepare rpm advisory.")
+                return
+            else:
+                self.logger.warning(f"Get release date from assembly {self.release_date}")
+            advisory_type = (
+                "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
+            )
+            rpm_num = await self.create_advisory(advisory_type, "rpm", self.release_date)
+            await self._slack_client.say_in_thread(
+                f"RPM advisory {rpm_num} created with release date {self.release_date}"
+            )
+            self.rpm_advisory_num = rpm_num
+        elif rpm_num == 0:
+            self.logger.info("Can't find rpm entry in assembly config, skip prepare rpm advisory.")
+            return
+        base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
+        # sweep builds
+        self.logger.info("Sweep builds into the the rpm advisory ...")
+        operate_cmd = ["find-builds", "--kind=rpm", f"--attach={rpm_num}", "--clean"]
+        await self.run_cmd_with_retry(base_command, operate_cmd)
+
+        self.logger.info("Find bugs for rpm advisory ...")
+        bug_ids = []
+        operate_cmd = base_command + ["find-bugs", "--permissive", "--output=json"]
+        stdout = await self.execute_command_with_logging(operate_cmd)
+        if stdout:
+            bug_ids = json.loads(stdout).get("rpm", [])
+        # sweep bugs
+        self.logger.info("Attach bugs for advisory ...")
+        if bug_ids:
+            self.logger.info(f"Find {len(bug_ids)} rpm bugs: {bug_ids}")
+            operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={rpm_num}"]
+            await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+            # attach cve flaws
+            self.logger.info("Processing attached Security Trackers ...")
+            operate_cmd = ["attach-cve-flaws", f"--advisory={rpm_num}"]
+            await self.run_cmd_with_retry(base_command, operate_cmd)
+        else:
+            self.logger.info("No rpm bugs found for rpm advisory.")
+        # change status to qe
+        try:
+            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(rpm_num)]
+            await self.run_cmd_with_retry(base_command, operate_cmd)
+        except Exception as ex:
+            self.logger.warning(f"Unable to move rpm advisory {rpm_num} to QE: {ex}")
+            await self._slack_client.say_in_thread(f"Unable to move rpm advisory {rpm_num} to QE. Details in log.")
+            return
+        try:
+            push_cdn_stage(rpm_num)
+        except Exception as ex:
+            self.logger.warning(f"Unable to trigger push rpm advisory {rpm_num} to CDN stage: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Unable to trigger push rpm advisory {rpm_num} to CDN stage. Details in log."
+            )
+
+    async def create_advisory(
+        self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0
+    ) -> int:
+        self.logger.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
+        create_cmd = self._elliott_base_command + [
+            "create",
+            f"--type={advisory_type}",
+            f"--art-advisory-key={art_advisory_key}",
+            f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
+            f"--manager={self.runtime.config['advisory']['manager']}",
+            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
+        ]
+        if batch_id:
+            create_cmd.append(f"--batch-id={batch_id}")
+        else:
+            create_cmd.append(f"--date={release_date}")
+        if not self.dry_run:
+            create_cmd.append("--yes")
+        stdout = await self.execute_command_with_logging(create_cmd)
+        match = re.search(
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)",
+            stdout,
+        )
+        advisory_num = int(match[1])
+        self.logger.info("Created %s advisory %s", art_advisory_key, advisory_num)
+        return advisory_num
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    async def run_cmd_with_retry(self, base_cmd: list[str], cmd: list[str]):
+        await self.execute_command_with_logging(base_cmd + cmd)
 
     async def prepare_shipment(self):
         """Prepare the shipment for the assembly.
@@ -891,6 +999,8 @@ class PrepareReleaseKonfluxPipeline:
         # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
         shipment_key = next(k for k in group_config.keys() if k.startswith("shipment"))
         group_config[shipment_key] = shipment_config
+        if self.rpm_advisory_num:
+            group_config["advisories"]["rpm"] = self.rpm_advisory_num
 
         if await self.build_data_repo.does_branch_exist_on_remote(branch, remote="origin"):
             await self.build_data_repo.fetch_switch_branch(branch, remote="origin")

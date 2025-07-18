@@ -1,7 +1,7 @@
 import copy
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
@@ -343,6 +343,51 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             "Shipment config should not specify advisories that are already defined in assembly.group.advisories",
             str(context.exception),
         )
+
+    @patch.object(
+        PrepareReleaseKonfluxPipeline,
+        "assembly_group_config",
+        new_callable=PropertyMock,
+    )
+    async def test_prepare_rpm_advisory_creates_and_processes_advisory(self, mock_assembly_group_config):
+        mock_assembly_group_config.return_value = {"advisories": {"rpm": -1}}
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.release_date = "2024-07-01"
+        pipeline.assembly_type = "STANDARD"
+        pipeline.assembly = "4.18.0"
+        pipeline.logger = Mock()
+        pipeline._slack_client = AsyncMock()
+        pipeline.create_advisory = AsyncMock(return_value=12345)
+        pipeline.run_cmd_with_retry = AsyncMock()
+        pipeline.execute_command_with_logging = AsyncMock(return_value='{"rpm": ["BUG-1", "BUG-2"]}')
+        pipeline._elliott_base_command = [
+            "elliott",
+            "--group=openshift-4.18",
+            "--assembly=4.18.0",
+            "--build-system=konflux",
+        ]
+
+        # Run the function
+        with patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage:
+            await pipeline.prepare_rpm_advisory()
+
+        # Assertions
+        pipeline.create_advisory.assert_awaited_once()
+        pipeline._slack_client.say_in_thread.assert_any_await("RPM advisory 12345 created with release date 2024-07-01")
+        pipeline.run_cmd_with_retry.assert_any_await(
+            [item for item in pipeline._elliott_base_command if item != '--build-system=konflux'],
+            ["find-builds", "--kind=rpm", "--attach=12345", "--clean"],
+        )
+        pipeline.execute_command_with_logging.assert_awaited()
+        pipeline.run_cmd_with_retry.assert_any_await(
+            pipeline._elliott_base_command, ["attach-bugs", "BUG-1", "BUG-2", "--advisory=12345"]
+        )
+        mock_push_cdn_stage.assert_called_with(12345)
 
     async def test_validate_shipment_config_invalid_env(self):
         pipeline = PrepareReleaseKonfluxPipeline(
