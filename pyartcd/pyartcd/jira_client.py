@@ -134,7 +134,9 @@ class JIRAClient:
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         try:
-            fields["description"] = jinja2.Template(fields["description"], autoescape=True).render(template_vars)
+            fields["description"] = (
+                jinja2.Template(fields["description"], autoescape=True).render(template_vars).strip()
+            )
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         return fields

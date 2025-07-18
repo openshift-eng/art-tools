@@ -422,7 +422,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
@@ -437,7 +436,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_builds_all,
         mock_find_bugs,
         mock_create_shipment_mr,
-        mock_create_build_data_pr,
         mock_update_shipment_mr,
         mock_errata_api,
         *_,
@@ -632,19 +630,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_shipments_arg["extras"], mock_shipment_extras_create)
         self.assertEqual(mock_create_shipment_mr.call_args[0][1], "prod")
 
-        # assert that build-data PR was created with the right config
-        mock_create_build_data_pr.assert_awaited_once()
-        self.assertEqual(
-            mock_create_build_data_pr.call_args[0][0],
-            {
-                "env": "prod",
-                "advisories": [
-                    {"kind": "image", "live_id": mock_live_id},
-                    {"kind": "extras", "live_id": mock_live_id},
-                ],
-                "url": "https://gitlab.example.com/mr/1",
-            },
-        )
         mock_errata_api_instance.close.assert_called_once()
 
         # assert bug finding was done and MR updated with the right shipment configs
@@ -666,3 +651,15 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
         self.assertEqual(mock_update_shipment_mr.call_args[0][1], "prod")
+
+        self.assertEqual(
+            pipeline.prepared_shipment_config,
+            {
+                'env': 'prod',
+                'advisories': [
+                    {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                    {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                ],
+                'url': 'https://gitlab.example.com/mr/1',
+            },
+        )
