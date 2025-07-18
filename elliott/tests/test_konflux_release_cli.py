@@ -206,7 +206,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 snapshot=Snapshot(
                     nvrs=["test-nvr-1", "test-nvr-2"],
                     spec=SnapshotSpec(
-                        application="test-app",
+                        application="openshift-4-18",
                         components=[
                             SnapshotComponent(
                                 name="test-rpm",
@@ -458,7 +458,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 snapshot=Snapshot(
                     nvrs=["test-nvr-1", "test-nvr-2"],
                     spec=SnapshotSpec(
-                        application="test-app",
+                        application="openshift-4-18",
                         components=[
                             SnapshotComponent(
                                 name="test-component",
