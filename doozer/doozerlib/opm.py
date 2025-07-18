@@ -101,7 +101,7 @@ async def verify_opm():
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
 async def render(
-    *input: str, output_format: str = "yaml", migrate: bool = False, auth: Optional[OpmRegistryAuth] = None
+    *input: str, output_format: str = "yaml", migrate_level: str = "none", auth: Optional[OpmRegistryAuth] = None
 ) -> List[dict]:
     """
         Run `opm render` on the given input and return the parsed file-based catalog blobs.
@@ -109,7 +109,7 @@ async def render(
         :param input: The catalog images, file-based catalog directories, bundle images, and sqlite
     database files to render.
         :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
-        :param migrate: Whether to Perform all available schema migrations on the rendered FBC.
+        :param migrate_level: The migration level to use when rendering the catalog. One of "none" or "bundle-object-to-csv-metadata".
         :param auth: The registry authentication information to use.
         :return: The parsed file-based catalog blobs.
     """
@@ -117,11 +117,10 @@ async def render(
         raise ValueError("input must not be empty.")
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
-    args = []
-    if migrate:
-        args.append("--migrate")
     LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
-    _, out, _ = await gather_opm(["render"] + args + ["-o", output_format, "--", *input], auth=auth)
+    _, out, _ = await gather_opm(
+        ["render", "--migrate-level", migrate_level, "-o", output_format, "--", *input], auth=auth
+    )
     blobs = yaml.load_all(StringIO(out))
     return list(blobs)
 
