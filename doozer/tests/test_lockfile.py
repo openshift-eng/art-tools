@@ -339,7 +339,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
 
         self.generator.builder.fetch_rpms_info = MagicMock()
@@ -366,7 +366,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -391,7 +391,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -431,7 +431,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = True
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -506,7 +506,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -545,7 +545,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -621,7 +621,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -674,7 +674,7 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.distgit_key = distgit_key
         mock_image_meta.is_lockfile_generation_enabled.return_value = enabled
         mock_image_meta.get_enabled_repos.return_value = {'repo1', 'repo2'} if has_repos else set()
-        mock_image_meta.fetch_rpms_from_build = AsyncMock(return_value={'pkg1', 'pkg2'} if has_rpms else set())
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value={'pkg1', 'pkg2'} if has_rpms else set())
         mock_image_meta.is_lockfile_force_enabled.return_value = force
         mock_image_meta.get_arches.return_value = arches or ['x86_64', 'aarch64']
         return mock_image_meta

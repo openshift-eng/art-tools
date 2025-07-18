@@ -316,7 +316,8 @@ class RPMLockfileGenerator:
             self.logger.info(f"Skipping lockfile generation for {image_meta.distgit_key}: repositories set is empty")
             return False, set()
 
-        rpms_to_install = await image_meta.fetch_rpms_from_build()
+        rpms_to_install = await image_meta.get_lockfile_rpms_to_install()
+
         if not rpms_to_install:
             self.logger.warning(
                 f'Empty RPM list to install for {image_meta.distgit_key}; all required RPMs may be inherited? Skipping lockfile generation.'
