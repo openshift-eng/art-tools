@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, cast
@@ -425,6 +426,74 @@ class FbcBuildCli:
         LOGGER.info("FBC build complete")
 
 
+class FbcRebaseAndBuildCli:
+    def __init__(
+        self,
+        runtime: Runtime,
+        version: str,
+        release: str,
+        commit_message: str,
+        fbc_repo: str,
+        operator_nvrs: Tuple[str, ...],
+        konflux_kubeconfig: Optional[str],
+        konflux_context: Optional[str],
+        konflux_namespace: str,
+        image_repo: str,
+        skip_checks: bool,
+        plr_template: str,
+        dry_run: bool,
+    ):
+        self.runtime = runtime
+        self.version = version
+        self.release = release
+        self.commit_message = commit_message
+        self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
+        self.operator_nvrs = operator_nvrs
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_context = konflux_context
+        self.konflux_namespace = konflux_namespace
+        self.image_repo = image_repo
+        self.skip_checks = skip_checks
+        self.plr_template = plr_template
+        self.dry_run = dry_run
+
+    async def run(self):
+        """Run both rebase and build operations sequentially"""
+        LOGGER.info("Starting FBC rebase and build process...")
+
+        # First, run the rebase operation
+        LOGGER.info("Step 1: Running FBC rebase...")
+        rebase_cli = FbcRebaseCli(
+            runtime=self.runtime,
+            version=self.version,
+            release=self.release,
+            commit_message=self.commit_message,
+            push=not self.dry_run,
+            fbc_repo=self.fbc_repo,
+            operator_nvrs=self.operator_nvrs,
+        )
+        await rebase_cli.run()
+        LOGGER.info("FBC rebase completed successfully")
+
+        # Then, run the build operation
+        LOGGER.info("Step 2: Running FBC build...")
+        build_cli = FbcBuildCli(
+            runtime=self.runtime,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_context=self.konflux_context,
+            konflux_namespace=self.konflux_namespace,
+            image_repo=self.image_repo,
+            skip_checks=self.skip_checks,
+            fbc_repo=self.fbc_repo,
+            plr_template=self.plr_template,
+            dry_run=self.dry_run,
+        )
+        await build_cli.run()
+        LOGGER.info("FBC build completed successfully")
+
+        LOGGER.info("FBC rebase and build process completed successfully")
+
+
 @cli.command("beta:fbc:build", short_help="Build the FBC source content")
 @click.option(
     '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
@@ -465,6 +534,12 @@ async def fbc_build(
     dry_run: bool,
     plr_template: str,
 ):
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    if not konflux_kubeconfig:
+        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+
     cli = FbcBuildCli(
         runtime=runtime,
         konflux_kubeconfig=konflux_kubeconfig,
@@ -473,6 +548,91 @@ async def fbc_build(
         image_repo=image_repo,
         skip_checks=skip_checks,
         fbc_repo=fbc_repo,
+        plr_template=plr_template,
+        dry_run=dry_run,
+    )
+    await cli.run()
+
+
+@cli.command("beta:fbc:rebase-and-build", short_help="Rebase FBC source content and then build it")
+@click.option(
+    "--version",
+    metavar='VERSION',
+    required=True,
+    callback=validate_semver_major_minor_patch,
+    help="Version string to populate in Dockerfiles.",
+)
+@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@option_commit_message
+@click.option(
+    "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
+)
+@click.option(
+    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+)
+@click.option(
+    '--konflux-context',
+    metavar='CONTEXT',
+    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+)
+@click.option(
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
+)
+@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
+@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option(
+    '--plr-template',
+    required=False,
+    default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+)
+@click.argument('operator_nvrs', nargs=-1, required=False)
+@pass_runtime
+@click_coroutine
+async def fbc_rebase_and_build(
+    runtime: Runtime,
+    version: str,
+    release: str,
+    message: str,
+    fbc_repo: str,
+    konflux_kubeconfig: Optional[str],
+    konflux_context: Optional[str],
+    konflux_namespace: str,
+    image_repo: str,
+    skip_checks: bool,
+    dry_run: bool,
+    plr_template: str,
+    operator_nvrs: Tuple[str, ...],
+):
+    """
+    Rebase FBC source content and then build it
+
+    This command combines both the rebase and build operations into a single workflow.
+    It will first refresh the group's FBC source content with OLM bundles of the runtime
+    assembly, then proceed to build the FBC source content.
+    """
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    if not konflux_kubeconfig:
+        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+
+    cli = FbcRebaseAndBuildCli(
+        runtime=runtime,
+        version=version,
+        release=release,
+        commit_message=message,
+        fbc_repo=fbc_repo,
+        operator_nvrs=operator_nvrs,
+        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_context=konflux_context,
+        konflux_namespace=konflux_namespace,
+        image_repo=image_repo,
+        skip_checks=skip_checks,
         plr_template=plr_template,
         dry_run=dry_run,
     )
