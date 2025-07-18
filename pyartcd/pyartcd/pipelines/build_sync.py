@@ -89,10 +89,14 @@ class BuildSyncPipeline:
             else f'{self.version}-konflux-art-latest'
         )
 
+    @start_as_current_span_async(TRACER, "build-sync.comment-on-assembly-pr")
     async def comment_on_assembly_pr(self, text_body):
         """
         Comment the link to this jenkins build on the assembly PR if it was triggered automatically
         """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
 
         # Skipping for konflux at the moment
         # TODO to be removed once Konflux is the primary build system
@@ -148,12 +152,19 @@ class BuildSyncPipeline:
         except Exception as e:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
+    @start_as_current_span_async(TRACER, "build-sync.run")
     async def run(self):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+
         self.supported_arches = await branch_arches(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system=self.build_system,
         )
+        current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
 
         if self.build_system == 'konflux':
@@ -180,7 +191,12 @@ class BuildSyncPipeline:
         self.logger.info('Update nightly imagestreams...')
         await self._update_nightly_imagestreams()
 
+    @start_as_current_span_async(TRACER, "build-sync.handle-success")
     async def handle_success(self):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+
         if self.assembly != 'stream':
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
@@ -201,12 +217,16 @@ class BuildSyncPipeline:
             if res:
                 self.runtime.logger.debug('Fail count "%s" deleted', self.fail_count_name)
 
+    @start_as_current_span_async(TRACER, "build-sync.retrigger-current-nightlies")
     async def _retrigger_current_nightlies(self):
         """
         Forces the release controllers to re-run with existing images, by marking the current ImageStreams as new
         again for Release Controllers. No change will be made to payload images in the release.
         The purpose of triggering current nightlies again is to run tests again on an already existing nightlies.
         """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
 
         if self.assembly != 'stream':
             raise RuntimeError('Cannot use with assembly other than stream. Exiting.')
@@ -254,6 +274,7 @@ class BuildSyncPipeline:
 
         await asyncio.gather(*(_retrigger_arch(arch) for arch in arches))
 
+    @start_as_current_span_async(TRACER, "build-sync.backup-all-imagestreams")
     async def _backup_all_imagestreams(self):
         """
         An incident where a bug in oc destroyed the content of a critical imagestream ocp:is/release uncovered the fact
@@ -262,6 +283,8 @@ class BuildSyncPipeline:
         In the build-sync job, prior to updating the 4.x-art-latest imagestreams, a copy of all imagestreams in the
         various release controller namespaces should be performed.
         """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
 
         if self.runtime.dry_run:
             self.logger.info('Would have backed up all imagestreams.')
@@ -310,8 +333,14 @@ class BuildSyncPipeline:
         cmd.extend(glob.glob('*.backup.yaml.lzma'))
         await exectools.cmd_assert_async(cmd)
 
+    @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
     @limit_concurrency(500)
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.arch_suffix", arch_suffix)
+        current_span.set_attribute("build-sync.tag", tag)
+        current_span.set_attribute("build-sync.version", self.version)
+
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
         cmd = (
@@ -346,6 +375,7 @@ class BuildSyncPipeline:
             else:
                 await exectools.cmd_gather_async(cmd)
 
+    @start_as_current_span_async(TRACER, "build-sync.populate-ci-imagestreams")
     async def _populate_ci_imagestreams(self):
         """ "
         Starting with 4.12, ART is responsible for populating the CI imagestream (-n ocp is/4.12) with
@@ -353,6 +383,10 @@ class BuildSyncPipeline:
         potentially more with rhel9). If this is failing, it must be treated as a priority since
         CI will begin falling behind nightly CoreOS content.
         """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
 
         # Only for applicable versions
         major, minor = [int(n) for n in self.version.split('.')]
@@ -376,11 +410,17 @@ class BuildSyncPipeline:
         except (ChildProcessError, KeyError) as e:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
+    @start_as_current_span_async(TRACER, "build-sync.update-nightly-imagestreams")
     async def _update_nightly_imagestreams(self):
         """
         Determine the content to update in the ART latest imagestreams and apply those changes on the CI cluster.
         The verb will also mirror out images to the quay monorepo.
         """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+        current_span.set_attribute("build-sync.publish", self.publish)
 
         jenkins.init_jenkins()
 
@@ -431,14 +471,22 @@ class BuildSyncPipeline:
                 tasks.append(self._publish(filename))
             await asyncio.gather(*tasks)
 
+    @start_as_current_span_async(TRACER, "build-sync.publish")
     @limit_concurrency(500)
     async def _publish(self, filename):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.filename", filename)
+
         with open(filename) as f:
             meta = yaml.safe_load(f.read())['metadata']
             namespace = meta['namespace']
             reponame = namespace.replace('ocp', 'release')
             name = f'{self.version}.0-{self.assembly}'  # must be semver
             image = f'registry.ci.openshift.org/{namespace}/{reponame}:{name}'
+            current_span.set_attribute("build-sync.namespace", namespace)
+            current_span.set_attribute("build-sync.image", image)
 
             # Build new Openshift release image
             cmd = (
@@ -484,7 +532,13 @@ class BuildSyncPipeline:
 
             return filtered_issues
 
+    @start_as_current_span_async(TRACER, "build-sync.handle-failure")
     async def handle_failure(self):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+        current_span.set_attribute("build-sync.version", self.version)
+
         if self.assembly != 'stream':
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
@@ -544,7 +598,15 @@ class BuildSyncPipeline:
                 # TODO 'brew' condition must be removed once Konflux is the primary build system
                 await self.notify_failures('#forum-ocp-release', report, fail_count)
 
+    @start_as_current_span_async(TRACER, "build-sync.notify-failures")
     async def notify_failures(self, channel, assembly_report, fail_count):
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.channel", channel)
+        current_span.set_attribute("build-sync.fail_count", fail_count)
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+        current_span.set_attribute("build-sync.build_system", self.build_system)
+
         msg = (
             f'Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} '
             f'(assembly `{self.assembly}`) {fail_count} times.'
