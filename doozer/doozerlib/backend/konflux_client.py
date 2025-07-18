@@ -732,7 +732,7 @@ class KonfluxClient:
                 "metadata": {"name": pipelinerun_name, "namespace": namespace},
                 "apiVersion": "tekton.dev/v1",
                 "kind": "PipelineRun",
-                "status": {"conditions": [{"status": "True"}]},
+                "status": {"conditions": [{"status": "True", "type": "Succeeded"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
             return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(
