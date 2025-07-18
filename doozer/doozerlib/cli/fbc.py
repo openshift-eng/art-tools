@@ -486,6 +486,7 @@ class FbcRebaseAndBuildCli:
         skip_checks: bool,
         plr_template: str,
         dry_run: bool,
+        force: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -500,11 +501,39 @@ class FbcRebaseAndBuildCli:
         self.skip_checks = skip_checks
         self.plr_template = plr_template
         self.dry_run = dry_run
+        self.force = force
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
         self._fbc_db = KonfluxDb()
         self._fbc_db.bind(KonfluxFbcBuildRecord)
+
+    async def _check_existing_fbc_build(
+        self, operator_meta: ImageMetadata, bundle_build: KonfluxBundleBuildRecord
+    ) -> Optional[KonfluxFbcBuildRecord]:
+        """Check if an FBC build already exists for the given bundle build.
+
+        :param operator_meta: Operator metadata
+        :param bundle_build: Bundle build record
+        :return: Existing FBC build record if found, None otherwise
+        """
+        fbc_name = KonfluxFbcRebaser.get_fbc_name(operator_meta.distgit_key)
+        logger = self._logger.getChild(f"[{operator_meta.distgit_key}]")
+
+        logger.info("Checking for existing FBC build...")
+        where = {
+            "name": fbc_name,
+            "group": self.runtime.group,
+            "assembly": self.runtime.assembly,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+
+        # Search for FBC builds that contain this bundle build NVR
+        existing_fbc_build = await anext(self._fbc_db.search_builds_by_fields(where=where, limit=1), None)
+        if existing_fbc_build and bundle_build.nvr in existing_fbc_build.bundle_nvrs:
+            logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
+            return existing_fbc_build
+        return None
 
     async def run(self):
         """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
@@ -532,6 +561,22 @@ class FbcRebaseAndBuildCli:
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
 
         self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
+
+        # Check for existing FBC builds if force is not set
+        if not self.force:
+            existing_builds = []
+            for dgk, bundle_build in dgk_bundle_builds.items():
+                operator_meta = runtime.image_map[dgk]
+                existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
+                if existing_fbc_build:
+                    existing_builds.append((dgk, existing_fbc_build))
+
+            if existing_builds:
+                self._logger.info("Found existing FBC builds, skipping rebase and build:")
+                for dgk, existing_build in existing_builds:
+                    self._logger.info(f"  {dgk}: {existing_build.nvr}")
+                self._logger.info("Use --force to override this check and rebuild")
+                return
 
         # Set up rebase and build components once
         rebaser = KonfluxFbcRebaser(
@@ -681,6 +726,12 @@ async def fbc_build(
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option(
+    '--force',
+    default=False,
+    is_flag=True,
+    help='Force rebuild even if an FBC build already exists for the given bundle builds.',
+)
+@click.option(
     '--plr-template',
     required=False,
     default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
@@ -701,6 +752,7 @@ async def fbc_rebase_and_build(
     image_repo: str,
     skip_checks: bool,
     dry_run: bool,
+    force: bool,
     plr_template: str,
     operator_nvrs: Tuple[str, ...],
 ):
@@ -731,5 +783,6 @@ async def fbc_rebase_and_build(
         skip_checks=skip_checks,
         plr_template=plr_template,
         dry_run=dry_run,
+        force=force,
     )
     await cli.run()
