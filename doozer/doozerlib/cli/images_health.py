@@ -59,7 +59,7 @@ class ImagesHealthPipeline:
             [
                 self.get_concerns(image_meta, 'konflux')
                 for image_meta in self.runtime.image_metas()
-                if not image_meta.config.konflux.mode == 'disabled'
+                if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
             ]
         )
         await asyncio.gather(*tasks)
