@@ -524,13 +524,17 @@ class FbcRebaseAndBuildCli:
         where = {
             "name": fbc_name,
             "group": self.runtime.group,
-            "assembly": self.runtime.assembly,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
 
         # Search for FBC builds that contain this bundle build NVR
-        existing_fbc_build = await anext(self._fbc_db.search_builds_by_fields(where=where, limit=1), None)
-        if existing_fbc_build and bundle_build.nvr in existing_fbc_build.bundle_nvrs:
+        existing_fbc_build = await anext(
+            self._fbc_db.search_builds_by_fields(
+                where=where, array_contains={"bundle_nvrs": bundle_build.nvr}, limit=1
+            ),
+            None,
+        )
+        if existing_fbc_build:
             logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
             return existing_fbc_build
         return None

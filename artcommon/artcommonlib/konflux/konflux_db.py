@@ -12,6 +12,7 @@ from artcommonlib.konflux import konflux_build_record
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxRecord
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
+from sqlalchemy.sql import text
 
 SCHEMA_LEVEL = 1
 DEFAULT_SEARCH_WINDOW = 90
@@ -120,6 +121,7 @@ class KonfluxDb:
         window_size: typing.Optional[int] = None,
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         extra_patterns: typing.Optional[dict] = None,
+        array_contains: typing.Optional[typing.Dict[str, str]] = None,
         order_by: str = '',
         sorting: str = 'DESC',
         limit: typing.Optional[int] = None,
@@ -133,6 +135,7 @@ class KonfluxDb:
         "end_search" can optionally be provided as an upper bound for the same field. If None, the search ends now.
         "window_size" is the number of days to search in each iteration. If None, defaults to DEFAULT_SEARCH_WINDOW.
         "extra_patterns" is an optional dictionary that maps names and values to define extra patterns to be matched.
+        "array_contains" is an optional dictionary that maps array field names to values that should be contained in those arrays.
         "order_by" is the column to order by.
         "sorting" is the sorting order.
         "limit" is the maximum number of results to return. None for no limit.
@@ -171,6 +174,13 @@ class KonfluxDb:
         for col_name, col_value in extra_patterns.items():
             regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
             base_clauses.append(regexp_condition)
+
+        array_contains = array_contains or {}
+        for array_field, search_value in array_contains.items():
+            # Generate SQL condition like: 'search_value' IN UNNEST(array_field)
+            # We need to use literal_column to create raw SQL since sqlalchemy doesn't have direct UNNEST support
+            array_condition = text(f"'{search_value}' IN UNNEST({array_field})")
+            base_clauses.append(array_condition)
 
         order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
         order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
