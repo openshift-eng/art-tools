@@ -27,7 +27,7 @@ class GroupRuntime(ABC):
 
     def initialize(self, build_system=None):
         self.initialize_logging()
-        self.initialize_konxflux_db()
+        self.initialize_konflux_db()
         if build_system:
             self.build_system = build_system
 
@@ -52,7 +52,7 @@ class GroupRuntime(ABC):
         logutil.setup_logging(log_level, self.debug_log_path)
         self._logger = logging.getLogger('artcommonlib')
 
-    def initialize_konxflux_db(self):
+    def initialize_konflux_db(self):
         if self.konflux_db:
             return  # already initialized
         try:
