@@ -382,9 +382,6 @@ class Runtime(GroupRuntime):
         elif self.group_commitish is None:
             self.group_commitish = self.group
 
-        if group_only:
-            return
-
         # For each "--stream alias image" on the command line, register its existence with
         # the runtime.
         for s in self.stream:
@@ -424,6 +421,12 @@ class Runtime(GroupRuntime):
 
         self.group_dir = self.gitdata.data_dir
         self.group_config = self.get_group_config()
+
+        if self.group_config.name != self.group:
+            raise IOError(
+                f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
+                "may have copied this group without updating group.yml (make sure to check branch)"
+            )
 
         self.hotfix = (
             False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
@@ -564,12 +567,6 @@ class Runtime(GroupRuntime):
                     self._logger.warn("Missing RHSM_PULP auth, will skip validating content sets")
                 else:
                     self.repos.validate_content_sets()
-
-            if self.group_config.name != self.group:
-                raise IOError(
-                    f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
-                    "may have copied this group without updating group.yml (make sure to check branch)"
-                )
 
             if self.branch is None:
                 if self.group_config.branch is not Missing:

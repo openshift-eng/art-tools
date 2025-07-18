@@ -444,6 +444,8 @@ class KonfluxClient:
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
         artifact_type: Optional[str] = None,
+        service_account: Optional[str] = None,
+        rebuild: Optional[bool] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -509,10 +511,13 @@ class KonfluxClient:
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
+        if rebuild is not None:
+            _modify_param(params, "rebuild", rebuild)
+
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
-        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = f"build-pipeline-{component_name}"
+        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = service_account or f"build-pipeline-{component_name}"
 
         # Check if RPM lockfile prefetch is being used
         rpm_lockfile_prefetch_enabled = prefetch and any(item.get("type") == "rpm" for item in prefetch)
@@ -624,6 +629,8 @@ class KonfluxClient:
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
         annotations: Optional[dict[str, str]] = None,
         artifact_type: Optional[str] = None,
+        service_account: Optional[str] = None,
+        rebuild: Optional[bool] = None,
     ):
         """
         Start a PipelineRun for building an image.
@@ -648,6 +655,8 @@ class KonfluxClient:
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :param annotations: Optional PLR annotations
         :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
+        :param service_account: The service account to use for the PipelineRun.
+        :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -680,6 +689,8 @@ class KonfluxClient:
             sast=sast,
             annotations=annotations,
             artifact_type=artifact_type,
+            service_account=service_account,
+            rebuild=rebuild,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
@@ -747,7 +758,7 @@ class KonfluxClient:
             watcher = watch.Watch()
             succeeded_status = "Not Found"
             succeeded_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
 
             # If a pipelinerun runs more than an hour, successful pods
             # might be garbage collected. Keep track of pod state across
@@ -795,7 +806,7 @@ class KonfluxClient:
                             label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
                             _request_timeout=self.request_timeout,
                         )
-                        current_time = datetime.datetime.now()
+                        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
                         for pod_instance in pods.items:
                             pod_name = pod_instance.metadata.name
                             try:
@@ -810,7 +821,7 @@ class KonfluxClient:
                                 if creation_time_str:
                                     creation_time = datetime.datetime.strptime(
                                         creation_time_str, "%Y-%m-%dT%H:%M:%SZ"
-                                    ).replace(tzinfo=None)
+                                    ).replace(tzinfo=datetime.timezone.utc)
                                 else:
                                     creation_time = current_time
                                 age = current_time - creation_time
@@ -901,7 +912,7 @@ class KonfluxClient:
                             watcher.stop()
                             return obj, list(pod_history.values())
 
-                        if datetime.datetime.now() > timeout_datetime:
+                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
                             self._logger.error(
                                 "PipelineRun %s has run longer than timeout %s; cancelling run",
                                 pipelinerun_name,
@@ -923,6 +934,7 @@ class KonfluxClient:
                                         },
                                     },
                                     content_type="application/merge-patch+json",
+                                    _request_timeout=self.request_timeout,
                                 )
                             except:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
@@ -984,7 +996,7 @@ class KonfluxClient:
             watcher = watch.Watch()
             released_status = "Not Found"
             released_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
 
             while True:
                 try:
@@ -1016,7 +1028,7 @@ class KonfluxClient:
                             watcher.stop()
                             return obj
 
-                        if datetime.datetime.now() > timeout_datetime:
+                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
                             self._logger.info("Timeout reached. Exiting..")
                             watcher.stop()
                             return obj

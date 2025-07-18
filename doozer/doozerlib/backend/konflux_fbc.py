@@ -1,12 +1,21 @@
 import asyncio
+import itertools
+import json
 import logging
 import os
 import shutil
+import ssl
+import urllib.parse
+from collections import defaultdict
 from datetime import datetime, timezone
+from io import StringIO
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+import httpx
+import jinja2
+import truststore
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -28,6 +37,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
+ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry-rhel9:v{major}.{minor}"
@@ -41,7 +51,6 @@ class KonfluxFbcImporter:
         group: str,
         assembly: str,
         ocp_version: Tuple[int, int],
-        keep_templates: bool,
         upcycle: bool,
         push: bool,
         commit_message: Optional[str] = None,
@@ -53,7 +62,6 @@ class KonfluxFbcImporter:
         self.group = group
         self.assembly = assembly
         self.ocp_version = ocp_version
-        self.keep_templates = keep_templates
         self.upcycle = upcycle
         self.push = push
         self.commit_message = commit_message
@@ -104,6 +112,108 @@ class KonfluxFbcImporter:
         else:
             logger.info("Not pushing changes to remote repository")
 
+    async def merge_fragments(self, fragments: Iterable[str]):
+        logger = self._logger.getChild(f"merge_fragments")
+        repo_dir = self.base_dir.joinpath("__merged")
+
+        branch = f"art-{self.group}-fbc-stage"
+        build_repo = BuildRepo(url=self.fbc_git_repo, branch=branch, local_dir=repo_dir, logger=logger)
+        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, branch, repo_dir)
+        await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
+
+        # Render the FBC fragments
+        all_blobs = await asyncio.gather(
+            *(self._render_index_image(fragment, migrate_level="none") for fragment in fragments),
+        )
+        catalog_blobs = list(itertools.chain.from_iterable(all_blobs))
+
+        # Write the rendered blobs to a file
+        catalog_dir = build_repo.local_dir.joinpath("catalog")
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+        LOGGER.info("Writing catalog blobs to %s", catalog_file_path)
+        with catalog_file_path.open('w') as f:
+            yaml.dump_all(catalog_blobs, f)
+
+        # Generate Dockerfile
+        df_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
+        LOGGER.info("Generating Dockerfile %s", df_path)
+        if df_path.exists():
+            LOGGER.info("Removing existing Dockerfile %s", df_path)
+            df_path.unlink()
+        base_image_format = (
+            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if self.ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        )
+        base_image = base_image_format.format(major=self.ocp_version[0], minor=self.ocp_version[1])
+        await opm.generate_dockerfile(build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image)
+
+        # Modify Dockerfile
+        # dockerfile_path = repo_dir.joinpath("catalog.Dockerfile")
+        # dfp = DockerfileParser(str(dockerfile_path))
+
+        # Merge ImageDigestMirrorSets
+        ims_path = build_repo.local_dir.joinpath(".tekton/images-mirror-set.yaml")
+        ims_path.parent.mkdir(parents=True, exist_ok=True)
+        LOGGER.info("Generating ImageDigestMirrorSet %s", ims_path)
+
+        http_client = httpx.AsyncClient(verify=ssl_ctx)
+
+        async def _get_image_digest_mirror_set(fragment: str):
+            fragment_info = await util.oc_image_info_for_arch_async__caching(
+                fragment,
+                registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            )
+            commit = fragment_info["config"]["config"]["Labels"]["vcs-ref"]
+            url = f"https://raw.githubusercontent.com/openshift-priv/art-fbc/{urllib.parse.quote(commit)}/.tekton/images-mirror-set.yaml"
+            response = await http_client.get(url)
+            response.raise_for_status()
+            idms_data = yaml.load(StringIO(response.text))
+            return idms_data
+
+        idms_list = await asyncio.gather(
+            *(_get_image_digest_mirror_set(fragment) for fragment in fragments),
+        )
+        mirrors_by_source = defaultdict(set)
+        for ims in idms_list:
+            for mirror in ims.get("spec", {}).get("imageDigestMirrors", []):
+                source = mirror.get("source")
+                mirrors = mirror.get("mirrors", [])
+                if source and mirrors:
+                    mirrors_by_source[source].update(mirrors)
+        target_idms = {
+            "apiVersion": "config.openshift.io/v1",
+            "kind": "ImageDigestMirrorSet",
+            "metadata": {
+                "name": "art-stage-mirror-set",
+                "namespace": "openshift-marketplace",
+            },
+            "spec": {
+                "imageDigestMirrors": [
+                    {
+                        "source": source,
+                        "mirrors": sorted(mirrors),
+                    }
+                    for source, mirrors in sorted(mirrors_by_source.items())
+                ],
+            },
+        }
+        with ims_path.open('w') as ims_file:
+            yaml.dump(target_idms, ims_file)
+        LOGGER.info("ImageDigestMirrorSet written to %s", ims_path)
+
+        # Validate the catalog
+        logger.info("Validating the catalog")
+        await opm.validate(repo_dir.joinpath("catalog"))
+
+        # Commit and push the changes
+        message = self.commit_message or f"Merge FBC fragments\n\n{', '.join(fragments)}"
+        await build_repo.commit(message, allow_empty=True)
+        if self.push:
+            await build_repo.push()
+            logger.info("Changes pushed to remote repository %s branch %s", self.fbc_git_repo, branch)
+        else:
+            logger.info("Not pushing changes to remote repository")
+
     async def _update_dir(
         self, metadata: ImageMetadata, build_repo: BuildRepo, index_image: str, logger: logging.Logger
     ):
@@ -111,40 +221,22 @@ class KonfluxFbcImporter:
         repo_dir = build_repo.local_dir
         # Get package name of the operator
         package_name = await self._get_package_name(metadata)
+
         # Render the catalog from the index image
-        org_catalog_blobs = await self._get_catalog_blobs_from_index_image(index_image, package_name)
-
-        # Write catalog_blobs to catalog-migrate/<package>/catalog.json
-        org_catalog_dir = repo_dir.joinpath("catalog-migrate", package_name)
-        org_catalog_dir.mkdir(parents=True, exist_ok=True)
-        org_catalog_file_path = org_catalog_dir.joinpath("catalog.yaml")
-        logger.info("Writing original catalog blobs to %s", org_catalog_file_path)
-        with org_catalog_file_path.open('w') as f:
-            yaml.dump_all(org_catalog_blobs, f)
-
-        # Generate basic fbc template to catalog-templates/<package>.yaml
-        templates_dir = repo_dir.joinpath("catalog-templates")
-        templates_dir.mkdir(parents=True, exist_ok=True)
-        template_file = templates_dir.joinpath(f"{package_name}.yaml")
-        await opm.generate_basic_template(org_catalog_file_path, template_file)
-
-        logger.info("Cleaning up catalog-migrate")
-        shutil.rmtree(repo_dir.joinpath("catalog-migrate"))
-
-        # Render final FBC catalog at catalog/<package>/catalog.yaml from template
-        catalog_dir = repo_dir.joinpath("catalog", package_name)
-        catalog_dir.mkdir(parents=True, exist_ok=True)
-        catalog_file = catalog_dir.joinpath("catalog.yaml")
-        logger.info("Rendering catalog from template %s to %s", template_file, catalog_file)
         migrate_level = "none"
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
-        await opm.render_catalog_from_template(template_file, catalog_file, migrate_level=migrate_level, auth=self.auth)
+        catalog_blobs = await self._get_catalog_blobs_from_index_image(
+            index_image, package_name, migrate_level=migrate_level
+        )
 
-        # Clean up catalog-templates
-        if not self.keep_templates:
-            logger.info("Cleaning up catalog-templates")
-            shutil.rmtree(templates_dir)
+        # Write catalog_blobs to catalog/<package>/catalog.json
+        catalog_dir = repo_dir.joinpath("catalog", package_name)
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+        logger.info("Writing catalog blobs to %s", catalog_file_path)
+        with catalog_file_path.open('w') as f:
+            yaml.dump_all(catalog_blobs, f)
 
         # Generate Dockerfile
         df_path = repo_dir.joinpath("catalog.Dockerfile")
@@ -161,10 +253,11 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str) -> List[Dict]:
+    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
+            migrate_level=migrate_level,
         )
         return blobs
 
@@ -193,8 +286,10 @@ class KonfluxFbcImporter:
             filtered[package_name].append(blob)
         return filtered
 
-    async def _get_catalog_blobs_from_index_image(self, index_image: str, package_name):
-        blobs = await self._render_index_image(index_image)
+    async def _get_catalog_blobs_from_index_image(
+        self, index_image: str, package_name: str | None, migrate_level: str = "none"
+    ):
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
             raise IOError(f"Package {package_name} not found in index image")
@@ -223,6 +318,519 @@ class KonfluxFbcImporter:
             if not package_name:
                 raise IOError(f"Package name not found in {package_yaml_file}")
             return str(package_name)
+
+
+class KonfluxFbcFragmentMerger:
+    def __init__(
+        self,
+        dry_run: bool,
+        working_dir: Path,
+        group: str,
+        konflux_namespace: str,
+        konflux_kubeconfig: str | None,
+        konflux_context: str | None = None,
+        upcycle: bool = False,
+        commit_message: str | None = None,
+        fbc_git_repo: str = constants.ART_FBC_GIT_REPO,
+        fbc_branch: str | None = None,
+        registry_auth: Optional[str] = None,
+        skip_checks: bool = False,
+        plr_template: Optional[str] = None,
+        logger: logging.Logger | None = None,
+    ):
+        """
+        Initialize the KonfluxFbcFragmentMerger.
+        """
+        self.dry_run = dry_run
+        self.working_dir = Path(working_dir)
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_namespace = konflux_namespace
+        self.konflux_context = konflux_context
+        # self.target_index = target_index
+        # self.fragments = fragments
+        # if not self.fragments:
+        #     raise ValueError("At least one fragment must be provided.")
+        self.group = group
+        self.upcycle = upcycle
+        self.commit_message = commit_message
+        self.fbc_git_repo = fbc_git_repo
+        self.fbc_branch = fbc_branch or f"art-{self.group}-fbc-stage"
+        self.registry_auth = registry_auth
+        self.skip_checks = skip_checks
+        self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
+        self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        # Default OCP version, can be changed based on the target index
+        self.ocp_version: tuple[int, int] = (4, 18)
+
+    async def run(self, fragments: Collection[str], target_index: str):
+        if not fragments:
+            raise ValueError("At least one fragment must be provided.")
+        if not target_index:
+            raise ValueError("Target index must be provided.")
+        logger = self._logger
+        # Clone the art-fbc repository into clone_dir
+        # clone_dir = self.working_dir / "art-fbc"
+        # if not clone_dir.exists():
+        #     clone_dir.mkdir(parents=True)
+        # # await self.clone_fbc_repo(clone_dir)
+        # print(f"Cloned FBC fragments into {clone_dir}")
+        repo_dir = self.working_dir
+        build_repo = BuildRepo(url=self.fbc_git_repo, branch=self.fbc_branch, local_dir=repo_dir, logger=logger)
+        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_branch, repo_dir)
+        await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
+
+        # # Render the FBC fragments
+        # opm_auth = opm.OpmRegistryAuth(path=self.registry_auth) if self.registry_auth else None
+        # all_blobs = await asyncio.gather(
+        #     *(opm.render(fragment, output_format="yaml", migrate_level="none", auth=opm_auth) for fragment in fragments)
+        # )
+        # catalog_blobs = list(itertools.chain.from_iterable(all_blobs))
+
+        # # Write the rendered blobs to a file
+        # catalog_dir = repo_dir.joinpath("catalog")
+        # catalog_dir.mkdir(parents=True, exist_ok=True)
+        # catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+        # LOGGER.info("Writing catalog blobs to %s", catalog_file_path)
+        # with catalog_file_path.open('w') as f:
+        #     yaml.dump_all(catalog_blobs, f)
+
+        # # Generate Dockerfile
+        # df_path = repo_dir.joinpath("catalog.Dockerfile")
+        # LOGGER.info("Generating Dockerfile %s", df_path)
+        # if df_path.exists():
+        #     LOGGER.info("Removing existing Dockerfile %s", df_path)
+        #     df_path.unlink()
+        # base_image_format = (
+        #     BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if self.ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        # )
+        # base_image = base_image_format.format(major=self.ocp_version[0], minor=self.ocp_version[1])
+        # await opm.generate_dockerfile(repo_dir, "catalog", base_image=base_image, builder_image=base_image)
+
+        # Modify Dockerfile
+        # dockerfile_path = repo_dir.joinpath("catalog.Dockerfile")
+        # dfp = DockerfileParser(str(dockerfile_path))
+
+        # Merge ImageDigestMirrorSets
+        idms_path = repo_dir.joinpath(".tekton/images-mirror-set.yaml")
+        idms_path.parent.mkdir(parents=True, exist_ok=True)
+        LOGGER.info("Generating ImageDigestMirrorSet %s", idms_path)
+
+        async with httpx.AsyncClient(verify=ssl_ctx) as http_client:
+
+            async def _get_fragment_idms(fragment: str) -> list[dict]:
+                """
+                Fetch the ImageDigestMirrorSet for a given fragment.
+                """
+                # _, out, _ = await self.cmd_assert(
+                #     "oc",
+                #     "image",
+                #     "info",
+                #     fragment,
+                #     "--output=json",
+                #     "--filter-by-os=linux/amd64",
+                #     stdout=asyncio.subprocess.PIPE,
+                #     stderr=asyncio.subprocess.PIPE,
+                # )
+                # fragment_info = json.loads(out)
+                fragment_info = await util.oc_image_info_for_arch_async__caching(
+                    fragment,
+                    registry_config=self.registry_auth,
+                )
+                commit = fragment_info["config"]["config"]["Labels"]["vcs-ref"]
+                url = (
+                    f"https://raw.githubusercontent.com/openshift-priv/art-fbc/{commit}/.tekton/images-mirror-set.yaml"
+                )
+
+                response = await http_client.get(url)
+                response.raise_for_status()
+                idms_data = yaml.load(StringIO(response.text))
+                return idms_data
+
+            idms_list = await asyncio.gather(*(_get_fragment_idms(fragment) for fragment in fragments))
+
+        mirrors_by_source = defaultdict(set)
+        for idms in idms_list:
+            for mirror in idms.get("spec", {}).get("imageDigestMirrors", []):
+                source = mirror.get("source")
+                mirrors = mirror.get("mirrors", [])
+                if source and mirrors:
+                    mirrors_by_source[source].update(mirrors)
+        target_idms = {
+            "apiVersion": "config.openshift.io/v1",
+            "kind": "ImageDigestMirrorSet",
+            "metadata": {
+                "name": "art-stage-mirror-set",
+                "namespace": "openshift-marketplace",
+            },
+            "spec": {
+                "imageDigestMirrors": [
+                    {
+                        "source": source,
+                        "mirrors": sorted(mirrors),
+                    }
+                    for source, mirrors in sorted(mirrors_by_source.items())
+                ],
+            },
+        }
+        with idms_path.open('w') as ims_file:
+            yaml.dump(target_idms, ims_file)
+        LOGGER.info("ImageDigestMirrorSet written to %s", idms_path)
+
+        # Commit the changes to the git repository
+        print("Committing changes to the git repository...")
+        # # await self.cmd_assert("git", "add", ".", cwd=repo_dir)
+        # # await self.cmd_assert("git", "commit", "-m", "Merge FBC fragments", cwd=clone_dir)
+        # # _, out, _ = await self.cmd_assert("git", "rev-parse", "HEAD", cwd=clone_dir, stdout=asyncio.subprocess.PIPE)
+        # # commit_sha = out.strip()
+        # message = self.commit_message or f"Merge FBC fragments\n\n{', '.join(fragments)}"
+        # await build_repo.commit(message, allow_empty=True)
+        commit_sha = build_repo.commit_hash
+        assert commit_sha, "Commit SHA should not be empty; Doozer bug?"
+        if not self.dry_run:
+            print("Pushing changes to the remote repository...")
+            await build_repo.push()
+            print(f"Changes pushed to remote repository {self.fbc_git_repo} branch {self.fbc_branch}")
+        else:
+            print("Dry run enabled, not pushing changes.")
+
+        # Create application
+        # API_VERSION = "appstudio.redhat.com/v1alpha1"
+        # # KIND_SNAPSHOT = "Snapshot"
+        # KIND_COMPONENT = "Component"
+        # KIND_APPLICATION = "Application"
+        app_name = f"fbc-openshift-{self.ocp_version[0]}-{self.ocp_version[1]}-stage"
+        # app = {
+        #     "apiVersion": API_VERSION,
+        #     "kind": KIND_APPLICATION,
+        #     "metadata": {
+        #         "name": app_name,
+        #         "namespace": self.konflux_namespace,
+        #     },
+        #     "spec": {
+        #         "displayName": app_name,
+        #         "appModelRepository": {"url": ""},
+        #         "gitOpsRepository": {"url": ""},
+        #     },
+        # }
+        # await self.cmd_assert("oc", "apply", "-f", "-", input=json.dumps(app))
+        konflux_client = KonfluxClient.from_kubeconfig(
+            config_file=self.konflux_kubeconfig,
+            default_namespace=self.konflux_namespace,
+            context=self.konflux_context,
+            dry_run=self.dry_run,
+            logger=logger,
+        )
+        await konflux_client.ensure_application(app_name, app_name)
+        print(f"Created application {app_name}")
+
+        # Create component
+        comp_name = app_name + "-merged"
+        # branch = f"art-openshift-{self.ocp_version[0]}-{self.ocp_version[1]}-fbc-stage"
+        # comp = {
+        #     "apiVersion": API_VERSION,
+        #     "kind": KIND_COMPONENT,
+        #     "metadata": {
+        #         "name": comp_name,
+        #         "namespace": self.konflux_namespace,
+        #         "annotations": {
+        #             "build.appstudio.openshift.io/pipeline": '{"name":"docker-build-multi-platform-oci-ta","bundle":"latest"}',
+        #             # will raise PRs to upstream repos (openshift-priv) if this is not set to false
+        #             "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',
+        #             # "build.appstudio.openshift.io/request": "configure-pac",
+        #             # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
+        #             "mintmaker.appstudio.redhat.com/disabled": "true",
+        #         },
+        #     },
+        #     "spec": {
+        #         "application": app_name,
+        #         "componentName": comp_name,
+        #         "source": {
+        #             "git": {
+        #                 "url": "https://github.com/openshift-priv/art-fbc.git",
+        #                 "revision": branch,
+        #             },
+        #         },
+        #     },
+        # }
+        # await self.cmd_assert("oc", "apply", "-f", "-", input=json.dumps(comp))
+        target_index_split = target_index.rsplit(":", maxsplit=1)
+        output_image_repo = target_index_split[0]
+        output_image_tag = (
+            target_index_split[1]
+            if len(target_index_split) > 1
+            else f"art-openshift-{self.ocp_version[0]}-{self.ocp_version[1]}-fbc-stage"
+        )
+        await konflux_client.ensure_component(
+            application=app_name,
+            name=comp_name,
+            component_name=comp_name,
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+            image_repo=output_image_repo,
+        )
+        print(f"Created component {comp_name} in application {app_name}")
+
+        # Create pipelinerun
+        # KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-fbc-konflux-template-push.yaml"
+        # plr_template_url = KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
+        # http_client = httpx.AsyncClient(verify=ctx)
+        # response = await http_client.get(plr_template_url, follow_redirects=True)
+        # response.raise_for_status()
+        # template_text = response.text
+        # plr_template = jinja2.Template(template_text, autoescape=True)
+        # rendered = plr_template.render(
+        #     {
+        #         "source_url": "https://github.com/openshift-priv/art-fbc",
+        #         "revision": commit_sha,
+        #         "target_branch": branch,
+        #         "git_auth_secret": "pipelines-as-code-secret",
+        #     }
+        # )
+        # https_url = "https://github.com/openshift-priv/art-fbc"
+        # plr = yaml.load(rendered)
+        # # Those fields in the template are specific to an image. They need to be removed.
+        # del plr["metadata"]["name"]
+        # del plr["metadata"]["annotations"]["pipelinesascode.tekton.dev/on-cel-expression"]
+        # # Override the generated name with the provided one
+        # generate_name = f"fbc-openshift-{self.ocp_version[0]}-{self.ocp_version[1]}-stage-"
+        # namespace = "ocp-art-tenant"
+        # if generate_name:
+        #     plr["metadata"]["generateName"] = generate_name
+        # if namespace:
+        #     plr["metadata"]["namespace"] = namespace
+        # else:
+        #     del plr["metadata"]["namespace"]
+        # # Set the application and component names
+        # plr["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
+        # plr["metadata"]["labels"]["appstudio.openshift.io/application"] = app_name
+        # plr["metadata"]["labels"]["appstudio.openshift.io/component"] = comp_name
+
+        # def _modify_param(params: List, name: str, value: Union[str, bool, list[str]]):
+        #     """Modify a parameter in the params list. If the parameter does not exist, it is added.
+
+        #     :param params: The list of parameters.
+        #     :param name: The name of the parameter.
+        #     :param value: The value of the parameter.
+        #     """
+        #     if isinstance(value, bool):
+        #         # boolean value should be converted to string
+        #         value = "true" if value else "false"
+        #     for param in params:
+        #         if param["name"] == name:
+        #             param["value"] = value
+        #             return
+        #     params.append({"name": name, "value": value})
+
+        # # Modify the parameters in the Pipelinerun
+        # SUPPORTED_ARCHES = {
+        #     "x86_64": ["linux/x86_64"],
+        #     "s390x": ["linux/s390x"],
+        #     "ppc64le": ["linux/ppc64le"],
+        #     "aarch64": ["linux/arm64"],
+        # }
+        # build_platforms = [platform for platforms in SUPPORTED_ARCHES.values() if platforms for platform in platforms]
+        # KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
+        # output_image = (
+        #     f"{KONFLUX_DEFAULT_FBC_REPO}:stage-{self.ocp_version[0]}-{self.ocp_version[1]}-fbc-{commit_sha[:7]}"
+        # )
+        # params = plr["spec"]["params"]
+        # _modify_param(params, "dockerfile", "catalog.Dockerfile")
+        # _modify_param(params, "build-platforms", build_platforms)
+        # _modify_param(params, "output-image", output_image)
+
+        # rc, out, err = await self.cmd_assert(
+        #     "oc",
+        #     "create",
+        #     "-f",
+        #     "-",
+        #     "-o",
+        #     "json",
+        #     input=json.dumps(plr),
+        #     stdout=asyncio.subprocess.PIPE,
+        #     stderr=asyncio.subprocess.PIPE,
+        # )
+        # created_plr = json.loads(out)
+        arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        created_plr = await konflux_client.start_pipeline_run_for_image_build(
+            generate_name=f"{comp_name}-",
+            namespace=self.konflux_namespace,
+            application_name=app_name,
+            component_name=comp_name,
+            git_url=build_repo.https_url,
+            commit_sha=commit_sha,
+            target_branch=self.fbc_branch or commit_sha,
+            output_image=f"{output_image_repo}:{output_image_tag}",
+            additional_tags=[],
+            vm_override={},
+            building_arches=arches,  # FBC should be built for all supported arches
+            hermetic=True,  # FBC should be built in hermetic mode
+            dockerfile="catalog.Dockerfile",
+            skip_checks=self.skip_checks,
+            pipelinerun_template_url=self.plr_template,
+        )
+        plr_name = created_plr["metadata"]["name"]
+        # plr_url = f"https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/{self.konflux_namespace}/applications/{app_name}/pipelineruns/{plr_name}"
+        plr_url = konflux_client.build_pipeline_url(created_plr)
+        print(f"Created Pipelinerun {plr_name}: {plr_url}")
+
+        # Wait for the Pipelinerun to complete
+        # print("Waiting for the Pipelinerun to complete...")
+        # while True:
+        #     rc, out, err = await self.cmd_assert(
+        #         "oc",
+        #         "get",
+        #         "pipelinerun",
+        #         plr_name,
+        #         "-o",
+        #         "json",
+        #         stdout=asyncio.subprocess.PIPE,
+        #         stderr=asyncio.subprocess.PIPE,
+        #     )
+        #     plr_info = json.loads(out)
+        #     conditions = plr_info.get("status", {}).get("conditions", [])
+        #     succeeded_cond = next((c for c in conditions if c.get("type") == "Succeeded"), None)
+        #     if not succeeded_cond:
+        #         print("Pipelinerun is still pending")
+        #         await asyncio.sleep(10)
+        #         continue
+        #     status = succeeded_cond.get("status")
+        #     if status == "True":
+        #         print("Pipelinerun completed successfully.")
+        #         break
+        #     elif status == "False":
+        #         print(f"Pipelinerun failed: {succeeded_cond.get('message', 'No message provided')}")
+        #         raise ChildProcessError(
+        #             f"Pipelinerun {plr_name} failed: {succeeded_cond.get('message', 'No message provided')}"
+        #         )
+        #     else:
+        #         print("Pipelinerun is still running...")
+        #         await asyncio.sleep(10)
+        plr, _ = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
+        succeeded_condition = artlib_util.KubeCondition.find_condition(plr, 'Succeeded')
+        outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+        logger.info(
+            "Pipelinerun %s completed with outcome: %s",
+            plr_name,
+            outcome,
+        )
+        if outcome is not KonfluxBuildOutcome.SUCCESS:
+            raise IOError(
+                f"Pipelinerun {plr_name} failed with outcome: {outcome.name} - {succeeded_condition.message or 'No message provided'}"
+            )
+
+    async def cmd_assert(self, program, *args, input=None, check=True, **kwargs):
+        """
+        Run a command asynchronously and return the result.
+        To capture stdout and stderr, pass `stdout=asyncio.subprocess.PIPE` and/or `stderr=asyncio.subprocess.PIPE` in kwargs.
+        If `check` is True and the command fails, raise a ChildProcessError with the error message.
+
+        Args:
+            program (str): The command to run.
+            check (bool): Whether to raise an error if the command fails.
+            input (str | bytes | None): Input to send to the command's stdin.
+            *args: Additional arguments to pass to the command.
+            **kwargs: Additional keyword arguments for subprocess creation.
+        Returns:
+            tuple: A tuple containing the return code, stdout, and stderr.
+        """
+        print(f"Running command: {program} {' '.join(args)}")
+        stdout = kwargs.pop('stdout', None)
+        stderr = kwargs.pop('stderr', None)
+        stdin = kwargs.pop('stdin', None)
+        if input is not None:
+            stdin = asyncio.subprocess.PIPE
+        env = kwargs.pop('env', None)
+        if env is None:
+            env = os.environ.copy()
+        proc = await asyncio.create_subprocess_exec(
+            program,
+            *args,
+            **kwargs,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=stdin,
+            env=env,
+        )
+        stdout, stderr = await proc.communicate(input=input.encode() if isinstance(input, str) else input)
+        out = stdout.decode() if stdout is not None else ""
+        err = stderr.decode() if stderr is not None else ""
+        if check and proc.returncode != 0:
+            raise ChildProcessError(f"Command failed with exit code {proc.returncode}: {err}")
+        return proc.returncode, out, err
+
+    async def clone_fbc_repo(self, clone_dir: Path):
+        # This is a placeholder for the actual cloning logic
+        # In a real implementation, you would clone the repository here
+        print(f"Cloning FBC fragments into {clone_dir}...")
+        shutil.rmtree(clone_dir, ignore_errors=True)  # Clean up if it exists
+        git_url = "git@github.com:openshift-priv/art-fbc.git"
+        branch = f"art-openshift-{self.ocp_version[0]}-{self.ocp_version[1]}-fbc-stage"
+        # _, _, err = await self.cmd_assert("git", "clone", "--depth", "1", "--branch", branch, git_url, str(clone_dir), stderr=asyncio.subprocess.PIPE)
+        # run git init
+        await self.cmd_assert("git", "init", str(clone_dir))
+        # run git remote add origin
+        await self.cmd_assert("git", "remote", "add", "origin", git_url, cwd=clone_dir)
+        # run git fetch. if the branch does not exist, create it
+        try:
+            await self.cmd_assert("git", "fetch", "origin", branch, cwd=clone_dir, stderr=asyncio.subprocess.PIPE)
+        except ChildProcessError as e:
+            if "couldn't find remote ref" in str(e):
+                print(f"Branch {branch} not found, creating it.")
+                await self.cmd_assert("git", "checkout", "--orphan", branch, cwd=clone_dir)
+            else:
+                raise e
+        else:
+            await self.cmd_assert("git", "checkout", branch, cwd=clone_dir)
+
+    async def opm_render(
+        self, *input: str, output_format: str = "yaml", migrate_level: str = "none", auth_file: str | None = None
+    ) -> list[dict]:
+        """
+            Run `opm render` on the given input and return the parsed file-based catalog blobs.
+
+            :param input: The catalog images, file-based catalog directories, bundle images, and sqlite
+        database files to render.
+            :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
+            :param migrate_level: The migration level to use when rendering the catalog. One of "none" or "bundle-object-to-csv-metadata".
+            :param auth: The registry authentication information to use.
+            :return: The parsed file-based catalog blobs.
+        """
+        if not input:
+            raise ValueError("input must not be empty.")
+        if output_format not in ["yaml", "json"]:
+            raise ValueError(f"Invalid output format: {output_format}")
+        # LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
+        _, out, _ = await self.cmd_assert(
+            "opm",
+            "render",
+            "--migrate-level",
+            migrate_level,
+            "-o",
+            output_format,
+            "--",
+            *input,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        blobs = yaml.load_all(StringIO(out))
+        return list(blobs)
+
+    async def generate_dockerfile(self, dest_dir: Path, dc_dir_name: str, base_image: str, builder_image: str):
+        """
+        Generate a Dockerfile for for a file-based catalog.
+
+        :param dest_dir: The directory to generate the Dockerfile in.
+        :param dc_dir_name: The directory containing the file-based catalog.
+        :param base_image: Image base to use to build catalog.
+        """
+        options = [
+            "--builder-image",
+            builder_image,
+            "--base-image",
+            base_image,
+        ]
+        LOGGER.debug(f"Generating FBC Dockerfile in {dest_dir}")
+        await self.cmd_assert("opm", "generate", "dockerfile", *options, "--", dc_dir_name, cwd=dest_dir)
 
 
 class KonfluxFbcRebaser:
