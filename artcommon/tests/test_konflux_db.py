@@ -258,6 +258,26 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             "ORDER BY `start_time` ASC LIMIT 10"
         )
 
+        query_mock.reset_mock()
+        await anext(
+            self.db.search_builds_by_fields(
+                start_search=start_search,
+                where={'name': 'test-operator-fbc', 'group': 'openshift-4.18'},
+                array_contains={'bundle_nvrs': 'test-operator-bundle-container-v4.18.0-123'},
+                order_by='start_time',
+                sorting='DESC',
+                limit=1,
+            ),
+            None,
+        )
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'test-operator-fbc' AND `group` = 'openshift-4.18' AND "
+            f"'test-operator-bundle-container-v4.18.0-123' IN UNNEST(bundle_nvrs) AND "
+            f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` DESC LIMIT 1"
+        )
+
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_search_builds_by_fields_windowed(self, mock_query_async: AsyncMock):
         mocked_rows = [
