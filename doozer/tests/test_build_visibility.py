@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from doozerlib.build_visibility import (
+from artcommonlib.build_visibility import (
     BuildVisibility,
     get_all_visibility_suffixes,
     get_build_system,

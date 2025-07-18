@@ -37,3 +37,4 @@ OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2
 
 # Sync konflux builds to default (formerly Brew) imagestreams for versions in this list
 KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = ["4.20"]
+KONFLUX_ART_IMAGES_PUBLIC = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-public"
