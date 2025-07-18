@@ -247,14 +247,23 @@ class FbcRebaseCli:
 
         :return: A dictionary of operator name to build records.
         """
-        runtime = self.runtime
+        return await self.get_operator_builds(self.runtime, self.operator_nvrs)
+
+    @staticmethod
+    async def get_operator_builds(runtime: Runtime, operator_nvrs: Tuple[str, ...]) -> Dict[str, KonfluxBuildRecord]:
+        """Get build records for the given operator nvrs or latest build records for all operators.
+
+        :param runtime: The runtime instance
+        :param operator_nvrs: Tuple of operator NVRs to fetch, or empty tuple for all operators
+        :return: A dictionary of operator name to build records.
+        """
         assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
         assert runtime.assembly is not None, "assembly is not initialized. Doozer bug?"
         dgk_records: Dict[str, KonfluxBuildRecord] = {}  # operator name to build records
-        if self.operator_nvrs:
+        if operator_nvrs:
             # Get build records for the given operator nvrs
             LOGGER.info("Fetching given nvrs from Konflux DB...")
-            records = await runtime.konflux_db.get_build_records_by_nvrs(self.operator_nvrs)
+            records = await runtime.konflux_db.get_build_records_by_nvrs(operator_nvrs)
             for record in records:
                 assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
                 dgk_records[record.name] = record
@@ -289,12 +298,7 @@ class FbcRebaseCli:
         :param operator_builds: operator builds.
         :return: A list of bundle build records.
         """
-        logger = self._logger.getChild("get_bundle_builds")
-        logger.info("Fetching bundle builds from Konflux DB...")
-        builds = await asyncio.gather(
-            *(self._get_bundle_build_for(operator_build, strict=strict) for operator_build in operator_builds)
-        )
-        return builds
+        return await self.get_bundle_builds(self._db_for_bundles, self.runtime.group, operator_builds, strict)
 
     async def _get_bundle_build_for(
         self, operator_build: KonfluxBuildRecord, strict: bool = True
@@ -304,15 +308,50 @@ class FbcRebaseCli:
         :param operator_build: Operator build record.
         :return: Bundle build record.
         """
+        return await self.get_bundle_build_for(self._db_for_bundles, self.runtime.group, operator_build, strict)
+
+    @staticmethod
+    async def get_bundle_builds(
+        db_for_bundles: KonfluxDb, group: str, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True
+    ) -> List[Optional[KonfluxBundleBuildRecord]]:
+        """Get bundle build records for the given operator builds.
+
+        :param db_for_bundles: Database instance for bundle queries
+        :param group: Group name for bundle lookup
+        :param operator_builds: operator builds.
+        :param strict: Whether to fail if bundle build is not found
+        :return: A list of bundle build records.
+        """
+        LOGGER.info("Fetching bundle builds from Konflux DB...")
+        builds = await asyncio.gather(
+            *(
+                FbcRebaseCli.get_bundle_build_for(db_for_bundles, group, operator_build, strict=strict)
+                for operator_build in operator_builds
+            )
+        )
+        return builds
+
+    @staticmethod
+    async def get_bundle_build_for(
+        db_for_bundles: KonfluxDb, group: str, operator_build: KonfluxBuildRecord, strict: bool = True
+    ) -> Optional[KonfluxBundleBuildRecord]:
+        """Get bundle build record for the given operator build.
+
+        :param db_for_bundles: Database instance for bundle queries
+        :param group: Group name for bundle lookup
+        :param operator_build: Operator build record.
+        :param strict: Whether to fail if bundle build is not found
+        :return: Bundle build record.
+        """
         bundle_name = f"{operator_build.name}-bundle"
         LOGGER.info("Fetching bundle build for %s from Konflux DB...", operator_build.nvr)
         where = {
             "name": bundle_name,
-            "group": self.runtime.group,
+            "group": group,
             "operator_nvr": operator_build.nvr,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
-        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        bundle_build = await anext(db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
         if not bundle_build:
             if strict:
                 raise IOError(f"Bundle build not found for {operator_build.name}. Please build the bundle first.")
@@ -456,42 +495,103 @@ class FbcRebaseAndBuildCli:
         self.skip_checks = skip_checks
         self.plr_template = plr_template
         self.dry_run = dry_run
+        self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
+        self._db_for_bundles = KonfluxDb()
+        self._db_for_bundles.bind(KonfluxBundleBuildRecord)
+        self._fbc_db = KonfluxDb()
+        self._fbc_db.bind(KonfluxFbcBuildRecord)
 
     async def run(self):
-        """Run both rebase and build operations sequentially"""
+        """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
         LOGGER.info("Starting FBC rebase and build process...")
 
-        # First, run the rebase operation
-        LOGGER.info("Step 1: Running FBC rebase...")
-        rebase_cli = FbcRebaseCli(
-            runtime=self.runtime,
+        runtime = self.runtime
+        runtime.initialize(config_only=True)
+        assembly = runtime.assembly
+        if assembly is None:
+            raise ValueError("Assemblies feature is disabled for this group. This is no longer supported.")
+        assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
+        konflux_db = runtime.konflux_db
+        konflux_db.bind(KonfluxBuildRecord)
+
+        # Get operator builds and corresponding bundle builds
+        dgk_operator_builds = await FbcRebaseCli.get_operator_builds(runtime, self.operator_nvrs)
+        bundle_builds = await FbcRebaseCli.get_bundle_builds(
+            self._db_for_bundles, runtime.group, list(dgk_operator_builds.values()), strict=False
+        )
+        not_found = [
+            dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None
+        ]
+        if not_found:
+            raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
+        bundle_builds = cast(List[KonfluxBundleBuildRecord], bundle_builds)
+
+        assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
+        assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
+
+        LOGGER.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
+
+        # Set up rebase and build components once
+        rebaser = KonfluxFbcRebaser(
+            base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
+            group=runtime.group,
+            assembly=assembly,
             version=self.version,
             release=self.release,
             commit_message=self.commit_message,
             push=not self.dry_run,
             fbc_repo=self.fbc_repo,
-            operator_nvrs=self.operator_nvrs,
+            upcycle=runtime.upcycle,
+            record_logger=runtime.record_logger,
         )
-        await rebase_cli.run()
-        LOGGER.info("FBC rebase completed successfully")
 
-        # Then, run the build operation
-        LOGGER.info("Step 2: Running FBC build...")
-        build_cli = FbcBuildCli(
-            runtime=self.runtime,
+        builder = KonfluxFbcBuilder(
+            base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
+            group=runtime.group,
+            assembly=runtime.assembly,
+            db=self._fbc_db,
+            fbc_repo=self.fbc_repo,
             konflux_kubeconfig=self.konflux_kubeconfig,
             konflux_context=self.konflux_context,
             konflux_namespace=self.konflux_namespace,
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
-            fbc_repo=self.fbc_repo,
-            plr_template=self.plr_template,
+            pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            record_logger=runtime.record_logger,
         )
-        await build_cli.run()
-        LOGGER.info("FBC build completed successfully")
 
-        LOGGER.info("FBC rebase and build process completed successfully")
+        failed_operators = []
+
+        # Process each operator individually: rebase then build
+        for i, (dgk, (operator_build, bundle_build)) in enumerate(
+            zip(dgk_operator_builds.keys(), zip(dgk_operator_builds.values(), bundle_builds)), 1
+        ):
+            operator_meta = runtime.image_map[dgk]
+            LOGGER.info(f"Processing operator {i}/{len(dgk_operator_builds)}: {dgk}")
+
+            try:
+                # Step 1: Rebase this specific operator
+                LOGGER.info(f"Step 1: Rebasing {dgk}...")
+                await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+                LOGGER.info(f"Rebase completed for {dgk}")
+
+                # Step 2: Build this specific operator
+                LOGGER.info(f"Step 2: Building {dgk}...")
+                await builder.build(operator_meta)
+                LOGGER.info(f"Build completed for {dgk}")
+
+            except Exception as e:
+                failed_operators.append(dgk)
+                stack_trace = ''.join(traceback.TracebackException.from_exception(e).format())
+                LOGGER.error(f"Failed to process {dgk}: {e}; {stack_trace}")
+                # Continue with the next operator rather than failing entirely
+                continue
+
+        if failed_operators:
+            raise DoozerFatalError(f"Failed to process operators: {', '.join(failed_operators)}")
+
+        LOGGER.info("FBC rebase and build process completed successfully for all operators")
 
 
 @cli.command("beta:fbc:build", short_help="Build the FBC source content")
