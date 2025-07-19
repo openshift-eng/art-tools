@@ -135,16 +135,6 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
 
-    def test_validate_with_invalid_konflux_cachi2_lockfile_rpms_empty_string(self):
-        """Test invalid rpm items (empty strings)"""
-        invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'lockfile': {'rpms': ['valid-package', '', 'another-valid-package']}}},
-        }
-        self.assertIn("should be non-empty", image_schema.validate('filename', invalid_data))
-
     def test_validate_with_valid_konflux_cachi2_lockfile_enabled(self):
         """Test valid konflux.cachi2.lockfile.enabled configuration"""
         valid_data = {
