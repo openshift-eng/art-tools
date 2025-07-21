@@ -98,9 +98,7 @@ class BuildFbcPipeline:
             '--message',
             commit_message,
         ]
-        if not self.runtime.dry_run:
-            doozer_opts.append('--push')
-        else:
+        if self.runtime.dry_run:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
