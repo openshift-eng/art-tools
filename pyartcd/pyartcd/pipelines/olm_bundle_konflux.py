@@ -133,12 +133,13 @@ async def olm_bundle_konflux(
 
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
-        jenkins.start_build_fbc(
-            version=version,
-            assembly=assembly,
-            operator_nvrs=operator_nvrs,
-            dry_run=runtime.dry_run,
-        )
+        if operator_nvrs:
+            jenkins.start_build_fbc(
+                version=version,
+                assembly=assembly,
+                operator_nvrs=operator_nvrs,
+                dry_run=runtime.dry_run,
+            )
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
