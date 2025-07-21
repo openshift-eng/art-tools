@@ -53,7 +53,7 @@ class KonfluxOlmBundleRebaser:
         self.dry_run = dry_run
         self._logger = logger
 
-    async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str):
+    async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str) -> str:
         """Rebase an operator with Konflux.
 
         :param metadata: The metadata of the operator to rebase.
@@ -124,7 +124,7 @@ class KonfluxOlmBundleRebaser:
         bundle_dir: Path,
         operator_build: KonfluxBuildRecord,
         input_release: str,
-    ):
+    ) -> str:
         """Rebase an operator directory with Konflux."""
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
@@ -392,7 +392,7 @@ class KonfluxOlmBundleRebaser:
         bundle_dir: Path,
         operator_framework_tags: Dict[str, str],
         input_release: str,
-    ):
+    ) -> str:
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
         bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
 
@@ -526,13 +526,16 @@ class KonfluxOlmBundleBuilder:
 
             # Parse bundle's Dockerfile
             bundle_df = DockerfileParser(str(df_path))
+            component_name = bundle_df.labels.get('com.redhat.component')
+            if not component_name:
+                raise IOError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
             version = bundle_df.labels.get('version')
             if not version:
                 raise IOError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
             release = bundle_df.labels.get('release')
             if not release:
                 raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
-            nvr = f"{metadata.get_olm_bundle_short_name()}-{version}-{release}"
+            nvr = f"{component_name}-{version}-{release}"
             record['bundle_nvr'] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
