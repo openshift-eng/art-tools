@@ -589,9 +589,13 @@ class FbcRebaseAndBuildCli:
         dgk_bundle_builds = await FbcRebaseCli.get_bundle_builds(
             self._db_for_bundles, runtime.group, list(dgk_operator_builds.values()), strict=False
         )
-        not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
-        if not_found:
-            raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
+        dgk_not_found = [dgk for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is None]
+        if dgk_not_found:
+            for dgk in dgk_not_found:
+                self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
+        dgk_bundle_builds = {dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None}
+        if not dgk_bundle_builds:
+            raise DoozerFatalError("No bundle builds found. Exiting.")
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
