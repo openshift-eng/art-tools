@@ -593,7 +593,9 @@ class FbcRebaseAndBuildCli:
         if dgk_not_found:
             for dgk in dgk_not_found:
                 self._logger.warning(f"Bundle build not found for {dgk_operator_builds[dgk].nvr}. Will skip it.")
-        dgk_bundle_builds = {dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None}
+        dgk_bundle_builds = {
+            dgk: bundle_build for dgk, bundle_build in dgk_bundle_builds.items() if bundle_build is not None
+        }
         if not dgk_bundle_builds:
             raise DoozerFatalError("No bundle builds found. Exiting.")
 
