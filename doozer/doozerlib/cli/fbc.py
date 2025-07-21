@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import traceback
@@ -487,6 +488,7 @@ class FbcRebaseAndBuildCli:
         plr_template: str,
         dry_run: bool,
         force: bool,
+        output: str,
     ):
         self.runtime = runtime
         self.version = version
@@ -502,6 +504,7 @@ class FbcRebaseAndBuildCli:
         self.plr_template = plr_template
         self.dry_run = dry_run
         self.force = force
+        self.output = output
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -539,6 +542,35 @@ class FbcRebaseAndBuildCli:
             return existing_fbc_build
         return None
 
+    async def _rebase_and_build(
+        self,
+        rebaser: KonfluxFbcRebaser,
+        builder: KonfluxFbcBuilder,
+        operator_meta: ImageMetadata,
+        bundle_build: KonfluxBundleBuildRecord,
+    ) -> str:
+        """Rebase and build FBC for the given operator and bundle build.
+
+        :param rebaser: FBC rebaser instance
+        :param builder: FBC builder instance
+        :param operator_meta: Operator metadata
+        :param bundle_build: Bundle build record
+        :return: NVR of the FBC build
+        """
+
+        existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
+        if existing_fbc_build:
+            self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
+            if not self.force:
+                return existing_fbc_build.nvr
+            self._logger.info("Force flag is set, rebuilding FBC")
+
+        self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
+        nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
+        self._logger.info(f"Building fbc for {operator_meta.name}...")
+        await builder.build(operator_meta)
+        return nvr
+
     async def run(self):
         """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
         self._logger.info("Starting FBC rebase and build process...")
@@ -565,22 +597,6 @@ class FbcRebaseAndBuildCli:
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
 
         self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
-
-        # Check for existing FBC builds if force is not set
-        if not self.force:
-            existing_builds = []
-            for dgk, bundle_build in dgk_bundle_builds.items():
-                operator_meta = runtime.image_map[dgk]
-                existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
-                if existing_fbc_build:
-                    existing_builds.append((dgk, existing_fbc_build))
-
-            if existing_builds:
-                self._logger.info("Found existing FBC builds, skipping rebase and build:")
-                for dgk, existing_build in existing_builds:
-                    self._logger.info(f"  {dgk}: {existing_build.nvr}")
-                self._logger.info("Use --force to override this check and rebuild")
-                return
 
         # Set up rebase and build components once
         rebaser = KonfluxFbcRebaser(
@@ -612,31 +628,24 @@ class FbcRebaseAndBuildCli:
             record_logger=runtime.record_logger,
         )
 
-        async def _rebase_and_build(operator_meta: ImageMetadata, bundle_build: KonfluxBundleBuildRecord):
-            self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
-            await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
-            self._logger.info(f"Building fbc for {operator_meta.name}...")
-            await builder.build(operator_meta)
-
         tasks = [
-            _rebase_and_build(self.runtime.image_map[dgk], bundle_build)
+            self._rebase_and_build(rebaser, builder, self.runtime.image_map[dgk], bundle_build)
             for dgk, bundle_build in dgk_bundle_builds.items()
         ]
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Check for failures
-        failed_operators = []
-        for result in results:
+        failed_tasks = []
+        for dgk, result in zip(dgk_bundle_builds, results):
             if isinstance(result, Exception):
-                failed_operators.append("unknown")
-            elif result is not None:
-                # result is the dgk of a failed operator
-                failed_operators.append(result)
+                failed_tasks.append(dgk)
+                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                LOGGER.error(f"Failed to rebase/build FBC for {dgk}: {result}; {stack_trace}")
 
-        if failed_operators:
-            raise DoozerFatalError(f"Failed to process operators: {', '.join(failed_operators)}")
-
-        self._logger.info("FBC rebase and build process completed successfully for all operators")
+        if failed_tasks:
+            raise DoozerFatalError(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+        if self.output == 'json':
+            click.echo(json.dumps({"nvrs": results}, indent=4))
+        LOGGER.info("FBC rebase and build process completed successfully for all operators")
 
 
 @cli.command("beta:fbc:build", short_help="Build the FBC source content")
@@ -741,6 +750,13 @@ async def fbc_build(
     default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
     help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
 )
+@click.option(
+    '--output',
+    '-o',
+    type=click.Choice(['json'], case_sensitive=False),
+    default='json',
+    help='Output format for the build records.',
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -758,6 +774,7 @@ async def fbc_rebase_and_build(
     dry_run: bool,
     force: bool,
     plr_template: str,
+    output: str,
     operator_nvrs: Tuple[str, ...],
 ):
     """
@@ -788,5 +805,6 @@ async def fbc_rebase_and_build(
         plr_template=plr_template,
         dry_run=dry_run,
         force=force,
+        output=output,
     )
     await cli.run()
