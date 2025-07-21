@@ -35,6 +35,7 @@ from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import BuildRecordInspector, ImageInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.constants import KONFLUX_IMAGES_SHARE
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.rhcos import RHCOSBuildInspector
@@ -1069,6 +1070,10 @@ class GenPayloadCli:
                 mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = (
                     payload_entry.build_record_inspector.get_build_pullspec()
                 )
+            if self.runtime.build_system == 'konflux' and not payload_entry.build_record_inspector.is_under_embargo():
+                mirror_src_for_dest[
+                    f'{KONFLUX_IMAGES_SHARE}/{payload_entry.image_meta.image_name_short}@{payload_entry.image_inspector.get_digest()}'
+                ] = payload_entry.image_inspector.get_pullspec()
 
         @exectools.limit_concurrency(500)
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))

@@ -49,6 +49,7 @@ MAX_KONFLUX_BUILD_QUEUE_SIZE = 100  # how many concurrent Konflux pipeline can w
 KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = (
     "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-konflux-template-push.yaml"
 )
+KONFLUX_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-bundle-konflux-template-push.yaml"
 KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-fbc-konflux-template-push.yaml"
 ART_FBC_GIT_REPO = "git@github.com:openshift-priv/art-fbc.git"
