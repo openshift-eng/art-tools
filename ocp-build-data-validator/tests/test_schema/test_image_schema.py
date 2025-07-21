@@ -1,9 +1,18 @@
+import os
+import shutil
+import tempfile
 import unittest
 
 from validator.schema import image_schema
 
 
 class TestImageSchema(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
     def test_validate_with_valid_data(self):
         valid_data = {
             'from': {},
@@ -193,3 +202,28 @@ class TestImageSchema(unittest.TestCase):
             },
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_dependents(self):
+        images_dir = self.temp_dir
+        with open(os.path.join(images_dir, "image1.yml"), "w") as f:
+            f.write("test")
+        with open(os.path.join(images_dir, "image2.yml"), "w") as f:
+            f.write("test")
+
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'dependents': ['image1', 'image2'],
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))
+
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'dependents': ['image1', 'image3'],
+        }
+        self.assertIn(
+            "Dependent image 'image3' not found", image_schema.validate('filename', invalid_data, images_dir=images_dir)
+        )

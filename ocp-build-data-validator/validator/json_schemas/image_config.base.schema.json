@@ -1246,6 +1246,28 @@
         "network_mode": {
           "description": "Network mode for konflux builds",
           "type": "string"
+        },
+        "vm_override": {
+          "description": "VM override for konflux builds",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "arches_dict.schema.json"
+            }
+          ]
+        },
+        "tagging_mode": {
+          "description": "Tagging mode for konflux builds",
+          "type": "string",
+          "enum": [
+            "enabled",
+            "legacy"
+          ]
+        },
+        "content": {
+          "$ref": "image_content.base.schema.json"
         }
       },
       "additionalProperties": false
