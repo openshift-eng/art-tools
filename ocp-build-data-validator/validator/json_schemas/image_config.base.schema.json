@@ -1242,7 +1242,11 @@
         "cachi2!": {
           "$ref": "#/properties/konflux/properties/cachi2"
         },
-        "cachi2-": {}
+        "cachi2-": {},
+        "network_mode": {
+          "description": "Network mode for konflux builds",
+          "type": "string"
+        }
       },
       "additionalProperties": false
     }
