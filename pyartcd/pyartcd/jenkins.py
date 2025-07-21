@@ -39,6 +39,7 @@ class Jobs(Enum):
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
+    BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
 
 
 def get_jenkins_url():
@@ -510,6 +511,25 @@ def start_build_plashets(
             'DATA_PATH': data_path,
             'DATA_GITREF': data_gitref,
             'COPY_LINKS': copy_links,
+            'DRY_RUN': dry_run,
+        },
+        **kwargs,
+    )
+
+
+def start_build_fbc(
+    version: str,
+    assembly: str,
+    operator_nvrs: list,
+    dry_run: bool,
+    **kwargs,
+) -> Optional[str]:
+    return start_build(
+        job=Jobs.BUILD_FBC,
+        params={
+            'BUILD_VERSION': version,
+            'ASSEMBLY': assembly,
+            'OPERATOR_NVRS': ','.join(operator_nvrs),
             'DRY_RUN': dry_run,
         },
         **kwargs,

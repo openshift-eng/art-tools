@@ -164,6 +164,14 @@ class Shipment(StrictBaseModel):
             raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
         return self
 
+    @model_validator(mode='after')
+    def shipment_and_snapshot_application_must_match(self) -> Self:
+        if self.snapshot and self.snapshot.spec.application != self.metadata.application:
+            raise ValueError(
+                f'shipment.snapshot.spec.application={self.snapshot.spec.application} is expected to be the same as shipment.metadata.application={self.metadata.application}'
+            )
+        return self
+
 
 def add_schema_comment(schema: dict):
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M %Z")
