@@ -116,6 +116,7 @@ async def olm_bundle_konflux(
 
         # Parse doozer record.log
         bundle_nvrs = []
+        operator_nvrs = []
         record_log_path = Path(runtime.doozer_working, 'record.log')
         if record_log_path.exists():
             with record_log_path.open() as file:
@@ -128,8 +129,16 @@ async def olm_bundle_konflux(
                         f'record with error message: {record["message"]}'
                     )
                 bundle_nvrs.append(record['bundle_nvr'])
+                operator_nvrs.append(record['operator_nvr'])
 
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
+
+        jenkins.start_build_fbc(
+            version=version,
+            assembly=assembly,
+            operator_nvrs=operator_nvrs,
+            dry_run=runtime.dry_run,
+        )
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
