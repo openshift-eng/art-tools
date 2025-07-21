@@ -6,6 +6,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from doozerlib.cli.fbc import FbcImportCli, FbcRebaseAndBuildCli
 from doozerlib.exceptions import DoozerFatalError
@@ -54,7 +55,8 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
 
 
 class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    @mock.patch("doozerlib.cli.fbc.KonfluxDb")
+    def setUp(self, mock_konflux_db_class):
         self.runtime = mock.Mock(spec=Runtime)
         self.runtime.group_config.vars = Model({"MAJOR": 4, "MINOR": 17})
         self.runtime.working_dir = "/tmp"
@@ -65,6 +67,15 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.konflux_db = mock.AsyncMock()
         self.runtime.konflux_db.bind = mock.Mock()  # Mock the bind method
         self.runtime.record_logger = mock.Mock()
+
+        # Mock KonfluxDb class to return mock instances
+        self.mock_db_for_bundles = mock.AsyncMock()
+        self.mock_db_for_bundles.bind = mock.Mock()
+        self.mock_fbc_db = mock.AsyncMock()
+        self.mock_fbc_db.bind = mock.Mock()
+
+        # Make KonfluxDb() return our mock instances
+        mock_konflux_db_class.side_effect = [self.mock_db_for_bundles, self.mock_fbc_db]
 
         self.fbc_cli = FbcRebaseAndBuildCli(
             runtime=self.runtime,
@@ -84,12 +95,6 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             output="json",
         )
 
-        # Mock the database objects created in the CLI constructor
-        self.fbc_cli._db_for_bundles = mock.AsyncMock()
-        self.fbc_cli._db_for_bundles.bind = mock.Mock()
-        self.fbc_cli._fbc_db = mock.AsyncMock()
-        self.fbc_cli._fbc_db.bind = mock.Mock()
-
     def _setup_database_mocks(self, bundle_builds=None, fbc_builds=None):
         """Helper method to setup database mocks consistently across tests"""
         if bundle_builds is None:
@@ -105,8 +110,8 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             for build in fbc_builds:
                 yield build
 
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self.mock_db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self.mock_fbc_db.search_builds_by_fields = mock_fbc_search
 
     def _create_mock_operator_build(self, name: str, nvr: str) -> KonfluxBuildRecord:
         build = mock.Mock(spec=KonfluxBuildRecord)
@@ -265,8 +270,8 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             if False:
                 yield
 
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self.mock_db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self.mock_fbc_db.search_builds_by_fields = mock_fbc_search
 
         mock_rebaser = mock.AsyncMock()
         mock_rebaser.rebase.return_value = "test-operator-1-fbc-1.0.0-1"
