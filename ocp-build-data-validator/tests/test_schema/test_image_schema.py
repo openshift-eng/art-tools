@@ -88,3 +88,108 @@ class TestImageSchema(unittest.TestCase):
             "is not valid",
             image_schema.validate('filename', data),
         )
+
+    def test_validate_with_valid_konflux_cachi2_lockfile_rpms(self):
+        """Test valid konflux.cachi2.lockfile.rpms configuration"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {
+                'mode': 'enabled',
+                'cachi2': {
+                    'enabled': True,
+                    'lockfile': {'enabled': True, 'force': False, 'rpms': ['package1', 'package2', 'package3']},
+                },
+            },
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_empty_konflux_cachi2_lockfile_rpms(self):
+        """Test empty rpms array is valid"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'rpms': []}}},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_lockfile_rpms_type(self):
+        """Test invalid rpms data type (not array)"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'rpms': 'not-an-array'}}},
+        }
+        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_lockfile_rpms_items(self):
+        """Test invalid rpm items (not strings)"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'rpms': ['valid-package', 123, 'another-valid-package']}}},
+        }
+        self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_with_valid_konflux_cachi2_lockfile_enabled(self):
+        """Test valid konflux.cachi2.lockfile.enabled configuration"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'enabled': True}}},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_lockfile_enabled(self):
+        """Test invalid konflux.cachi2.lockfile.enabled type"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'enabled': 'not-a-boolean'}}},
+        }
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_with_valid_konflux_cachi2_lockfile_force(self):
+        """Test valid konflux.cachi2.lockfile.force configuration"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'force': False}}},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_lockfile_force(self):
+        """Test invalid konflux.cachi2.lockfile.force type"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'lockfile': {'force': 'not-a-boolean'}}},
+        }
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_with_valid_komplux_cachi2_enabled(self):
+        """Test valid konflux.cachi2.enabled configuration"""
+        valid_data = {'from': {}, 'name': 'my-name', 'for_payload': True, 'konflux': {'cachi2': {'enabled': True}}}
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_combined_konflux_configurations(self):
+        """Test valid combined konflux configurations"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {
+                'mode': 'enabled',
+                'cachito': {'mode': 'emulation'},
+                'cachi2': {'enabled': True, 'lockfile': {'enabled': True, 'force': False, 'rpms': ['rpm1', 'rpm2']}},
+            },
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))

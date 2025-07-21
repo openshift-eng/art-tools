@@ -1133,6 +1133,13 @@
             "disabled"
           ]
         },
+        "mode?": {
+          "$ref": "#/properties/konflux/properties/mode"
+        },
+        "mode!": {
+          "$ref": "#/properties/konflux/properties/mode"
+        },
+        "mode-": {},
         "cachito": {
           "type": "object",
           "properties": {
@@ -1144,22 +1151,100 @@
                 "removal",
                 "emulation"
               ]
-            }
+            },
+            "mode?": {
+              "$ref": "#/properties/konflux/properties/cachito/properties/mode"
+            },
+            "mode!": {
+              "$ref": "#/properties/konflux/properties/cachito/properties/mode"
+            },
+            "mode-": {}
           },
-          "mode?": {
-            "$ref": "#/properties/mode"
-          },
-          "mode!": {
-            "$ref": "#/properties/mode"
-          }
+          "additionalProperties": false
         },
         "cachito?": {
-            "$ref": "#/properties/cachito"
+          "$ref": "#/properties/konflux/properties/cachito"
         },
         "cachito!": {
-            "$ref": "#/properties/cachito"
-        }
-      }
+          "$ref": "#/properties/konflux/properties/cachito"
+        },
+        "cachito-": {},
+        "cachi2": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Enable/disable cachi2 functionality",
+              "type": "boolean"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled-": {},
+            "lockfile": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "description": "Enable/disable lockfile generation",
+                  "type": "boolean"
+                },
+                "enabled?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/enabled"
+                },
+                "enabled!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/enabled"
+                },
+                "enabled-": {},
+                "force": {
+                  "description": "Force lockfile generation even when conditions aren't met",
+                  "type": "boolean"
+                },
+                "force?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force-": {},
+                "rpms": {
+                  "description": "Array of RPM package names to include in lockfile generation",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "rpms?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/rpms"
+                },
+                "rpms!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/rpms"
+                },
+                "rpms-": {}
+              },
+              "additionalProperties": false
+            },
+            "lockfile?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile-": {}
+          },
+          "additionalProperties": false
+        },
+        "cachi2?": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2!": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2-": {}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
