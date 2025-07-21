@@ -63,6 +63,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.upcycle = False
         self.runtime.source_resolver = mock.Mock(spec=SourceResolver)
         self.runtime.konflux_db = mock.AsyncMock()
+        self.runtime.konflux_db.bind = mock.Mock()  # Mock the bind method
         self.runtime.record_logger = mock.Mock()
 
         self.fbc_cli = FbcRebaseAndBuildCli(
@@ -82,6 +83,30 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             force=False,
             output="json",
         )
+
+        # Mock the database objects created in the CLI constructor
+        self.fbc_cli._db_for_bundles = mock.AsyncMock()
+        self.fbc_cli._db_for_bundles.bind = mock.Mock()
+        self.fbc_cli._fbc_db = mock.AsyncMock()
+        self.fbc_cli._fbc_db.bind = mock.Mock()
+
+    def _setup_database_mocks(self, bundle_builds=None, fbc_builds=None):
+        """Helper method to setup database mocks consistently across tests"""
+        if bundle_builds is None:
+            bundle_builds = []
+        if fbc_builds is None:
+            fbc_builds = []
+
+        async def mock_bundle_search(*args, **kwargs):
+            for build in bundle_builds:
+                yield build
+
+        async def mock_fbc_search(*args, **kwargs):
+            for build in fbc_builds:
+                yield build
+
+        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
 
     def _create_mock_operator_build(self, name: str, nvr: str) -> KonfluxBuildRecord:
         build = mock.Mock(spec=KonfluxBuildRecord)
@@ -108,16 +133,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.images = ["test-operator"]
         self.runtime.image_map = {"test-operator": mock.Mock(is_olm_operator=True, distgit_key="test-operator")}
 
-        async def mock_bundle_search(*args, **kwargs):
-            yield bundle_build
-
-        async def mock_fbc_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[])
 
         mock_rebaser = mock.AsyncMock()
         mock_rebaser.rebase.return_value = "test-fbc-1.0.0-1"
@@ -147,16 +163,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
         )
 
-        async def mock_bundle_search(*args, **kwargs):
-            yield bundle_build
-
-        async def mock_fbc_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[])
 
         mock_rebaser = mock.AsyncMock()
         mock_rebaser.rebase.return_value = "test-fbc-1.0.0-1"
@@ -185,14 +192,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             "test-operator": mock.Mock(is_olm_operator=True, distgit_key="test-operator", name="test-operator")
         }
 
-        async def mock_bundle_search(*args, **kwargs):
-            yield bundle_build
-
-        async def mock_fbc_search(*args, **kwargs):
-            yield existing_fbc
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[existing_fbc])
 
         mock_rebaser = mock.AsyncMock()
         mock_rebaser_class.return_value = mock_rebaser
@@ -223,14 +223,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             "test-operator": mock.Mock(is_olm_operator=True, distgit_key="test-operator", name="test-operator")
         }
 
-        async def mock_bundle_search(*args, **kwargs):
-            yield bundle_build
-
-        async def mock_fbc_search(*args, **kwargs):
-            yield existing_fbc
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[existing_fbc])
 
         mock_rebaser = mock.AsyncMock()
         mock_rebaser.rebase.return_value = "test-fbc-1.0.0-2"
@@ -267,10 +260,8 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             where = kwargs.get('where', {})
             if where.get('name') == 'test-operator-1-bundle':
                 yield bundle_build1
-            # For other cases, this becomes an empty async generator
 
         async def mock_fbc_search(*args, **kwargs):
-            # Empty async generator
             if False:
                 yield
 
@@ -301,12 +292,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.images = ["test-operator"]
         self.runtime.image_map = {"test-operator": mock.Mock(is_olm_operator=True, distgit_key="test-operator")}
 
-        async def mock_bundle_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self._setup_database_mocks(bundle_builds=[], fbc_builds=[])
 
         self.fbc_cli.operator_nvrs = ("test-operator-1.0.0-1",)
 
@@ -330,10 +316,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
         )
 
-        async def mock_bundle_search(*args, **kwargs):
-            yield bundle_build
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self._setup_database_mocks(bundle_builds=[bundle_build], fbc_builds=[])
 
         result = await self.fbc_cli.get_bundle_build_for(operator_build)
 
@@ -342,12 +325,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
     async def test_get_bundle_build_for_not_found_strict(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
 
-        async def mock_bundle_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self._setup_database_mocks(bundle_builds=[], fbc_builds=[])
 
         with self.assertRaises(IOError):
             await self.fbc_cli.get_bundle_build_for(operator_build, strict=True)
@@ -355,12 +333,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
     async def test_get_bundle_build_for_not_found_non_strict(self):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
 
-        async def mock_bundle_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._db_for_bundles.search_builds_by_fields = mock_bundle_search
+        self._setup_database_mocks(bundle_builds=[], fbc_builds=[])
 
         result = await self.fbc_cli.get_bundle_build_for(operator_build, strict=False)
 
@@ -375,10 +348,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         )
         existing_fbc = mock.Mock(spec=KonfluxFbcBuildRecord, nvr="test-fbc-1.0.0-1")
 
-        async def mock_fbc_search(*args, **kwargs):
-            yield existing_fbc
-
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[], fbc_builds=[existing_fbc])
 
         result = await self.fbc_cli._check_existing_fbc_build(operator_meta, bundle_build)
 
@@ -392,12 +362,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
         )
 
-        async def mock_fbc_search(*args, **kwargs):
-            # Empty async generator
-            if False:
-                yield
-
-        self.fbc_cli._fbc_db.search_builds_by_fields = mock_fbc_search
+        self._setup_database_mocks(bundle_builds=[], fbc_builds=[])
 
         result = await self.fbc_cli._check_existing_fbc_build(operator_meta, bundle_build)
 
