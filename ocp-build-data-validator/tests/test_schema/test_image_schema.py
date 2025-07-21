@@ -18,6 +18,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
@@ -65,6 +66,7 @@ class TestImageSchema(unittest.TestCase):
             'name': '1234',
             'from': {},
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
@@ -73,6 +75,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'update-csv': {
                 'manifests-dir': '...',
                 'bundle-dir': '...',
@@ -104,6 +107,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'mode': 'enabled',
                 'cachi2': {
@@ -120,6 +124,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'lockfile': {'rpms': []}}},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -150,6 +155,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'lockfile': {'enabled': True}}},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -170,6 +176,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {'cachi2': {'lockfile': {'force': False}}},
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
@@ -186,7 +193,13 @@ class TestImageSchema(unittest.TestCase):
 
     def test_validate_with_valid_komplux_cachi2_enabled(self):
         """Test valid konflux.cachi2.enabled configuration"""
-        valid_data = {'from': {}, 'name': 'my-name', 'for_payload': True, 'konflux': {'cachi2': {'enabled': True}}}
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'cachi2': {'enabled': True}},
+        }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
     def test_validate_with_combined_konflux_configurations(self):
@@ -195,6 +208,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
                 'mode': 'enabled',
                 'cachito': {'mode': 'emulation'},
@@ -214,6 +228,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 'my-name',
             'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'dependents': ['image1', 'image2'],
         }
         self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))

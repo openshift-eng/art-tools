@@ -31,8 +31,9 @@ def validate(file, data, images_dir=None):
     if data.get("mode") != "disabled" and data.get("for_release") is not False:
         delivery_info = data.get('delivery')
         if not delivery_info or 'delivery_repo_names' not in delivery_info:
-            errors.append("Image must have a 'delivery.delivery_repo_names' field unless 'mode' is 'disabled' or 'for_release' is false.")
-
+            errors.append(
+                "Image must have a 'delivery.delivery_repo_names' field unless 'mode' is 'disabled' or 'for_release' is false."
+            )
 
     if images_dir:
         image_files = [os.path.splitext(f)[0] for f in os.listdir(images_dir) if f.endswith(".yml")]
