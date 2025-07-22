@@ -1088,6 +1088,8 @@ class GenPayloadCli:
                     '--continue-on-error',
                     f'--filename={str(src_dest_path)}',
                 ]
+                if self.runtime.build_system == 'konflux':
+                    cmd.append(f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}')
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
