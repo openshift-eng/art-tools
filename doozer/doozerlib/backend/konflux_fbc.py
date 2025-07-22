@@ -256,7 +256,9 @@ class KonfluxFbcRebaser:
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
 
-    async def rebase(self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str):
+    async def rebase(
+        self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str
+    ) -> str:
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
@@ -291,7 +293,8 @@ class KonfluxFbcRebaser:
             )
 
             # Update the FBC repo
-            await self._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+            rebase_nvr = await self._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+            assert rebase_nvr == nvr, f"rebase_nvr != nvr; doozer bug? {rebase_nvr} != {nvr}"
 
             # Validate the updated catalog
             logger.info("Validating the updated catalog")
@@ -316,6 +319,7 @@ class KonfluxFbcRebaser:
         finally:
             if self._record_logger:
                 self._record_logger.add_record("rebase_fbc_konflux", **record)
+        return nvr
 
     async def _get_referenced_images(self, konflux_db: KonfluxDb, bundle_build: KonfluxBundleBuildRecord):
         assert bundle_build.operator_nvr, "operator_nvr is empty; doozer bug?"
@@ -334,7 +338,7 @@ class KonfluxFbcRebaser:
         version: str,
         release: str,
         logger: logging.Logger,
-    ):
+    ) -> str:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
         # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
@@ -517,7 +521,9 @@ class KonfluxFbcRebaser:
         # The following label is used internally by ART's shipment pipeline
         name = self.get_fbc_name(metadata.distgit_key)
         dfp.labels['com.redhat.art.name'] = name
-        dfp.labels['com.redhat.art.nvr'] = f'{name}-{version}-{release}'
+        nvr = f'{name}-{version}-{release}'
+        dfp.labels['com.redhat.art.nvr'] = nvr
+        return nvr
 
     def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.

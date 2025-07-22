@@ -27,6 +27,7 @@ class BuildFbcPipeline:
         kubeconfig: str,
         plr_template: str,
         skip_checks: bool,
+        force: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -40,6 +41,7 @@ class BuildFbcPipeline:
         self.kubeconfig = kubeconfig
         self.plr_template = plr_template
         self.skip_checks = skip_checks
+        self.force = force
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -47,17 +49,12 @@ class BuildFbcPipeline:
 
     async def run(self):
         try:
-            # Rebase FBC repo
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-            self._logger.info('Rebasing FBC repo with release %s', release_str)
-            rebase_records = await self._rebase(
+            self._logger.info('Rebasing and building FBC repo with release %s', release_str)
+            build_records = await self._rebase_and_build(
                 release=release_str,
                 commit_message='Rebase FBC segment with release {}'.format(release_str),
             )
-
-            # Build FBC segments
-            distgit_keys = [str(record['name']) for record in rebase_records]
-            build_records = await self._build(distgit_keys)
 
             # Parse doozer record.log
             self._logger.info('Parsing doozer record.log')
@@ -91,9 +88,9 @@ class BuildFbcPipeline:
         self._logger.info(f'Running doozer command: {" ".join(cmd)}')
         await exectools.cmd_assert_async(cmd)
 
-    async def _rebase(self, release: str, commit_message: str):
+    async def _rebase_and_build(self, release: str, commit_message: str):
         doozer_opts = [
-            'beta:fbc:rebase',
+            'beta:fbc:rebase-and-build',
             '--version',
             self.version,
             '--release',
@@ -101,27 +98,10 @@ class BuildFbcPipeline:
             '--message',
             commit_message,
         ]
-        if not self.runtime.dry_run:
-            doozer_opts.append('--push')
+        if self.runtime.dry_run:
+            doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        if self.operator_nvrs:
-            doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
-        try:
-            await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude)
-        finally:
-            successful_records, failed_records = await self._parse_record_log('rebase_fbc_konflux')
-            self._logger.info(
-                'Successfully rebased: %s', ', '.join([str(entry['name']) for entry in successful_records])
-            )
-            if failed_records:
-                self._logger.error('Failed to rebase: %s', ', '.join([str(entry['name']) for entry in failed_records]))
-        return successful_records
-
-    async def _build(self, distgit_keys: List[str]):
-        doozer_opts = [
-            'beta:fbc:build',
-        ]
         if self.kubeconfig:
             doozer_opts.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
@@ -134,18 +114,34 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--plr-template', plr_template_url])
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
-        if self.fbc_repo:
-            doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        if self.runtime.dry_run:
-            doozer_opts.append('--dry-run')
+        if self.force:
+            doozer_opts.append('--force')
+        if self.operator_nvrs:
+            doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
-            await self._run_doozer(doozer_opts, only=','.join(distgit_keys), exclude='')
+            await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude)
         finally:
-            successful_records, failed_records = await self._parse_record_log('build_fbc_konflux')
-            self._logger.info('Successfully built: %s', ', '.join([str(entry['name']) for entry in successful_records]))
-            if failed_records:
-                self._logger.error('Failed to build: %s', ', '.join([str(entry['name']) for entry in failed_records]))
-        return successful_records
+            # Parse both rebase and build records from the combined operation
+            successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')
+            successful_build_records, failed_build_records = await self._parse_record_log('build_fbc_konflux')
+
+            self._logger.info(
+                'Successfully rebased: %s', ', '.join([str(entry['name']) for entry in successful_rebase_records])
+            )
+            if failed_rebase_records:
+                self._logger.error(
+                    'Failed to rebase: %s', ', '.join([str(entry['name']) for entry in failed_rebase_records])
+                )
+
+            self._logger.info(
+                'Successfully built: %s', ', '.join([str(entry['name']) for entry in successful_build_records])
+            )
+            if failed_build_records:
+                self._logger.error(
+                    'Failed to build: %s', ', '.join([str(entry['name']) for entry in failed_build_records])
+                )
+
+        return successful_build_records
 
     async def _parse_record_log(self, entry_type: str):
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
@@ -198,6 +194,7 @@ class BuildFbcPipeline:
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
+@click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -213,6 +210,7 @@ async def build_fbc(
     kubeconfig: str,
     plr_template: str,
     skip_checks: bool,
+    force: bool,
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,
@@ -227,5 +225,6 @@ async def build_fbc(
         kubeconfig=kubeconfig,
         plr_template=plr_template,
         skip_checks=skip_checks,
+        force=force,
     )
     await pipeline.run()
