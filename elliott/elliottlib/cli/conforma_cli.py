@@ -24,12 +24,14 @@ class ConformaVerifyCli:
         runtime: Runtime,
         nvrs: list,
         policy_path: str = None,
+        kubeconfig: str = None,
     ):
         self.runtime = runtime
         if not nvrs:
             raise ValueError("nvrs must be provided")
         self.nvrs = nvrs
         self.policy_path = policy_path or "https://raw.githubusercontent.com/enterprise-contract/config/refs/heads/main/redhat/policy.yaml"
+        self.kubeconfig = kubeconfig
 
     async def run(self) -> Dict[str, Dict]:
         """Run conforma verification for all NVRs and return results."""
@@ -78,10 +80,9 @@ class ConformaVerifyCli:
             policy_file = self.policy_path
         
         # Extract cosign public key
-        cmd = [
-            "kubectl", "get", "-n", "openshift-pipelines", "secret", "public-key", 
-            "-o", "json"
-        ]
+        cmd = ["oc", "get", "-n", "openshift-pipelines", "secret", "public-key", "-o", "json"]
+        if self.kubeconfig:
+            cmd.extend(["--kubeconfig", self.kubeconfig])
         _, stdout, _ = await cmd_gather_async(cmd)
         
         secret_data = json.loads(stdout)
@@ -227,6 +228,11 @@ def conforma_cli():
     metavar="PATH_OR_URL",
     help="Path to policy.yaml file or URL. Defaults to the official Red Hat Enterprise Contract policy.",
 )
+@click.option(
+    '--kubeconfig',
+    metavar='PATH',
+    help='Path to the kubeconfig file to use. Can also be set via KUBECONFIG env var.',
+)
 @click.pass_obj
 @click_coroutine
 async def verify_conforma_cli(
@@ -234,6 +240,7 @@ async def verify_conforma_cli(
     nvrs_file,
     nvrs,
     policy,
+    kubeconfig,
 ):
     """
     Verify given builds (NVRs) with Conforma
@@ -246,6 +253,9 @@ async def verify_conforma_cli(
 
     \b
     $ elliott -g openshift-4.18 conforma verify --policy /path/to/custom/policy.yaml nvr1 nvr2
+
+    \b
+    $ elliott -g openshift-4.18 conforma verify --kubeconfig /path/to/kubeconfig nvr1 nvr2
     """
     if bool(nvrs) and bool(nvrs_file):
         raise click.BadParameter("Use only one of nvrs arguments or --nvrs-file")
@@ -258,10 +268,14 @@ async def verify_conforma_cli(
     if not nvrs:
         raise click.BadParameter("Must provide NVRs either as arguments or via --nvrs-file")
 
+    if not kubeconfig:
+        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
     pipeline = ConformaVerifyCli(
         runtime=runtime,
         nvrs=nvrs,
         policy_path=policy,
+        kubeconfig=kubeconfig,
     )
     results = await pipeline.run()
     
