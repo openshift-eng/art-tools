@@ -32,7 +32,7 @@ class ConformaVerifyCli:
         self.nvrs = nvrs
         self.policy_path = (
             policy_path
-            or "https://raw.githubusercontent.com/enterprise-contract/config/refs/heads/main/redhat/policy.yaml"
+            or "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-prod.yaml"
         )
         self.kubeconfig = kubeconfig
 
@@ -73,15 +73,48 @@ class ConformaVerifyCli:
         policy_file = os.path.join(temp_dir, "policy.yaml")
         cosign_pub_file = os.path.join(temp_dir, "cosign.pub")
 
-        # Download policy.yaml
+        # Download and process EnterpriseContractPolicy
         if self.policy_path.startswith(('http://', 'https://')):
-            cmd = ["wget", "-q", "-O", policy_file, self.policy_path]
+            # Download the EnterpriseContractPolicy YAML
+            temp_download = os.path.join(temp_dir, "ec_policy.yaml")
+
+            # Convert GitLab blob URL to raw URL if needed
+            download_url = self.policy_path
+            if "gitlab.cee.redhat.com" in download_url and "/-/blob/" in download_url:
+                download_url = download_url.replace("/-/blob/", "/-/raw/")
+
+            cmd = ["wget", "-q", "-O", temp_download, download_url]
             await cmd_assert_async(cmd)
+
+            # Parse the YAML and extract the spec section
+            with open(temp_download, 'r') as f:
+                full_policy = yaml.safe_load(f)
+
+            if 'spec' not in full_policy:
+                raise RuntimeError("Downloaded EnterpriseContractPolicy does not contain a 'spec' section")
+
+            # Write just the spec content to the policy file
+            with open(policy_file, 'w') as f:
+                yaml.dump(full_policy['spec'], f, default_flow_style=False)
+
         else:
-            # Local file path
+            # Local file path - check if it's a full EnterpriseContractPolicy or just the spec
             if not os.path.exists(self.policy_path):
                 raise FileNotFoundError(f"Policy file not found: {self.policy_path}")
-            policy_file = self.policy_path
+
+            with open(self.policy_path, 'r') as f:
+                policy_content = yaml.safe_load(f)
+
+            # If it's a full EnterpriseContractPolicy, extract the spec
+            if 'kind' in policy_content and policy_content['kind'] == 'EnterpriseContractPolicy':
+                if 'spec' not in policy_content:
+                    raise RuntimeError("EnterpriseContractPolicy does not contain a 'spec' section")
+
+                with open(policy_file, 'w') as f:
+                    yaml.dump(policy_content['spec'], f, default_flow_style=False)
+            else:
+                # Assume it's already a spec-only file
+                policy_file = self.policy_path
 
         # Extract cosign public key
         cmd = ["oc", "get", "-n", "openshift-pipelines", "secret", "public-key", "-o", "json"]
@@ -251,9 +284,9 @@ def conforma_cli():
     type=click.File("rt"),
 )
 @click.option(
-    "--policy",
+    "--konflux-policy",
     metavar="PATH_OR_URL",
-    help="Path to policy.yaml file or URL. Defaults to the official Red Hat Enterprise Contract policy.",
+    help="Path to EnterpriseContractPolicy YAML file or URL. Defaults to the official OCP Konflux policy.",
 )
 @click.option(
     '--kubeconfig',
@@ -266,7 +299,7 @@ async def verify_conforma_cli(
     runtime: Runtime,
     nvrs_file,
     nvrs,
-    policy,
+    konflux_policy,
     kubeconfig,
 ):
     """
@@ -279,7 +312,7 @@ async def verify_conforma_cli(
     $ elliott -g openshift-4.18 conforma verify nvr1 nvr2 nvr3
 
     \b
-    $ elliott -g openshift-4.18 conforma verify --policy /path/to/custom/policy.yaml nvr1 nvr2
+    $ elliott -g openshift-4.18 conforma verify --konflux-policy /path/to/custom/policy.yaml nvr1 nvr2
 
     \b
     $ elliott -g openshift-4.18 conforma verify --kubeconfig /path/to/kubeconfig nvr1 nvr2
@@ -301,7 +334,7 @@ async def verify_conforma_cli(
     pipeline = ConformaVerifyCli(
         runtime=runtime,
         nvrs=nvrs,
-        policy_path=policy,
+        policy_path=konflux_policy,
         kubeconfig=kubeconfig,
     )
     results = await pipeline.run()
