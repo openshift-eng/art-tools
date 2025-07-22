@@ -30,7 +30,10 @@ class ConformaVerifyCli:
         if not nvrs:
             raise ValueError("nvrs must be provided")
         self.nvrs = nvrs
-        self.policy_path = policy_path or "https://raw.githubusercontent.com/enterprise-contract/config/refs/heads/main/redhat/policy.yaml"
+        self.policy_path = (
+            policy_path
+            or "https://raw.githubusercontent.com/enterprise-contract/config/refs/heads/main/redhat/policy.yaml"
+        )
         self.kubeconfig = kubeconfig
 
     async def run(self) -> Dict[str, Dict]:
@@ -40,20 +43,21 @@ class ConformaVerifyCli:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
         LOGGER.info("Verifying %d NVRs with Conforma", len(self.nvrs))
-        
+
         # Fetch build records from DB
         build_records = await self._fetch_build_records()
-        
+
         # Setup verification environment
         with tempfile.TemporaryDirectory() as temp_dir:
             policy_file, cosign_pub_file = await self._setup_verification_files(temp_dir)
-            
+
             # Run verification for each image
             results = await self._verify_images(build_records, policy_file, cosign_pub_file)
-            
-        # Report results
+
+        # Report results and save to file
         self._report_results(results)
-        
+        self._save_results_to_file(results)
+
         return results
 
     async def _fetch_build_records(self) -> List[KonfluxRecord]:
@@ -65,10 +69,10 @@ class ConformaVerifyCli:
     async def _setup_verification_files(self, temp_dir: str) -> Tuple[str, str]:
         """Download policy.yaml and extract cosign public key."""
         LOGGER.info("Setting up verification files...")
-        
+
         policy_file = os.path.join(temp_dir, "policy.yaml")
         cosign_pub_file = os.path.join(temp_dir, "cosign.pub")
-        
+
         # Download policy.yaml
         if self.policy_path.startswith(('http://', 'https://')):
             cmd = ["wget", "-q", "-O", policy_file, self.policy_path]
@@ -78,34 +82,37 @@ class ConformaVerifyCli:
             if not os.path.exists(self.policy_path):
                 raise FileNotFoundError(f"Policy file not found: {self.policy_path}")
             policy_file = self.policy_path
-        
+
         # Extract cosign public key
         cmd = ["oc", "get", "-n", "openshift-pipelines", "secret", "public-key", "-o", "json"]
         if self.kubeconfig:
             cmd.extend(["--kubeconfig", self.kubeconfig])
         _, stdout, _ = await cmd_gather_async(cmd)
-        
+
         secret_data = json.loads(stdout)
         import base64
+
         cosign_pub_data = base64.b64decode(secret_data['data']['cosign.pub']).decode('utf-8')
-        
+
         with open(cosign_pub_file, 'w') as f:
             f.write(cosign_pub_data)
-        
+
         LOGGER.info("Verification files prepared: policy=%s, cosign.pub=%s", policy_file, cosign_pub_file)
         return policy_file, cosign_pub_file
 
-    async def _verify_images(self, build_records: List[KonfluxRecord], policy_file: str, cosign_pub_file: str) -> Dict[str, Dict]:
+    async def _verify_images(
+        self, build_records: List[KonfluxRecord], policy_file: str, cosign_pub_file: str
+    ) -> Dict[str, Dict]:
         """Run ec validate for each image pullspec."""
         LOGGER.info("Running ec validation for %d images...", len(build_records))
-        
+
         tasks = []
         for record in build_records:
             task = self._verify_single_image(record, policy_file, cosign_pub_file)
             tasks.append(task)
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Combine results with NVRs
         verification_results = {}
         for record, result in zip(build_records, results):
@@ -115,33 +122,39 @@ class ConformaVerifyCli:
                     "pullspec": record.image_pullspec,
                     "success": False,
                     "error": str(result),
-                    "output": None
+                    "output": None,
                 }
             else:
                 verification_results[nvr] = result
-                
+
         return verification_results
 
     async def _verify_single_image(self, record: KonfluxRecord, policy_file: str, cosign_pub_file: str) -> Dict:
         """Run ec validate for a single image."""
         pullspec = record.image_pullspec
         nvr = str(record.nvr)
-        
-        LOGGER.debug("Verifying image: %s (NVR: %s)", pullspec, nvr)
-        
+
+        LOGGER.info("Verifying image: %s (NVR: %s)", pullspec, nvr)
+
         cmd = [
-            "ec", "validate", "image",
-            "--image", pullspec,
-            "--public-key", cosign_pub_file,
-            "--policy", policy_file,
+            "ec",
+            "validate",
+            "image",
+            "--image",
+            pullspec,
+            "--public-key",
+            cosign_pub_file,
+            "--policy",
+            policy_file,
             "--ignore-rekor",
-            "--output", "yaml"
+            "--output",
+            "yaml",
         ]
-        
+
         try:
             # Run ec validate command
             _, stdout, stderr = await cmd_gather_async(cmd, check=False)
-            
+
             # Parse YAML output
             output_data = None
             if stdout:
@@ -150,61 +163,77 @@ class ConformaVerifyCli:
                 except yaml.YAMLError as e:
                     LOGGER.warning("Failed to parse YAML output for %s: %s", nvr, e)
                     output_data = {"raw_output": stdout}
-            
+
             # cmd_gather_async with check=False doesn't raise on non-zero return codes
             # Determine success based on whether we got valid output and no significant errors
             # EC command typically outputs validation results even on policy violations,
             # so we rely on the absence of critical errors in stderr
             success = output_data is not None and not any(
-                error_keyword in stderr.lower() 
+                error_keyword in stderr.lower()
                 for error_keyword in ["error:", "fatal:", "failed to", "cannot", "unable to"]
                 if stderr
             )
-            
+
             result = {
                 "pullspec": pullspec,
                 "success": success,
                 "output": output_data,
-                "stderr": stderr if stderr else None
+                "stderr": stderr if stderr else None,
             }
-            
+
             if success:
-                LOGGER.debug("✓ Verification passed for %s", nvr)
+                LOGGER.info("✓ Verification passed for %s", nvr)
             else:
                 LOGGER.warning("✗ Verification failed for %s", nvr)
-                
+
             return result
-            
+
         except Exception as e:
             LOGGER.error("Exception during verification of %s: %s", nvr, e)
-            return {
-                "pullspec": pullspec,
-                "success": False,
-                "error": str(e),
-                "output": None
-            }
+            return {"pullspec": pullspec, "success": False, "error": str(e), "output": None}
 
     def _report_results(self, results: Dict[str, Dict]):
         """Report verification results summary."""
         total = len(results)
         passed = sum(1 for r in results.values() if r["success"])
         failed = total - passed
-        
+
         LOGGER.info("=== Conforma Verification Results ===")
         LOGGER.info("Total: %d, Passed: %d, Failed: %d", total, passed, failed)
-        
+
         if failed > 0:
             LOGGER.warning("Failed verifications:")
             for nvr, result in results.items():
                 if not result["success"]:
                     error_msg = result.get("error") or result.get("stderr") or "Verification failed"
                     LOGGER.warning("  ✗ %s - %s", nvr, error_msg)
-        
+
         if passed > 0:
             LOGGER.info("Passed verifications:")
             for nvr, result in results.items():
                 if result["success"]:
                     LOGGER.info("  ✓ %s", nvr)
+
+    def _save_results_to_file(self, results: Dict[str, Dict]):
+        """Save detailed verification results to results.yaml file."""
+        results_file = "results.yaml"
+
+        # Prepare results data for YAML output
+        results_data = {
+            "summary": {
+                "total": len(results),
+                "passed": sum(1 for r in results.values() if r["success"]),
+                "failed": sum(1 for r in results.values() if not r["success"]),
+            },
+            "verifications": results,
+        }
+
+        try:
+            with open(results_file, 'w') as f:
+                yaml.dump(results_data, f, default_flow_style=False, sort_keys=False)
+            LOGGER.info("Detailed results saved to %s", results_file)
+        except Exception as e:
+            LOGGER.error("Failed to save results to %s: %s", results_file, e)
 
 
 @cli.group("conforma", short_help="Commands for Conforma verification")
@@ -212,9 +241,7 @@ def conforma_cli():
     pass
 
 
-@conforma_cli.command(
-    "verify", short_help="Verify given builds (NVRs) with Conforma"
-)
+@conforma_cli.command("verify", short_help="Verify given builds (NVRs) with Conforma")
 @click.argument('nvrs', metavar='<NVR>', nargs=-1, required=False, default=None)
 @click.option(
     "--nvrs-file",
@@ -278,15 +305,14 @@ async def verify_conforma_cli(
         kubeconfig=kubeconfig,
     )
     results = await pipeline.run()
-    
-    # Output results summary
+
+    # Output brief summary (detailed results are saved to results.yaml)
     total = len(results)
     passed = sum(1 for r in results.values() if r["success"])
     failed = total - passed
-    
-    click.echo(f"\n=== Summary ===")
-    click.echo(f"Total: {total}, Passed: {passed}, Failed: {failed}")
-    
+
+    click.echo(f"Verification complete: {passed}/{total} passed. See results.yaml for details.")
+
     # Exit with non-zero code if any verifications failed
     if failed > 0:
-        sys.exit(1) 
+        sys.exit(1)
