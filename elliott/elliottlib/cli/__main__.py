@@ -37,7 +37,7 @@ from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
 from elliottlib.cli.attach_cve_flaws_cli import attach_cve_flaws_cli
 from elliottlib.cli.change_state_cli import change_state_cli
 from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
-from elliottlib.cli.conforma_cli import conforma_cli
+from elliottlib.cli.conforma_cli import verify_conforma_cli
 from elliottlib.cli.create_cli import create_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.create_textonly_cli import create_textonly_cli
@@ -282,7 +282,7 @@ cli.add_command(advisory_images_cli)
 cli.add_command(create_placeholder_cli)
 cli.add_command(create_cli)
 cli.add_command(change_state_cli)
-cli.add_command(conforma_cli)
+cli.add_command(verify_conforma_cli)
 cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_bugs_cli)
 cli.add_command(find_builds_cli)
