@@ -10,12 +10,16 @@ import yaml
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import KonfluxRecord
+from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import cli, click_coroutine
-from elliottlib.cli.snapshot_cli import get_build_records_by_nvrs
+from elliottlib.cli.snapshot_cli import CreateSnapshotCli, get_build_records_by_nvrs
 from elliottlib.runtime import Runtime
 
 LOGGER = logutil.get_logger(__name__)
+
+yaml = new_roundtrip_yaml_handler()
 
 
 class ConformaVerifyCli:
@@ -24,7 +28,8 @@ class ConformaVerifyCli:
         runtime: Runtime,
         nvrs: list,
         policy_path: str = None,
-        kubeconfig: str = None,
+        konflux_kubeconfig: str = None,
+        pull_secret: str = None,
     ):
         self.runtime = runtime
         if not nvrs:
@@ -34,31 +39,48 @@ class ConformaVerifyCli:
             policy_path
             or "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-prod.yaml"
         )
-        self.kubeconfig = kubeconfig
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.pull_secret = pull_secret
 
     async def run(self) -> Dict[str, Dict]:
         """Run conforma verification for all NVRs and return results."""
-        self.runtime.initialize(build_system='konflux')
-        if self.runtime.konflux_db is None:
-            raise RuntimeError('Must run Elliott with Konflux DB initialized')
-
         LOGGER.info("Verifying %d NVRs with Conforma", len(self.nvrs))
 
-        # Fetch build records from DB
-        build_records = await self._fetch_build_records()
+        pipeline = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config={
+                'kubeconfig': self.konflux_kubeconfig,
+                'namespace': KONFLUX_DEFAULT_NAMESPACE,
+                'context': None,
+            },
+            image_repo_pull_secret=self.pull_secret,
+            builds=self.nvrs,
+            dry_run=True,
+            job_url=None,
+        )
+        snapshots = await pipeline.run()
+        if len(snapshots) != 1:
+            raise ValueError(
+                "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
+                len(snapshots),
+            )
+        snapshot_spec = snapshots[0].spec
+
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file_path = temp_file.name
+            yaml.dump(snapshot_spec.to_dict(), temp_file)
 
         # Setup verification environment
         with tempfile.TemporaryDirectory() as temp_dir:
             policy_file, cosign_pub_file = await self._setup_verification_files(temp_dir)
+            result = await self._verify_snapshot(temp_file_path, policy_file, cosign_pub_file)
 
-            # Run verification for each image
-            results = await self._verify_images(build_records, policy_file, cosign_pub_file)
+        results_file = "results.yaml"
+        with open(results_file, 'w') as f:
+            yaml.dump(result, f)
+        LOGGER.info("Detailed results saved to %s", results_file)
 
-        # Report results and save to file
-        self._report_results(results)
-        self._save_results_to_file(results)
-
-        return results
+        return result
 
     async def _fetch_build_records(self) -> List[KonfluxRecord]:
         """Fetch build records from DB for the given NVRs."""
@@ -88,14 +110,14 @@ class ConformaVerifyCli:
 
             # Parse the YAML and extract the spec section
             with open(temp_download, 'r') as f:
-                full_policy = yaml.safe_load(f)
+                full_policy = yaml.load(f)
 
             if 'spec' not in full_policy:
                 raise RuntimeError("Downloaded EnterpriseContractPolicy does not contain a 'spec' section")
 
             # Write just the spec content to the policy file
             with open(policy_file, 'w') as f:
-                yaml.dump(full_policy['spec'], f, default_flow_style=False)
+                yaml.dump(full_policy['spec'], f)
 
         else:
             # Local file path - check if it's a full EnterpriseContractPolicy or just the spec
@@ -103,7 +125,7 @@ class ConformaVerifyCli:
                 raise FileNotFoundError(f"Policy file not found: {self.policy_path}")
 
             with open(self.policy_path, 'r') as f:
-                policy_content = yaml.safe_load(f)
+                policy_content = yaml.load(f)
 
             # If it's a full EnterpriseContractPolicy, extract the spec
             if 'kind' in policy_content and policy_content['kind'] == 'EnterpriseContractPolicy':
@@ -111,15 +133,15 @@ class ConformaVerifyCli:
                     raise RuntimeError("EnterpriseContractPolicy does not contain a 'spec' section")
 
                 with open(policy_file, 'w') as f:
-                    yaml.dump(policy_content['spec'], f, default_flow_style=False)
+                    yaml.dump(policy_content['spec'], f)
             else:
                 # Assume it's already a spec-only file
                 policy_file = self.policy_path
 
         # Extract cosign public key
         cmd = ["oc", "get", "-n", "openshift-pipelines", "secret", "public-key", "-o", "json"]
-        if self.kubeconfig:
-            cmd.extend(["--kubeconfig", self.kubeconfig])
+        if self.konflux_kubeconfig:
+            cmd.extend(["--kubeconfig", self.konflux_kubeconfig])
         _, stdout, _ = await cmd_gather_async(cmd)
 
         secret_data = json.loads(stdout)
@@ -162,19 +184,15 @@ class ConformaVerifyCli:
 
         return verification_results
 
-    async def _verify_single_image(self, record: KonfluxRecord, policy_file: str, cosign_pub_file: str) -> Dict:
-        """Run ec validate for a single image."""
-        pullspec = record.image_pullspec
-        nvr = str(record.nvr)
-
-        LOGGER.info("Verifying image: %s (NVR: %s)", pullspec, nvr)
+    async def _verify_snapshot(self, snapshot_spec_filepath: str, policy_file: str, cosign_pub_file: str) -> Dict:
+        """Run ec validate for a given snapshot"""
 
         cmd = [
             "ec",
             "validate",
             "image",
-            "--image",
-            pullspec,
+            "--images",
+            snapshot_spec_filepath,
             "--public-key",
             cosign_pub_file,
             "--policy",
@@ -184,89 +202,32 @@ class ConformaVerifyCli:
             "yaml",
         ]
 
-        try:
-            # Run ec validate command
-            _, stdout, stderr = await cmd_gather_async(cmd, check=False)
+        # Run ec validate command
+        rc, stdout, stderr = await cmd_gather_async(cmd, check=False)
 
-            # Parse YAML output
-            output_data = None
-            if stdout:
-                try:
-                    output_data = yaml.safe_load(stdout)
-                except yaml.YAMLError as e:
-                    LOGGER.warning("Failed to parse YAML output for %s: %s", nvr, e)
-                    output_data = {"raw_output": stdout}
+        # Parse YAML output
+        output_data = None
+        if stdout:
+            try:
+                output_data = yaml.load(stdout)
+            except yaml.YAMLError as e:
+                LOGGER.warning("Failed to parse YAML output: %s", e)
+                output_data = {"raw_output": stdout}
 
-            # cmd_gather_async with check=False doesn't raise on non-zero return codes
-            # Determine success based on whether we got valid output and no significant errors
-            # EC command typically outputs validation results even on policy violations,
-            # so we rely on the absence of critical errors in stderr
-            success = output_data is not None and not any(
-                error_keyword in stderr.lower()
-                for error_keyword in ["error:", "fatal:", "failed to", "cannot", "unable to"]
-                if stderr
-            )
-
-            result = {
-                "pullspec": pullspec,
-                "success": success,
-                "output": output_data,
-                "stderr": stderr if stderr else None,
-            }
-
-            if success:
-                LOGGER.info("✓ Verification passed for %s", nvr)
-            else:
-                LOGGER.warning("✗ Verification failed for %s", nvr)
-
-            return result
-
-        except Exception as e:
-            LOGGER.error("Exception during verification of %s: %s", nvr, e)
-            return {"pullspec": pullspec, "success": False, "error": str(e), "output": None}
-
-    def _report_results(self, results: Dict[str, Dict]):
-        """Report verification results summary."""
-        total = len(results)
-        passed = sum(1 for r in results.values() if r["success"])
-        failed = total - passed
-
-        LOGGER.info("=== Conforma Verification Results ===")
-        LOGGER.info("Total: %d, Passed: %d, Failed: %d", total, passed, failed)
-
-        if failed > 0:
-            LOGGER.warning("Failed verifications:")
-            for nvr, result in results.items():
-                if not result["success"]:
-                    error_msg = result.get("error") or result.get("stderr") or "Verification failed"
-                    LOGGER.warning("  ✗ %s - %s", nvr, error_msg)
-
-        if passed > 0:
-            LOGGER.info("Passed verifications:")
-            for nvr, result in results.items():
-                if result["success"]:
-                    LOGGER.info("  ✓ %s", nvr)
-
-    def _save_results_to_file(self, results: Dict[str, Dict]):
-        """Save detailed verification results to results.yaml file."""
-        results_file = "results.yaml"
-
-        # Prepare results data for YAML output
-        results_data = {
-            "summary": {
-                "total": len(results),
-                "passed": sum(1 for r in results.values() if r["success"]),
-                "failed": sum(1 for r in results.values() if not r["success"]),
-            },
-            "verifications": results,
+        success = rc == 0
+        result = {
+            "snapshot": snapshot_spec_filepath,
+            "success": success,
+            "output": output_data,
+            "stderr": stderr if stderr else None,
         }
 
-        try:
-            with open(results_file, 'w') as f:
-                yaml.dump(results_data, f, default_flow_style=False, sort_keys=False)
-            LOGGER.info("Detailed results saved to %s", results_file)
-        except Exception as e:
-            LOGGER.error("Failed to save results to %s: %s", results_file, e)
+        if success:
+            LOGGER.info("✓ Verification passed ")
+        else:
+            LOGGER.warning("✗ Verification failed")
+
+        return result
 
 
 @cli.group("conforma", short_help="Commands for Conforma verification")
@@ -289,9 +250,14 @@ def conforma_cli():
     help="Path to EnterpriseContractPolicy YAML file or URL. Defaults to the official OCP Konflux policy.",
 )
 @click.option(
-    '--kubeconfig',
+    '--konflux-kubeconfig',
     metavar='PATH',
     help='Path to the kubeconfig file to use. Can also be set via KUBECONFIG env var.',
+)
+@click.option(
+    '--pull-secret',
+    metavar='PATH',
+    help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
 )
 @click.pass_obj
 @click_coroutine
@@ -300,7 +266,8 @@ async def verify_conforma_cli(
     nvrs_file,
     nvrs,
     konflux_policy,
-    kubeconfig,
+    konflux_kubeconfig,
+    pull_secret,
 ):
     """
     Verify given builds (NVRs) with Conforma
@@ -328,24 +295,22 @@ async def verify_conforma_cli(
     if not nvrs:
         raise click.BadParameter("Must provide NVRs either as arguments or via --nvrs-file")
 
-    if not kubeconfig:
-        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    if not pull_secret:
+        pull_secret = os.environ.get('KONFLUX_PULL_SECRET')
 
     pipeline = ConformaVerifyCli(
         runtime=runtime,
         nvrs=nvrs,
         policy_path=konflux_policy,
-        kubeconfig=kubeconfig,
+        konflux_kubeconfig=konflux_kubeconfig,
+        pull_secret=pull_secret,
     )
     results = await pipeline.run()
 
-    # Output brief summary (detailed results are saved to results.yaml)
-    total = len(results)
-    passed = sum(1 for r in results.values() if r["success"])
-    failed = total - passed
+    click.echo(f"Verification complete. See results.yaml for details.")
 
-    click.echo(f"Verification complete: {passed}/{total} passed. See results.yaml for details.")
-
-    # Exit with non-zero code if any verifications failed
-    if failed > 0:
+    if not results["success"]:
         sys.exit(1)
