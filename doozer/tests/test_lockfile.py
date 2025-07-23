@@ -444,9 +444,10 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_write_yaml.assert_called_once()
         self.logger.info.assert_any_call("Force flag set for test-image. Regenerating lockfile without digest check.")
 
-    @patch('artcommonlib.util.download_file_from_github')
+    @patch("tempfile.NamedTemporaryFile")
+    @patch('doozerlib.lockfile.download_file_from_github')
     @patch('os.environ.get')
-    async def test_get_digest_from_target_branch_not_found(self, mock_environ, mock_download):
+    async def test_get_digest_from_target_branch_not_found(self, mock_environ, mock_download, mock_tempfile):
         """Test digest fetching when file doesn't exist in target branch"""
         mock_runtime = MagicMock()
         mock_runtime.group = "openshift-4.20"
@@ -559,9 +560,10 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         self.logger.info.assert_any_call("Found digest in target branch for test-image")
         self.logger.info.assert_any_call("RPM list changed for test-image. Regenerating lockfile.")
 
-    @patch('artcommonlib.util.download_file_from_github')
+    @patch("tempfile.NamedTemporaryFile")
+    @patch('doozerlib.lockfile.download_file_from_github')
     @patch('os.environ.get')
-    async def test_get_lockfile_from_target_branch_not_found(self, mock_environ, mock_download):
+    async def test_get_lockfile_from_target_branch_not_found(self, mock_environ, mock_download, mock_tempfile):
         """Test lockfile fetching when file doesn't exist in target branch"""
         mock_runtime = MagicMock()
         mock_runtime.group = "test-group"
