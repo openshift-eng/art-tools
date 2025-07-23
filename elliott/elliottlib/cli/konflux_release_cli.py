@@ -191,7 +191,13 @@ class CreateReleaseCli:
             application=shipment.metadata.application,
             release_name=release_name,
         )
+
         if shipment.data:
+            # We only reserve live_id for prod release, therefore releaseNotes.live_id is only meant for prod
+            # For stage release, we want konflux to automatically assign a live_id to the release
+            if env != "prod":
+                shipment.data.releaseNotes.live_id = None
+
             # Do not set exclude_unset=True when dumping, since Konflux
             # expects certain keys to always be set, even if empty.
             # Those are appropriately set as default values in pydantic shipment model
