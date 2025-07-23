@@ -266,12 +266,12 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-stage-timestamp',
+                'name': 'ose-4-18-prod-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
             },
             'spec': {
-                'releasePlan': shipment_config.shipment.environments.stage.releasePlan,
+                'releasePlan': shipment_config.shipment.environments.prod.releasePlan,
                 'snapshot': created_snapshot_name,
                 'data': {
                     'releaseNotes': {
@@ -426,7 +426,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 'data': {
                     'releaseNotes': {
                         'type': shipment_config.shipment.data.releaseNotes.type,
-                        'live_id': None,
                         'synopsis': shipment_config.shipment.data.releaseNotes.synopsis,
                         'topic': shipment_config.shipment.data.releaseNotes.topic,
                         'description': shipment_config.shipment.data.releaseNotes.description,
