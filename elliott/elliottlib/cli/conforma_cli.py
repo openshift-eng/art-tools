@@ -233,11 +233,10 @@ class ConformaVerifyCli:
                         "total": 0,
                         "codes": [],
                     }
-                else:
-                    nvr_results[nvr]["violations"]["total"] += len(component["violations"])
-                    nvr_results[nvr]["violations"]["codes"].extend(
-                        set([violation["metadata"]["code"] for violation in component["violations"]])
-                    )
+                nvr_results[nvr]["violations"]["total"] += len(component["violations"])
+                nvr_results[nvr]["violations"]["codes"].extend(
+                    set([violation["metadata"]["code"] for violation in component["violations"]])
+                )
 
         success = rc == 0
         result = {
