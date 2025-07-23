@@ -6,7 +6,6 @@ import tempfile
 from typing import Dict, List, Tuple
 
 import click
-import yaml
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import KonfluxRecord
@@ -334,7 +333,7 @@ async def verify_conforma_cli(
     )
     results = await pipeline.run()
 
-    click.echo(f"Verification complete. See results.yaml for details.")
+    click.echo("Verification complete. See results.yaml for details.")
 
     if not results["success"]:
         sys.exit(1)
