@@ -35,6 +35,7 @@ class ConformaVerifyCli:
         if not nvrs:
             raise ValueError("nvrs must be provided")
         self.nvrs = nvrs
+        self.nvrs_by_pullspec = None
         self.policy_path = (
             policy_path
             or "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-prod.yaml"
@@ -46,7 +47,7 @@ class ConformaVerifyCli:
         """Run conforma verification for all NVRs and return results."""
         LOGGER.info("Verifying %d NVRs with Conforma", len(self.nvrs))
 
-        pipeline = CreateSnapshotCli(
+        snapshot_pipeline = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config={
                 'kubeconfig': self.konflux_kubeconfig,
@@ -58,13 +59,19 @@ class ConformaVerifyCli:
             dry_run=True,
             job_url=None,
         )
-        snapshots = await pipeline.run()
+        snapshots = await snapshot_pipeline.run()
         if len(snapshots) != 1:
             raise ValueError(
                 "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
                 len(snapshots),
             )
         snapshot_spec = snapshots[0].spec
+
+        self.pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
+
+        # we need to fetch build records so we can map nvrs to pullspecs
+        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, self.nvrs, strict=True)
+        self.nvrs_by_pullspec = {str(record.image_pullspec): record.nvr for record in build_records_by_nvrs.values()}
 
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             temp_file_path = temp_file.name
@@ -204,19 +211,37 @@ class ConformaVerifyCli:
 
         # Run ec validate command
         rc, stdout, stderr = await cmd_gather_async(cmd, check=False)
+        output_data = yaml.load(stdout)
 
-        # Parse YAML output
-        output_data = None
-        if stdout:
-            try:
-                output_data = yaml.load(stdout)
-            except yaml.YAMLError as e:
-                LOGGER.warning("Failed to parse YAML output: %s", e)
-                output_data = {"raw_output": stdout}
+        nvr_results = {}
+        for component in output_data["components"]:
+            component_name = component["name"]
+            if ":" in component_name:
+                component_name = component_name.split(":")[0].removesuffix("-sha256")
+            main_image_pullspec = self.pullspec_by_name[component_name]
+            nvr = self.nvrs_by_pullspec[main_image_pullspec]
+
+            if nvr not in nvr_results:
+                nvr_results[nvr] = {
+                    "success": component["success"],
+                }
+            nvr_results[nvr]["success"] &= component["success"]
+
+            if component.get("violations"):
+                if "violations" not in nvr_results[nvr]:
+                    nvr_results[nvr]["violations"] = {
+                        "total": 0,
+                        "codes": [],
+                    }
+                else:
+                    nvr_results[nvr]["violations"]["total"] += len(component["violations"])
+                    nvr_results[nvr]["violations"]["codes"].extend(
+                        set([violation["metadata"]["code"] for violation in component["violations"]])
+                    )
 
         success = rc == 0
         result = {
-            "snapshot": snapshot_spec_filepath,
+            "nvr_results": nvr_results,
             "success": success,
             "output": output_data,
             "stderr": stderr if stderr else None,
