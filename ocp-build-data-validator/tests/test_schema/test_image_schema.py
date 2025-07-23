@@ -191,6 +191,39 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
 
+    def test_validate_with_valid_konflux_cachi2_lockfile_exclude_parents_true(self):
+        """Test valid konflux.cachi2.lockfile.exclude_parents = true"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'cachi2': {'lockfile': {'exclude_parents': True}}},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_valid_konflux_cachi2_lockfile_exclude_parents_false(self):
+        """Test valid konflux.cachi2.lockfile.exclude_parents = false"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'cachi2': {'lockfile': {'exclude_parents': False}}},
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_lockfile_exclude_parents_type(self):
+        """Test invalid exclude_parents data type (not boolean)"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'cachi2': {'lockfile': {'exclude_parents': 'not-a-boolean'}}},
+        }
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
     def test_validate_with_valid_komplux_cachi2_enabled(self):
         """Test valid konflux.cachi2.enabled configuration"""
         valid_data = {

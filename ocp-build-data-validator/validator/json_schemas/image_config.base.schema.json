@@ -1222,7 +1222,18 @@
                 "rpms!": {
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/rpms"
                 },
-                "rpms-": {}
+                "rpms-": {},
+                "exclude_parents": {
+                  "description": "Exclude parent RPMs from lockfile generation, returning only image-specific RPMs",
+                  "type": "boolean"
+                },
+                "exclude_parents?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/exclude_parents"
+                },
+                "exclude_parents!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/exclude_parents"
+                },
+                "exclude_parents-": {}
               },
               "additionalProperties": false
             },
