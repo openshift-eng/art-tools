@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -88,12 +89,6 @@ class ConformaVerifyCli:
 
         return result
 
-    async def _fetch_build_records(self) -> List[KonfluxRecord]:
-        """Fetch build records from DB for the given NVRs."""
-        LOGGER.info("Fetching build records from DB...")
-        records_map = await get_build_records_by_nvrs(self.runtime, self.nvrs, strict=True)
-        return list(records_map.values())
-
     async def _setup_verification_files(self, temp_dir: str) -> Tuple[str, str]:
         """Download policy.yaml and extract cosign public key."""
         LOGGER.info("Setting up verification files...")
@@ -149,10 +144,7 @@ class ConformaVerifyCli:
         if self.konflux_kubeconfig:
             cmd.extend(["--kubeconfig", self.konflux_kubeconfig])
         _, stdout, _ = await cmd_gather_async(cmd)
-
         secret_data = json.loads(stdout)
-        import base64
-
         cosign_pub_data = base64.b64decode(secret_data['data']['cosign.pub']).decode('utf-8')
 
         with open(cosign_pub_file, 'w') as f:
@@ -160,35 +152,6 @@ class ConformaVerifyCli:
 
         LOGGER.info("Verification files prepared: policy=%s, cosign.pub=%s", policy_file, cosign_pub_file)
         return policy_file, cosign_pub_file
-
-    async def _verify_images(
-        self, build_records: List[KonfluxRecord], policy_file: str, cosign_pub_file: str
-    ) -> Dict[str, Dict]:
-        """Run ec validate for each image pullspec."""
-        LOGGER.info("Running ec validation for %d images...", len(build_records))
-
-        tasks = []
-        for record in build_records:
-            task = self._verify_single_image(record, policy_file, cosign_pub_file)
-            tasks.append(task)
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Combine results with NVRs
-        verification_results = {}
-        for record, result in zip(build_records, results):
-            nvr = str(record.nvr)
-            if isinstance(result, Exception):
-                verification_results[nvr] = {
-                    "pullspec": record.image_pullspec,
-                    "success": False,
-                    "error": str(result),
-                    "output": None,
-                }
-            else:
-                verification_results[nvr] = result
-
-        return verification_results
 
     async def _verify_snapshot(self, snapshot_spec_filepath: str, policy_file: str, cosign_pub_file: str) -> Dict:
         """Run ec validate for a given snapshot"""
