@@ -1,15 +1,13 @@
-import asyncio
 import base64
 import json
 import os
 import sys
 import tempfile
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import click
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
-from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
@@ -27,6 +25,7 @@ class ConformaVerifyCli:
         self,
         runtime: Runtime,
         nvrs: list,
+        env: str = None,
         policy_path: str = None,
         konflux_kubeconfig: str = None,
         pull_secret: str = None,
@@ -36,12 +35,24 @@ class ConformaVerifyCli:
             raise ValueError("nvrs must be provided")
         self.nvrs = nvrs
         self.nvrs_by_pullspec = None
-        self.policy_path = (
-            policy_path
-            or "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-prod.yaml"
-        )
+        self.policy_path = policy_path
         self.konflux_kubeconfig = konflux_kubeconfig
         self.pull_secret = pull_secret
+        self.env = env
+
+    @staticmethod
+    def get_policy_url(application: str, env: str) -> str:
+        gitlab_base_url = "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/"
+        policy_url_map = {
+            "stage": f"{gitlab_base_url}config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-stage.yaml",
+            "prod": f"{gitlab_base_url}config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-prod.yaml",
+            "fbc-stage": f"{gitlab_base_url}config/common/product/EnterpriseContractPolicy/fbc-stage.yaml",
+            "fbc-prod": f"{gitlab_base_url}config/common/product/EnterpriseContractPolicy/fbc-standard.yaml",
+        }
+        key = env
+        if "fbc" in application:
+            key = f"fbc-{env}"
+        return policy_url_map[key]
 
     async def run(self) -> Dict[str, Dict]:
         """Run conforma verification for all NVRs and return results."""
@@ -66,6 +77,11 @@ class ConformaVerifyCli:
                 len(snapshots),
             )
         snapshot_spec = snapshots[0].spec
+        if not self.policy_path:
+            self.policy_path = self.get_policy_url(snapshot_spec.application, self.env)
+            LOGGER.info(
+                "Found policy for application %s and env %s: %s", snapshot_spec.application, self.env, self.policy_path
+            )
 
         self.pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
 
@@ -193,12 +209,17 @@ class ConformaVerifyCli:
                 if "violations" not in nvr_results[nvr]:
                     nvr_results[nvr]["violations"] = {
                         "total": 0,
-                        "codes": [],
+                        "codes": set(),
                     }
                 nvr_results[nvr]["violations"]["total"] += len(component["violations"])
-                nvr_results[nvr]["violations"]["codes"].extend(
-                    set([violation["metadata"]["code"] for violation in component["violations"]])
+                nvr_results[nvr]["violations"]["codes"].update(
+                    {violation["metadata"]["code"] for violation in component["violations"]}
                 )
+
+        # Convert sets to lists for clean YAML output
+        for nvr_data in nvr_results.values():
+            if "violations" in nvr_data and "codes" in nvr_data["violations"]:
+                nvr_data["violations"]["codes"] = list(nvr_data["violations"]["codes"])
 
         success = rc == 0
         result = {
@@ -209,19 +230,14 @@ class ConformaVerifyCli:
         }
 
         if success:
-            LOGGER.info("✓ Verification passed ")
+            LOGGER.info("✓ Verification passed")
         else:
             LOGGER.warning("✗ Verification failed")
 
         return result
 
 
-@cli.group("conforma", short_help="Commands for Conforma verification")
-def conforma_cli():
-    pass
-
-
-@conforma_cli.command("verify", short_help="Verify given builds (NVRs) with Conforma")
+@cli.command("verify-conforma", short_help="Verify given builds (NVRs) with Conforma")
 @click.argument('nvrs', metavar='<NVR>', nargs=-1, required=False, default=None)
 @click.option(
     "--nvrs-file",
@@ -245,6 +261,13 @@ def conforma_cli():
     metavar='PATH',
     help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
 )
+@click.option(
+    '--env',
+    metavar='ENV',
+    help='Environment to use for the policy. Defaults to "prod".',
+    type=click.Choice(["stage", "prod"]),
+    default="prod",
+)
 @click.pass_obj
 @click_coroutine
 async def verify_conforma_cli(
@@ -254,6 +277,7 @@ async def verify_conforma_cli(
     konflux_policy,
     konflux_kubeconfig,
     pull_secret,
+    env,
 ):
     """
     Verify given builds (NVRs) with Conforma
@@ -270,6 +294,9 @@ async def verify_conforma_cli(
     \b
     $ elliott -g openshift-4.18 conforma verify --kubeconfig /path/to/kubeconfig nvr1 nvr2
     """
+    if env and konflux_policy:
+        raise click.BadParameter("Cannot specify both --env and --konflux-policy")
+
     if bool(nvrs) and bool(nvrs_file):
         raise click.BadParameter("Use only one of nvrs arguments or --nvrs-file")
 
@@ -293,6 +320,7 @@ async def verify_conforma_cli(
         policy_path=konflux_policy,
         konflux_kubeconfig=konflux_kubeconfig,
         pull_secret=pull_secret,
+        env=env,
     )
     results = await pipeline.run()
 
