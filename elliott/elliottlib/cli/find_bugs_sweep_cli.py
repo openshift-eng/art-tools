@@ -454,12 +454,12 @@ def categorize_bugs_by_type(
     invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
-        if not b.has_valid_summary_suffix(major_version, minor_version):
+        if not b.has_valid_target_version_in_summary(major_version, minor_version):
             invalid_summary_trackers.add(b)
 
     if invalid_summary_trackers:
         sorted_ids = sorted([t.id for t in invalid_summary_trackers])
-        message = f"Tracker Bug(s) {sorted_ids} have invalid summary suffixes."
+        message = f"Tracker Bug(s) {sorted_ids} have invalid summary."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)

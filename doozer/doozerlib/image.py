@@ -749,15 +749,43 @@ class ImageMetadata(Metadata):
 
         return False
 
+    def is_lockfile_parent_inspect_enabled(self) -> bool:
+        """
+        Determines whether lockfile parent inspection is enabled for the current image configuration.
+
+        The method checks configuration in the following order:
+        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.inspect_parent`)
+        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent`)
+
+        If neither is set, parent inspection defaults to enabled (True).
+
+        Returns:
+            bool: True if lockfile parent inspection is enabled, False otherwise.
+        """
+        lockfile_inspect_parent_config_override = self.config.konflux.cachi2.lockfile.inspect_parent
+        if lockfile_inspect_parent_config_override not in [Missing, None]:
+            lockfile_inspect_parent = bool(lockfile_inspect_parent_config_override)
+            self.logger.info(f"Lockfile parent inspection set from metadata config: {lockfile_inspect_parent}")
+            return lockfile_inspect_parent
+
+        lockfile_inspect_parent_group_override = self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent
+        if lockfile_inspect_parent_group_override not in [Missing, None]:
+            lockfile_inspect_parent = bool(lockfile_inspect_parent_group_override)
+            self.logger.info(f"Lockfile parent inspection set from group config: {lockfile_inspect_parent}")
+            return lockfile_inspect_parent
+
+        return True
+
     async def fetch_rpms_from_build(self) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.
 
-        Returns difference between this image's packages and parent packages.
-        Caches result in installed_rpms attribute.
+        Returns either the full image RPM set or difference from parent packages,
+        based on the inspect_parent configuration. Caches result in installed_rpms attribute.
 
         Returns:
-            set[str]: Source RPM package names to install for this image
+            set[str]: Source RPM package names - full set if inspect_parent=False,
+                     otherwise difference between this image's packages and parent packages
         """
         if hasattr(self, 'installed_rpms') and self.installed_rpms is not None:
             self.logger.debug(f"Using cached installed_rpms for {self.distgit_key}: {len(self.installed_rpms)} RPMs")
@@ -778,6 +806,12 @@ class ImageMetadata(Metadata):
                 )
                 self.installed_rpms = []
                 return set()
+
+            # Check if we should skip parent inspection
+            if not self.is_lockfile_parent_inspect_enabled():
+                # Skip parent inspection: return full image RPM list
+                self.installed_rpms = list(rpms)
+                return rpms
 
             parents = self.get_parent_members()
             if not parents:

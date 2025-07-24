@@ -251,8 +251,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
+        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
 
-        await self.rebaser.rebase(metadata, bundle_build, version, release)
+        actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -284,9 +286,11 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
+        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
         self.rebaser.push = True
 
-        await self.rebaser.rebase(metadata, bundle_build, version, release)
+        actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -413,7 +417,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             MagicMock(image_pullspec="example.com/art-images@2"),
         ]
 
-        await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+        actual = await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
         mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
@@ -700,6 +705,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
         mock_dfp.labels = {
             'com.redhat.art.name': 'test-distgit-key-fbc',
+            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
         }
 
         await self.builder.build(metadata)
@@ -775,6 +781,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
         mock_dfp.labels = {
             'com.redhat.art.name': 'test-distgit-key-fbc',
+            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
         }
 
         await self.builder.build(metadata)

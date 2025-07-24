@@ -388,7 +388,7 @@ class KonfluxBundleCli:
         builder: KonfluxOlmBundleBuilder,
         image_meta: ImageMetadata,
         operator_build: KonfluxBuildRecord,
-    ):
+    ) -> str:
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         input_release = self.release
         if not self.force or not input_release:

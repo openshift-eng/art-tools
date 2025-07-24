@@ -31,10 +31,10 @@ class TestBug(unittest.TestCase):
             ("Wrong version [openshift-4.19]", (4, 20), "Wrong version [openshift-4.20]"),
         ]
     )
-    def test_get_summary_with_ocp_suffix(self, summary, version, expected):
+    def test_make_summary_with_target_version(self, summary, version, expected):
         major, minor = version
         bug = JIRABug(flexmock(fields=flexmock(summary=summary)))
-        result = bug.get_summary_with_ocp_suffix(major, minor)
+        result = bug.make_summary_with_target_version(major, minor)
         self.assertEqual(result, expected)
 
     @parameterized.expand(
@@ -49,7 +49,7 @@ class TestBug(unittest.TestCase):
     def test_has_valid_summary_suffix(self, summary, version, expected):
         major, minor = version
         bug = JIRABug(flexmock(fields=flexmock(summary=summary)))
-        result = bug.has_valid_summary_suffix(major, minor)
+        result = bug.has_valid_target_version_in_summary(major, minor)
         self.assertEqual(result, expected)
 
 

@@ -7,10 +7,10 @@ def ignore_validate(*args, **kwargs):
     return ''
 
 
-def validate(file, data):
+def validate(file, data, images_dir=None):
     return {
         'streams': streams_schema.validate,
-        'image': image_schema.validate,
+        'image': lambda f, d: image_schema.validate(f, d, images_dir=images_dir),
         'rpm': rpm_schema.validate,
         'ignore': ignore_validate,
         'releases': releases_schema.validate,
