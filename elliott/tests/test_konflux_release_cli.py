@@ -166,7 +166,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.runtime.shipment_gitdata = MagicMock()
 
         self.dry_run = False
-        self.force = False
 
         self.konflux_config = dict(
             namespace="test-namespace",
@@ -301,7 +300,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
-            force=self.force,
         )
 
         result = await cli.run()
@@ -450,7 +448,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
-            force=self.force,
         )
 
         result = await cli.run()
@@ -524,7 +521,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
-            force=self.force,
         )
 
         with self.assertRaises(ValueError) as context:
@@ -578,7 +574,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
-            force=self.force,
         )
 
         with self.assertRaises(ValueError) as context:
@@ -589,7 +584,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_shipped_no_force(self, mock_runtime, mock_konflux_client_init, _):
+    async def test_shipped(self, mock_runtime, mock_konflux_client_init, _):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
@@ -651,12 +646,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
-            force=False,
         )
 
-        # This test checks that it raises an error when force=False and the environment is already shipped
-        # It should fail early before creating a snapshot, so no need to mock snapshot creation
-        with self.assertRaises(ValueError) as context:
-            await cli.run()
+        # This test checks that pipeline does not create a release when the environment is already shipped
+        result = await cli.run()
 
-        self.assertIn("existing release metadata is not empty for prod", str(context.exception))
+        # assert that release did not get created
+        self.assertEqual(self.konflux_client._create.call_count, 0)
+        self.assertEqual(result, None)
