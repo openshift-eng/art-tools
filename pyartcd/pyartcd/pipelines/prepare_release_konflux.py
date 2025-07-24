@@ -1073,7 +1073,7 @@ class PrepareReleaseKonfluxPipeline:
             await self.build_data_repo.create_branch(branch)
 
         new_releases_config = self.releases_config.copy()
-        new_releases_config["releases"][self.assembly]["group"] = self.updated_assembly_group_config.primitive()
+        new_releases_config["releases"][self.assembly]["assembly"]["group"] = self.updated_assembly_group_config.primitive()
 
         out = StringIO()
         yaml.dump(new_releases_config, out)
