@@ -1223,17 +1223,17 @@
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/rpms"
                 },
                 "rpms-": {},
-                "exclude_parents": {
-                  "description": "Exclude parent RPMs from lockfile generation, returning only image-specific RPMs",
+                "inspect_parent": {
+                  "description": "Inspect parent RPMs during lockfile generation (default: true)",
                   "type": "boolean"
                 },
-                "exclude_parents?": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/exclude_parents"
+                "inspect_parent?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
                 },
-                "exclude_parents!": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/exclude_parents"
+                "inspect_parent!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
                 },
-                "exclude_parents-": {}
+                "inspect_parent-": {}
               },
               "additionalProperties": false
             },

@@ -673,8 +673,8 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
 
-        # Mock exclude_parents disabled (default behavior)
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=False)
+        # Mock inspect_parent enabled (default behavior)
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=True)
 
         # Mock no parent members
         with patch.object(metadata, 'get_parent_members', return_value={}):
@@ -705,8 +705,8 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=mock_get_latest_build)
 
-        # Mock exclude_parents disabled (default behavior)
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=False)
+        # Mock inspect_parent enabled (default behavior)
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=True)
 
         # Mock parent members
         with patch.object(metadata, 'get_parent_members', return_value={'parent-image'}):
@@ -784,8 +784,8 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=mock_get_latest_build)
 
-        # Mock exclude_parents disabled (default behavior)
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=False)
+        # Mock inspect_parent enabled (default behavior)
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=True)
 
         # Mock parent members
         with patch.object(metadata, 'get_parent_members', return_value={'parent-image'}):
@@ -909,102 +909,102 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, expected)
         metadata.logger.info.assert_called_once_with('test-image adding 3 RPMs from lockfile config')
 
-    def test_is_lockfile_parent_exclude_enabled_image_config_true(self):
-        """Test exclude_parents enabled via image metadata configuration"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    def test_is_lockfile_parent_inspect_enabled_image_config_true(self):
+        """Test inspect_parent enabled via image metadata configuration"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
         # Mock image config override
         mock_config = MagicMock()
-        mock_config.konflux.cachi2.lockfile.exclude_parents = True
+        mock_config.konflux.cachi2.lockfile.inspect_parent = True
         metadata.config = mock_config
         metadata.logger = MagicMock()
 
-        result = metadata.is_lockfile_parent_exclude_enabled()
+        result = metadata.is_lockfile_parent_inspect_enabled()
 
         self.assertTrue(result)
-        metadata.logger.info.assert_called_once_with("Lockfile parent exclusion set from metadata config: True")
+        metadata.logger.info.assert_called_once_with("Lockfile parent inspection set from metadata config: True")
 
-    def test_is_lockfile_parent_exclude_enabled_image_config_false(self):
-        """Test exclude_parents disabled via image metadata configuration"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    def test_is_lockfile_parent_inspect_enabled_image_config_false(self):
+        """Test inspect_parent disabled via image metadata configuration"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
         # Mock image config override
         mock_config = MagicMock()
-        mock_config.konflux.cachi2.lockfile.exclude_parents = False
+        mock_config.konflux.cachi2.lockfile.inspect_parent = False
         metadata.config = mock_config
         metadata.logger = MagicMock()
 
-        result = metadata.is_lockfile_parent_exclude_enabled()
+        result = metadata.is_lockfile_parent_inspect_enabled()
 
         self.assertFalse(result)
-        metadata.logger.info.assert_called_once_with("Lockfile parent exclusion set from metadata config: False")
+        metadata.logger.info.assert_called_once_with("Lockfile parent inspection set from metadata config: False")
 
-    def test_is_lockfile_parent_exclude_enabled_group_config_true(self):
-        """Test exclude_parents enabled via group configuration"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    def test_is_lockfile_parent_inspect_enabled_group_config_true(self):
+        """Test inspect_parent enabled via group configuration"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
         # Mock image config as Missing
         mock_config = MagicMock()
-        mock_config.konflux.cachi2.lockfile.exclude_parents = Missing
+        mock_config.konflux.cachi2.lockfile.inspect_parent = Missing
         metadata.config = mock_config
 
         # Mock group config override
         mock_group_config = MagicMock()
-        mock_group_config.konflux.cachi2.lockfile.exclude_parents = True
+        mock_group_config.konflux.cachi2.lockfile.inspect_parent = True
         metadata.runtime.group_config = mock_group_config
         metadata.logger = MagicMock()
 
-        result = metadata.is_lockfile_parent_exclude_enabled()
+        result = metadata.is_lockfile_parent_inspect_enabled()
 
         self.assertTrue(result)
-        metadata.logger.info.assert_called_once_with("Lockfile parent exclusion set from group config: True")
+        metadata.logger.info.assert_called_once_with("Lockfile parent inspection set from group config: True")
 
-    def test_is_lockfile_parent_exclude_enabled_group_config_false(self):
-        """Test exclude_parents disabled via group configuration"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    def test_is_lockfile_parent_inspect_enabled_group_config_false(self):
+        """Test inspect_parent disabled via group configuration"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
         # Mock image config as Missing
         mock_config = MagicMock()
-        mock_config.konflux.cachi2.lockfile.exclude_parents = Missing
+        mock_config.konflux.cachi2.lockfile.inspect_parent = Missing
         metadata.config = mock_config
 
         # Mock group config override
         mock_group_config = MagicMock()
-        mock_group_config.konflux.cachi2.lockfile.exclude_parents = False
+        mock_group_config.konflux.cachi2.lockfile.inspect_parent = False
         metadata.runtime.group_config = mock_group_config
         metadata.logger = MagicMock()
 
-        result = metadata.is_lockfile_parent_exclude_enabled()
+        result = metadata.is_lockfile_parent_inspect_enabled()
 
         self.assertFalse(result)
-        metadata.logger.info.assert_called_once_with("Lockfile parent exclusion set from group config: False")
+        metadata.logger.info.assert_called_once_with("Lockfile parent inspection set from group config: False")
 
-    def test_is_lockfile_parent_exclude_enabled_default_false(self):
-        """Test exclude_parents defaults to False when no configuration is set"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    def test_is_lockfile_parent_inspect_enabled_default_true(self):
+        """Test inspect_parent defaults to True when no configuration is set"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
         # Mock both configs as Missing
         mock_config = MagicMock()
-        mock_config.konflux.cachi2.lockfile.exclude_parents = Missing
+        mock_config.konflux.cachi2.lockfile.inspect_parent = Missing
         metadata.config = mock_config
 
         mock_group_config = MagicMock()
-        mock_group_config.konflux.cachi2.lockfile.exclude_parents = Missing
+        mock_group_config.konflux.cachi2.lockfile.inspect_parent = Missing
         metadata.runtime.group_config = mock_group_config
         metadata.logger = MagicMock()
 
-        result = metadata.is_lockfile_parent_exclude_enabled()
+        result = metadata.is_lockfile_parent_inspect_enabled()
 
-        self.assertFalse(result)
+        self.assertTrue(result)
         # Should not log when using default
         metadata.logger.info.assert_not_called()
 
-    async def test_fetch_rpms_exclude_parents_enabled_returns_full_set(self):
-        """Test fetch_rpms_from_build with exclude_parents=True returns full image RPMs"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    async def test_fetch_rpms_inspect_parent_disabled_returns_full_set(self):
+        """Test fetch_rpms_from_build with inspect_parent=False returns full image RPMs"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
-        # Mock exclude_parents enabled
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=True)
+        # Mock inspect_parent disabled
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=False)
 
         # Mock image build with RPMs
         mock_build = MagicMock()
@@ -1017,12 +1017,12 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3', 'pkg4'})
         self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2', 'pkg3', 'pkg4'})
 
-    async def test_fetch_rpms_exclude_parents_disabled_returns_diff(self):
-        """Test fetch_rpms_from_build with exclude_parents=False returns diff"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    async def test_fetch_rpms_inspect_parent_enabled_returns_diff(self):
+        """Test fetch_rpms_from_build with inspect_parent=True returns diff"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
-        # Mock exclude_parents disabled
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=False)
+        # Mock inspect_parent enabled
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=True)
 
         # Mock image build
         mock_build = MagicMock()
@@ -1049,12 +1049,12 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, {'pkg3', 'pkg4'})
         self.assertEqual(set(metadata.installed_rpms), {'pkg3', 'pkg4'})
 
-    async def test_fetch_rpms_exclude_parents_enabled_skips_parent_fetch(self):
-        """Test that exclude_parents=True skips parent processing entirely"""
-        metadata = self._create_image_metadata('openshift/test-exclude-parents')
+    async def test_fetch_rpms_inspect_parent_disabled_skips_parent_fetch(self):
+        """Test that inspect_parent=False skips parent processing entirely"""
+        metadata = self._create_image_metadata('openshift/test-inspect-parent')
 
-        # Mock exclude_parents enabled
-        metadata.is_lockfile_parent_exclude_enabled = MagicMock(return_value=True)
+        # Mock inspect_parent disabled
+        metadata.is_lockfile_parent_inspect_enabled = MagicMock(return_value=False)
 
         # Mock image build with RPMs
         mock_build = MagicMock()
