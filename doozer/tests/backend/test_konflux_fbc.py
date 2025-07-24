@@ -739,7 +739,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',
@@ -809,7 +809,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',

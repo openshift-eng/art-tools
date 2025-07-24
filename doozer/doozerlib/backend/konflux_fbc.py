@@ -268,7 +268,7 @@ class KonfluxFbcRebaser:
         record = {
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
             'status': -1,
-            "name": metadata.distgit_key,
+            "name": name,
             "message": "Unknown failure",
             "fbc_nvr": nvr,
             "bundle_nvrs": ','.join(
@@ -680,14 +680,14 @@ class KonfluxFbcBuilder:
         )
 
     @staticmethod
-    def get_application_name(group_name: str, _: str):
+    def get_application_name(group_name: str) -> str:
         # Note: for now, we use a different application for each image
         # In future, we might change it to one application per group for all images
         return f"fbc-{group_name}".replace(".", "-").replace("_", "-")
 
     @staticmethod
-    def get_component_name(group_name: str, image_name: str):
-        application_name = KonfluxFbcBuilder.get_application_name(group_name, image_name)
+    def get_component_name(group_name: str, image_name: str) -> str:
+        application_name = KonfluxFbcBuilder.get_application_name(group_name)
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
@@ -754,7 +754,10 @@ class KonfluxFbcBuilder:
             name = dfp.labels.get('com.redhat.art.name')
             if not name:
                 raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
-            nvr = f"{name}-{version}-{release}"
+            record["name"] = name
+            nvr = dfp.labels.get('com.redhat.art.nvr')
+            if not nvr:
+                raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
@@ -823,7 +826,7 @@ class KonfluxFbcBuilder:
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         # Ensure the Application resource exists
-        app_name = self.get_application_name(self.group, metadata.distgit_key)
+        app_name = self.get_application_name(self.group)
         logger.info(f"Using Konflux application: {app_name}")
         konflux_client = self._konflux_client
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
@@ -889,15 +892,14 @@ class KonfluxFbcBuilder:
             name = dfp.labels.get('com.redhat.art.name')
             version = dfp.envs.get("__doozer_version")
             release = dfp.envs.get("__doozer_release")
-            assert name and version and release, (
-                "Name, version, or release not found in the catalog.Dockerfile. Did you rebase?"
+            nvr = dfp.labels.get('com.redhat.art.nvr')
+            assert name and version and release and nvr, (
+                "Name, version, release, or NVR not found in the catalog.Dockerfile. Did you rebase?"
             )
 
             bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs", "").split(",")
             source_repo = dfp.labels.get('io.openshift.build.source-location')
             commitish = dfp.labels.get('io.openshift.build.commit.id')
-
-            nvr = "-".join([name, version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
