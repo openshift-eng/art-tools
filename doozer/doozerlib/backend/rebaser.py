@@ -9,13 +9,14 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import aiofiles
 import bashlex
 import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
+from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.telemetry import start_as_current_span_async
@@ -23,7 +24,6 @@ from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_en
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
