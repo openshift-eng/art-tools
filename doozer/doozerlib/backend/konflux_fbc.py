@@ -843,7 +843,14 @@ class KonfluxFbcBuilder:
         logger.info(f"Konflux component {component_name} created")
         # Create a new pipeline run
         logger.info("Starting Konflux pipeline run...")
+
         additional_tags = []
+        if metadata.runtime.assembly == "stream":
+            version = metadata.runtime.group.removeprefix("openshift-")
+            delivery_repo_names = metadata.config.delivery.delivery_repo_names
+            for delivery_repo in delivery_repo_names:
+                additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
+
         pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
