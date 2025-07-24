@@ -292,25 +292,20 @@ def assembly_basis_event(
     target_assembly = releases_config.releases[assembly].assembly
 
     if not target_assembly.basis.brew_event and not target_assembly.basis.time:
-        return assembly_basis_event(
-            releases_config, target_assembly.basis.assembly, strict=strict, build_system=build_system
-        )
+        if target_assembly.basis.assembly:
+            return assembly_basis_event(
+                releases_config,
+                target_assembly.basis.assembly,
+                strict=strict,
+            )
+        if strict:
+            raise ValueError(f"Assembly {assembly} has no basis.brew_event or basis.time or basis.assembly defined")
+        return None
 
-    if build_system == 'brew':
-        if target_assembly.basis.brew_event is Missing:
-            if strict:
-                raise ValueError(f"Assembly {assembly} has no assembly.basis.brew_event defined")
-            return None
+    def _basis_brew_event() -> int:
+        return int(target_assembly.basis.brew_event)
 
-        return int(target_assembly.basis.brew_event)  # Integer for Brew event
-
-    elif build_system == 'konflux':
-        if target_assembly.basis.time is Missing:
-            if strict:
-                raise ValueError(f"Assembly {assembly} has no assembly.basis.time defined")
-            return None
-
-        # datetime UTC for Konflux
+    def _basis_time() -> datetime:
         time_str = target_assembly.basis.time
         if not isinstance(time_str, str):
             raise ValueError(f"Invalid time format for assembly {assembly}: {time_str}")
@@ -319,6 +314,20 @@ def assembly_basis_event(
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
 
+    # IMPORTANT: this logic is a bit special. We want to support these command invocations:
+    # - (old default) --build-system=brew and basis.brew_event defined
+    # - (new interop) --build-system=brew and basis.time defined. In this case, brew event is automatically calculated from the time
+    # - (new default) --build-system=konflux and basis.time defined
+    # * do not support --build-system=konflux and no basis.time defined
+    if build_system == 'brew':
+        if target_assembly.basis.brew_event:
+            return _basis_brew_event()
+        elif target_assembly.basis.time:
+            return _basis_time()
+    elif build_system == 'konflux':
+        if not target_assembly.basis.time:
+            raise ValueError(f"Assembly {assembly} has no basis.time defined")
+        return _basis_time()
     else:
         raise ValueError(f"Unsupported build system: {build_system}. Supported systems are 'brew' and 'konflux'.")
 

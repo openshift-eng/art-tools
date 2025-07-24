@@ -835,7 +835,7 @@ class GenAssemblyCli:
             f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {advisories}, {release_jira}"
         )
 
-        # As a final check, make sure Konflux advisories do not contain image, extras and metadata
+        # If build system is konflux, make sure that old-style advisories are not present for image, extras and metadata
         if self.runtime.build_system == 'konflux':
             advisories.pop('image', None)
             advisories.pop('extras', None)
@@ -957,6 +957,7 @@ class GenAssemblyCli:
                 {'kind': 'image'},
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
+                {'kind': 'fbc'},
             ],
         }
         if env:

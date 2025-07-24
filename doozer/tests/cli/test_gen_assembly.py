@@ -370,6 +370,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image'},
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
+                {'kind': 'fbc'},
             ],
         }
         self.assertEqual(expected, shipment)
@@ -384,6 +385,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image'},
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
+                {'kind': 'fbc'},
                 {'kind': 'prerelease'},
             ],
             'env': 'stage',
@@ -397,6 +399,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image', 'live_id': 123},
                 {'kind': 'extras', 'live_id': 456},
                 {'kind': 'metadata', 'live_id': 789},
+                {'kind': 'fbc'},
             ]
         }
         runtime.get_releases_config.return_value = Model(
@@ -412,6 +415,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image', 'live_id': 123},
                 {'kind': 'extras', 'live_id': 456},
                 {'kind': 'metadata', 'live_id': 789},
+                {'kind': 'fbc'},
             ]
         }
         runtime.get_releases_config.return_value = Model(
@@ -433,6 +437,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image', 'live_id': 123},
                 {'kind': 'extras', 'live_id': 456},
                 {'kind': 'metadata', 'live_id': 789},
+                {'kind': 'fbc'},
             ]
         }
         runtime.get_releases_config.return_value = Model(
@@ -451,6 +456,7 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'image'},
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
+                {'kind': 'fbc'},
             ],
             'env': 'stage',
         }
