@@ -187,6 +187,8 @@ class FbcRebaseAndBuildCli:
         dry_run: bool,
         force: bool,
         output: str,
+        reset_to_prod: bool,
+        prod_registry_auth: Optional[str] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -203,6 +205,8 @@ class FbcRebaseAndBuildCli:
         self.dry_run = dry_run
         self.force = force
         self.output = output
+        self.reset_to_prod = reset_to_prod
+        self.prod_registry_auth = prod_registry_auth
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -327,6 +331,7 @@ class FbcRebaseAndBuildCli:
 
     async def _rebase_and_build(
         self,
+        importer: KonfluxFbcImporter,
         rebaser: KonfluxFbcRebaser,
         builder: KonfluxFbcBuilder,
         operator_meta: ImageMetadata,
@@ -347,6 +352,10 @@ class FbcRebaseAndBuildCli:
             if not self.force:
                 return existing_fbc_build.nvr
             self._logger.info("Force flag is set, rebuilding FBC")
+
+        if self.reset_to_prod:
+            self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
+            await importer.import_from_index_image(operator_meta, None)
 
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
@@ -386,6 +395,19 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
 
         # Set up rebase and build components once
+        importer = KonfluxFbcImporter(
+            base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
+            group=runtime.group,
+            assembly=assembly,
+            ocp_version=(runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR),
+            keep_templates=False,  # Not needed for rebase and build
+            upcycle=runtime.upcycle,
+            push=False,  # We will push after rebase
+            commit_message=self.commit_message,
+            fbc_repo=self.fbc_repo,
+            auth=opm.OpmRegistryAuth(path=self.prod_registry_auth) if self.prod_registry_auth else None,
+        )
+
         rebaser = KonfluxFbcRebaser(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
@@ -416,7 +438,7 @@ class FbcRebaseAndBuildCli:
         )
 
         tasks = [
-            self._rebase_and_build(rebaser, builder, self.runtime.image_map[dgk], bundle_build)
+            self._rebase_and_build(importer, rebaser, builder, self.runtime.image_map[dgk], bundle_build)
             for dgk, bundle_build in dgk_bundle_builds.items()
         ]
 
@@ -484,6 +506,18 @@ class FbcRebaseAndBuildCli:
     default='json',
     help='Output format for the build records.',
 )
+@click.option(
+    '--reset-to-prod/--no-reset-to-prod',
+    default=True,
+    is_flag=True,
+    help='Reset the FBC source content to the production index image before rebasing.',
+)
+@click.option(
+    "--prod-registry-auth",
+    metavar='PATH',
+    help="The registry authentication file to use for the index image."
+    " This might be needed if --reset-to-prod is used and the production index image requires authentication.",
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -502,6 +536,8 @@ async def fbc_rebase_and_build(
     force: bool,
     plr_template: str,
     output: str,
+    reset_to_prod: bool,
+    prod_registry_auth: Optional[str],
     operator_nvrs: Tuple[str, ...],
 ):
     """
@@ -533,5 +569,7 @@ async def fbc_rebase_and_build(
         dry_run=dry_run,
         force=force,
         output=output,
+        reset_to_prod=reset_to_prod,
+        prod_registry_auth=prod_registry_auth,
     )
     await cli.run()

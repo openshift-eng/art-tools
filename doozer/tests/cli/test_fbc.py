@@ -93,6 +93,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             dry_run=False,
             force=False,
             output="json",
+            reset_to_prod=True,
         )
 
     def _setup_database_mocks(self, bundle_builds=None, fbc_builds=None):
@@ -126,9 +127,10 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         build.operator_nvr = operator_nvr
         return build
 
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
-    async def test_run_with_operator_nvrs(self, mock_rebaser_class, mock_builder_class):
+    async def test_run_with_operator_nvrs(self, mock_rebaser_class, mock_builder_class, mock_importer_class):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
         bundle_build = self._create_mock_bundle_build(
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
@@ -147,6 +149,9 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_builder = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
 
+        mock_importer = mock.AsyncMock()
+        mock_importer_class.return_value = mock_importer
+
         self.fbc_cli.operator_nvrs = ("test-operator-1.0.0-1",)
 
         await self.fbc_cli.run()
@@ -154,9 +159,10 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
 
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
-    async def test_run_without_operator_nvrs(self, mock_rebaser_class, mock_builder_class):
+    async def test_run_without_operator_nvrs(self, mock_rebaser_class, mock_builder_class, mock_importer_class):
         operator_meta = mock.Mock(is_olm_operator=True, distgit_key="test-operator")
         operator_meta.get_latest_build = mock.AsyncMock(
             return_value=self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
@@ -176,6 +182,9 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         mock_builder = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
+
+        mock_importer = mock.AsyncMock()
+        mock_importer_class.return_value = mock_importer
 
         await self.fbc_cli.run()
 
@@ -213,9 +222,12 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser.rebase.assert_not_called()
         mock_builder.build.assert_not_called()
 
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
-    async def test_run_existing_fbc_build_found_with_force(self, mock_rebaser_class, mock_builder_class):
+    async def test_run_existing_fbc_build_found_with_force(
+        self, mock_rebaser_class, mock_builder_class, mock_importer_class
+    ):
         operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
         bundle_build = self._create_mock_bundle_build(
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
@@ -237,6 +249,9 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_builder = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
 
+        mock_importer = mock.AsyncMock()
+        mock_importer_class.return_value = mock_importer
+
         self.fbc_cli.operator_nvrs = ("test-operator-1.0.0-1",)
         self.fbc_cli.force = True
 
@@ -245,9 +260,12 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser.rebase.assert_called_once()
         mock_builder.build.assert_called_once()
 
+    @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcBuilder")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser")
-    async def test_run_two_operators_one_bundle_found(self, mock_rebaser_class, mock_builder_class):
+    async def test_run_two_operators_one_bundle_found(
+        self, mock_rebaser_class, mock_builder_class, mock_importer_class
+    ):
         operator_build1 = self._create_mock_operator_build("test-operator-1", "test-operator-1-1.0.0-1")
         operator_build2 = self._create_mock_operator_build("test-operator-2", "test-operator-2-1.0.0-1")
         bundle_build1 = self._create_mock_bundle_build(
@@ -279,6 +297,9 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         mock_builder = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
+
+        mock_importer = mock.AsyncMock()
+        mock_importer_class.return_value = mock_importer
 
         self.fbc_cli.operator_nvrs = ("test-operator-1-1.0.0-1", "test-operator-2-1.0.0-1")
 
