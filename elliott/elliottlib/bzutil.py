@@ -89,37 +89,37 @@ class Bug:
             raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
         return self.product == "Security Response" and self.component == "vulnerability"
 
-    def get_summary_with_ocp_suffix(self, major_version: int, minor_version: int) -> str:
+    def make_summary_with_target_version(self, major_version: int, minor_version: int) -> str:
         """Given an OCPBUGS bug summary and the major and minor version numbers,
-        ensure that the summary ends with the correct version suffix.
+        ensure that the summary starts/ends with the correct target version.
         :param summary: The bug summary string
         :param major_version: The major version number (e.g., 4 for 4.18)
         :param minor_version: The minor version number (e.g., 18 for 4.18)
-        :return: The summary with the correct version suffix appended or replaced
+        :return: The summary with the correct version prefix/suffix
         """
-
+        if self.has_valid_target_version_in_summary(major_version, minor_version):
+            # If the summary already has the correct version, return it as is
+            return self.summary
         expected_suffix = f"[openshift-{major_version}.{minor_version}]"
-
-        accepted_suffixes = [
-            expected_suffix,
-            f"[openshift-{major_version}.{minor_version}.z]",
-            f"[openshift-{major_version}.{minor_version}.0]",
-        ]
-        for suffix in accepted_suffixes:
-            if self.summary.endswith(suffix):
-                return self.summary
-
-        version_suffix_pattern = r"\[openshift[^\]]*\]$"
-        if re.search(version_suffix_pattern, self.summary):
-            new_s = re.sub(version_suffix_pattern, expected_suffix, self.summary)
+        version_suffix_pattern = r"\[openshift[^\]]*\]"
+        if m := re.search(version_suffix_pattern, self.summary):
+            found = m.group(0)
+            new_s = self.summary.replace(found, expected_suffix)
         else:
             new_s = f"{self.summary} {expected_suffix}"
         return new_s
 
-    def has_valid_summary_suffix(self, major_version, minor_version):
-        """Check if the bug summary has the correct OCP version suffix."""
-
-        return self.get_summary_with_ocp_suffix(major_version, minor_version) == self.summary
+    def has_valid_target_version_in_summary(self, major_version: int, minor_version: int):
+        """Check if the bug summary has the correct OCP version."""
+        accepted_tags = [
+            f"[openshift-{major_version}.{minor_version}]",
+            f"[openshift-{major_version}.{minor_version}.z]",
+            f"[openshift-{major_version}.{minor_version}.0]",
+        ]
+        for tag in accepted_tags:
+            if self.summary.endswith(tag) or self.summary.startswith(tag):
+                return True
+        return False
 
     def is_ocp_bug(self):
         raise NotImplementedError

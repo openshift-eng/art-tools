@@ -69,8 +69,8 @@ def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
                 bug_tracker.add_comment(bug.id, comment, private=True, noop=noop)
 
                 # get summary of tracker bug and update it if needed
-                new_s = bug.get_summary_with_ocp_suffix(major_version, minor_version)
-                if new_s != bug.summary:
+                if not bug.has_valid_target_version_in_summary(major_version, minor_version):
+                    new_s = bug.make_summary_with_target_version(major_version, minor_version)
                     LOGGER.info(f"Updating summary for bug {bug.id} from '{bug.summary}' to '{new_s}'")
                     try:
                         bug.update_summary(new_s, noop=noop)
