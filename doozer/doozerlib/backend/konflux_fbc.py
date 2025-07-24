@@ -767,6 +767,7 @@ class KonfluxFbcBuilder:
                     build_repo=build_repo,
                     output_image=output_image,
                     arches=arches,
+                    version=version,
                     logger=logger,
                 )
                 pipelinerun_name = pipelinerun.metadata.name
@@ -817,6 +818,7 @@ class KonfluxFbcBuilder:
         build_repo: BuildRepo,
         output_image: str,
         arches: Sequence[str],
+        version: str,
         logger: logging.Logger,
     ):
         """Start a build with Konflux."""
@@ -843,7 +845,12 @@ class KonfluxFbcBuilder:
         logger.info(f"Konflux component {component_name} created")
         # Create a new pipeline run
         logger.info("Starting Konflux pipeline run...")
+
         additional_tags = []
+        if metadata.runtime.assembly == "stream":
+            # Tag the latest build of an FBC with .v4.20 for example
+            additional_tags.append(version.removesuffix(".0"))
+
         pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
