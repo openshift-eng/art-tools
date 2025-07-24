@@ -260,7 +260,7 @@ class PrepareReleaseKonfluxPipeline:
 
         self.releases_config = yaml.load(await self.build_data_repo.read_file("releases.yml"))
         self.group_config = yaml.load(await self.build_data_repo.read_file("group.yml"))
-        self.updated_assembly_group_config = self.assembly_group_config.copy()
+        self.updated_assembly_group_config = Model(self.assembly_group_config.copy())
 
     async def validate_assembly(self):
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
