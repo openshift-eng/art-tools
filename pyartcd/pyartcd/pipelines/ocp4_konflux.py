@@ -412,7 +412,7 @@ class KonfluxOcp4Pipeline:
 
     async def mirror_images(self):
         """
-        Mirror non embargoed builds to quay.io/redhat-user-workloads/ocp-art-tenant/art-images-public
+        Mirror non embargoed builds to quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share
         """
         if self.runtime.dry_run:
             LOGGER.info('Not mirroring images in dry run mode')
