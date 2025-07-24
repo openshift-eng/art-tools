@@ -155,6 +155,42 @@ class ConformaVerifyCli:
                 # Assume it's already a spec-only file
                 policy_file = self.policy_path
 
+        # workaround for https://gitlab.cee.redhat.com/releng/konflux-release-data/-/merge_requests/8746
+        # setting spec.sources.ruleData.policy_intention explicitly to match managed-pipeline runs
+        policy_content = yaml.load(open(policy_file, 'r'))
+        policy_intention_set = False
+        for source in policy_content['sources']:
+            if source['name'] != "Release Policies":
+                continue
+            rule_data = source.get('ruleData', {})
+            policy_intention = rule_data.get('policy_intention')
+            if policy_intention:
+                if self.env == "stage" and policy_intention != "staging":
+                    raise ValueError(
+                        f"Policy intention is not set to 'staging' for stage environment: {policy_intention}"
+                    )
+                if self.env == "prod" and policy_intention not in ["release", "production"]:
+                    raise ValueError(
+                        f"Policy intention is not set to 'release' or 'production' for prod environment: {policy_intention}"
+                    )
+                LOGGER.info(f"Policy intention was set to {policy_intention} in {policy_file}")
+                policy_intention_set = True
+            else:
+                if self.env == "stage":
+                    rule_data['policy_intention'] = "staging"
+                else:
+                    rule_data['policy_intention'] = "production"
+                with open(policy_file, 'w') as f:
+                    yaml.dump(policy_content, f)
+                LOGGER.info(
+                    f"Policy intention was not set in {policy_file}, setting to {rule_data['policy_intention']}"
+                )
+                policy_intention_set = True
+            # there should be only one source with name "Release Policies"
+            break
+        if not policy_intention_set:
+            raise ValueError(f"Policy intention was not set in {policy_file}")
+
         # Extract cosign public key
         cmd = ["oc", "get", "-n", "openshift-pipelines", "secret", "public-key", "-o", "json"]
         if self.konflux_kubeconfig:
