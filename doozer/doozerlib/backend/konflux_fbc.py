@@ -845,8 +845,9 @@ class KonfluxFbcBuilder:
         logger.info("Starting Konflux pipeline run...")
 
         additional_tags = []
-        if metadata.runtime.assembly == "stream":
-            version = metadata.runtime.group.removeprefix("openshift-")
+        group_name = metadata.runtime.group
+        if metadata.runtime.assembly == "stream" and group_name.startswith("openshift-"):
+            version = group_name.removeprefix("openshift-")
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
                 additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
