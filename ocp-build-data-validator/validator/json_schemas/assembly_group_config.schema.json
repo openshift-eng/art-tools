@@ -141,6 +141,16 @@
       "$ref": "#/properties/release_jira"
     },
     "release_jira-": {},
+    "release_date": {
+      "type": "string",
+    },
+    "release_date!": {
+      "$ref": "#/properties/release_date"
+    },
+    "release_date?": {
+      "$ref": "#/properties/release_date"
+    },
+    "release_date-": {},
     "upgrades": {
       "type": "string"
     },

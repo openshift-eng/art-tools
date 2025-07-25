@@ -864,7 +864,7 @@ class GenAssemblyCli:
                 group_info['operator_index_mode'] = 'pre-release'
 
         if self.runtime.build_system == 'konflux':
-            group_info['date'] = await self._get_release_date()
+            group_info['release_date'] = await self._get_release_date()
             group_info['shipment'] = self._get_shipment_info()
             basis_info['time'] = self.assembly_basis_time
 
