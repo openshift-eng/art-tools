@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple, cast
 import aiofiles
 import bashlex
 import bashlex.errors
+import semver
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
@@ -496,32 +497,44 @@ class KonfluxRebaser:
         async with aiofiles.open(df_path, mode='w+', encoding='utf-8') as distgit_dockerfile:
             await distgit_dockerfile.write(source_dockerfile_content)
 
-        append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
-        if append_gomod_patch and append_gomod_patch is not Missing:
-            gomod_path = dest_dir.joinpath('go.mod')
-            if gomod_path.exists():
-                # Read the gomod contents
-                new_lines = []
-                with open(gomod_path, "r") as file:
-                    lines = file.readlines()
-                    for line in lines:
-                        stripped_line = line.strip()
-                        match = re.match(r"(^go \d\.\d+$)", stripped_line)
-                        if match:
-                            # Append a .0 to the go mod version, if it exists
-                            # Replace the line 'go 1.22' with 'go 1.22.0' for example
-                            self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
-                            go_version_string = match.group(1)  # eg. 'go 1.23'
-                            go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
-                            if go_version_number >= 1.22:
+        gomod_path = dest_dir.joinpath('go.mod')
+        if gomod_path.exists():
+            # Read the gomod contents
+            new_lines = []
+            with open(gomod_path, "r") as file:
+                lines = file.readlines()
+                for line in lines:
+                    stripped_line = line.strip()
+                    match = re.match(r"(^go \d\.\d+$)", stripped_line)
+                    if match:
+                        # Append a .0 to the go mod version, if it exists
+                        # Replace the line 'go 1.22' with 'go 1.22.0' for example
+                        go_version_string = match.group(1)  # eg. 'go 1.23'
+                        version_part = go_version_string.split(" ")[-1]  # eg. '1.23'
+
+                        # Use semver for reliable version comparison
+                        try:
+                            # Convert to semver format (add .0 patch version for comparison)
+                            current_version = semver.VersionInfo.parse(f"{version_part}.0")
+                            min_version = semver.VersionInfo.parse("1.22.0")
+
+                            if current_version >= min_version:
+                                self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
                                 stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
                                 new_lines.append(f"{stripped_line}\n")
                                 continue
+                        except ValueError as e:
+                            self._logger.warning(
+                                f"Failed to parse go version '{version_part}': {e}. Skipping version check."
+                            )
+                            # Fall back to original behavior if version parsing fails
+                            new_lines.append(line)
+                            continue
 
-                        # If there is no match or if the go version is not >= 1.22, use the same go version
-                        new_lines.append(line)
-                async with aiofiles.open(gomod_path, "w") as file:
-                    await file.writelines(new_lines)
+                    # If there is no match or if the go version is not >= 1.22, use the same go version
+                    new_lines.append(line)
+            with open(gomod_path, "w") as file:
+                file.writelines(new_lines)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
