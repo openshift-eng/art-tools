@@ -29,11 +29,11 @@ class SourceResolution:
     source_path: str
     """ The local path to the source code repository. """
     url: str
-    """ The URL (usually HTTPS or SSH) of the source code repository. """
+    """ The URL (usually HTTPS or SSH) of the source code repository (for pushing). """
     branch: str
     """ The branch name (or commit hash) of the source code repository. """
     https_url: str
-    """ The HTTPS URL (instead of SSH) of the source code repository. """
+    """ The HTTPS URL (instead of SSH) of the source code repository (for pushing). """
     commit_hash: str
     """ The commit hash of the current HEAD. """
 
@@ -52,6 +52,15 @@ class SourceResolution:
     """ The public upstream URL of the source code repository. If the source code repository does not have a public upstream, this will be the same as the https_url. """
     public_upstream_branch: str
     """ The public upstream branch name of the source code repository. If the source code repository does not have a public upstream, this will be the same as the branch. """
+    pull_url: Optional[str] = None
+    """ The URL to pull from. If None, uses url for both pull and push. """
+
+    @property
+    def https_pull_url(self) -> str:
+        """The HTTPS URL for pulling. If pull_url is None, returns https_url."""
+        if self.pull_url:
+            return art_util.convert_remote_git_to_https(self.pull_url)
+        return self.https_url
 
 
 class SourceResolver:
@@ -170,6 +179,7 @@ class SourceResolver:
             clone_branch, _ = self.detect_remote_source_branch(source_details, self.stage, use_source_fallback_branch)
 
             url = str(source_details["url"])
+            pull_url = source_details.get("url_pull")  # Extract optional pull URL
             has_public_upstream = False
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(
@@ -189,9 +199,11 @@ class SourceResolver:
                     has_public_upstream=has_public_upstream,
                     public_upstream_url=meta.public_upstream_url or https_url,
                     public_upstream_branch=meta.public_upstream_branch or clone_branch,
+                    pull_url=pull_url,
                 )
 
-            LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
+            clone_url = pull_url or url  # Use pull URL for cloning if available
+            LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (clone_url, clone_branch, source_dir))
             try:
                 # clone all branches as we must sometimes reference master /OWNERS for maintainer information
                 if self.is_branch_commit_hash(branch=clone_branch):
@@ -200,8 +212,18 @@ class SourceResolver:
                     gitargs = ['--branch', clone_branch]
 
                 git_clone(
-                    url, source_dir, gitargs=gitargs, set_env=constants.GIT_NO_PROMPTS, git_cache_dir=self.cache_dir
+                    clone_url,
+                    source_dir,
+                    gitargs=gitargs,
+                    set_env=constants.GIT_NO_PROMPTS,
+                    git_cache_dir=self.cache_dir,
                 )
+
+                # If we used pull_url for cloning, we need to set up the push remote
+                if pull_url and pull_url != url:
+                    with exectools.Dir(source_dir):
+                        exectools.cmd_assert(f'git remote set-url origin {url}')  # Set origin to push URL
+                        exectools.cmd_assert(f'git remote add pull {pull_url}')  # Add pull remote
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
@@ -245,7 +267,7 @@ class SourceResolver:
         if use_source_fallback_branch not in ["yes", "always", "never"]:
             raise ValueError(f"Invalid value for use_source_fallback_branch: {use_source_fallback_branch}")
 
-        git_url = source_details["url"]
+        git_url = source_details.get("url_pull", source_details["url"])  # Use pull URL if available
         branches = source_details["branch"]
 
         stage_branch = branches.get("stage", None) if stage else None
@@ -352,6 +374,12 @@ class SourceResolver:
             if not url or not branch:
                 raise IOError(f"Couldn't detect source URL or branch for local source {path}. Is it a valid Git repo?")
 
+            # Check if pull remote exists
+            pull_url = None
+            rc_pull, out_pull, _ = exectools.cmd_gather(["git", "config", "--get", "remote.pull.url"])
+            if rc_pull == 0:
+                pull_url = out_pull.strip()
+
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
             commit_hash = out.strip()
 
@@ -382,6 +410,7 @@ class SourceResolver:
                 has_public_upstream=has_public_upstream,
                 public_upstream_url=public_upstream_url,
                 public_upstream_branch=public_upstream_branch,
+                pull_url=pull_url,
             )
             self.source_resolutions[alias] = resolution
             if self._record_logger:
