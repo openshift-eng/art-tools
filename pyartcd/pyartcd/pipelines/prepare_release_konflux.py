@@ -744,7 +744,7 @@ class PrepareReleaseKonfluxPipeline:
         if new_snapshot_obj.get("apiVersion") != API_VERSION or new_snapshot_obj.get("kind") != KIND_SNAPSHOT:
             raise ValueError(f"Snapshot object is not valid: {stdout}")
 
-        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=builds)
+        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=sorted(builds))
 
     async def execute_command_with_logging(self, cmd: list[str]) -> str:
         """
