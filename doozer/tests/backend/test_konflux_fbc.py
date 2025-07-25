@@ -632,6 +632,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "test"
         build_repo = MagicMock(
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
@@ -642,7 +644,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.builder._start_build(
-            metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
         kube_client.ensure_component.assert_awaited_once_with(
@@ -665,6 +671,58 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             vm_override={},
             building_arches=['x86_64', 's390x'],
             additional_tags=[],
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
+    async def test_start_build_2(self):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "stream"
+        metadata.runtime.group = "openshift-4.20"
+        metadata.config = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["openshift4/sample-operator-1", "openshift4/sample-operator-2"]
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
+        kube_client = self.kube_client
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"},
+        )
+
+        result = await self.builder._start_build(
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
+        )
+        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
+        kube_client.ensure_component.assert_awaited_once_with(
+            name="fbc-test-group-foo",
+            application="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            image_repo="test-image-pullspec",
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+        )
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
             skip_checks=False,
             hermetic=True,
             dockerfile='catalog.Dockerfile',
