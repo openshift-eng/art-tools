@@ -15,8 +15,8 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import get_assembly_release_date_async, new_roundtrip_yaml_handler
 from requests.adapters import HTTPAdapter
-from ruamel.yaml import YAML
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
@@ -124,6 +124,7 @@ def releases_gen_assembly(ctx, name):
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
 @click_coroutine
 @click.pass_context
@@ -143,6 +144,7 @@ async def gen_assembly_from_releases(
     suggestions_url: Optional[str],
     output_file: Optional[str],
     gen_microshift: bool,
+    date: Optional[str],
 ):
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
@@ -167,14 +169,11 @@ async def gen_assembly_from_releases(
         graph_content_candidate=graph_content_candidate,
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
+        release_date=date,
     ).run()
 
     # ruamel.yaml configuration
-    yaml = YAML()
-    yaml.default_flow_style = False
-    yaml.preserve_quotes = True
-    yaml.indent(mapping=2, sequence=4, offset=2)
-    yaml.width = 4096
+    yaml = new_roundtrip_yaml_handler()
 
     def represent_datetime(dumper, data):
         return dumper.represent_scalar('tag:yaml.org,2002:str', data.isoformat(), style='"')
@@ -205,6 +204,7 @@ class GenAssemblyCli:
         graph_content_candidate: Optional[str] = None,
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
+        release_date: Optional[str] = None,
     ):
         self.runtime = runtime
         # The name of the assembly we are going to output
@@ -240,6 +240,7 @@ class GenAssemblyCli:
         self.rhcos_version = ''
         self.rhcos_node_id = ''
         self.final_previous_list: List[VersionInfo] = []
+        self.release_date = release_date
 
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
@@ -276,7 +277,7 @@ class GenAssemblyCli:
         self._get_rhcos_container()
         await self._select_rpms()
         self._calculate_previous_list()
-        return self._generate_assembly_definition()
+        return await self._generate_assembly_definition()
 
     @staticmethod
     def _exit_with_error(msg):
@@ -843,9 +844,11 @@ class GenAssemblyCli:
 
         return advisories, release_jira
 
-    def _generate_assembly_definition(self) -> dict:
+    async def _generate_assembly_definition(self) -> dict:
         image_member_overrides, rpm_member_overrides = self._get_member_overrides()
-
+        basis_info = {}
+        basis_info['brew_event'] = self.basis_event
+        basis_info['reference_releases'] = self.reference_releases_by_arch
         group_info = {}
         if self.custom:
             # Custom payloads don't require advisories.
@@ -861,23 +864,19 @@ class GenAssemblyCli:
                 group_info['operator_index_mode'] = 'pre-release'
 
         if self.runtime.build_system == 'konflux':
+            group_info['release_date'] = await self._get_release_date()
             group_info['shipment'] = self._get_shipment_info()
+            basis_info['time'] = self.assembly_basis_time
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
-
-        basis_event_key = 'brew_event' if self.runtime.build_system == 'brew' else 'time'
-        basis_event_value = self.basis_event if self.runtime.build_system == 'brew' else self.assembly_basis_time
 
         return {
             'releases': {
                 self.gen_assembly_name: {
                     "assembly": {
                         'type': self.assembly_type.value,
-                        'basis': {
-                            basis_event_key: basis_event_value,
-                            'reference_releases': self.reference_releases_by_arch,
-                        },
+                        'basis': basis_info,
                         'group': group_info,
                         'rhcos': {
                             tag: dict(images={arch: pullspec for arch, pullspec in specs_by_arch.items()})
@@ -891,6 +890,18 @@ class GenAssemblyCli:
                 },
             },
         }
+
+    async def _get_release_date(self):
+        if self.release_date:
+            return self.release_date
+        if self.assembly_type != AssemblyTypes.STANDARD:
+            raise ValueError("For non standard release you need to manually set release date from job")
+        self.logger.info("Release date not provided. Fetching release date from release schedule...")
+        try:
+            self.release_date = await get_assembly_release_date_async(self.release_name)
+        except Exception as ex:
+            raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
+        self.logger.info("Release date: %s", self.release_date)
 
     def _get_member_overrides(self):
         """
