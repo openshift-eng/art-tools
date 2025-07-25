@@ -103,6 +103,7 @@ class PrepareReleaseKonfluxPipeline:
         self.jira_client = None
         self.updated_assembly_group_config = None
         self.olm_operators = None
+        self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -208,6 +209,9 @@ class PrepareReleaseKonfluxPipeline:
         finally:
             await self.create_update_build_data_pr()
             await self.verify_payload()
+            # Mark shipment MR as ready at the end if everything completed successfully
+            if not failed:
+                await self.set_shipment_mr_ready()
         if failed:
             raise Exception("Failed to prepare release")
 
@@ -876,7 +880,7 @@ class PrepareReleaseKonfluxPipeline:
         source_project = _get_project(self.shipment_repo_push_url)
         target_project = _get_project(self.shipment_repo_pull_url)
 
-        mr_title = f"Shipment for {self.release_name}"
+        mr_title = f"Draft: Shipment for {self.release_name}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else commit_message
 
         if self.dry_run:
@@ -894,8 +898,10 @@ class PrepareReleaseKonfluxPipeline:
                 }
             )
             mr_url = mr.web_url
-            self.logger.info("Created Merge Request: %s", mr_url)
+            self.logger.info("Created Draft Merge Request: %s", mr_url)
 
+        # Store the MR URL for later use
+        self.shipment_mr_url = mr_url
         return mr_url
 
     async def update_shipment_mr(
@@ -919,6 +925,16 @@ class PrepareReleaseKonfluxPipeline:
         project = self._gitlab.projects.get(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
+        # Store the MR URL for later use
+        self.shipment_mr_url = shipment_url
+
+        # Ensure MR is set as draft if not already
+        if not mr.title.startswith("Draft:"):
+            mr.title = f"Draft: {mr.title}"
+            if not self.dry_run:
+                mr.save()
+                self.logger.info("Set existing MR to draft status")
+
         # Checkout the MR branch
         source_branch = mr.source_branch
         await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
@@ -941,6 +957,37 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("Shipment MR updated: %s", shipment_url)
 
         return True
+
+    async def set_shipment_mr_ready(self):
+        """Mark the shipment MR as ready by removing the Draft prefix from the title.
+        This should be called at the end of the pipeline when all work is complete.
+        """
+        if not self.shipment_mr_url:
+            self.logger.info("No shipment MR URL stored, skipping setting to ready")
+            return
+
+        self.logger.info("Setting shipment MR to ready: %s", self.shipment_mr_url)
+
+        # Parse the shipment URL to extract project and MR details
+        parsed_url = urlparse(self.shipment_mr_url)
+        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+        mr_id = parsed_url.path.split('/')[-1]
+
+        # Load the existing MR
+        project = self._gitlab.projects.get(target_project_path)
+        mr = project.mergerequests.get(mr_id)
+
+        # Remove draft prefix from title
+        if mr.title.startswith("Draft: "):
+            mr.title = mr.title.removeprefix("Draft: ")
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have set MR to ready with title: %s", mr.title)
+            else:
+                mr.save()
+                self.logger.info("Shipment MR marked as ready: %s", self.shipment_mr_url)
+                await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
+        else:
+            self.logger.info("MR is already ready (no draft prefix found)")
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
