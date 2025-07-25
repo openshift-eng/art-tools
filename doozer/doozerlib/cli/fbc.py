@@ -14,9 +14,15 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from ruamel.yaml import YAML
 
 from doozerlib import constants, opm
-from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder, KonfluxFbcImporter, KonfluxFbcRebaser
+from doozerlib.backend.konflux_fbc import (
+    KonfluxFbcBuilder,
+    KonfluxFbcFragmentMerger,
+    KonfluxFbcImporter,
+    KonfluxFbcRebaser,
+)
 from doozerlib.cli import (
     cli,
     click_coroutine,
@@ -154,7 +160,7 @@ async def fbc_import(
 
     Example usage:
 
-    doozer --group=openshift-4.17 beta:fbc:import registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
+    doozer --group=openshift-4.17 beta:fbc:import --from-index=registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
     cli = FbcImportCli(
         runtime=runtime,
@@ -165,6 +171,173 @@ async def fbc_import(
         registry_auth=registry_auth,
         message=message,
         dest_dir=dest_dir,
+    )
+    await cli.run()
+
+
+class FbcMergeCli:
+    def __init__(
+        self,
+        runtime: Runtime,
+        konflux_kubeconfig: Optional[str],
+        konflux_context: Optional[str],
+        konflux_namespace: str,
+        dry_run: bool,
+        fragments: Tuple[str, ...],
+        dest_dir: Optional[str],
+        fbc_repo: str,
+        fbc_branch: Optional[str],
+        registry_auth: Optional[str],
+        message: Optional[str],
+        skip_checks: bool,
+        plr_template: Optional[str],
+        target_index: Optional[str],
+    ):
+        """
+        Initialize the FBCFragmentMergerCli.
+        """
+        self.runtime = runtime
+        self.dry_run = dry_run
+        self.dest_dir = dest_dir
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_context = konflux_context
+        self.konflux_namespace = konflux_namespace
+        self.fragments = fragments
+        self.fbc_repo = fbc_repo
+        self.fbc_branch = fbc_branch
+        self.registry_auth = registry_auth
+        self.message = message
+        self.skip_checks = skip_checks
+        self.plr_template = plr_template
+        self.target_index = target_index
+        if not self.fragments:
+            raise ValueError("At least one fragment must be provided.")
+        # Default OCP version, can be changed based on the target index
+        self.ocp_version: tuple[int, int] = (4, 18)
+
+    async def run(self):
+        # Initialize runtime
+        runtime = self.runtime
+        runtime.initialize(mode="none", clone_distgits=False, config_only=True)
+        assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
+        if (
+            not runtime.group_config.vars
+            or "MAJOR" not in runtime.group_config.vars
+            or "MINOR" not in runtime.group_config.vars
+        ):
+            raise ValueError("MAJOR and MINOR must be set in group vars.")
+        major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
+        # target_index = self.target_index or f"{constants.KONFLUX_DEFAULT_FBC_REPO}:ocp-{major}.{minor}"
+        target_index = f"quay.io/openshift-art/stage-fbc-fragments:ocp-{major}.{minor}"
+        working_dir = (
+            Path(self.dest_dir)
+            if self.dest_dir
+            else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES, "__merged")
+        )
+
+        merger = KonfluxFbcFragmentMerger(
+            working_dir=working_dir,
+            group=runtime.group,
+            group_config=runtime.group_config,
+            upcycle=runtime.upcycle,
+            dry_run=self.dry_run,
+            commit_message=self.message,
+            fbc_git_repo=self.fbc_repo,
+            fbc_branch=self.fbc_branch or f"art-{runtime.group}-fbc-stage",
+            registry_auth=self.registry_auth,
+            konflux_context=self.konflux_context,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_namespace=self.konflux_namespace,
+            skip_checks=self.skip_checks,
+            plr_template=self.plr_template,
+        )
+        await merger.run(self.fragments, target_index)
+
+
+@cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
+@pass_runtime
+@click.option(
+    "--message", "-m", metavar='MSG', help="Commit message. If not provided, a default generated message will be used."
+)
+@click.option("--dry-run", is_flag=True, default=False, help="Perform a dry run without pushing changes.")
+@click.option(
+    "--dest-dir", metavar='DEST_DIR', default=None, help="The destination directory for the merged FBC fragments."
+)
+@click.option("--registry-auth", metavar='REGISTRY_AUTH', default=None, help="Path to the registry auth file.")
+@click.option(
+    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+)
+@click.option(
+    '--konflux-context',
+    metavar='CONTEXT',
+    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+)
+@click.option(
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
+)
+@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option(
+    '--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO
+)
+@click.option(
+    '--fbc-branch',
+    metavar='FBC_BRANCH',
+    default=None,
+    help='The branch to push the FBC to. Defaults to art-<group>-fbc-stage',
+)
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option(
+    '--plr-template',
+    required=False,
+    default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+)
+@click.option('--skip-checks', is_flag=True, default=False, help='Skip all post build checks')
+@click.option(
+    '--target-index',
+    metavar='TARGET_INDEX',
+    default=None,
+    help='The target index image to merge fragments into. If not specified, a default index will be used.',
+)
+@click.argument("fragments", nargs=-1, required=True)
+@click_coroutine
+async def fbc_merge(
+    runtime: Runtime,
+    konflux_kubeconfig: Optional[str],
+    konflux_context: Optional[str],
+    konflux_namespace: str,
+    fragments: Tuple[str, ...],
+    message: str,
+    dry_run: bool,
+    fbc_repo: str,
+    fbc_branch: Optional[str],
+    dest_dir: Optional[str],
+    registry_auth: Optional[str],
+    skip_checks: bool,
+    plr_template: Optional[str],
+    target_index: Optional[str],
+):
+    """
+    Merge FBC fragments from multiple index images into a single FBC repository.
+    """
+    cli = FbcMergeCli(
+        runtime=runtime,
+        fragments=fragments,
+        message=message,
+        dry_run=dry_run,
+        fbc_repo=fbc_repo,
+        fbc_branch=fbc_branch,
+        dest_dir=dest_dir,
+        registry_auth=registry_auth,
+        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_context=konflux_context,
+        konflux_namespace=konflux_namespace,
+        skip_checks=skip_checks,
+        plr_template=plr_template,
+        target_index=target_index,
     )
     await cli.run()
 
