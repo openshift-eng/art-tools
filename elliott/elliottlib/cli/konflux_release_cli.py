@@ -111,11 +111,10 @@ class CreateReleaseCli:
 
         env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
         if env_config.shipped() and self.release_env == "prod":
-            LOGGER.error(
+            raise ValueError(
                 f"existing release metadata is not empty for {self.release_env}: "
                 f"{env_config.model_dump()}. If you want to proceed remove the release metadata from the shipment config and try again."
             )
-            return None
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
