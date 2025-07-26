@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
-from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME, RpmInfo, RpmInfoCollector, RPMLockfileGenerator
+from doozerlib.lockfile import DEFAULT_RPM_LOCKFILE_NAME, ArtifactInfo, RpmInfo, RpmInfoCollector, RPMLockfileGenerator
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repo, Repos
 
@@ -813,3 +813,20 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
                         "Image skips-generation skipping lockfile generation (digest unchanged)"
                     )
                     self.logger.info.assert_any_call("Loading repositories for 1 images needing lockfile generation")
+
+
+class TestArtifactInfo(unittest.TestCase):
+    def test_to_dict(self):
+        artifact_info = ArtifactInfo(url="https://example.com/file.pem", checksum="sha256:abc123", filename="file.pem")
+        expected = {"download_url": "https://example.com/file.pem", "checksum": "sha256:abc123", "filename": "file.pem"}
+        self.assertEqual(artifact_info.to_dict(), expected)
+
+    def test_creation(self):
+        artifact_info = ArtifactInfo(
+            url="https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
+            checksum="sha256:def456",
+            filename="Current-IT-Root-CAs.pem",
+        )
+        self.assertEqual(artifact_info.url, "https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem")
+        self.assertEqual(artifact_info.checksum, "sha256:def456")
+        self.assertEqual(artifact_info.filename, "Current-IT-Root-CAs.pem")

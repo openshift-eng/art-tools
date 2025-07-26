@@ -1243,7 +1243,57 @@
             "lockfile!": {
               "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
             },
-            "lockfile-": {}
+            "lockfile-": {},
+            "artifact_lockfile": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "description": "Enable/disable artifact lockfile generation",
+                  "type": "boolean"
+                },
+                "enabled?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/enabled"
+                },
+                "enabled!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/enabled"
+                },
+                "enabled-": {},
+                "resources": {
+                  "description": "Array of resource names to include in artifact lockfile generation",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "resources?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/resources"
+                },
+                "resources!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/resources"
+                },
+                "resources-": {},
+                "path": {
+                  "description": "Path for artifact lockfile (default: '.')",
+                  "type": "string"
+                },
+                "path?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/path"
+                },
+                "path!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile/properties/path"
+                },
+                "path-": {}
+              },
+              "additionalProperties": false
+            },
+            "artifact_lockfile?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile"
+            },
+            "artifact_lockfile!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/artifact_lockfile"
+            },
+            "artifact_lockfile-": {}
           },
           "additionalProperties": false
         },

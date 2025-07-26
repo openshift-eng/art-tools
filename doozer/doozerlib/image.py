@@ -876,3 +876,72 @@ class ImageMetadata(Metadata):
             set[str]: Repository names enabled for this image
         """
         return set(self.config.get("enabled_repos", []))
+
+    def is_artifact_lockfile_enabled(self) -> bool:
+        """
+        Determines whether artifact lockfile generation is enabled for the current image configuration.
+
+        The method checks preconditions in the following order:
+        1. Cachi2 feature must be enabled
+        2. Artifact resources must be defined and not empty
+        3. Artifact lockfile generation overrides:
+           - Image metadata configuration (`self.config.konflux.cachi2.artifact_lockfile.enabled`)
+           - Group configuration (`self.runtime.group_config.konflux.cachi2.artifact_lockfile.enabled`)
+        If no override is set, artifact lockfile generation defaults to enabled.
+
+        Returns:
+            bool: True if artifact lockfile generation is enabled, False otherwise.
+        """
+        artifact_lockfile_enabled = True
+
+        # First check: cachi2 must be enabled
+        cachi2_enabled = self.is_cachi2_enabled()
+        if not cachi2_enabled:
+            return False
+
+        # Second check: artifact resources must exist and not be empty
+        artifact_resources = self.config.konflux.cachi2.artifact_lockfile.resources
+        if artifact_resources in [Missing, None] or not artifact_resources:
+            self.logger.info("Artifact lockfile generation disabled: artifact resources not defined")
+            return False
+
+        # Third check: artifact lockfile-specific overrides
+        artifact_lockfile_config_override = self.config.konflux.cachi2.artifact_lockfile.enabled
+        if artifact_lockfile_config_override not in [Missing, None]:
+            artifact_lockfile_enabled = bool(artifact_lockfile_config_override)
+            self.logger.info(f"Artifact lockfile generation set from metadata config {artifact_lockfile_enabled}")
+        else:
+            artifact_lockfile_group_override = self.runtime.group_config.konflux.cachi2.artifact_lockfile.enabled
+            if artifact_lockfile_group_override not in [Missing, None]:
+                artifact_lockfile_enabled = bool(artifact_lockfile_group_override)
+                self.logger.info(f"Artifact lockfile generation set from group config {artifact_lockfile_enabled}")
+
+        return artifact_lockfile_enabled
+
+    def get_required_artifacts(self) -> list:
+        """Get list of required artifacts with resolved URLs from group config."""
+        if not self.is_artifact_lockfile_enabled():
+            return []
+
+        # Get resource names from image config
+        resource_names = self.config.konflux.cachi2.artifact_lockfile.resources
+        if resource_names in [Missing, None]:
+            return []
+
+        # Resolve to group config resource definitions
+        group_resources = self.runtime.group_config.konflux.cachi2.resources
+        if group_resources in [Missing, None]:
+            self.logger.warning("No artifact resources defined in group config")
+            return []
+
+        resource_map = {res['name']: res for res in group_resources}
+
+        resolved_artifacts = []
+        for resource in resource_names or []:
+            name = resource['name'] if isinstance(resource, dict) and 'name' in resource else resource
+            if name in resource_map:
+                resolved_artifacts.append(resource_map[name])
+            else:
+                self.logger.warning(f"Artifact resource '{name}' not found in group config")
+
+        return resolved_artifacts
