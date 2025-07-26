@@ -1086,25 +1086,52 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("PR to update assembly updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update assembly updated: {result.html_url}")
 
-        await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
+        # Check if we can auto-merge
+        if source_owner == target_owner:
+            self.logger.info(
+                "Push and pull URLs are from same project (%s), attempting to auto-merge PR...", source_owner
+            )
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have auto-merged PR with number %s", pull_number)
+            else:
+                try:
+                    # Auto-merge the PR
+                    api.pulls.merge(pull_number)
+                    self.logger.info("PR to update assembly was auto-merged: %s", result.html_url)
+                    await self._slack_client.say_in_thread(f":white_check_mark: PR auto-merged: {result.html_url}")
+                except Exception as ex:
+                    self.logger.warning(f"Failed to auto-merge PR {pull_number}: {ex}")
+                    await self._slack_client.say_in_thread(
+                        f"Failed to auto-merge PR, will wait for manual merge: {result.html_url}"
+                    )
+                    # Fall back to waiting for manual merge
+                    await self._wait_for_pr_merge(api, pull_number, result.html_url)
+        else:
+            self.logger.info(
+                "Push owner (%s) differs from pull owner (%s), waiting for manual merge...", source_owner, target_owner
+            )
+            await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
+            await self._wait_for_pr_merge(api, pull_number, result.html_url)
 
+        return True
+
+    async def _wait_for_pr_merge(self, api, pull_number: int, pr_url: str):
+        """Wait for a PR to be merged manually with timeout."""
         # wait until the PR is merged
         timeout = 60 * 60  # 1 hour
         start_time = time.time()
         while True:
             if (time.time() - start_time) > timeout:
-                raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {result.html_url}")
+                raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {pr_url}")
             await asyncio.sleep(10)
             pr = api.pulls.get(pull_number)
             if pr.merged:
-                self.logger.info("PR to update assembly was merged: %s", pr.html_url)
+                self.logger.info("PR to update assembly was merged: %s", pr_url)
                 break
             if pr.state == "closed":
-                self.logger.info("PR to update assembly was closed: %s", pr.html_url)
-                raise RuntimeError(f"PR to update assembly was closed: {pr.html_url}")
-            self.logger.info("Waiting for PR to update assembly to be merged: %s", pr.html_url)
-
-        return True
+                self.logger.info("PR to update assembly was closed: %s", pr_url)
+                raise RuntimeError(f"PR to update assembly was closed: {pr_url}")
+            self.logger.info("Waiting for PR to update assembly to be merged: %s", pr_url)
 
     async def update_build_data(self, branch: str) -> bool:
         """Update releases.yml in build data repo with the given shipment assembly config.
