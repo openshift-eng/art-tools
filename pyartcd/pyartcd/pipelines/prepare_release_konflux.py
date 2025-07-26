@@ -34,7 +34,7 @@ from doozerlib.cli.release_gen_payload import (
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
-from elliottlib.shipment_utils import get_shipment_configs_from_mr
+from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -95,7 +95,7 @@ class PrepareReleaseKonfluxPipeline:
         self.releases_config = None
         self.release_version = None
         self.group_config = None
-        self._issues_by_kind = None
+        self._bug_ids_by_kind = None
         self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
@@ -501,7 +501,8 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             if kind == "fbc":
                 continue
-            shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
+            bug_ids = await self.find_bugs(kind, permissive=permissive)
+            add_bug_ids_to_release_notes(shipment.shipment.data.releaseNotes, bug_ids)
 
         # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -793,36 +794,34 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
-        """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
-        :param kind: The kind for which to find bugs
+    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[List[str]]:
+        """Find bugs for the given advisory kind.
+        :param kind: The shipment kind for which to find bugs
         :param permissive: Ignore invalid bugs that are found and continue
-        :return: An Issues object containing the bugs found
         """
 
-        if self._issues_by_kind is not None:
-            return self._issues_by_kind.get(kind)
+        if self._bug_ids_by_kind is None:
+            find_bugs_cmd = self._elliott_base_command + [
+                "find-bugs",
+                "--output=json",
+            ]
+            if permissive:
+                find_bugs_cmd.append("--permissive")
 
-        find_bugs_cmd = self._elliott_base_command + [
-            "find-bugs",
-            "--output=json",
-        ]
-        if permissive:
-            find_bugs_cmd.append("--permissive")
+            stdout = await self.execute_command_with_logging(find_bugs_cmd)
+            self._bug_ids_by_kind = {}
+            if stdout:
+                for advisory_kind, bugs in json.loads(stdout).items():
+                    self._bug_ids_by_kind[advisory_kind] = bugs
 
-        _, stdout, _ = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
-        if stdout:
-            self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
+        return self._bug_ids_by_kind.get(kind)
 
-        self._issues_by_kind = {}
-        if stdout:
-            for advisory_kind, bugs in json.loads(stdout).items():
-                fixed = [Issue(id=b, source="issues.redhat.com") for b in bugs] if bugs else []
-                self._issues_by_kind[advisory_kind] = Issues(fixed=fixed)
+    async def attach_cve_flaws(self, kind: str, shipment: ShipmentConfig):
+        """Attach CVE flaws to the given shipment.
+        :param kind: The shipment kind for which to attach CVE flaws
+        :param shipment: The shipment to attach CVE flaws to
+        """
 
-        return self._issues_by_kind.get(kind)
-
-    async def attach_cve_flaws(self, kind, shipment):
         # Create base path if it does not exist
         base_path = self.elliott_working_dir / 'attach_cve_flaws'
         base_path.mkdir(parents=True, exist_ok=True)
@@ -833,7 +832,7 @@ class PrepareReleaseKonfluxPipeline:
                 arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
                 for arg in self._elliott_base_command
             ]
-            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
+            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=yaml']
 
             self.logger.info('Running elliott attach-cve-flaws...')
             _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
@@ -846,7 +845,7 @@ class PrepareReleaseKonfluxPipeline:
             shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/attach-cve-flaws-{kind}-debug.log')
 
         if stdout:
-            shipment.shipment.data.releaseNotes = json.loads(stdout)
+            shipment.shipment.data.releaseNotes = yaml.load(stdout)
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
