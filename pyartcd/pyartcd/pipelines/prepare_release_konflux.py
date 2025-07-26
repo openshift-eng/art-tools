@@ -986,8 +986,35 @@ class PrepareReleaseKonfluxPipeline:
                 mr.save()
                 self.logger.info("Shipment MR marked as ready: %s", self.shipment_mr_url)
                 await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
+
+                # Trigger CI pipeline after marking as ready
+                await self.trigger_ci_pipeline(project, mr.source_branch)
         else:
             self.logger.info("MR is already ready (no draft prefix found)")
+
+    async def trigger_ci_pipeline(self, project, branch: str):
+        """Trigger a GitLab CI pipeline for the specified project and branch.
+
+        Args:
+            project: GitLab project object
+            branch: The branch name to trigger the pipeline for
+        """
+        try:
+            self.logger.info("Triggering CI pipeline for branch %s in project %s", branch, project.path_with_namespace)
+
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have triggered CI pipeline for branch: %s", branch)
+                return
+
+            # Create a new pipeline for the specified branch
+            pipeline = project.pipelines.create({'ref': branch})
+
+            self.logger.info("CI pipeline triggered successfully: %s", pipeline.web_url)
+            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline.web_url}")
+
+        except Exception as ex:
+            self.logger.warning(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
+            await self._slack_client.say_in_thread(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
