@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import gitlab
 from artcommonlib.util import new_roundtrip_yaml_handler
 
-from elliottlib.shipment_model import ReleaseNotes, ShipmentConfig
+from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,10 @@ def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:
 
 
 def add_bug_ids_to_release_notes(release_notes: ReleaseNotes, bug_ids: Iterable[int | str]):
-    existing_issues_ids = [b.id for b in release_notes.issues.fixed or []]
+    if not release_notes.issues:
+        release_notes.issues = Issues(fixed=[])
+    existing_issues_ids = [b.id for b in release_notes.issues.fixed]
     for issue_id in sorted(set(bug_ids)):
         if issue_id not in existing_issues_ids:
             source = "bugzilla.redhat.com" if issue_id.isdigit() else "issues.redhat.com"
-            release_notes.issues.fixed.append({'id': issue_id, 'source': source})
+            release_notes.issues.fixed.append(Issue(id=issue_id, source=source))
