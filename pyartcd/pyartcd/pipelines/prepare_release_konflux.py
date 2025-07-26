@@ -208,10 +208,9 @@ class PrepareReleaseKonfluxPipeline:
             failed = True
         finally:
             await self.create_update_build_data_pr()
+            await self.set_shipment_mr_ready()
             await self.verify_payload()
-            # Mark shipment MR as ready at the end if everything completed successfully
-            if not failed:
-                await self.set_shipment_mr_ready()
+
         if failed:
             raise Exception("Failed to prepare release")
 
