@@ -19,6 +19,8 @@ from pyartcd.runtime import Runtime
 
 SEARCH_WINDOW_HOURS = 8  # Window of last X hours that we consider for our failed builds search
 RELEASE_ARTIST_HANDLE = 'release-artists'
+ART_KONFLUX_TEMPLATE_REPO = 'openshift-priv/art-konflux-template'
+ART_DOCS_TASK_BUNDLES_URL = 'https://art-docs.engineering.redhat.com/konflux/update-konflux-task-bundles/'
 
 
 class SSLCertificateChecker:
@@ -171,6 +173,36 @@ class ArtNotifyPipeline:
             return failed_jobs_text
         return ''
 
+    def _get_konflux_task_update_pr(self):
+        self.logger.info('Checking for Konflux template update PRs...')
+        github_token = os.getenv('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError('GITHUB_TOKEN environment variable must be set')
+
+        api_url = f'https://api.github.com/repos/{ART_KONFLUX_TEMPLATE_REPO}/pulls'
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json',
+        }
+
+        try:
+            response = requests.get(api_url, headers=headers)
+            response.raise_for_status()
+            prs = response.json()
+        except requests.RequestException as e:
+            self.logger.error(f'Failed to fetch PRs from {ART_KONFLUX_TEMPLATE_REPO}: {e}')
+            return None
+
+        for pr in prs:
+            if pr['state'] == 'open' and pr['title'] == 'Update Konflux references':
+                pr_url = pr['html_url']
+                self.logger.info(f'Found open Konflux template update PR: {pr_url}')
+
+                return f'* <{pr_url}|Review Konflux Task Update PR>, refer docs ({ART_DOCS_TASK_BUNDLES_URL})'
+
+        self.logger.info('No open Konflux template update PRs found.')
+        return None
+
     @staticmethod
     def _slack_link(job_name, job_url, job_id=None, text=None):
         link = job_url
@@ -208,7 +240,7 @@ class ArtNotifyPipeline:
         self.logger.info('Found matching messages: \n%s', json.dumps(all_matches, indent=4))
         return all_matches
 
-    def _notify_messages(self, failed_jobs_text, messages, expired_certificates):
+    def _notify_messages(self, failed_jobs_text, messages, extra_notifications):
         header_text = "Currently unresolved ART threads"
         fallback_text = header_text
 
@@ -273,6 +305,7 @@ class ArtNotifyPipeline:
         n_threads = len(response_messages)
         if failed_jobs_text:
             n_threads += 1
+        n_threads += len(extra_notifications)
 
         header_block = [
             {"type": "header", "text": {"type": "plain_text", "text": f"{header_text} ({n_threads})", "emoji": True}},
@@ -291,8 +324,8 @@ class ArtNotifyPipeline:
             if failed_jobs_text:
                 self.logger.info(failed_jobs_text)
 
-            if expired_certificates:
-                self.logger.info(expired_certificates)
+            for notification in extra_notifications:
+                self.logger.info(notification)
 
         else:
             # https://api.slack.com/methods/chat.postMessage#examples
@@ -315,10 +348,8 @@ class ArtNotifyPipeline:
             if failed_jobs_text:
                 self.app.client.chat_postMessage(channel=self.channel, text=failed_jobs_text, thread_ts=response['ts'])
 
-            if expired_certificates:
-                self.app.client.chat_postMessage(
-                    channel=self.channel, text=expired_certificates, thread_ts=response['ts']
-                )
+            for notification in extra_notifications:
+                self.app.client.chat_postMessage(channel=self.channel, text=notification, thread_ts=response['ts'])
 
     async def _get_rebase_failures(self):
         """
@@ -379,9 +410,12 @@ class ArtNotifyPipeline:
         failed_jobs_text = self._get_failed_jobs_text()
         messages = self._get_messages()
         expired_certificates = await SSLCertificateChecker().check_expired_certificates()
+        konflux_pr_text = self._get_konflux_task_update_pr()
 
-        if any([failed_jobs_text, messages, expired_certificates]):
-            self._notify_messages(failed_jobs_text, messages, expired_certificates)
+        extra_notifications = [n for n in [expired_certificates, konflux_pr_text] if n]
+
+        if any([failed_jobs_text, messages, extra_notifications]):
+            self._notify_messages(failed_jobs_text, messages, extra_notifications)
 
         else:
             self.logger.info('No messages matching attention emoji criteria and no failed jobs found')
