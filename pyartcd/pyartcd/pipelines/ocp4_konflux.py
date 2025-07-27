@@ -370,7 +370,15 @@ class KonfluxOcp4Pipeline:
             operator_nvrs = []
             for record in records:
                 if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
-                    operator_nvrs.append(record['nvrs'].split(',')[0])
+                    nvr = record['nvrs'].split(',')[0]
+                    release = nvr.split("-")[-1]
+
+                    # Do not trigger bundle builds for an embargoed operator build
+                    if is_release_embargoed(release=release, build_system="konflux"):
+                        LOGGER.warning(f"Not triggering bundle build for {nvr} because it is in an embargoed release")
+                        continue
+
+                    operator_nvrs.append(nvr)
             if operator_nvrs:
                 jenkins.start_olm_bundle_konflux(
                     build_version=self.version,
