@@ -1370,7 +1370,7 @@ class PrepareReleaseKonfluxPipeline:
 @click.option(
     "--inject-build-data-repo",
     is_flag=True,
-    help="Inject build-data repo/commit given by --build-repo-url into the shipment config",
+    help="Inject build-data repo/commit given by --build-data-repo-url into the shipment config",
 )
 @click.option(
     '--shipment-data-repo-url',
