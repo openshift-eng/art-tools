@@ -85,5 +85,5 @@ def add_bug_ids_to_release_notes(release_notes: ReleaseNotes, bug_ids: Iterable[
     existing_issues_ids = [b.id for b in release_notes.issues.fixed]
     for issue_id in sorted(set(bug_ids)):
         if issue_id not in existing_issues_ids:
-            source = "bugzilla.redhat.com" if issue_id.isdigit() else "issues.redhat.com"
+            source = "bugzilla.redhat.com" if (isinstance(issue_id, int) or issue_id.isdigit()) else "issues.redhat.com"
             release_notes.issues.fixed.append(Issue(id=issue_id, source=source))
