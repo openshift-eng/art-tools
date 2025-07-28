@@ -211,12 +211,15 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.error(f"Unable to prepare release: {ex}")
             failed = True
         finally:
+            self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
             await self.create_update_build_data_pr()
-            await self.set_shipment_mr_ready()
-            await self.verify_payload()
 
         if failed:
-            raise Exception("Failed to prepare release")
+            raise Exception(f"Failed to prepare release: {ex}")
+
+        await self.set_shipment_mr_ready()
+        await self.verify_payload()
+
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
