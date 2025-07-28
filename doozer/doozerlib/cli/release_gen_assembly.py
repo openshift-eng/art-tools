@@ -124,6 +124,7 @@ def releases_gen_assembly(ctx, name):
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
 @click_coroutine
 @click.pass_context
@@ -143,6 +144,7 @@ async def gen_assembly_from_releases(
     suggestions_url: Optional[str],
     output_file: Optional[str],
     gen_microshift: bool,
+    date: Optional[str],
 ):
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
@@ -167,6 +169,7 @@ async def gen_assembly_from_releases(
         graph_content_candidate=graph_content_candidate,
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
+        release_date=date,
     ).run()
 
     # ruamel.yaml configuration
@@ -205,6 +208,7 @@ class GenAssemblyCli:
         graph_content_candidate: Optional[str] = None,
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
+        release_date: Optional[str] = None,
     ):
         self.runtime = runtime
         # The name of the assembly we are going to output
@@ -240,6 +244,7 @@ class GenAssemblyCli:
         self.rhcos_version = ''
         self.rhcos_node_id = ''
         self.final_previous_list: List[VersionInfo] = []
+        self.release_date = release_date
 
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
@@ -862,6 +867,7 @@ class GenAssemblyCli:
 
         if self.runtime.build_system == 'konflux':
             group_info['shipment'] = self._get_shipment_info()
+            group_info['release_date'] = self._get_release_date()
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
@@ -891,6 +897,18 @@ class GenAssemblyCli:
                 },
             },
         }
+
+    async def _get_release_date(self):
+        if self.release_date:
+            return self.release_date
+        if self.assembly_type != AssemblyTypes.STANDARD:
+            raise ValueError("For non standard release you need to manually set release date from job")
+        self.logger.info("Release date not provided. Fetching release date from release schedule...")
+        try:
+            self.release_date = await get_assembly_release_date_async(self.release_name)
+        except Exception as ex:
+            raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
+        self.logger.info("Release date: %s", self.release_date)
 
     def _get_member_overrides(self):
         """
