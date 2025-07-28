@@ -202,7 +202,7 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
         await self.check_blockers()
-        failed = False
+        failed, ex = False, None
         try:
             await self.handle_jira_ticket()
             await self.prepare_rpm_advisory()
@@ -215,11 +215,10 @@ class PrepareReleaseKonfluxPipeline:
             await self.create_update_build_data_pr()
 
         if failed:
-            raise Exception(f"Failed to prepare release: {ex}")
+            raise ex
 
         await self.set_shipment_mr_ready()
         await self.verify_payload()
-
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -715,7 +714,7 @@ class PrepareReleaseKonfluxPipeline:
 
         if self.inject_build_data_repo:
             # inject the build repo into the shipment config
-            repo_username = self.build_data_repo_url.split('/')[-2]
+            repo_username = self.build_data_repo_pull_url.split('/')[-2]
             build_commit = self.build_data_gitref or self.group
             shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
 
