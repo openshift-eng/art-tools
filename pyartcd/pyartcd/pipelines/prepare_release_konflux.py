@@ -239,10 +239,10 @@ class PrepareReleaseKonfluxPipeline:
 
     def setup_working_dir(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        if self._build_repo_dir.exists():
-            shutil.rmtree(self._build_repo_dir, ignore_errors=True)
-        if self._shipment_repo_dir.exists():
-            shutil.rmtree(self._shipment_repo_dir, ignore_errors=True)
+        if self._build_data_repo_dir.exists():
+            shutil.rmtree(self._build_data_repo_dir, ignore_errors=True)
+        if self._shipment_data_repo_dir.exists():
+            shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
         if self.elliott_working_dir.exists():
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         if self.doozer_working_dir.exists():
