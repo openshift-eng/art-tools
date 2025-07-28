@@ -85,9 +85,8 @@ class PrepareReleaseKonfluxPipeline:
         self.product = 'ocp'  # assume that product is ocp for now
 
         # Have clear pull and push targets for both the build and shipment repos
-        self.build_data_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_data_repo_vars(
-            build_data_repo_url
-        )
+        self.build_data_repo_url = build_data_repo_url
+        self.build_data_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_data_repo_vars()
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
             shipment_data_repo_url
         )
@@ -140,9 +139,9 @@ class PrepareReleaseKonfluxPipeline:
         # and the token as the password
         return f'https://oauth2:{token}@{rest_of_the_url}'
 
-    def _build_data_repo_vars(self, build_data_repo_url: Optional[str]):
+    def _build_data_repo_vars(self):
         build_data_repo_pull_url = (
-            build_data_repo_url
+            self.build_data_repo_url
             or self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
             or constants.OCP_BUILD_DATA_URL
         )
