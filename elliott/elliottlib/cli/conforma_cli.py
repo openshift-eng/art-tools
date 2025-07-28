@@ -8,12 +8,14 @@ from typing import Dict, Tuple
 import click
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
+from artcommonlib.rhcos import get_container_configs
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, get_build_records_by_nvrs
 from elliottlib.runtime import Runtime
+from elliottlib.util import get_nvrs_from_release
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -24,15 +26,18 @@ class ConformaVerifyCli:
     def __init__(
         self,
         runtime: Runtime,
+        pullspec: str,
         nvrs: list,
         env: str = None,
         policy_path: str = None,
         konflux_kubeconfig: str = None,
         pull_secret: str = None,
     ):
+        if not pullspec and not nvrs:
+            raise ValueError("Either pullspec or nvrs must be provided")
+
         self.runtime = runtime
-        if not nvrs:
-            raise ValueError("nvrs must be provided")
+        self.pullspec = pullspec
         self.nvrs = nvrs
         self.nvrs_by_pullspec = None
         self.policy_path = policy_path
@@ -56,6 +61,16 @@ class ConformaVerifyCli:
 
     async def run(self) -> Dict[str, Dict]:
         """Run conforma verification for all NVRs and return results."""
+
+        self.runtime.initialize(build_system='konflux', mode='images')
+
+        if self.pullspec:
+            rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
+            nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
+            self.nvrs = []
+            for component, (v, r) in nvr_map.items():
+                self.nvrs.append(f"{component}-{v}-{r}")
+
         LOGGER.info("Verifying %d NVRs with Conforma", len(self.nvrs))
 
         snapshot_pipeline = CreateSnapshotCli(
@@ -219,16 +234,27 @@ class ConformaVerifyCli:
             "--policy",
             policy_file,
             "--ignore-rekor",
+            "--timeout",
+            "10m",
             "--output",
             "yaml",
         ]
 
         # Run ec validate command
-        rc, stdout, stderr = await cmd_gather_async(cmd, check=False)
+        rc, stdout, _ = await cmd_gather_async(cmd, stderr=None, check=False)
+        if not stdout:
+            return {
+                "success": False,
+                "total_nvrs": 0,
+                "failed_nvrs": 0,
+                "nvr_results": {},
+                "output": {},
+            }
+
         output_data = yaml.load(stdout)
 
         nvr_results = {}
-        for component in output_data["components"]:
+        for component in output_data.get("components", []):
             component_name = component["name"]
             if ":" in component_name:
                 component_name = component_name.split(":")[0].removesuffix("-sha256")
@@ -257,15 +283,15 @@ class ConformaVerifyCli:
             if "violations" in nvr_data and "codes" in nvr_data["violations"]:
                 nvr_data["violations"]["codes"] = list(nvr_data["violations"]["codes"])
 
-        success = rc == 0
         result = {
+            "success": rc == 0,
+            "total_nvrs": len(nvr_results),
+            "failed_nvrs": len([nvr_data for nvr_data in nvr_results.values() if not nvr_data["success"]]),
             "nvr_results": nvr_results,
-            "success": success,
             "output": output_data,
-            "stderr": stderr if stderr else None,
         }
 
-        if success:
+        if result["success"]:
             LOGGER.info("✓ Verification passed")
         else:
             LOGGER.warning("✗ Verification failed")
@@ -281,6 +307,11 @@ class ConformaVerifyCli:
     "nvrs_file",
     help="File to read NVRs from, `-` to read from STDIN.",
     type=click.File("rt"),
+)
+@click.option(
+    "--pullspec",
+    default=None,
+    help="Pullspec of OCP payload to fetch NVRs from. e.g. registry.ci.openshift.org/ocp/konflux-release:4.19.0-0.konflux-nightly-2025-07-28-143852",
 )
 @click.option(
     "--konflux-policy",
@@ -310,6 +341,7 @@ async def verify_conforma_cli(
     runtime: Runtime,
     nvrs_file,
     nvrs,
+    pullspec,
     konflux_policy,
     konflux_kubeconfig,
     pull_secret,
@@ -333,16 +365,13 @@ async def verify_conforma_cli(
     if env and konflux_policy:
         raise click.BadParameter("Cannot specify both --env and --konflux-policy")
 
-    if bool(nvrs) and bool(nvrs_file):
-        raise click.BadParameter("Use only one of nvrs arguments or --nvrs-file")
+    if sum(map(bool, [nvrs, nvrs_file, pullspec])) != 1:
+        raise click.BadParameter("Use only one of nvrs arguments, --nvrs-file or --pullspec")
 
     if nvrs_file:
         if nvrs_file == "-":
             nvrs_file = sys.stdin
         nvrs = [line.strip() for line in nvrs_file.readlines()]
-
-    if not nvrs:
-        raise click.BadParameter("Must provide NVRs either as arguments or via --nvrs-file")
 
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -352,6 +381,7 @@ async def verify_conforma_cli(
 
     pipeline = ConformaVerifyCli(
         runtime=runtime,
+        pullspec=pullspec,
         nvrs=nvrs,
         policy_path=konflux_policy,
         konflux_kubeconfig=konflux_kubeconfig,
@@ -360,7 +390,9 @@ async def verify_conforma_cli(
     )
     results = await pipeline.run()
 
-    click.echo("Verification complete. See results.yaml for details.")
+    click.echo(
+        f"Verification complete. See results.yaml for details. {results['failed_nvrs']} failed out of {results['total_nvrs']} total."
+    )
 
     if not results["success"]:
         sys.exit(1)
