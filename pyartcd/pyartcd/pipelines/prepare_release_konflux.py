@@ -71,6 +71,7 @@ class PrepareReleaseKonfluxPipeline:
         self.assembly = assembly
         self.date = date
         self.group = group
+        self.inject_build_repo = inject_build_repo
 
         self._slack_client = slack_client
 
@@ -691,10 +692,9 @@ class PrepareReleaseKonfluxPipeline:
                     break  # there should be only one advisory with this kind
         return live_id
 
-    async def init_shipment(self, kind: str, inject_build_repo: bool = False) -> ShipmentConfig:
+    async def init_shipment(self, kind: str) -> ShipmentConfig:
         """Initialize a shipment for the given kind.
         :param kind: The kind for which to initialize shipment
-        :param inject_build_repo: Whether to inject the build repo into the shipment config
         :return: A ShipmentConfig object initialized with the given kind
         """
 
@@ -708,7 +708,8 @@ class PrepareReleaseKonfluxPipeline:
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
 
-        if inject_build_repo:
+        if self.inject_build_repo:
+            # inject the build repo into the shipment config
             repo_username = self.build_repo_url.split('/')[-2]
             build_commit = self.build_data_gitref or self.group
             shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
