@@ -202,20 +202,20 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
         await self.check_blockers()
-        failed, ex = False, None
+        err = None
         try:
             await self.handle_jira_ticket()
             await self.prepare_rpm_advisory()
             await self.prepare_shipment()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}")
-            failed = True
+            err = ex
         finally:
             self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
             await self.create_update_build_data_pr()
 
-        if failed:
-            raise ex
+        if err:
+            raise err
 
         await self.set_shipment_mr_ready()
         await self.verify_payload()
