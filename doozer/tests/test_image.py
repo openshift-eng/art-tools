@@ -596,6 +596,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         rt = MagicMock()
         rt.group = 'test-group'
+        rt.build_system = 'konflux'
         rt.konflux_db = MagicMock()
 
         metadata = image.ImageMetadata(rt, data_obj)
@@ -639,7 +640,9 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, set())
         self.assertEqual(metadata.installed_rpms, [])
-        metadata.runtime.konflux_db.get_latest_build.assert_called_once_with(name='test-image', group='test-group')
+        metadata.runtime.konflux_db.get_latest_build.assert_called_once_with(
+            name='test-image', group='test-group', outcome='success', engine='konflux'
+        )
         self.logger.debug.assert_called_with("No build record found for test-image/test-group")
         self.logger.error.assert_not_called()
 
@@ -696,7 +699,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_parent_build = MagicMock()
         mock_parent_build.installed_rpms = ['pkg1', 'pkg2']
 
-        async def mock_get_latest_build(name, group):
+        async def mock_get_latest_build(name, group, outcome=None, engine=None):
             if name == 'test-image':
                 return mock_build
             elif name == 'parent-image':
@@ -717,8 +720,8 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         # Verify both builds were fetched
         expected_calls = [
-            mock.call(name='test-image', group='test-group'),
-            mock.call(name='parent-image', group='test-group'),
+            mock.call(name='test-image', group='test-group', outcome='success', engine='konflux'),
+            mock.call(name='parent-image', group='test-group', outcome='success', engine='konflux'),
         ]
         metadata.runtime.konflux_db.get_latest_build.assert_has_calls(expected_calls, any_order=True)
         # Should not log errors or warnings when parent calculation succeeds
@@ -737,7 +740,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_parent_build = MagicMock()
         mock_parent_build.installed_rpms = None
 
-        async def mock_get_latest_build(name, group):
+        async def mock_get_latest_build(name, group, outcome=None, engine=None):
             if name == 'test-image':
                 return mock_build
             elif name == 'parent-image':
@@ -775,7 +778,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_build = MagicMock()
         mock_build.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
 
-        async def mock_get_latest_build(name, group):
+        async def mock_get_latest_build(name, group, outcome=None, engine=None):
             if name == 'test-image':
                 return mock_build
             elif name == 'parent-image':
@@ -1032,7 +1035,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_parent_build = MagicMock()
         mock_parent_build.installed_rpms = ['pkg1', 'pkg2']
 
-        async def mock_get_latest_build(name, group):
+        async def mock_get_latest_build(name, group, outcome=None, engine=None):
             if name == 'test-image':
                 return mock_build
             elif name == 'parent-image':
