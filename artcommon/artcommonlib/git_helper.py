@@ -1,6 +1,7 @@
 import copy
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Sequence
@@ -69,7 +70,9 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
     exectools.cmd_assert(cmd, retries=3, on_retry=["rm", "-rf", target_dir], set_env=set_env)
 
 
-async def run_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
+async def run_git_async(
+    args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, stdout=sys.stderr, **kwargs
+):
     """Run a git command and optionally raises an exception if the return code of the command indicates failure.
     :param args: List of arguments to pass to git
     :param env: Optional environment variables to set
@@ -82,7 +85,7 @@ async def run_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = Non
     set_env.update(constants.GIT_NO_PROMPTS)
     if env:
         set_env.update(env)
-    return await exectools.cmd_assert_async(['git'] + list(args), check=check, env=set_env, **kwargs)
+    return await exectools.cmd_assert_async(['git'] + list(args), check=check, env=set_env, stdout=stdout, **kwargs)
 
 
 async def gather_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):

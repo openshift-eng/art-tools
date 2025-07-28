@@ -275,7 +275,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-0',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='foo',
                 component='',
                 summary='',
@@ -285,7 +285,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-1',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='bar',
                 component='',
                 summary='',
@@ -295,7 +295,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-2',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
                 summary='',
@@ -345,7 +345,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-0',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='foo',
                 component='',
                 summary='',
@@ -355,7 +355,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-1',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='bar',
                 component='',
                 summary='',
@@ -365,7 +365,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-2',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
                 summary='',
@@ -445,13 +445,13 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-5',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: False,
+                has_valid_target_version_in_summary=lambda *_: False,
                 whiteboard_component='foo',
                 component='',
             )
         ]
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
-        with self.assertRaisesRegex(ElliottFatalError, 'invalid summary suffixes'):
+        with self.assertRaisesRegex(ElliottFatalError, 'invalid summary'):
             categorize_bugs_by_type(
                 bugs=bugs,
                 builds_by_advisory_kind=None,
@@ -466,7 +466,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-2',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: True,
+                has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
                 summary='',
@@ -476,7 +476,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 id='OCPBUGS-4',
                 is_tracker_bug=lambda: True,
                 is_invalid_tracker_bug=lambda: False,
-                has_valid_summary_suffix=lambda *_: False,
+                has_valid_target_version_in_summary=lambda *_: False,
                 whiteboard_component='foo',
                 component='',
             ),
@@ -519,7 +519,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
             issues,
             [
                 "Bug(s) ['OCPBUGS-5'] look like CVE trackers, but really are not.",
-                "Tracker Bug(s) ['OCPBUGS-4'] have invalid summary suffixes.",
+                "Tracker Bug(s) ['OCPBUGS-4'] have invalid summary.",
             ],
         )
 

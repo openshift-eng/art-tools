@@ -1,3 +1,4 @@
+import sys
 import unittest
 from unittest.mock import ANY, Mock, patch
 
@@ -11,7 +12,7 @@ class TestGitHelper(unittest.IsolatedAsyncioTestCase):
         args = ["init", "local_dir"]
         check = True
         await git_helper.run_git_async(args, check=check)
-        cmd_assert_async.assert_called_once_with(["git"] + args, env=ANY, check=check)
+        cmd_assert_async.assert_called_once_with(["git"] + args, env=ANY, check=check, stdout=sys.stderr)
 
     @patch('artcommonlib.exectools.cmd_gather_async')
     async def test_gather_git(self, cmd_gather_async: Mock):

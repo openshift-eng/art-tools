@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 import aiohttp
 import requests
 from artcommonlib.constants import RELEASE_SCHEDULES
-from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -461,3 +461,21 @@ async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Option
     _, out, _ = await cmd_gather_async(cmd, env=env)
 
     return out.strip()
+
+
+async def sync_to_quay(source_pullspec, destination_repo):
+    LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
+    cmd = [
+        'oc',
+        'image',
+        'mirror',
+        '--keep-manifest-list',
+        source_pullspec,
+        destination_repo,
+    ]
+
+    konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+    if konflux_registry_auth_file:
+        cmd += [f'--registry-config={konflux_registry_auth_file}']
+
+    await asyncio.wait_for(cmd_assert_async(cmd), timeout=7200)

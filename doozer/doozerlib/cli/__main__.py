@@ -30,7 +30,7 @@ from doozerlib.cli.config import (
 from doozerlib.cli.config_plashet import config_plashet
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.detect_embargo import detect_embargo
-from doozerlib.cli.fbc import fbc_build, fbc_import, fbc_rebase
+from doozerlib.cli.fbc import fbc_import, fbc_rebase_and_build
 from doozerlib.cli.get_nightlies import get_nightlies
 from doozerlib.cli.images import (
     distgit_config_template,

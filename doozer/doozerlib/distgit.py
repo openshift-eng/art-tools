@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime
 from multiprocessing import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union, cast
 
@@ -22,6 +22,13 @@ import requests
 import yaml
 from artcommonlib import assertion, exectools, logutil
 from artcommonlib.brew import BuildStates
+from artcommonlib.build_visibility import (
+    BuildVisibility,
+    get_all_visibility_suffixes,
+    get_visibility_suffix,
+    is_release_embargoed,
+    isolate_pflag_in_release,
+)
 from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import gather_git, git_clone
@@ -43,13 +50,6 @@ from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_at
 import doozerlib
 from doozerlib import state, util
 from doozerlib.build_info import BrewBuildRecordInspector
-from doozerlib.build_visibility import (
-    BuildVisibility,
-    get_all_visibility_suffixes,
-    get_visibility_suffix,
-    is_release_embargoed,
-    isolate_pflag_in_release,
-)
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError

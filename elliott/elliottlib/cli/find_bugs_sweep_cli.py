@@ -331,6 +331,9 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
     if runtime.build_system == 'brew':
         advisory_ids = runtime.get_default_advisories()
         for kind, kind_advisory_id in advisory_ids.items():
+            if int(kind_advisory_id) <= 0:
+                logger.info(f"{kind} advisory is not initialized: {kind_advisory_id}")
+                continue
             builds_by_advisory_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
     elif runtime.build_system == 'konflux':
         # fetch builds from shipments
@@ -454,12 +457,12 @@ def categorize_bugs_by_type(
     invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
-        if not b.has_valid_summary_suffix(major_version, minor_version):
+        if not b.has_valid_target_version_in_summary(major_version, minor_version):
             invalid_summary_trackers.add(b)
 
     if invalid_summary_trackers:
         sorted_ids = sorted([t.id for t in invalid_summary_trackers])
-        message = f"Tracker Bug(s) {sorted_ids} have invalid summary suffixes."
+        message = f"Tracker Bug(s) {sorted_ids} have invalid summary."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
@@ -618,13 +621,16 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
 
 async def get_sweep_cutoff_timestamp(runtime):
     sweep_cutoff_timestamp = 0
-    if runtime.build_system == 'brew' and runtime.assembly_basis_event:
-        logger.info(f"Determining approximate cutoff timestamp from basis event {runtime.assembly_basis_event}...")
+
+    # get timestamp from whatever basis event is available
+    basis_event = runtime.assembly_basis_event
+    if isinstance(basis_event, int):
+        logger.info(f"Determining approximate cutoff timestamp from basis event {basis_event}...")
         brew_api = runtime.build_retrying_koji_client()
         sweep_cutoff_timestamp = await bzutil.approximate_cutoff_timestamp(
             runtime.assembly_basis_event, brew_api, runtime.rpm_metas() + runtime.image_metas()
         )
-    elif runtime.build_system == 'konflux':
-        sweep_cutoff_timestamp = runtime.assembly_basis_event.timestamp()
+    elif isinstance(basis_event, datetime):
+        sweep_cutoff_timestamp = basis_event.timestamp()
 
     return sweep_cutoff_timestamp

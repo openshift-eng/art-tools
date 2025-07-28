@@ -148,14 +148,15 @@ async def find_builds_cli(
         $ elliott --group openshift-3.6 find-builds -k rpm -b megafrobber-1.0.1-2.el7 -a 93170
     """
 
-    if advisory_id and default_advisory_type:
+    advisory_id_provided = advisory_id is not None
+    if advisory_id_provided and default_advisory_type:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
     if payload and non_payload:
         raise click.BadParameter('Use only one of --payload or --non-payload.')
     if builds and builds_file:
         raise click.BadParameter('Use only one of --build or --builds-file.')
     if clean:
-        if not (advisory_id or default_advisory_type):
+        if not (advisory_id_provided or default_advisory_type):
             raise click.BadParameter('Cannot use --clean without --attach or --use-default-advisory.')
         if builds or builds_file:
             raise click.BadParameter('Cannot use --clean with --build or --builds-file.')
@@ -169,7 +170,16 @@ async def find_builds_cli(
 
     if runtime.build_system == 'konflux':
         if any(
-            [builds, builds_file, advisory_id, default_advisory_type, clean, no_cdn_repos, include_shipped, member_only]
+            [
+                builds,
+                builds_file,
+                advisory_id_provided,
+                default_advisory_type,
+                clean,
+                no_cdn_repos,
+                include_shipped,
+                member_only,
+            ]
         ):
             raise click.BadParameter(
                 'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
@@ -177,16 +187,14 @@ async def find_builds_cli(
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
         if all_image_types:
-            builds_map = await find_builds_konflux_all_types(runtime)
-            if as_json:
-                click.echo(json.dumps(builds_map, indent=4, sort_keys=True))
-                return
-        records = await find_builds_konflux(runtime, payload)
+            data = await find_builds_konflux_all_types(runtime)
+        else:
+            data = await find_builds_konflux(runtime, payload)
+
         if as_json:
-            _json_dump(as_json, records, kind)
-            return
-        for nvr in sorted([r.nvr for r in records]):
-            click.echo(nvr)
+            _json_dump(as_json, data)
+        else:
+            click.echo(data)
         return
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
@@ -434,19 +442,17 @@ def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
     return nvrps
 
 
-def _json_dump(as_json: str, builds: list, kind: str):
+def _json_dump(as_json: str, data: dict):
     """Dumps builds as JSON to a file or stdout
     :param as_json: file name to dump JSON to, or '-' for stdout
-    :param builds: list of Brew build objects
-    :param kind: kind of builds, either 'rpm' or 'image'
+    :param data: data to dump as JSON
     """
 
-    json_data = dict(builds=sorted([b.nvr for b in builds]), kind=kind)
     if as_json == '-':
-        click.echo(json.dumps(json_data, indent=4, sort_keys=True))
+        click.echo(json.dumps(data, indent=4, sort_keys=True))
     else:
         with open(as_json, 'w') as json_file:
-            json.dump(json_data, json_file, indent=4, sort_keys=True)
+            json.dump(data, json_file, indent=4, sort_keys=True)
 
 
 def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
@@ -518,7 +524,7 @@ def _ensure_accepted_tags(
     for build in builds:
         accepted_tag = next(filter(lambda tag: tag in tag_pv_map, build["_tags"]), None)
         if not accepted_tag:
-            msg = f"Build {build['nvr']} has Brew tags {build['_tags']}, but none of them has an associated Errata product version."
+            msg = f"Build {build['nvr']} has Brew tags {build['_tags']}, but none of them has an associated Errata product version. Available tag_pv_map keys: {list(tag_pv_map.keys())}"
             if raise_exception:
                 raise IOError(msg)
             else:
@@ -750,7 +756,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
             continue
         image_metas.append((image.is_payload, image))
 
-    LOGGER.info("Fetching NVRs from DB...")
+    LOGGER.info("Fetching image NVRs from DB...")
     # find build result (is_olm_operator, build_Record, is_payload)
     olm_flags = []
     payload_flags = []
@@ -767,7 +773,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records_with_olm)} images")
 
     # get related bundle records in KonfluxBundleBuildRecord
-    LOGGER.info("Fetching bundle build from DB ...")
+    LOGGER.info("Fetching bundle NVRs from DB ...")
     runtime.konflux_db.bind(KonfluxBundleBuildRecord)
 
     operator_builds = []

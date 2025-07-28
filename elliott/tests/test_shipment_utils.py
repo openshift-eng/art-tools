@@ -274,10 +274,10 @@ shipment:
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
         mock_diffs = [
-            {'new_path': 'rpm.yaml', 'old_path': None},
+            {'new_path': 'fbc.yaml', 'old_path': None},
             {'new_path': 'image.yml', 'old_path': None},
             {'new_path': 'extras.yaml', 'old_path': None},
-            {'new_path': 'microshift.yml', 'old_path': None},
+            {'new_path': 'microshift-bootc.yml', 'old_path': None},
             {'new_path': 'metadata.yaml', 'old_path': None},
         ]
         self.mock_diff.diffs = mock_diffs
@@ -290,7 +290,7 @@ shipment:
         result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url)
 
         # Assertions
-        expected_kinds = {"rpm", "image", "extras", "microshift", "metadata"}
+        expected_kinds = {"fbc", "image", "extras", "microshift-bootc", "metadata"}
         self.assertEqual(set(result.keys()), expected_kinds)
 
 

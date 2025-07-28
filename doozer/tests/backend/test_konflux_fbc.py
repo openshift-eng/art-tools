@@ -251,8 +251,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
+        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
 
-        await self.rebaser.rebase(metadata, bundle_build, version, release)
+        actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -284,9 +286,11 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
+        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
         self.rebaser.push = True
 
-        await self.rebaser.rebase(metadata, bundle_build, version, release)
+        actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -413,7 +417,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             MagicMock(image_pullspec="example.com/art-images@2"),
         ]
 
-        await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+        actual = await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
         mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
@@ -627,6 +632,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "test"
         build_repo = MagicMock(
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
@@ -637,7 +644,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.builder._start_build(
-            metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
         kube_client.ensure_component.assert_awaited_once_with(
@@ -660,6 +671,58 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             vm_override={},
             building_arches=['x86_64', 's390x'],
             additional_tags=[],
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
+    async def test_start_build_2(self):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "stream"
+        metadata.runtime.group = "openshift-4.20"
+        metadata.config = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["openshift4/sample-operator-1", "openshift4/sample-operator-2"]
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
+        kube_client = self.kube_client
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"},
+        )
+
+        result = await self.builder._start_build(
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
+        )
+        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
+        kube_client.ensure_component.assert_awaited_once_with(
+            name="fbc-test-group-foo",
+            application="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            image_repo="test-image-pullspec",
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+        )
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
             skip_checks=False,
             hermetic=True,
             dockerfile='catalog.Dockerfile',
@@ -700,6 +763,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
         mock_dfp.labels = {
             'com.redhat.art.name': 'test-distgit-key-fbc',
+            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
         }
 
         await self.builder.build(metadata)
@@ -733,7 +797,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',
@@ -775,6 +839,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         }
         mock_dfp.labels = {
             'com.redhat.art.name': 'test-distgit-key-fbc',
+            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
         }
 
         await self.builder.build(metadata)
@@ -802,7 +867,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',

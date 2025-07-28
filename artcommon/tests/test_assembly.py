@@ -280,7 +280,7 @@ releases:
         self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         self.assertEqual(
             assembly_basis_event(releases_config=self.releases_config, assembly='foo', build_system='brew'),
-            None,
+            datetime(2021, 1, 1, 0, 0, tzinfo=timezone.utc),
         )
 
     def test_asssembly_basis_time_with_brew_event_4(self):

@@ -13,6 +13,7 @@ from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
@@ -21,7 +22,6 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
@@ -202,6 +202,12 @@ class KonfluxImageBuilder:
                     image_pullspec = next(
                         (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
                     )
+                    image_digest = next(
+                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
+                    )
+
+                    record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
+
                     # Get SLA attestation from konflux. The command will error out if it cannot find it.
                     try:
                         await artlib_util.get_konflux_slsa_attestation(

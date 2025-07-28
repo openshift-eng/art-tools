@@ -61,7 +61,7 @@ class KonfluxClient:
 
     def verify_connection(self):
         try:
-            self.corev1_client.get_api_resources()
+            self.corev1_client.get_api_resources(_request_timeout=self.request_timeout)
             self._logger.info("Successfully authenticated to the Kubernetes cluster.")
         except Exception as e:
             self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
@@ -709,7 +709,7 @@ class KonfluxClient:
         namespace: Optional[str] = None,
         overall_timeout_timedelta: Optional[datetime.timedelta] = None,
         pending_timeout_timedelta: Optional[datetime.timedelta] = None,
-    ) -> (resource.ResourceInstance, List[Dict]):
+    ) -> tuple[resource.ResourceInstance, list[Dict]]:
         """
         Wait for a PipelineRun to complete.
 
@@ -732,7 +732,7 @@ class KonfluxClient:
                 "metadata": {"name": pipelinerun_name, "namespace": namespace},
                 "apiVersion": "tekton.dev/v1",
                 "kind": "PipelineRun",
-                "status": {"conditions": [{"status": "True"}]},
+                "status": {"conditions": [{"status": "True", "type": "Succeeded"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
             return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(
@@ -747,7 +747,7 @@ class KonfluxClient:
             watcher = watch.Watch()
             succeeded_status = "Not Found"
             succeeded_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
 
             # If a pipelinerun runs more than an hour, successful pods
             # might be garbage collected. Keep track of pod state across
@@ -795,7 +795,7 @@ class KonfluxClient:
                             label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
                             _request_timeout=self.request_timeout,
                         )
-                        current_time = datetime.datetime.now()
+                        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
                         for pod_instance in pods.items:
                             pod_name = pod_instance.metadata.name
                             try:
@@ -810,7 +810,7 @@ class KonfluxClient:
                                 if creation_time_str:
                                     creation_time = datetime.datetime.strptime(
                                         creation_time_str, "%Y-%m-%dT%H:%M:%SZ"
-                                    ).replace(tzinfo=None)
+                                    ).replace(tzinfo=datetime.timezone.utc)
                                 else:
                                     creation_time = current_time
                                 age = current_time - creation_time
@@ -901,7 +901,7 @@ class KonfluxClient:
                             watcher.stop()
                             return obj, list(pod_history.values())
 
-                        if datetime.datetime.now() > timeout_datetime:
+                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
                             self._logger.error(
                                 "PipelineRun %s has run longer than timeout %s; cancelling run",
                                 pipelinerun_name,
@@ -923,6 +923,7 @@ class KonfluxClient:
                                         },
                                     },
                                     content_type="application/merge-patch+json",
+                                    _request_timeout=self.request_timeout,
                                 )
                             except:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
@@ -984,7 +985,7 @@ class KonfluxClient:
             watcher = watch.Watch()
             released_status = "Not Found"
             released_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
 
             while True:
                 try:
@@ -995,6 +996,7 @@ class KonfluxClient:
                         serialize=False,
                         field_selector=f"metadata.name={release_name}",
                         timeout_seconds=60,
+                        _request_timeout=self.request_timeout,
                     )
                     for event in release_obj:
                         assert isinstance(event, Dict)
@@ -1016,7 +1018,7 @@ class KonfluxClient:
                             watcher.stop()
                             return obj
 
-                        if datetime.datetime.now() > timeout_datetime:
+                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
                             self._logger.info("Timeout reached. Exiting..")
                             watcher.stop()
                             return obj

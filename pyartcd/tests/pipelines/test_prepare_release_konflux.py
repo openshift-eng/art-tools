@@ -400,11 +400,18 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             "--build-system=konflux",
         ]
 
+        pipeline.updated_assembly_group_config = Model({"advisories": {"rpm": -1}})
+
         # Run the function
         with patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage:
             await pipeline.prepare_rpm_advisory()
 
         # Assertions
+        self.assertEqual(
+            pipeline.updated_assembly_group_config,
+            Model({"advisories": {"rpm": 12345}}),
+        )
+
         pipeline.create_advisory.assert_awaited_once()
         pipeline._slack_client.say_in_thread.assert_any_await("RPM advisory 12345 created with release date 2024-07-01")
         pipeline.run_cmd_with_retry.assert_any_await(
@@ -453,22 +460,38 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_fbc_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'get_snapshot', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
         mock_get_snapshot,
-        mock_find_or_build_bundle_builds,
         mock_find_builds_all,
+        mock_find_or_build_bundle_builds,
+        mock_find_or_build_fbc_builds,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_update_shipment_mr,
         mock_errata_api,
         *_,
     ):
+        group_config = {
+            "shipment": {
+                "env": "prod",
+                "advisories": [
+                    {"kind": "image"},
+                    {"kind": "extras"},
+                    {"kind": "metadata"},
+                    {"kind": "fbc"},
+                ],
+                # No 'url'
+            },
+            "advisories": {"rpm": 123},
+        }
+
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
             runtime=self.runtime,
@@ -482,14 +505,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 "releases": {
                     self.assembly: {
                         "assembly": {
-                            "group": {
-                                "shipment": {
-                                    "env": "prod",
-                                    "advisories": [{"kind": "image"}, {"kind": "extras"}],
-                                    # No 'url'
-                                },
-                                "advisories": {"rpm": 123},
-                            }
+                            "group": group_config,
                         }
                     }
                 }
@@ -517,7 +533,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
                 environments=Environments(
-                    stage=ShipmentEnv(releasePlan="rp-img-stage"), prod=ShipmentEnv(releasePlan="rp-img-prod")
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
                 ),
                 data=Data(
                     releaseNotes=ReleaseNotes(
@@ -546,7 +563,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
                 environments=Environments(
-                    stage=ShipmentEnv(releasePlan="rp-ext-stage"), prod=ShipmentEnv(releasePlan="rp-ext-prod")
+                    stage=ShipmentEnv(releasePlan="rp-ext-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-ext-prod"),
                 ),
                 data=Data(
                     releaseNotes=ReleaseNotes(
@@ -559,11 +577,65 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         )
+        mock_shipment_metadata = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-metadata",
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-metadata",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-meta-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-meta-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
+            )
+        )
+        mock_shipment_fbc = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-fbc",
+                    fbc=True,
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-fbc",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-fbc-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-fbc-prod"),
+                ),
+            )
+        )
 
         def init_shipment(kind):
             return {
                 "image": mock_shipment_image,
                 "extras": mock_shipment_extras,
+                "metadata": mock_shipment_metadata,
+                "fbc": mock_shipment_fbc,
             }.get(kind)
 
         mock_init_shipment.side_effect = init_shipment
@@ -572,30 +644,38 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             return {
                 "image": ["image-nvr"],
                 "extras": ["extras-nvr"],
-                "metadata": ["olm-nvr"],
-                "olm_builds_not_found": ["new-operatorm-builds"],
+                "metadata": [],
+                "olm_builds_not_found": ["extras-nvr"],
             }
 
-        def find_or_build_bundle_builds(nvr):
-            return ["new-olm-builds"]
-
         mock_find_builds_all.side_effect = find_builds_all
+
+        def find_or_build_bundle_builds(nvrs):
+            return ["extras-bundle-nvr"]
+
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
+
+        def find_or_build_fbc_builds(nvrs):
+            return ["fbc-nvr"]
+
+        mock_find_or_build_fbc_builds.side_effect = find_or_build_fbc_builds
 
         def find_bugs(kind, **_):
             return {
                 "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
                 "extras": Issues(fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]),
+                "metadata": Issues(fixed=[]),
             }.get(kind)
 
         mock_find_bugs.side_effect = find_bugs
+
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
 
         def get_snapshot(builds):
             if "image-nvr" in builds:
                 return Snapshot(
-                    nvrs=["image-nvr"],
+                    nvrs=builds,
                     spec=SnapshotSpec(
                         application="app-image",
                         components=[
@@ -611,7 +691,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 )
             elif "extras-nvr" in builds:
                 return Snapshot(
-                    nvrs=["extras-nvr"],
+                    nvrs=builds,
                     spec=SnapshotSpec(
                         application="app-extras",
                         components=[
@@ -625,38 +705,85 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                         ],
                     ),
                 )
+            elif "extras-bundle-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-metadata",
+                        components=[
+                            SnapshotComponent(
+                                name="test-metadata-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-metadata.git", revision="ghi789")
+                                ),
+                                containerImage="test-metadata:latest",
+                            ),
+                        ],
+                    ),
+                )
+            elif "fbc-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-fbc",
+                        components=[
+                            SnapshotComponent(
+                                name="test-fbc-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-fbc.git", revision="jkl012")
+                                ),
+                                containerImage="test-fbc:latest",
+                            ),
+                        ],
+                    ),
+                )
 
         mock_get_snapshot.side_effect = get_snapshot
+
+        pipeline.updated_assembly_group_config = Model(group_config)
 
         await pipeline.prepare_shipment()
 
         # assert liveID is reserved
         mock_errata_api.assert_called_once()
-        self.assertEqual(mock_errata_api_instance.reserve_live_id.call_count, 2)
+        self.assertEqual(mock_errata_api_instance.reserve_live_id.call_count, 3)
 
         # assert shipment init calls and get_snapshot calls
         mock_init_shipment.assert_any_call("extras")
         mock_init_shipment.assert_any_call("image")
-        self.assertEqual(mock_init_shipment.call_count, 2)
+        mock_init_shipment.assert_any_call("metadata")
+        mock_init_shipment.assert_any_call("fbc")
+        self.assertEqual(mock_init_shipment.call_count, 4)
         self.assertEqual(mock_find_builds_all.call_count, 1)
         self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
+        self.assertEqual(mock_find_or_build_fbc_builds.call_count, 1)
         mock_get_snapshot.assert_any_call(['extras-nvr'])
         mock_get_snapshot.assert_any_call(['image-nvr'])
-        self.assertEqual(mock_get_snapshot.call_count, 2)
+        mock_get_snapshot.assert_any_call(['extras-bundle-nvr'])
+        mock_get_snapshot.assert_any_call(['fbc-nvr'])
+        self.assertEqual(mock_get_snapshot.call_count, 4)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
         mock_shipment_extras_create = copy.deepcopy(mock_shipment_extras)
+        mock_shipment_metadata_create = copy.deepcopy(mock_shipment_metadata)
+        mock_shipment_fbc_create = copy.deepcopy(mock_shipment_fbc)
         mock_shipment_image_create.shipment.data.releaseNotes.live_id = mock_live_id
         mock_shipment_image_create.shipment.snapshot.nvrs = ["image-nvr"]
         mock_shipment_extras_create.shipment.data.releaseNotes.live_id = mock_live_id
         mock_shipment_extras_create.shipment.snapshot.nvrs = ["extras-nvr"]
+        mock_shipment_metadata_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_metadata_create.shipment.snapshot.nvrs = ["extras-bundle-nvr"]
+        # fbc does not get live_id
+        mock_shipment_fbc_create.shipment.snapshot.nvrs = ["fbc-nvr"]
 
         # assert MR is created with the right shipment configs
         mock_create_shipment_mr.assert_awaited_once()
         created_shipments_arg = mock_create_shipment_mr.call_args[0][0]
         self.assertEqual(created_shipments_arg["image"], mock_shipment_image_create)
         self.assertEqual(created_shipments_arg["extras"], mock_shipment_extras_create)
+        self.assertEqual(created_shipments_arg["metadata"], mock_shipment_metadata_create)
+        self.assertEqual(created_shipments_arg["fbc"], mock_shipment_fbc_create)
         self.assertEqual(mock_create_shipment_mr.call_args[0][1], "prod")
 
         mock_errata_api_instance.close.assert_called_once()
@@ -664,31 +791,42 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         # assert bug finding was done and MR updated with the right shipment configs
         mock_find_bugs.assert_any_call("extras", permissive=False)
         mock_find_bugs.assert_any_call("image", permissive=False)
-        self.assertEqual(mock_find_bugs.call_count, 2)
+        mock_find_bugs.assert_any_call("metadata", permissive=False)
+        self.assertEqual(mock_find_bugs.call_count, 3)
 
         self.assertEqual(mock_update_shipment_mr.call_count, 2)
         updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
 
         mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
         mock_shipment_extras_update = copy.deepcopy(mock_shipment_extras_create)
+        mock_shipment_metadata_update = copy.deepcopy(mock_shipment_metadata_create)
         mock_shipment_image_update.shipment.data.releaseNotes.issues = Issues(
             fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]
         )
         mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
             fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]
         )
+        mock_shipment_metadata_update.shipment.data.releaseNotes.issues = Issues(fixed=[])
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
+        self.assertEqual(updated_shipments_arg["metadata"], mock_shipment_metadata_update)
         self.assertEqual(mock_update_shipment_mr.call_args[0][1], "prod")
 
         self.assertEqual(
-            pipeline.prepared_shipment_config,
-            {
-                'env': 'prod',
-                'advisories': [
-                    {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
-                    {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
-                ],
-                'url': 'https://gitlab.example.com/mr/1',
-            },
+            pipeline.updated_assembly_group_config,
+            Model(
+                {
+                    'shipment': {
+                        'env': 'prod',
+                        'advisories': [
+                            {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'metadata', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'fbc'},
+                        ],
+                        'url': 'https://gitlab.example.com/mr/1',
+                    },
+                    'advisories': {'rpm': 123},
+                }
+            ),
         )
