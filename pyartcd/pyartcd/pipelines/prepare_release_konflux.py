@@ -62,16 +62,16 @@ class PrepareReleaseKonfluxPipeline:
         group: str,
         assembly: str,
         date: Optional[str] = None,
-        build_repo_url: Optional[str] = None,
-        shipment_repo_url: Optional[str] = None,
-        inject_build_repo: bool = False,
+        build_data_repo_url: Optional[str] = None,
+        shipment_data_repo_url: Optional[str] = None,
+        inject_build_data_repo: bool = False,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.date = date
         self.group = group
-        self.inject_build_repo = inject_build_repo
+        self.inject_build_data_repo = inject_build_data_repo
 
         self._slack_client = slack_client
 
@@ -79,18 +79,20 @@ class PrepareReleaseKonfluxPipeline:
         self.working_dir = self.runtime.working_dir.absolute()
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
-        self._build_repo_dir = self.working_dir / "ocp-build-data-push"
-        self._shipment_repo_dir = self.working_dir / "shipment-data-push"
+        self._build_data_repo_dir = self.working_dir / "ocp-build-data-push"
+        self._shipment_data_repo_dir = self.working_dir / "shipment-data-push"
         self.dry_run = self.runtime.dry_run
         self.product = 'ocp'  # assume that product is ocp for now
 
         # Have clear pull and push targets for both the build and shipment repos
-        self.build_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_repo_vars(
-            build_repo_url
+        self.build_data_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_data_repo_vars(
+            build_data_repo_url
         )
-        self.shipment_repo_pull_url, self.shipment_repo_push_url = self._shipment_repo_vars(shipment_repo_url)
-        self.build_data_repo = GitRepository(self._build_repo_dir, self.dry_run)
-        self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
+        self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
+            shipment_data_repo_url
+        )
+        self.build_data_repo = GitRepository(self._build_data_repo_dir, self.dry_run)
+        self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
 
         # these will be initialized later
         self.assembly_type = None
@@ -117,7 +119,7 @@ class PrepareReleaseKonfluxPipeline:
             f'--assembly={self.assembly}',
             '--build-system=konflux',
             f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={self.build_repo_pull_url}',
+            f'--data-path={self.build_data_repo_pull_url}',
         ]
 
         self._doozer_base_command = [
@@ -125,7 +127,7 @@ class PrepareReleaseKonfluxPipeline:
             group_param,
             '--build-system=konflux',
             f'--working-dir={self.doozer_working_dir}',
-            f'--data-path={self.build_repo_pull_url}',
+            f'--data-path={self.build_data_repo_pull_url}',
         ]
 
     @staticmethod
@@ -138,31 +140,31 @@ class PrepareReleaseKonfluxPipeline:
         # and the token as the password
         return f'https://oauth2:{token}@{rest_of_the_url}'
 
-    def _build_repo_vars(self, build_repo_url: Optional[str]):
-        build_repo_pull_url = (
-            build_repo_url
+    def _build_data_repo_vars(self, build_data_repo_url: Optional[str]):
+        build_data_repo_pull_url = (
+            build_data_repo_url
             or self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
             or constants.OCP_BUILD_DATA_URL
         )
         build_data_gitref = None
-        if "@" in build_repo_pull_url:
-            build_repo_pull_url, build_data_gitref = build_repo_pull_url.split("@", 1)
+        if "@" in build_data_repo_pull_url:
+            build_data_repo_pull_url, build_data_gitref = build_data_repo_pull_url.split("@", 1)
 
         build_data_push_url = (
             self.runtime.config.get("build_config", {}).get("ocp_build_data_push_url") or constants.OCP_BUILD_DATA_URL
         )
-        return build_repo_pull_url, build_data_gitref, build_data_push_url
+        return build_data_repo_pull_url, build_data_gitref, build_data_push_url
 
-    def _shipment_repo_vars(self, shipment_repo_url: Optional[str]):
-        shipment_repo_pull_url = (
-            shipment_repo_url
+    def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
+        shipment_data_repo_pull_url = (
+            shipment_data_repo_url
             or self.runtime.config.get("shipment_config", {}).get("shipment_data_url")
             or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
         )
-        shipment_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
+        shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
             "shipment_data_push_url"
         ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
-        return shipment_repo_pull_url, shipment_repo_push_url
+        return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
     @cached_property
     def _errata_api(self) -> AsyncErrataAPI:
@@ -251,15 +253,15 @@ class PrepareReleaseKonfluxPipeline:
         # pushing is done via SSH
         await self.build_data_repo.setup(
             remote_url=convert_remote_git_to_ssh(self.build_data_push_url),
-            upstream_remote_url=self.build_repo_pull_url,
+            upstream_remote_url=self.build_data_repo_pull_url,
         )
         await self.build_data_repo.fetch_switch_branch(self.build_data_gitref or self.group)
 
         # setup shipment-data repo which should reside in GitLab
         # pushing is done via basic auth
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_repo_push_url, self.gitlab_token),
-            upstream_remote_url=self.shipment_repo_pull_url,
+            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            upstream_remote_url=self.shipment_data_repo_pull_url,
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
@@ -650,15 +652,15 @@ class PrepareReleaseKonfluxPipeline:
         if mr.state != "opened":
             raise ValueError(f"MR state {mr.state} is not opened. This is not supported.")
 
-        if target_project_path not in self.shipment_repo_pull_url:
+        if target_project_path not in self.shipment_data_repo_pull_url:
             raise ValueError(
-                f"MR target project {target_project_path} does not match the pull repo {self.shipment_repo_pull_url}"
+                f"MR target project {target_project_path} does not match the pull repo {self.shipment_data_repo_pull_url}"
             )
 
         source_project_path = self._gitlab.projects.get(mr.source_project_id).path_with_namespace
-        if source_project_path not in self.shipment_repo_push_url:
+        if source_project_path not in self.shipment_data_repo_push_url:
             raise ValueError(
-                f"MR source project {source_project_path} does not match the push repo {self.shipment_repo_push_url}"
+                f"MR source project {source_project_path} does not match the push repo {self.shipment_data_repo_push_url}"
             )
 
         if mr.target_branch != "main":
@@ -699,7 +701,7 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         create_cmd = self._elliott_base_command + [
-            f'--shipment-path={self.shipment_repo_pull_url}',
+            f'--shipment-path={self.shipment_data_repo_pull_url}',
             "shipment",
             "init",
             kind,
@@ -708,9 +710,9 @@ class PrepareReleaseKonfluxPipeline:
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
 
-        if self.inject_build_repo:
+        if self.inject_build_data_repo:
             # inject the build repo into the shipment config
-            repo_username = self.build_repo_url.split('/')[-2]
+            repo_username = self.build_data_repo_url.split('/')[-2]
             build_commit = self.build_data_gitref or self.group
             shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
 
@@ -884,8 +886,8 @@ class PrepareReleaseKonfluxPipeline:
             project_path = parsed_url.path.strip('/').removesuffix('.git')
             return self._gitlab.projects.get(project_path)
 
-        source_project = _get_project(self.shipment_repo_push_url)
-        target_project = _get_project(self.shipment_repo_pull_url)
+        source_project = _get_project(self.shipment_data_repo_push_url)
+        target_project = _get_project(self.shipment_data_repo_pull_url)
 
         mr_title = f"Draft: Shipment for {self.release_name}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else commit_message
@@ -1069,9 +1071,9 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in assembly config. PR will not be created or updated.")
             return False
 
-        target_repo = self.build_repo_pull_url.split('/')[-1].replace('.git', '')
+        target_repo = self.build_data_repo_pull_url.split('/')[-1].replace('.git', '')
         source_owner = self.build_data_push_url.split('/')[-2]
-        target_owner = self.build_repo_pull_url.split('/')[-2]
+        target_owner = self.build_data_repo_pull_url.split('/')[-2]
 
         head = f"{source_owner}:{branch}"
         base = self.build_data_gitref or self.group
@@ -1362,16 +1364,16 @@ class PrepareReleaseKonfluxPipeline:
     "--date", metavar="YYYY-MMM-DD", required=False, default=None, help="Expected release date (e.g. 2020-Nov-25)"
 )
 @click.option(
-    '--build-repo-url',
+    '--build-data-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
 @click.option(
-    "--inject-build-repo",
+    "--inject-build-data-repo",
     is_flag=True,
     help="Inject build-data repo/commit given by --build-repo-url into the shipment config",
 )
 @click.option(
-    '--shipment-repo-url',
+    '--shipment-data-repo-url',
     help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
 )
 @pass_runtime
@@ -1381,9 +1383,9 @@ async def prepare_release(
     group: str,
     assembly: str,
     date: str,
-    build_repo_url: Optional[str],
-    inject_build_repo: bool,
-    shipment_repo_url: Optional[str],
+    build_data_repo_url: Optional[str],
+    inject_build_data_repo: bool,
+    shipment_data_repo_url: Optional[str],
 ):
     # Check if assembly is valid
     if assembly == "stream":
@@ -1401,9 +1403,9 @@ async def prepare_release(
             group=group,
             assembly=assembly,
             date=date,
-            build_repo_url=build_repo_url,
-            shipment_repo_url=shipment_repo_url,
-            inject_build_repo=inject_build_repo,
+            build_data_repo_url=build_data_repo_url,
+            shipment_data_repo_url=shipment_data_repo_url,
+            inject_build_data_repo=inject_build_data_repo,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")

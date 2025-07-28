@@ -65,12 +65,14 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
-        self.assertEqual(pipeline.build_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
+        self.assertEqual(pipeline.build_data_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
-        self.assertEqual(pipeline.shipment_repo_pull_url, self.runtime.config["shipment_config"]["shipment_data_url"])
         self.assertEqual(
-            pipeline.shipment_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
+            pipeline.shipment_data_repo_pull_url, self.runtime.config["shipment_config"]["shipment_data_url"]
+        )
+        self.assertEqual(
+            pipeline.shipment_data_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
         )
 
     def test_init_empty_config(self):
@@ -84,11 +86,11 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
-        self.assertEqual(pipeline.build_repo_pull_url, constants.OCP_BUILD_DATA_URL)
+        self.assertEqual(pipeline.build_data_repo_pull_url, constants.OCP_BUILD_DATA_URL)
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, constants.OCP_BUILD_DATA_URL)
-        self.assertEqual(pipeline.shipment_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
-        self.assertEqual(pipeline.shipment_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
+        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
 
     def test_init_with_custom_urls(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -96,18 +98,18 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             runtime=self.runtime,
             group=self.group,
             assembly=self.assembly,
-            build_repo_url="https://github.com/foo/build-repo@branch",
-            shipment_repo_url="https://gitlab.com/bar/shipment-repo",
+            build_data_repo_url="https://github.com/foo/build-repo@branch",
+            shipment_data_repo_url="https://gitlab.com/bar/shipment-repo",
         )
         pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
-        self.assertEqual(pipeline.build_repo_pull_url, "https://github.com/foo/build-repo")
+        self.assertEqual(pipeline.build_data_repo_pull_url, "https://github.com/foo/build-repo")
         self.assertEqual(pipeline.build_data_gitref, "branch")
         self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
-        self.assertEqual(pipeline.shipment_repo_pull_url, "https://gitlab.com/bar/shipment-repo")
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, "https://gitlab.com/bar/shipment-repo")
         self.assertEqual(
-            pipeline.shipment_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
+            pipeline.shipment_data_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
         )
 
     @patch('pyartcd.pipelines.prepare_release_konflux.GitRepository')
@@ -116,12 +118,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         file_contents = {"releases.yml": 'releases_key: releases_value', "group.yml": 'group_key: group_value'}
 
         # Create mock repositories
-        mock_build_repo = AsyncMock(spec=GitRepository)
-        mock_build_repo.read_file.side_effect = lambda f: file_contents[f]
+        mock_build_data_repo = AsyncMock(spec=GitRepository)
+        mock_build_data_repo.read_file.side_effect = lambda f: file_contents[f]
 
-        mock_shipment_repo = AsyncMock(spec=GitRepository)
+        mock_shipment_data_repo = AsyncMock(spec=GitRepository)
 
-        MockGitRepositoryClass.side_effect = [mock_build_repo, mock_shipment_repo]
+        MockGitRepositoryClass.side_effect = [mock_build_data_repo, mock_shipment_data_repo]
 
         # Create pipeline and call setup_repos
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -139,20 +141,20 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MockGitRepositoryClass.call_count, 2)
 
         # Verify build repo setup
-        mock_build_repo.setup.assert_awaited_once_with(
+        mock_build_data_repo.setup.assert_awaited_once_with(
             remote_url=convert_remote_git_to_ssh(pipeline.build_data_push_url),
-            upstream_remote_url=pipeline.build_repo_pull_url,
+            upstream_remote_url=pipeline.build_data_repo_pull_url,
         )
-        mock_build_repo.fetch_switch_branch.assert_awaited_once_with(self.group)
-        mock_build_repo.read_file.assert_has_awaits([call("releases.yml"), call("group.yml")])
+        mock_build_data_repo.fetch_switch_branch.assert_awaited_once_with(self.group)
+        mock_build_data_repo.read_file.assert_has_awaits([call("releases.yml"), call("group.yml")])
 
         # Verify shipment repo setup
-        mock_shipment_repo.setup.assert_awaited_once_with(
-            remote_url=pipeline.basic_auth_url(pipeline.shipment_repo_push_url, pipeline.gitlab_token),
-            upstream_remote_url=pipeline.shipment_repo_pull_url,
+        mock_shipment_data_repo.setup.assert_awaited_once_with(
+            remote_url=pipeline.basic_auth_url(pipeline.shipment_data_repo_push_url, pipeline.gitlab_token),
+            upstream_remote_url=pipeline.shipment_data_repo_pull_url,
         )
-        mock_shipment_repo.fetch_switch_branch.assert_awaited_once_with("main")
-        mock_shipment_repo.read_file.assert_not_awaited()
+        mock_shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
+        mock_shipment_data_repo.read_file.assert_not_awaited()
 
         # Verify config parsing
         self.assertEqual(pipeline.releases_config, {'releases_key': 'releases_value'})
