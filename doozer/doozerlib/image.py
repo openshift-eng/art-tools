@@ -792,7 +792,14 @@ class ImageMetadata(Metadata):
             return set(self.installed_rpms)
 
         try:
-            build = await self.runtime.konflux_db.get_latest_build(name=self.distgit_key, group=self.runtime.group)
+            base_search_params = {
+                'group': self.runtime.group,
+                'outcome': "success",
+                'engine': self.runtime.build_system,
+            }
+
+            base_search_params['name'] = self.distgit_key
+            build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
             if not build:
                 self.logger.debug(f"No build record found for {self.distgit_key}/{self.runtime.group}")
                 self.installed_rpms = []
@@ -821,9 +828,8 @@ class ImageMetadata(Metadata):
 
             parent_name = next(iter(parents))
             try:
-                parent_build = await self.runtime.konflux_db.get_latest_build(
-                    name=parent_name, group=self.runtime.group
-                )
+                base_search_params['name'] = parent_name
+                parent_build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
                 parent_rpms = set(parent_build.installed_rpms or []) if parent_build else set()
 
                 diff_rpms = rpms - parent_rpms
