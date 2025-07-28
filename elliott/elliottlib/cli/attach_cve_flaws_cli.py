@@ -18,7 +18,7 @@ from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
-from elliottlib.shipment_utils import get_shipment_configs_from_mr
+from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
@@ -63,16 +63,21 @@ class AttachCveFlaws:
                 )
 
             release_notes = await self.handle_konflux_cve_flaws()
+            if not release_notes:
+                self.logger.info("No changes made, exiting.")
+                sys.exit(0)
 
             if self.output == 'json':
-                click.echo(json.dumps(release_notes.model_dump(mode='json'), indent=4))
+                click.echo(
+                    json.dumps(release_notes.model_dump(mode='json', exclude_unset=True, exclude_none=True), indent=4)
+                )
             else:
-                YAML.dump(release_notes.model_dump(mode='python'), sys.stdout)
+                YAML.dump(release_notes.model_dump(mode='python', exclude_unset=True, exclude_none=True), sys.stdout)
 
         elif self.runtime.build_system == 'brew':
             await self.handle_brew_cve_flaws()
 
-    async def handle_konflux_cve_flaws(self) -> ReleaseNotes:
+    async def handle_konflux_cve_flaws(self) -> Optional[ReleaseNotes]:
         """
         Handle attaching CVE flaws in a Konflux environment.
         """
@@ -85,7 +90,7 @@ class AttachCveFlaws:
         advisories = shipment.get("advisories", [])
         if not advisories:
             self.logger.info("No advisories found in the shipment block, exiting.")
-            sys.exit(0)
+            return None
 
         # Validate default advisory type
         kinds = [advisory.get("kind") for advisory in advisories]
@@ -105,24 +110,27 @@ class AttachCveFlaws:
 
         # Fetch the bug IDs from the release notes
         bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
-
         if not bug_ids:
-            self.logger.info("No fixed issues found in the release notes, exiting.")
-            return release_notes
+            self.logger.info("No bugs found in shipment")
+            return None
+        self.logger.info(f"Found {len(bug_ids)} bugs in shipment")
 
         # Get the bug trackers
         tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira'))
+        if not tracker_bugs:
+            self.logger.info("No tracker bugs found in shipment")
+            return None
+        self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
+
+        # Get the flaw bugs
         tracker_flaws, flaw_bugs = get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs)
+        if not flaw_bugs:
+            self.logger.info("No eligible flaw bugs found in shipment")
+            return None
+        self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
-        if flaw_bugs:
-            self.logger.info(f"Found {len(flaw_bugs)} flaw bugs, updating release notes.")
-
-            # Turn the advisory type into an RHSA
-            self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
-
-        else:
-            self.logger.info('No flaw bugs found, leaving release notes unchanged')
-
+        # Turn the advisory type into an RHSA
+        self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
         return release_notes
 
     def get_release_notes_from_mr(self, mr_url: str) -> ReleaseNotes:
@@ -182,12 +190,14 @@ class AttachCveFlaws:
 
         # Add the CVE component mapping to the cve field
         cve_component_mapping = self.get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
-        for cve_id, components in cve_component_mapping.items():
-            for component in components:
-                release_notes.cves.append(CveAssociation(key=cve_id, component=component))
+        release_notes.cves = [
+            CveAssociation(key=cve_id, component=component)
+            for cve_id, components in cve_component_mapping.items()
+            for component in components
+        ]
+        release_notes.cves.sort(key=lambda x: x.key)  # Sort by CVE ID
 
-        # Attach the flaw bugs to the release notes issues
-        release_notes.issues.fixed.extend([{'id': bug.id, 'source': "bugzilla.redhat.com"} for bug in flaw_bugs])
+        add_bug_ids_to_release_notes(release_notes, [b.id for b in flaw_bugs])
 
         # Update synopsis, topic and solution
         cve_boilerplate = get_advisory_boilerplate(

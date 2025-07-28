@@ -633,9 +633,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         def find_bugs(kind, **_):
             return {
-                "image": Issues(fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]),
-                "extras": Issues(fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]),
-                "metadata": Issues(fixed=[]),
+                "image": ["IMAGEBUG"],
+                "extras": ["EXTRASBUG"],
+                "metadata": [],
             }.get(kind)
 
         mock_find_bugs.side_effect = find_bugs
