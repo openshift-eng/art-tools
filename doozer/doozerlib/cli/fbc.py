@@ -516,7 +516,8 @@ class FbcRebaseAndBuildCli:
     "--prod-registry-auth",
     metavar='PATH',
     help="The registry authentication file to use for the index image."
-    " This might be needed if --reset-to-prod is used and the production index image requires authentication.",
+    " This might be needed if --reset-to-prod is used and the production index image requires authentication."
+    " If not set, the KONFLUX_OPERATOR_INDEX_AUTH_FILE environment variable will be used if set.",
 )
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
@@ -552,6 +553,9 @@ async def fbc_rebase_and_build(
 
     if not konflux_kubeconfig:
         raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+
+    if reset_to_prod and not prod_registry_auth:
+        prod_registry_auth = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
 
     cli = FbcRebaseAndBuildCli(
         runtime=runtime,
