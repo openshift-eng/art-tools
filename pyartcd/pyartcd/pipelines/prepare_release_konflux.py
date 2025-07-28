@@ -514,10 +514,10 @@ class PrepareReleaseKonfluxPipeline:
 
         # Attach CVE flaws
         if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
-            tasks = [
-                self.attach_cve_flaws(kind, shipment) for kind, shipment in shipments_by_kind.items() if kind != "fbc"
-            ]
-            await asyncio.gather(*tasks)
+            for kind, shipment in shipments_by_kind.items():
+                if kind == "fbc":
+                    continue
+                self.attach_cve_flaws(kind, shipment)
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -836,28 +836,14 @@ class PrepareReleaseKonfluxPipeline:
         :param shipment: The shipment to attach CVE flaws to
         """
 
-        # Create base path if it does not exist
-        base_path = self.elliott_working_dir / 'attach_cve_flaws'
-        base_path.mkdir(parents=True, exist_ok=True)
+        attach_cve_flaws_command = self._elliott_base_command + [
+            'attach-cve-flaws',
+            f'--use-default-advisory={kind}',
+            '--output=yaml',
+        ]
 
-        with TemporaryDirectory(prefix=str(base_path / kind)) as elliott_working:
-            # Replace the elliott working dir to allow concurrent commands execution
-            attach_cve_flaws_command = [
-                arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
-                for arg in self._elliott_base_command
-            ]
-            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=yaml']
-
-            self.logger.info('Running elliott attach-cve-flaws...')
-            _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
-            if stdout:
-                self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
-
-            # Move debug.log to elliott working directory to allow Jenkins archive it
-            debug_log_path = Path(self.elliott_working_dir) / 'attach-cve-flaws'  # destination dir
-            debug_log_path.mkdir(parents=True, exist_ok=True)
-            shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/attach-cve-flaws-{kind}-debug.log')
-
+        self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
+        stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
             shipment.shipment.data.releaseNotes = yaml.load(stdout)
 
