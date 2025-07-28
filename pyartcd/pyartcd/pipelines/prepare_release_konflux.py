@@ -64,6 +64,7 @@ class PrepareReleaseKonfluxPipeline:
         date: Optional[str] = None,
         build_repo_url: Optional[str] = None,
         shipment_repo_url: Optional[str] = None,
+        inject_build_repo: bool = False,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -690,9 +691,10 @@ class PrepareReleaseKonfluxPipeline:
                     break  # there should be only one advisory with this kind
         return live_id
 
-    async def init_shipment(self, kind: str) -> ShipmentConfig:
+    async def init_shipment(self, kind: str, inject_build_repo: bool = False) -> ShipmentConfig:
         """Initialize a shipment for the given kind.
         :param kind: The kind for which to initialize shipment
+        :param inject_build_repo: Whether to inject the build repo into the shipment config
         :return: A ShipmentConfig object initialized with the given kind
         """
 
@@ -705,6 +707,12 @@ class PrepareReleaseKonfluxPipeline:
         stdout = await self.execute_command_with_logging(create_cmd)
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
+
+        if inject_build_repo:
+            repo_username = self.build_repo_url.split('/')[-2]
+            build_commit = self.build_data_gitref or self.group
+            shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
+
         return shipment
 
     async def get_snapshot(self, builds: list) -> Optional[Snapshot]:
@@ -1357,6 +1365,11 @@ class PrepareReleaseKonfluxPipeline:
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
 @click.option(
+    "--inject-build-repo",
+    is_flag=True,
+    help="Inject build-data repo/commit given by --build-repo-url into the shipment config",
+)
+@click.option(
     '--shipment-repo-url',
     help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
 )
@@ -1368,6 +1381,7 @@ async def prepare_release(
     assembly: str,
     date: str,
     build_repo_url: Optional[str],
+    inject_build_repo: bool,
     shipment_repo_url: Optional[str],
 ):
     # Check if assembly is valid
@@ -1388,6 +1402,7 @@ async def prepare_release(
             date=date,
             build_repo_url=build_repo_url,
             shipment_repo_url=shipment_repo_url,
+            inject_build_repo=inject_build_repo,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")
