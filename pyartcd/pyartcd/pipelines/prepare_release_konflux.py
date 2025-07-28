@@ -33,7 +33,7 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -716,6 +716,8 @@ class PrepareReleaseKonfluxPipeline:
             # inject the build repo into the shipment config
             repo_username = self.build_data_repo_pull_url.split('/')[-2]
             build_commit = self.build_data_gitref or self.group
+            if not shipment.shipment.tools:
+                shipment.shipment.tools = Tools()
             shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
 
         return shipment
