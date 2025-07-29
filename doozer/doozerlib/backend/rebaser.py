@@ -26,7 +26,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
-from doozerlib.lockfile import RPMLockfileGenerator
+from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -89,6 +89,7 @@ class KonfluxRebaser:
         self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
         self.rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
+        self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -698,6 +699,8 @@ class KonfluxRebaser:
 
             await self._write_rpms_lock_file(metadata, dest_dir)
 
+            await self._write_artifacts_lock_file(metadata, dest_dir)
+
             df_path = dest_dir.joinpath('Dockerfile')
             await self._update_dockerfile(
                 metadata,
@@ -723,6 +726,15 @@ class KonfluxRebaser:
         self._logger.info(f'Generating RPM lockfile for {metadata.distgit_key}')
 
         await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
+
+    async def _write_artifacts_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
+        if not metadata.is_artifact_lockfile_enabled():
+            self._logger.debug(f'Artifact lockfile generation is disabled for {metadata.distgit_key}')
+            return
+
+        self._logger.info(f'Generating artifact lockfile for {metadata.distgit_key}')
+
+        await self.artifact_lockfile_generator.generate_artifact_lockfile(metadata, dest_dir)
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]
@@ -1099,11 +1111,21 @@ class KonfluxRebaser:
                 # Cachito makes application source code and dependencies available inside the app/ directory. We only make the
                 # repo source code available there.
                 "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
-                # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
-                "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
-                # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
-                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
             ]
+
+            if network_mode != "hermetic":
+                konflux_lines += [
+                    # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
+                    "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
+                    # Cachito also writes a pem file which some builds reference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
+                    "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
+                ]
+            elif metadata.is_artifact_lockfile_enabled():
+                konflux_lines += [
+                    "USER 0",
+                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem /tmp/art/Current-IT-Root-CAs.pem",
+                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
+                ]
 
         konflux_lines += [
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",

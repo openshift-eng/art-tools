@@ -23,7 +23,7 @@ from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
-from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME
+from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from kubernetes.dynamic import resource
@@ -336,9 +336,25 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
             prefetch.append(data)
-            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_LOCKFILE_NAME} at path: {lockfile_path}")
+            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
         else:
             logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
+
+        artifact_lockfile_enabled = metadata.is_artifact_lockfile_enabled()
+        if network_mode == "hermetic" and artifact_lockfile_enabled:
+            artifact_lockfile_path = metadata.config.konflux.cachi2.artifact_lockfile.get("path", ".")
+            artifact_data = {
+                "type": "generic",
+                "path": artifact_lockfile_path,
+            }
+            prefetch.append(artifact_data)
+            logger.info(
+                f"Adding generic prefetch for artifact lockfile {DEFAULT_ARTIFACT_LOCKFILE_NAME} at path: {artifact_lockfile_path}"
+            )
+        else:
+            logger.debug(
+                f"Skipping generic prefetch - network_mode: {network_mode}, artifact_lockfile_enabled: {artifact_lockfile_enabled}"
+            )
 
         for package_manager in ["gomod", "npm", "pip", "yarn"]:
             if package_manager in required_package_managers:
