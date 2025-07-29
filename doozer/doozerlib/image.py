@@ -919,29 +919,12 @@ class ImageMetadata(Metadata):
         return artifact_lockfile_enabled
 
     def get_required_artifacts(self) -> list:
-        """Get list of required artifacts with resolved URLs from group config."""
+        """Get list of required artifact URLs from image config."""
         if not self.is_artifact_lockfile_enabled():
             return []
 
-        # Get resource names from image config
-        resource_names = self.config.konflux.cachi2.artifact_lockfile.resources
-        if resource_names in [Missing, None]:
+        resource_urls = self.config.konflux.cachi2.artifact_lockfile.resources
+        if resource_urls in [Missing, None]:
             return []
 
-        # Resolve to group config resource definitions
-        group_resources = self.runtime.group_config.konflux.cachi2.resources
-        if group_resources in [Missing, None]:
-            self.logger.warning("No artifact resources defined in group config")
-            return []
-
-        resource_map = {res['name']: res for res in group_resources}
-
-        resolved_artifacts = []
-        for resource in resource_names or []:
-            name = resource['name'] if isinstance(resource, dict) and 'name' in resource else resource
-            if name in resource_map:
-                resolved_artifacts.append(resource_map[name])
-            else:
-                self.logger.warning(f"Artifact resource '{name}' not found in group config")
-
-        return resolved_artifacts
+        return resource_urls  # Direct URL list

@@ -1084,30 +1084,24 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         # Create a mock instance
         metadata = MagicMock()
         metadata.is_artifact_lockfile_enabled.return_value = True
-        metadata.config.konflux.cachi2.artifact_lockfile.resources = ["cert-1", "cert-2"]
-        metadata.runtime.group_config.konflux.cachi2.resources = [
-            {"name": "cert-1", "url": "https://example.com/cert1.pem"},
-            {"name": "cert-2", "url": "https://example.com/cert2.pem"},
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = [
+            "https://example.com/cert1.pem",
+            "https://example.com/cert2.pem",
         ]
         metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
 
         result = metadata.get_required_artifacts()
-        expected = [
-            {"name": "cert-1", "url": "https://example.com/cert1.pem"},
-            {"name": "cert-2", "url": "https://example.com/cert2.pem"},
-        ]
+        expected = ["https://example.com/cert1.pem", "https://example.com/cert2.pem"]
         self.assertEqual(result, expected)
 
-    def test_get_required_artifacts_missing_group_resources(self):
+    def test_get_required_artifacts_missing_resources(self):
         from artcommonlib.model import Missing
 
         # Create a mock instance
         metadata = MagicMock()
         metadata.is_artifact_lockfile_enabled.return_value = True
-        metadata.config.konflux.cachi2.artifact_lockfile.resources = ["cert-1"]
-        metadata.runtime.group_config.konflux.cachi2.resources = Missing
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = Missing
         metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
 
         result = metadata.get_required_artifacts()
         self.assertEqual(result, [])
-        metadata.logger.warning.assert_called_with("No artifact resources defined in group config")

@@ -1259,11 +1259,11 @@
                 },
                 "enabled-": {},
                 "resources": {
-                  "description": "Array of resource names to include in artifact lockfile generation",
+                  "description": "Array of resource URLs to include in artifact lockfile generation",
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "minLength": 1
+                    "format": "uri"
                   }
                 },
                 "resources?": {

@@ -284,7 +284,13 @@ class TestImageSchema(unittest.TestCase):
             'for_payload': True,
             'delivery': {'delivery_repo_names': ['foo', 'bar']},
             'konflux': {
-                'cachi2': {'artifact_lockfile': {'enabled': True, 'resources': ['cert1', 'cert2'], 'path': '.'}}
+                'cachi2': {
+                    'artifact_lockfile': {
+                        'enabled': True,
+                        'resources': ['https://example.com/cert1.pem', 'https://example.com/cert2.pem'],
+                        'path': '.',
+                    }
+                }
             },
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))

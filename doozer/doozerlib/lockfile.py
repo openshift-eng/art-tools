@@ -650,6 +650,10 @@ class ArtifactLockfileGenerator:
         self.logger = logger or logutil.get_logger(__name__)
         self.runtime = runtime
 
+    def _extract_filename_from_url(self, url: str) -> str:
+        """Extract filename from URL for artifact naming."""
+        return url.split('/')[-1] or 'artifact'
+
     def should_generate_artifact_lockfile(self, image_meta: ImageMetadata, dest_dir: Path) -> bool:
         """
         Determine if artifact lockfile generation should proceed.
@@ -684,14 +688,15 @@ class ArtifactLockfileGenerator:
 
         self.logger.info(f"Generating artifact lockfile for {image_meta.distgit_key}")
 
-        required_artifacts = image_meta.get_required_artifacts()
-        if not required_artifacts:
+        required_artifact_urls = image_meta.get_required_artifacts()
+        if not required_artifact_urls:
             self.logger.warning(f"No artifacts defined for {image_meta.distgit_key}")
             return
 
         artifact_infos = []
         async with aiohttp.ClientSession() as session:
-            for artifact_resource in required_artifacts:
+            for url in required_artifact_urls:
+                artifact_resource = {'name': self._extract_filename_from_url(url), 'url': url}
                 artifact_info = await self._download_and_compute_checksum(session, artifact_resource)
                 artifact_infos.append(artifact_info)
 
