@@ -12,10 +12,12 @@ import aiofiles
 import yaml
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
+from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -584,8 +586,24 @@ class KonfluxOlmBundleBuilder:
                 succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
-                # Update the Konflux DB with the final outcome
                 if not self.dry_run:
+                    image_pullspec = next(
+                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
+                    )
+                    image_digest = next(
+                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
+                    )
+
+                    if not (image_pullspec and image_digest):
+                        raise ValueError(
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                            f"pipelinerun {pipelinerun_name}"
+                        )
+
+                    # Sync the bundle to art-images-share
+                    await sync_to_quay(f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_ART_IMAGES_SHARE)
+
+                    # Update the Konflux DB with the final outcome
                     await self._update_konflux_db(
                         metadata,
                         bundle_build_repo,

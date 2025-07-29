@@ -280,32 +280,32 @@ data:
         )
 
     def test_get_rpms_by_name_found(self):
-        found, not_found = self.repodata.get_rpms("foo")
+        found, not_found = self.repodata.get_rpms("foo", arch="x86_64")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].name, "foo")
         self.assertEqual(not_found, [])
 
     def test_get_rpms_by_name_not_found(self):
-        found, not_found = self.repodata.get_rpms("baz")
+        found, not_found = self.repodata.get_rpms("baz", arch="x86_64")
         self.assertEqual(found, [])
         self.assertEqual(not_found, ["baz"])
 
     def test_get_rpms_by_nvr_found(self):
         nvr = self.rpms[1].nvr
-        found, not_found = self.repodata.get_rpms(nvr)
+        found, not_found = self.repodata.get_rpms(nvr, arch="x86_64")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].name, "bar")
         self.assertEqual(not_found, [])
 
     def test_get_rpms_multiple_items(self):
         items = ["foo", self.rpms[1].nvr, "baz"]
-        found, not_found = self.repodata.get_rpms(items)
+        found, not_found = self.repodata.get_rpms(items, arch="x86_64")
         self.assertEqual({rpm.name for rpm in found}, {"foo", "bar"})
         self.assertEqual(not_found, ["baz"])
 
     def test_get_rpms_duplicates(self):
         items = ["foo", "foo"]
-        found, not_found = self.repodata.get_rpms(items)
+        found, not_found = self.repodata.get_rpms(items, arch="x86_64")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].name, "foo")
         self.assertEqual(not_found, [])
@@ -336,6 +336,17 @@ data:
                 arch="aarch64",
             ),
             Rpm(
+                name="multiarch",
+                epoch=1,
+                version="1.0.0",
+                checksum="abc4",
+                size=100,
+                location="multiarch-noarch.rpm",
+                sourcerpm="multiarch-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="noarch",
+            ),
+            Rpm(
                 name="noarch-pkg",
                 epoch=1,
                 version="1.0.0",
@@ -349,32 +360,118 @@ data:
         ]
         repodata_with_arch = Repodata(name="testrepo", primary_rpms=self.rpms + rpms_with_arch, modules=[])
 
-        # Test exact architecture match
+        # Test exact architecture match - should return arch-specific AND noarch
         found, not_found = repodata_with_arch.get_rpms("multiarch", arch="x86_64")
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].arch, "x86_64")
+        self.assertEqual(len(found), 2)  # x86_64 + noarch
+        found_arches = {rpm.arch for rpm in found}
+        self.assertEqual(found_arches, {"x86_64", "noarch"})
         self.assertEqual(not_found, [])
 
-        # Test fallback to noarch when exact match not found
+        # Test arch with only noarch available
         found, not_found = repodata_with_arch.get_rpms("noarch-pkg", arch="x86_64")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].arch, "noarch")
         self.assertEqual(not_found, [])
 
-        # Test no arch specified (original behavior)
-        found, not_found = repodata_with_arch.get_rpms("multiarch")
-        self.assertEqual(len(found), 1)
-        # Should return first matching RPM (x86_64 comes first in the list)
-        self.assertEqual(found[0].arch, "x86_64")
+        # Test another arch - should return arch-specific AND noarch (if they exist)
+        found, not_found = repodata_with_arch.get_rpms("multiarch", arch="aarch64")
+        self.assertEqual(len(found), 2)  # aarch64 + noarch
+        found_arches = {rpm.arch for rpm in found}
+        self.assertEqual(found_arches, {"aarch64", "noarch"})
+        self.assertEqual(not_found, [])
+
+        # Test arch with no matches - should return only noarch (no fallback to other arches)
+        found, not_found = repodata_with_arch.get_rpms("multiarch", arch="s390x")
+        self.assertEqual(len(found), 1)  # only noarch
+        found_arches = {rpm.arch for rpm in found}
+        self.assertEqual(found_arches, {"noarch"})
         self.assertEqual(not_found, [])
 
     def test_get_rpms_with_arch_no_match(self):
-        # Test when no RPM matches the requested architecture
+        # Test when no RPM matches the requested architecture and no noarch exists
         found, not_found = self.repodata.get_rpms("foo", arch="s390x")
-        self.assertEqual(len(found), 1)
-        # Should fallback to first matching RPM regardless of arch
-        self.assertEqual(found[0].name, "foo")
-        self.assertEqual(found[0].arch, "x86_64")
+        self.assertEqual(len(found), 0)  # No arch-specific or noarch match
+        self.assertEqual(not_found, ["foo"])  # Should be marked as not found for this arch
+
+    def test_get_rpms_exists_different_arch_only(self):
+        # Test when package exists for different arch but not requested arch or noarch
+        rpm_different_arch = Rpm(
+            name="other-arch-only",
+            epoch=1,
+            version="1.0.0",
+            checksum="xyz",
+            size=100,
+            location="other-arch-only.rpm",
+            sourcerpm="other-arch-only-1.0.0-1.el9.src.rpm",
+            release="1.el9",
+            arch="ppc64le",
+        )
+        repodata_other_arch = Repodata(name="testrepo", primary_rpms=[rpm_different_arch], modules=[])
+
+        # Request x86_64 for package that only exists as ppc64le
+        found, not_found = repodata_other_arch.get_rpms("other-arch-only", arch="x86_64")
+        self.assertEqual(len(found), 0)
+        self.assertEqual(not_found, ["other-arch-only"])  # Should be not_found for x86_64
+
+    def test_get_rpms_returns_all_versions_for_arch(self):
+        # Test that get_rpms returns all versions for a specific architecture
+        rpms_multiple_versions = [
+            Rpm(
+                name="multi-version",
+                epoch=1,
+                version="1.0.0",
+                checksum="v1",
+                size=100,
+                location="multi-version-1.0.0.x86_64.rpm",
+                sourcerpm="multi-version-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="multi-version",
+                epoch=1,
+                version="2.0.0",
+                checksum="v2",
+                size=200,
+                location="multi-version-2.0.0.x86_64.rpm",
+                sourcerpm="multi-version-2.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="multi-version",
+                epoch=1,
+                version="1.0.0",
+                checksum="v1a",
+                size=100,
+                location="multi-version-1.0.0.aarch64.rpm",
+                sourcerpm="multi-version-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="aarch64",
+            ),
+            Rpm(
+                name="multi-version",
+                epoch=1,
+                version="3.0.0",
+                checksum="v3n",
+                size=300,
+                location="multi-version-3.0.0.noarch.rpm",
+                sourcerpm="multi-version-3.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="noarch",
+            ),
+        ]
+        repodata_multi = Repodata(name="testrepo", primary_rpms=rpms_multiple_versions, modules=[])
+
+        # Should return all x86_64 versions plus noarch versions
+        found, not_found = repodata_multi.get_rpms("multi-version", arch="x86_64")
+        self.assertEqual(len(found), 3)  # 2 x86_64 + 1 noarch
+
+        # Check that we get the right versions/architectures
+        versions = {rpm.version for rpm in found}
+        arches = {rpm.arch for rpm in found}
+        self.assertEqual(versions, {"1.0.0", "2.0.0", "3.0.0"})
+        self.assertEqual(arches, {"x86_64", "noarch"})
         self.assertEqual(not_found, [])
 
 

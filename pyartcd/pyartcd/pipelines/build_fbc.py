@@ -27,6 +27,8 @@ class BuildFbcPipeline:
         kubeconfig: str,
         plr_template: str,
         skip_checks: bool,
+        reset_to_prod: bool,
+        prod_registry_auth: Optional[str],
         force: bool,
     ):
         self.runtime = runtime
@@ -41,6 +43,8 @@ class BuildFbcPipeline:
         self.kubeconfig = kubeconfig
         self.plr_template = plr_template
         self.skip_checks = skip_checks
+        self.reset_to_prod = reset_to_prod
+        self.prod_registry_auth = prod_registry_auth
         self.force = force
 
         self._logger = logging.getLogger(__name__)
@@ -114,6 +118,12 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--plr-template', plr_template_url])
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
+        if self.reset_to_prod:
+            doozer_opts.append('--reset-to-prod')
+        else:
+            doozer_opts.append('--no-reset-to-prod')
+        if self.prod_registry_auth:
+            doozer_opts.extend(['--prod-registry-auth', self.prod_registry_auth])
         if self.force:
             doozer_opts.append('--force')
         if self.operator_nvrs:
@@ -194,6 +204,14 @@ class BuildFbcPipeline:
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
+@click.option(
+    "--reset-to-prod/--no-reset-to-prod", is_flag=True, help="Reset FBC builds to the latest production version"
+)
+@click.option(
+    "--prod-registry-auth",
+    metavar='PATH',
+    help="The registry authentication file to use for the production index image.",
+)
 @click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
 @pass_runtime
 @click_coroutine
@@ -210,6 +228,8 @@ async def build_fbc(
     kubeconfig: str,
     plr_template: str,
     skip_checks: bool,
+    reset_to_prod: bool,
+    prod_registry_auth: Optional[str],
     force: bool,
 ):
     pipeline = BuildFbcPipeline(
@@ -225,6 +245,8 @@ async def build_fbc(
         kubeconfig=kubeconfig,
         plr_template=plr_template,
         skip_checks=skip_checks,
+        reset_to_prod=reset_to_prod,
+        prod_registry_auth=prod_registry_auth,
         force=force,
     )
     await pipeline.run()

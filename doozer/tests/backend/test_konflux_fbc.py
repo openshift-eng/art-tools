@@ -1,12 +1,17 @@
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder, KonfluxFbcImporter, KonfluxFbcRebaser
+from doozerlib.backend.konflux_fbc import (
+    KonfluxFbcBuilder,
+    KonfluxFbcFragmentMerger,
+    KonfluxFbcImporter,
+    KonfluxFbcRebaser,
+)
 from doozerlib.image import ImageMetadata
 from doozerlib.opm import OpmRegistryAuth, yaml
 
@@ -632,6 +637,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "test"
         build_repo = MagicMock(
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
@@ -642,7 +649,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.builder._start_build(
-            metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
         kube_client.ensure_component.assert_awaited_once_with(
@@ -665,6 +676,58 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             vm_override={},
             building_arches=['x86_64', 's390x'],
             additional_tags=[],
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
+    async def test_start_build_2(self):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "stream"
+        metadata.runtime.group = "openshift-4.20"
+        metadata.config = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["openshift4/sample-operator-1", "openshift4/sample-operator-2"]
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
+        kube_client = self.kube_client
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"},
+        )
+
+        result = await self.builder._start_build(
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
+        )
+        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
+        kube_client.ensure_component.assert_awaited_once_with(
+            name="fbc-test-group-foo",
+            application="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            image_repo="test-image-pullspec",
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+        )
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
             skip_checks=False,
             hermetic=True,
             dockerfile='catalog.Dockerfile',
@@ -739,7 +802,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',
@@ -809,7 +872,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key',
+            name='test-distgit-key-fbc',
             message='Success',
             task_id='test-pipelinerun-name',
             task_url='https://example.com/pipeline',
@@ -817,3 +880,91 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             bundle_nvrs='foo-bundle-1.0.0-1',
         )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)
+
+
+class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.working_dir = Path("/tmp/konflux_fbc_fragment_merger")
+        self.group = "test-group"
+        self.assembly = "test-assembly"
+        self.db = MagicMock()
+        self.fbc_repo = "https://example.com/fbc-repo.git"
+        self.konflux_namespace = "test-namespace"
+        self.konflux_kubeconfig = "/path/to/kube/config"
+        self.konflux_context = None
+        self.image_repo = "quay.io/test-repo"
+        self.skip_checks = False
+        self.pipelinerun_template_url = "https://example.com/template.yaml"
+        self.dry_run = False
+        self.record_logger = MagicMock()
+        self.logger = MagicMock()
+
+        with patch("doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient) as MockKonfluxClient:
+            self.kube_client = MockKonfluxClient.from_kubeconfig.return_value = AsyncMock(spec=KonfluxClient)
+            self.merger = KonfluxFbcFragmentMerger(
+                working_dir=self.working_dir,
+                group=self.group,
+                group_config=MagicMock(),
+                fbc_git_repo=self.fbc_repo,
+                konflux_namespace=self.konflux_namespace,
+                konflux_kubeconfig=self.konflux_kubeconfig,
+                konflux_context=self.konflux_context,
+                skip_checks=self.skip_checks,
+                plr_template=self.pipelinerun_template_url,
+                dry_run=self.dry_run,
+                logger=self.logger,
+            )
+
+    @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
+    @patch("httpx.AsyncClient", autospec=True)
+    async def test_merge_idms(self, mock_async_client: Mock, mock_oc_image_info_for_arch_async__caching: AsyncMock):
+        http_client = mock_async_client.return_value.__aenter__.return_value = AsyncMock()
+        http_client.get.side_effect = [
+            MagicMock(
+                text=f"""
+kind: ImageDigestMirrorSet
+apiVersion: config.openshift.io/v1
+metadata:
+  name: art-images-fbc-staging-index
+  namespace: openshift-marketplace
+spec:
+  imageDigestMirrors:
+    - source: example.com/source-a{idx}
+      mirrors:
+        - example.com/mirror-a{idx}
+    - source: example.com/source-b{idx}
+      mirrors:
+        - example.com/mirror-b{idx}
+
+"""
+            )
+            for idx in range(3)
+        ]
+        mock_oc_image_info_for_arch_async__caching.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "vcs-ref": "deadbeef",
+                    },
+                },
+            },
+        }
+
+        expected = {
+            'apiVersion': 'config.openshift.io/v1',
+            'kind': 'ImageDigestMirrorSet',
+            'metadata': {'name': 'art-stage-mirror-set', 'namespace': 'openshift-marketplace'},
+            'spec': {
+                'imageDigestMirrors': [
+                    {'source': 'example.com/source-a0', 'mirrors': ['example.com/mirror-a0']},
+                    {'source': 'example.com/source-a1', 'mirrors': ['example.com/mirror-a1']},
+                    {'source': 'example.com/source-a2', 'mirrors': ['example.com/mirror-a2']},
+                    {'source': 'example.com/source-b0', 'mirrors': ['example.com/mirror-b0']},
+                    {'source': 'example.com/source-b1', 'mirrors': ['example.com/mirror-b1']},
+                    {'source': 'example.com/source-b2', 'mirrors': ['example.com/mirror-b2']},
+                ]
+            },
+        }
+
+        result = await self.merger._merge_idms(["example.com/idm1", "example.com/idm2", "example.com/idm3"])
+        self.assertEqual(result, expected)

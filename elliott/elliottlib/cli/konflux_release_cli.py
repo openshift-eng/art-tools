@@ -43,7 +43,6 @@ class CreateReleaseCli:
         konflux_config: dict,
         image_repo_pull_secret: dict,
         dry_run: bool,
-        force: bool,
         job_url: str = None,
     ):
         self.runtime = runtime
@@ -51,7 +50,6 @@ class CreateReleaseCli:
         self.konflux_config = konflux_config
         self.image_repo_pull_secret = image_repo_pull_secret
         self.dry_run = dry_run
-        self.force = force
         self.job_url = job_url
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
@@ -111,13 +109,12 @@ class CreateReleaseCli:
         major, minor = self.runtime.get_major_minor()
         release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
 
-        if not self.force:
-            env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
-            if env_config.shipped():
-                raise ValueError(
-                    f"existing release metadata is not empty for {self.release_env}: "
-                    f"{env_config.model_dump()}. Use --force to proceed"
-                )
+        env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
+        if env_config.shipped() and self.release_env == "prod":
+            raise ValueError(
+                f"existing release metadata is not empty for {self.release_env}: "
+                f"{env_config.model_dump()}. If you want to proceed remove the release metadata from the shipment config and try again."
+            )
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -294,7 +291,6 @@ def konflux_release_cli():
     help='Release environment to create the release for',
 )
 @click.option('--apply', is_flag=True, default=False, help='Create the release in cluster (False by default)')
-@click.option('--force', is_flag=True, default=False, help='Proceed even if an associated release/advisory detected')
 @click.option(
     '--job-url',
     metavar='URL',
@@ -311,7 +307,6 @@ async def new_release_cli(
     config,
     env,
     apply,
-    force,
     job_url,
 ):
     """
@@ -340,7 +335,6 @@ async def new_release_cli(
         konflux_config=konflux_config,
         image_repo_pull_secret=pull_secret,
         dry_run=not apply,
-        force=force,
         job_url=job_url,
     )
     release = await pipeline.run()
