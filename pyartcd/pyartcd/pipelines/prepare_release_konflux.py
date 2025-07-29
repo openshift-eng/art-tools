@@ -517,7 +517,7 @@ class PrepareReleaseKonfluxPipeline:
             for kind, shipment in shipments_by_kind.items():
                 if kind == "fbc":
                     continue
-                self.attach_cve_flaws(kind, shipment)
+                await self.attach_cve_flaws(kind, shipment)
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
