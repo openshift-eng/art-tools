@@ -6,6 +6,7 @@ from pyartcd.pipelines import (
     art_notify,
     brew_scan_osh,
     build_fbc,
+    build_merged_fbc,
     build_microshift,
     build_microshift_bootc,
     build_plashets,

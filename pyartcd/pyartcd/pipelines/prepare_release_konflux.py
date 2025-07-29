@@ -33,8 +33,8 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
-from elliottlib.shipment_utils import get_shipment_configs_from_mr
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec, Tools
+from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -62,14 +62,16 @@ class PrepareReleaseKonfluxPipeline:
         group: str,
         assembly: str,
         date: Optional[str] = None,
-        build_repo_url: Optional[str] = None,
-        shipment_repo_url: Optional[str] = None,
+        build_data_repo_url: Optional[str] = None,
+        shipment_data_repo_url: Optional[str] = None,
+        inject_build_data_repo: bool = False,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.date = date
         self.group = group
+        self.inject_build_data_repo = inject_build_data_repo
 
         self._slack_client = slack_client
 
@@ -77,25 +79,27 @@ class PrepareReleaseKonfluxPipeline:
         self.working_dir = self.runtime.working_dir.absolute()
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
-        self._build_repo_dir = self.working_dir / "ocp-build-data-push"
-        self._shipment_repo_dir = self.working_dir / "shipment-data-push"
+        self._build_data_repo_dir = self.working_dir / "ocp-build-data-push"
+        self._shipment_data_repo_dir = self.working_dir / "shipment-data-push"
         self.dry_run = self.runtime.dry_run
         self.product = 'ocp'  # assume that product is ocp for now
 
         # Have clear pull and push targets for both the build and shipment repos
-        self.build_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_repo_vars(
-            build_repo_url
+        self.build_data_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_data_repo_vars(
+            build_data_repo_url
         )
-        self.shipment_repo_pull_url, self.shipment_repo_push_url = self._shipment_repo_vars(shipment_repo_url)
-        self.build_data_repo = GitRepository(self._build_repo_dir, self.dry_run)
-        self.shipment_data_repo = GitRepository(self._shipment_repo_dir, self.dry_run)
+        self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
+            shipment_data_repo_url
+        )
+        self.build_data_repo = GitRepository(self._build_data_repo_dir, self.dry_run)
+        self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
 
         # these will be initialized later
         self.assembly_type = None
         self.releases_config = None
         self.release_version = None
         self.group_config = None
-        self._issues_by_kind = None
+        self._bug_ids_by_kind = None
         self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
@@ -103,6 +107,7 @@ class PrepareReleaseKonfluxPipeline:
         self.jira_client = None
         self.updated_assembly_group_config = None
         self.olm_operators = None
+        self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -114,7 +119,7 @@ class PrepareReleaseKonfluxPipeline:
             f'--assembly={self.assembly}',
             '--build-system=konflux',
             f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={self.build_repo_pull_url}',
+            f'--data-path={self.build_data_repo_pull_url}',
         ]
 
         self._doozer_base_command = [
@@ -122,7 +127,7 @@ class PrepareReleaseKonfluxPipeline:
             group_param,
             '--build-system=konflux',
             f'--working-dir={self.doozer_working_dir}',
-            f'--data-path={self.build_repo_pull_url}',
+            f'--data-path={self.build_data_repo_pull_url}',
         ]
 
     @staticmethod
@@ -135,31 +140,31 @@ class PrepareReleaseKonfluxPipeline:
         # and the token as the password
         return f'https://oauth2:{token}@{rest_of_the_url}'
 
-    def _build_repo_vars(self, build_repo_url: Optional[str]):
-        build_repo_pull_url = (
-            build_repo_url
+    def _build_data_repo_vars(self, build_data_repo_url: Optional[str]):
+        build_data_repo_pull_url = (
+            build_data_repo_url
             or self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
             or constants.OCP_BUILD_DATA_URL
         )
         build_data_gitref = None
-        if "@" in build_repo_pull_url:
-            build_repo_pull_url, build_data_gitref = build_repo_pull_url.split("@", 1)
+        if "@" in build_data_repo_pull_url:
+            build_data_repo_pull_url, build_data_gitref = build_data_repo_pull_url.split("@", 1)
 
         build_data_push_url = (
             self.runtime.config.get("build_config", {}).get("ocp_build_data_push_url") or constants.OCP_BUILD_DATA_URL
         )
-        return build_repo_pull_url, build_data_gitref, build_data_push_url
+        return build_data_repo_pull_url, build_data_gitref, build_data_push_url
 
-    def _shipment_repo_vars(self, shipment_repo_url: Optional[str]):
-        shipment_repo_pull_url = (
-            shipment_repo_url
+    def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
+        shipment_data_repo_pull_url = (
+            shipment_data_repo_url
             or self.runtime.config.get("shipment_config", {}).get("shipment_data_url")
             or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
         )
-        shipment_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
+        shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
             "shipment_data_push_url"
         ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
-        return shipment_repo_pull_url, shipment_repo_push_url
+        return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
     @cached_property
     def _errata_api(self) -> AsyncErrataAPI:
@@ -197,19 +202,23 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
         await self.check_blockers()
-        failed = False
+        err = None
         try:
             await self.handle_jira_ticket()
             await self.prepare_rpm_advisory()
             await self.prepare_shipment()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}")
-            failed = True
+            err = ex
         finally:
+            self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
             await self.create_update_build_data_pr()
-            await self.verify_payload()
-        if failed:
-            raise Exception("Failed to prepare release")
+
+        if err:
+            raise err
+
+        await self.set_shipment_mr_ready()
+        await self.verify_payload()
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -232,10 +241,10 @@ class PrepareReleaseKonfluxPipeline:
 
     def setup_working_dir(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        if self._build_repo_dir.exists():
-            shutil.rmtree(self._build_repo_dir, ignore_errors=True)
-        if self._shipment_repo_dir.exists():
-            shutil.rmtree(self._shipment_repo_dir, ignore_errors=True)
+        if self._build_data_repo_dir.exists():
+            shutil.rmtree(self._build_data_repo_dir, ignore_errors=True)
+        if self._shipment_data_repo_dir.exists():
+            shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
         if self.elliott_working_dir.exists():
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         if self.doozer_working_dir.exists():
@@ -246,15 +255,15 @@ class PrepareReleaseKonfluxPipeline:
         # pushing is done via SSH
         await self.build_data_repo.setup(
             remote_url=convert_remote_git_to_ssh(self.build_data_push_url),
-            upstream_remote_url=self.build_repo_pull_url,
+            upstream_remote_url=self.build_data_repo_pull_url,
         )
         await self.build_data_repo.fetch_switch_branch(self.build_data_gitref or self.group)
 
         # setup shipment-data repo which should reside in GitLab
         # pushing is done via basic auth
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_repo_push_url, self.gitlab_token),
-            upstream_remote_url=self.shipment_repo_pull_url,
+            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            upstream_remote_url=self.shipment_data_repo_pull_url,
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
 
@@ -497,17 +506,18 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             if kind == "fbc":
                 continue
-            shipment.shipment.data.releaseNotes.issues = await self.find_bugs(kind, permissive=permissive)
+            bug_ids = await self.find_bugs(kind, permissive=permissive)
+            add_bug_ids_to_release_notes(shipment.shipment.data.releaseNotes, bug_ids)
 
         # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
         # Attach CVE flaws
         if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
-            tasks = [
-                self.attach_cve_flaws(kind, shipment) for kind, shipment in shipments_by_kind.items() if kind != "fbc"
-            ]
-            await asyncio.gather(*tasks)
+            for kind, shipment in shipments_by_kind.items():
+                if kind == "fbc":
+                    continue
+                self.attach_cve_flaws(kind, shipment)
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -644,15 +654,15 @@ class PrepareReleaseKonfluxPipeline:
         if mr.state != "opened":
             raise ValueError(f"MR state {mr.state} is not opened. This is not supported.")
 
-        if target_project_path not in self.shipment_repo_pull_url:
+        if target_project_path not in self.shipment_data_repo_pull_url:
             raise ValueError(
-                f"MR target project {target_project_path} does not match the pull repo {self.shipment_repo_pull_url}"
+                f"MR target project {target_project_path} does not match the pull repo {self.shipment_data_repo_pull_url}"
             )
 
         source_project_path = self._gitlab.projects.get(mr.source_project_id).path_with_namespace
-        if source_project_path not in self.shipment_repo_push_url:
+        if source_project_path not in self.shipment_data_repo_push_url:
             raise ValueError(
-                f"MR source project {source_project_path} does not match the push repo {self.shipment_repo_push_url}"
+                f"MR source project {source_project_path} does not match the push repo {self.shipment_data_repo_push_url}"
             )
 
         if mr.target_branch != "main":
@@ -693,7 +703,7 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         create_cmd = self._elliott_base_command + [
-            f'--shipment-path={self.shipment_repo_pull_url}',
+            f'--shipment-path={self.shipment_data_repo_pull_url}',
             "shipment",
             "init",
             kind,
@@ -701,6 +711,15 @@ class PrepareReleaseKonfluxPipeline:
         stdout = await self.execute_command_with_logging(create_cmd)
         out = yaml.load(stdout)
         shipment = ShipmentConfig(**out)
+
+        if self.inject_build_data_repo:
+            # inject the build repo into the shipment config
+            repo_username = self.build_data_repo_pull_url.split('/')[-2]
+            build_commit = self.build_data_gitref or self.group
+            if not shipment.shipment.tools:
+                shipment.shipment.tools = Tools()
+            shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
+
         return shipment
 
     async def get_snapshot(self, builds: list) -> Optional[Snapshot]:
@@ -789,60 +808,44 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[Issues]:
-        """Find bugs for the given advisory kind and return an Issues object containing the bugs found.
-        :param kind: The kind for which to find bugs
+    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[List[str]]:
+        """Find bugs for the given advisory kind.
+        :param kind: The shipment kind for which to find bugs
         :param permissive: Ignore invalid bugs that are found and continue
-        :return: An Issues object containing the bugs found
         """
 
-        if self._issues_by_kind is not None:
-            return self._issues_by_kind.get(kind)
-
-        find_bugs_cmd = self._elliott_base_command + [
-            "find-bugs",
-            "--output=json",
-        ]
-        if permissive:
-            find_bugs_cmd.append("--permissive")
-
-        _, stdout, _ = await exectools.cmd_gather_async(find_bugs_cmd, stderr=None)
-        if stdout:
-            self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
-
-        self._issues_by_kind = {}
-        if stdout:
-            for advisory_kind, bugs in json.loads(stdout).items():
-                fixed = [Issue(id=b, source="issues.redhat.com") for b in bugs] if bugs else []
-                self._issues_by_kind[advisory_kind] = Issues(fixed=fixed)
-
-        return self._issues_by_kind.get(kind)
-
-    async def attach_cve_flaws(self, kind, shipment):
-        # Create base path if it does not exist
-        base_path = self.elliott_working_dir / 'attach_cve_flaws'
-        base_path.mkdir(parents=True, exist_ok=True)
-
-        with TemporaryDirectory(prefix=str(base_path / kind)) as elliott_working:
-            # Replace the elliott working dir to allow concurrent commands execution
-            attach_cve_flaws_command = [
-                arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
-                for arg in self._elliott_base_command
+        if self._bug_ids_by_kind is None:
+            find_bugs_cmd = self._elliott_base_command + [
+                "find-bugs",
+                "--output=json",
             ]
-            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=json']
+            if permissive:
+                find_bugs_cmd.append("--permissive")
 
-            self.logger.info('Running elliott attach-cve-flaws...')
-            _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
+            stdout = await self.execute_command_with_logging(find_bugs_cmd)
+            self._bug_ids_by_kind = {}
             if stdout:
-                self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
+                for advisory_kind, bugs in json.loads(stdout).items():
+                    self._bug_ids_by_kind[advisory_kind] = bugs
 
-            # Move debug.log to elliott working directory to allow Jenkins archive it
-            debug_log_path = Path(self.elliott_working_dir) / 'attach-cve-flaws'  # destination dir
-            debug_log_path.mkdir(parents=True, exist_ok=True)
-            shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/attach-cve-flaws-{kind}-debug.log')
+        return self._bug_ids_by_kind.get(kind)
 
+    async def attach_cve_flaws(self, kind: str, shipment: ShipmentConfig):
+        """Attach CVE flaws to the given shipment.
+        :param kind: The shipment kind for which to attach CVE flaws
+        :param shipment: The shipment to attach CVE flaws to
+        """
+
+        attach_cve_flaws_command = self._elliott_base_command + [
+            'attach-cve-flaws',
+            f'--use-default-advisory={kind}',
+            '--output=yaml',
+        ]
+
+        self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
+        stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
-            shipment.shipment.data.releaseNotes = json.loads(stdout)
+            shipment.shipment.data.releaseNotes = yaml.load(stdout)
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
@@ -873,10 +876,10 @@ class PrepareReleaseKonfluxPipeline:
             project_path = parsed_url.path.strip('/').removesuffix('.git')
             return self._gitlab.projects.get(project_path)
 
-        source_project = _get_project(self.shipment_repo_push_url)
-        target_project = _get_project(self.shipment_repo_pull_url)
+        source_project = _get_project(self.shipment_data_repo_push_url)
+        target_project = _get_project(self.shipment_data_repo_pull_url)
 
-        mr_title = f"Shipment for {self.release_name}"
+        mr_title = f"Draft: Shipment for {self.release_name}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else commit_message
 
         if self.dry_run:
@@ -894,8 +897,10 @@ class PrepareReleaseKonfluxPipeline:
                 }
             )
             mr_url = mr.web_url
-            self.logger.info("Created Merge Request: %s", mr_url)
+            self.logger.info("Created Draft Merge Request: %s", mr_url)
 
+        # Store the MR URL for later use
+        self.shipment_mr_url = mr_url
         return mr_url
 
     async def update_shipment_mr(
@@ -919,6 +924,16 @@ class PrepareReleaseKonfluxPipeline:
         project = self._gitlab.projects.get(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
+        # Store the MR URL for later use
+        self.shipment_mr_url = shipment_url
+
+        # Ensure MR is set as draft if not already
+        if not mr.title.startswith("Draft:"):
+            mr.title = f"Draft: {mr.title}"
+            if not self.dry_run:
+                mr.save()
+                self.logger.info("Set existing MR to draft status")
+
         # Checkout the MR branch
         source_branch = mr.source_branch
         await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
@@ -941,6 +956,64 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("Shipment MR updated: %s", shipment_url)
 
         return True
+
+    async def set_shipment_mr_ready(self):
+        """Mark the shipment MR as ready by removing the Draft prefix from the title.
+        This should be called at the end of the pipeline when all work is complete.
+        """
+        if not self.shipment_mr_url:
+            self.logger.info("No shipment MR URL stored, skipping setting to ready")
+            return
+
+        self.logger.info("Setting shipment MR to ready: %s", self.shipment_mr_url)
+
+        # Parse the shipment URL to extract project and MR details
+        parsed_url = urlparse(self.shipment_mr_url)
+        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+        mr_id = parsed_url.path.split('/')[-1]
+
+        # Load the existing MR
+        project = self._gitlab.projects.get(target_project_path)
+        mr = project.mergerequests.get(mr_id)
+
+        # Remove draft prefix from title
+        if mr.title.startswith("Draft: "):
+            mr.title = mr.title.removeprefix("Draft: ")
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have set MR to ready with title: %s", mr.title)
+            else:
+                mr.save()
+                self.logger.info("Shipment MR marked as ready: %s", self.shipment_mr_url)
+                await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
+
+                # Trigger CI pipeline after marking as ready
+                await self.trigger_ci_pipeline(project, mr.source_branch)
+        else:
+            self.logger.info("MR is already ready (no draft prefix found)")
+
+    async def trigger_ci_pipeline(self, project, branch: str):
+        """Trigger a GitLab CI pipeline for the specified project and branch.
+
+        Args:
+            project: GitLab project object
+            branch: The branch name to trigger the pipeline for
+        """
+        try:
+            self.logger.info("Triggering CI pipeline for branch %s in project %s", branch, project.path_with_namespace)
+
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have triggered CI pipeline for branch: %s", branch)
+                return
+
+            # Create a new pipeline for the specified branch
+            pipeline = project.pipelines.create({'ref': branch})
+
+            self.logger.info("CI pipeline triggered successfully: %s", pipeline.web_url)
+            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline.web_url}")
+
+        except Exception as ex:
+            self.logger.warning(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
+            await self._slack_client.say_in_thread(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -988,9 +1061,9 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in assembly config. PR will not be created or updated.")
             return False
 
-        target_repo = self.build_repo_pull_url.split('/')[-1].replace('.git', '')
+        target_repo = self.build_data_repo_pull_url.split('/')[-1].replace('.git', '')
         source_owner = self.build_data_push_url.split('/')[-2]
-        target_owner = self.build_repo_pull_url.split('/')[-2]
+        target_owner = self.build_data_repo_pull_url.split('/')[-2]
 
         head = f"{source_owner}:{branch}"
         base = self.build_data_gitref or self.group
@@ -1039,25 +1112,52 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("PR to update assembly updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update assembly updated: {result.html_url}")
 
-        await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
+        # Check if we can auto-merge
+        if source_owner == target_owner:
+            self.logger.info(
+                "Push and pull URLs are from same project (%s), attempting to auto-merge PR...", source_owner
+            )
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would have auto-merged PR with number %s", pull_number)
+            else:
+                try:
+                    # Auto-merge the PR
+                    api.pulls.merge(pull_number)
+                    self.logger.info("PR to update assembly was auto-merged: %s", result.html_url)
+                    await self._slack_client.say_in_thread(f":white_check_mark: PR auto-merged: {result.html_url}")
+                except Exception as ex:
+                    self.logger.warning(f"Failed to auto-merge PR {pull_number}: {ex}")
+                    await self._slack_client.say_in_thread(
+                        f"Failed to auto-merge PR, will wait for manual merge: {result.html_url}"
+                    )
+                    # Fall back to waiting for manual merge
+                    await self._wait_for_pr_merge(api, pull_number, result.html_url)
+        else:
+            self.logger.info(
+                "Push owner (%s) differs from pull owner (%s), waiting for manual merge...", source_owner, target_owner
+            )
+            await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
+            await self._wait_for_pr_merge(api, pull_number, result.html_url)
 
+        return True
+
+    async def _wait_for_pr_merge(self, api, pull_number: int, pr_url: str):
+        """Wait for a PR to be merged manually with timeout."""
         # wait until the PR is merged
         timeout = 60 * 60  # 1 hour
         start_time = time.time()
         while True:
             if (time.time() - start_time) > timeout:
-                raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {result.html_url}")
+                raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {pr_url}")
             await asyncio.sleep(10)
             pr = api.pulls.get(pull_number)
             if pr.merged:
-                self.logger.info("PR to update assembly was merged: %s", pr.html_url)
+                self.logger.info("PR to update assembly was merged: %s", pr_url)
                 break
             if pr.state == "closed":
-                self.logger.info("PR to update assembly was closed: %s", pr.html_url)
-                raise RuntimeError(f"PR to update assembly was closed: {pr.html_url}")
-            self.logger.info("Waiting for PR to update assembly to be merged: %s", pr.html_url)
-
-        return True
+                self.logger.info("PR to update assembly was closed: %s", pr_url)
+                raise RuntimeError(f"PR to update assembly was closed: {pr_url}")
+            self.logger.info("Waiting for PR to update assembly to be merged: %s", pr_url)
 
     async def update_build_data(self, branch: str) -> bool:
         """Update releases.yml in build data repo with the given shipment assembly config.
@@ -1254,11 +1354,16 @@ class PrepareReleaseKonfluxPipeline:
     "--date", metavar="YYYY-MMM-DD", required=False, default=None, help="Expected release date (e.g. 2020-Nov-25)"
 )
 @click.option(
-    '--build-repo-url',
+    '--build-data-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
 @click.option(
-    '--shipment-repo-url',
+    "--inject-build-data-repo",
+    is_flag=True,
+    help="Inject build-data repo/commit given by --build-data-repo-url into the shipment config",
+)
+@click.option(
+    '--shipment-data-repo-url',
     help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
 )
 @pass_runtime
@@ -1268,8 +1373,9 @@ async def prepare_release(
     group: str,
     assembly: str,
     date: str,
-    build_repo_url: Optional[str],
-    shipment_repo_url: Optional[str],
+    build_data_repo_url: Optional[str],
+    inject_build_data_repo: bool,
+    shipment_data_repo_url: Optional[str],
 ):
     # Check if assembly is valid
     if assembly == "stream":
@@ -1287,8 +1393,9 @@ async def prepare_release(
             group=group,
             assembly=assembly,
             date=date,
-            build_repo_url=build_repo_url,
-            shipment_repo_url=shipment_repo_url,
+            build_data_repo_url=build_data_repo_url,
+            shipment_data_repo_url=shipment_data_repo_url,
+            inject_build_data_repo=inject_build_data_repo,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")
