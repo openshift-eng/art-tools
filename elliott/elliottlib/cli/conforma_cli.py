@@ -235,7 +235,7 @@ class ConformaVerifyCli:
             policy_file,
             "--ignore-rekor",
             "--timeout",
-            "10m",
+            "30m",
             "--output",
             "yaml",
         ]
