@@ -33,7 +33,7 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec
+from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -202,21 +202,23 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
         await self.check_blockers()
-        failed = False
+        err = None
         try:
             await self.handle_jira_ticket()
             await self.prepare_rpm_advisory()
             await self.prepare_shipment()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}")
-            failed = True
+            err = ex
         finally:
+            self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
             await self.create_update_build_data_pr()
-            await self.set_shipment_mr_ready()
-            await self.verify_payload()
 
-        if failed:
-            raise Exception("Failed to prepare release")
+        if err:
+            raise err
+
+        await self.set_shipment_mr_ready()
+        await self.verify_payload()
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -512,10 +514,10 @@ class PrepareReleaseKonfluxPipeline:
 
         # Attach CVE flaws
         if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
-            tasks = [
-                self.attach_cve_flaws(kind, shipment) for kind, shipment in shipments_by_kind.items() if kind != "fbc"
-            ]
-            await asyncio.gather(*tasks)
+            for kind, shipment in shipments_by_kind.items():
+                if kind == "fbc":
+                    continue
+                self.attach_cve_flaws(kind, shipment)
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -712,8 +714,10 @@ class PrepareReleaseKonfluxPipeline:
 
         if self.inject_build_data_repo:
             # inject the build repo into the shipment config
-            repo_username = self.build_data_repo_url.split('/')[-2]
+            repo_username = self.build_data_repo_pull_url.split('/')[-2]
             build_commit = self.build_data_gitref or self.group
+            if not shipment.shipment.tools:
+                shipment.shipment.tools = Tools()
             shipment.shipment.tools.build_data = f"{repo_username}@{build_commit}"
 
         return shipment
@@ -832,28 +836,14 @@ class PrepareReleaseKonfluxPipeline:
         :param shipment: The shipment to attach CVE flaws to
         """
 
-        # Create base path if it does not exist
-        base_path = self.elliott_working_dir / 'attach_cve_flaws'
-        base_path.mkdir(parents=True, exist_ok=True)
+        attach_cve_flaws_command = self._elliott_base_command + [
+            'attach-cve-flaws',
+            f'--use-default-advisory={kind}',
+            '--output=yaml',
+        ]
 
-        with TemporaryDirectory(prefix=str(base_path / kind)) as elliott_working:
-            # Replace the elliott working dir to allow concurrent commands execution
-            attach_cve_flaws_command = [
-                arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
-                for arg in self._elliott_base_command
-            ]
-            attach_cve_flaws_command += ['attach-cve-flaws', f'--use-default-advisory={kind}', '--output=yaml']
-
-            self.logger.info('Running elliott attach-cve-flaws...')
-            _, stdout, _ = await exectools.cmd_gather_async(attach_cve_flaws_command)
-            if stdout:
-                self.logger.info("Shipment find bugs command stdout:\n %s", stdout)
-
-            # Move debug.log to elliott working directory to allow Jenkins archive it
-            debug_log_path = Path(self.elliott_working_dir) / 'attach-cve-flaws'  # destination dir
-            debug_log_path.mkdir(parents=True, exist_ok=True)
-            shutil.move(f'{elliott_working}/debug.log', f'{debug_log_path}/attach-cve-flaws-{kind}-debug.log')
-
+        self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
+        stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
             shipment.shipment.data.releaseNotes = yaml.load(stdout)
 
