@@ -282,7 +282,7 @@ class GenAssemblyCli:
         self._get_rhcos_container()
         await self._select_rpms()
         self._calculate_previous_list()
-        return self._generate_assembly_definition()
+        return await self._generate_assembly_definition()
 
     @staticmethod
     def _exit_with_error(msg):
@@ -849,7 +849,7 @@ class GenAssemblyCli:
 
         return advisories, release_jira
 
-    def _generate_assembly_definition(self) -> dict:
+    async def _generate_assembly_definition(self) -> dict:
         image_member_overrides, rpm_member_overrides = self._get_member_overrides()
 
         group_info = {}
@@ -868,7 +868,7 @@ class GenAssemblyCli:
 
         if self.runtime.build_system == 'konflux':
             group_info['shipment'] = self._get_shipment_info()
-            group_info['release_date'] = self._get_release_date()
+            group_info['release_date'] = await self._get_release_date()
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
