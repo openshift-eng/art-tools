@@ -910,6 +910,7 @@ class GenAssemblyCli:
         except Exception as ex:
             raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
         self.logger.info("Release date: %s", self.release_date)
+        return self.release_date
 
     def _get_member_overrides(self):
         """
