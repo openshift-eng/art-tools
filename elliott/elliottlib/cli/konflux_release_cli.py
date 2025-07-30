@@ -44,6 +44,8 @@ class CreateReleaseCli:
         image_repo_pull_secret: dict,
         dry_run: bool,
         job_url: str = None,
+        force: bool = False,
+        kind: str = None,
     ):
         self.runtime = runtime
         self.config_path = config_path
@@ -59,6 +61,8 @@ class CreateReleaseCli:
         )
         self.konflux_client.verify_connection()
         self.release_env = release_env
+        self.force = force
+        self.kind = kind
 
     async def run(self):
         self.runtime.initialize(build_system='konflux', with_shipment=True)
@@ -107,13 +111,14 @@ class CreateReleaseCli:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
         major, minor = self.runtime.get_major_minor()
-        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
+        kind_str = f"-{self.kind}" if self.kind else ""
+        release_name = f"ose-{major}-{minor}{kind_str}-{self.release_env}-{get_utc_now_formatted_str()}"
 
         env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
-        if env_config.shipped() and self.release_env == "prod":
+        if env_config.shipped() and not self.force:
             raise ValueError(
                 f"existing release metadata is not empty for {self.release_env}: "
-                f"{env_config.model_dump()}. If you want to proceed remove the release metadata from the shipment config and try again."
+                f"{env_config.model_dump()}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
             )
 
         # Create snapshot first using the spec from shipment config
@@ -151,7 +156,8 @@ class CreateReleaseCli:
             raise ValueError("A valid snapshot must be provided")
 
         major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        kind_str = f"-{self.kind}" if self.kind else ""
+        snapshot_name = f"ose-{major}-{minor}{kind_str}-{get_utc_now_formatted_str()}"
 
         # Prepare metadata with labels and optional annotations
         metadata = {
@@ -296,6 +302,14 @@ def konflux_release_cli():
     metavar='URL',
     help='The URL of the job that created this release. This will be added as an annotation to both the snapshot and release objects.',
 )
+@click.option(
+    '--force', is_flag=True, default=False, help='Force the creation of the release even if it already exists'
+)
+@click.option(
+    '--kind',
+    metavar='KIND',
+    help='The kind of release being created (e.g. "image"), only used for naming the snapshot and release objects',
+)
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(
@@ -308,6 +322,8 @@ async def new_release_cli(
     env,
     apply,
     job_url,
+    force,
+    kind,
 ):
     """
     Create a new Konflux Release in the given namespace based on the config provided
@@ -336,6 +352,8 @@ async def new_release_cli(
         image_repo_pull_secret=pull_secret,
         dry_run=not apply,
         job_url=job_url,
+        force=force,
+        kind=kind,
     )
     release = await pipeline.run()
     yaml.dump(release.to_dict(), sys.stdout)

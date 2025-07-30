@@ -653,9 +653,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "existing release metadata is not empty for prod: "
-            "{'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}"
-            ". If you want to proceed remove the release metadata from the shipment config and try again.",
+            "existing release metadata is not empty for prod: {'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag.",
             str(context.exception),
         )
 
