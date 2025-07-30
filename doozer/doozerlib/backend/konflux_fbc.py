@@ -244,7 +244,9 @@ class KonfluxFbcFragmentMerger:
         upcycle: bool = False,
         commit_message: str | None = None,
         fbc_git_repo: str = constants.ART_FBC_GIT_REPO,
-        fbc_branch: str | None = None,
+        fbc_git_branch: str | None = None,
+        fbc_git_username: str | None = None,
+        fbc_git_password: str | None = None,
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
         plr_template: Optional[str] = None,
@@ -253,6 +255,8 @@ class KonfluxFbcFragmentMerger:
         """
         Initialize the KonfluxFbcFragmentMerger.
         """
+        if bool(fbc_git_username) != bool(fbc_git_password):
+            raise ValueError("Both fbc_git_username and fbc_git_password must be provided or neither.")
         self.dry_run = dry_run
         self.working_dir = Path(working_dir)
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -263,7 +267,9 @@ class KonfluxFbcFragmentMerger:
         self.upcycle = upcycle
         self.commit_message = commit_message
         self.fbc_git_repo = fbc_git_repo
-        self.fbc_branch = fbc_branch or f"art-{self.group}-fbc-stage"
+        self.fbc_git_branch = fbc_git_branch or f"art-{self.group}-fbc-stage"
+        self.fbc_git_username = fbc_git_username
+        self.fbc_git_password = fbc_git_password
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
@@ -287,8 +293,15 @@ class KonfluxFbcFragmentMerger:
         konflux_client = self._konflux_client
 
         repo_dir = self.working_dir
-        build_repo = BuildRepo(url=self.fbc_git_repo, branch=self.fbc_branch, local_dir=repo_dir, logger=logger)
-        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_branch, repo_dir)
+        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_git_branch, repo_dir)
+        build_repo = BuildRepo(
+            url=self.fbc_git_repo,
+            branch=self.fbc_git_branch,
+            local_dir=repo_dir,
+            username=self.fbc_git_username,
+            password=self.fbc_git_password,
+            logger=logger,
+        )
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Merge ImageDigestMirrorSets
@@ -302,11 +315,21 @@ class KonfluxFbcFragmentMerger:
 
         # Render the FBC fragments
         logger.info("Rendering FBC fragments...")
-        all_blobs = await asyncio.gather(*(opm.render(fragment, output_format="yaml") for fragment in fragments))
+        semaphore = asyncio.BoundedSemaphore(10)  # Limit concurrency to avoid overwhelming the registry
+
+        async def _render_fragment(fragment: str):
+            async with semaphore:
+                return await opm.render(
+                    fragment,
+                    output_format="yaml",
+                    auth=opm.OpmRegistryAuth(self.registry_auth) if self.registry_auth else None,
+                )
+
+        all_blobs = await asyncio.gather(*(map(_render_fragment, fragments)))
         catalog_blobs = list(itertools.chain.from_iterable(all_blobs))
 
         # Write the rendered blobs to a file
-        # Write catalog_blobs to catalog/<package>/catalog.yaml
+        # Write catalog_blobs to catalog/catalog.yaml
         catalog_dir = repo_dir.joinpath("catalog")
         catalog_dir.mkdir(parents=True, exist_ok=True)
         catalog_file_path = catalog_dir.joinpath("catalog.yaml")
@@ -337,7 +360,7 @@ class KonfluxFbcFragmentMerger:
             await build_repo.commit(message, allow_empty=True)
             logger.info("Pushing changes to the remote repository...")
             await build_repo.push()
-            logger.info(f"Changes pushed to remote repository {self.fbc_git_repo} branch {self.fbc_branch}")
+            logger.info(f"Changes pushed to remote repository {self.fbc_git_repo} branch {self.fbc_git_branch}")
         else:
             logger.info("Dry run enabled, not pushing changes.")
 
@@ -490,7 +513,7 @@ class KonfluxFbcFragmentMerger:
             component_name=comp_name,
             git_url=build_repo.https_url,
             commit_sha=commit_sha,
-            target_branch=self.fbc_branch or commit_sha,
+            target_branch=self.fbc_git_branch or commit_sha,
             output_image=f"{output_image_repo}:{output_image_tag}",
             additional_tags=[],
             vm_override={},
