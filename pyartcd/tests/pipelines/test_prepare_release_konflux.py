@@ -1,7 +1,7 @@
 import copy
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, PropertyMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
@@ -313,6 +313,34 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config should specify `kind` for each advisory", str(context.exception))
 
+    @patch('pyartcd.pipelines.prepare_release_konflux.KonfluxDb')
+    async def test_verify_attached_operators(self, MockKonfluxDb):
+        """
+        Tests the success case where all referenced builds are found.
+        The function should complete without raising an exception.
+        """
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        build = MagicMock(
+            nvr="my-bundle-1.0", operator_nvr="my-operator-1.0", operand_nvrs=["my-operand-A-1.0", "my-operand-B-1.0"]
+        )
+        MockKonfluxDb.should_receive("search_builds_by_fields").and_return(iter([build]))
+
+        kind_to_builds = {
+            "metadata": ["my-bundle-1.0"],
+            "image": ["my-operator-1.0", "my-operand-A-1.0"],
+            "extras": ["my-operand-B-1.0"],
+        }
+
+        with self.assertRaises(ValueError) as context:
+            await pipeline.verify_attached_operators(kind_to_builds)
+        self.assertIn("Verify_attached_operators check failed", str(context.exception))
+
     async def test_validate_shipment_config_overlap(self):
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
@@ -428,6 +456,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
 
+    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_attached_operators', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)

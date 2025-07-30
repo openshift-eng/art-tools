@@ -21,6 +21,8 @@ import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
@@ -472,6 +474,8 @@ class PrepareReleaseKonfluxPipeline:
             bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
             kind_to_builds["metadata"] += bundle_nvrs
 
+        await self.verify_attached_operators(kind_to_builds)
+
         # make sure that fbc shipment needs to be prepared
         # find and build any missing fbc builds
         if "fbc" in shipments_by_kind:
@@ -521,6 +525,51 @@ class PrepareReleaseKonfluxPipeline:
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+    async def verify_attached_operators(self, kind_to_builds: Dict[str, List[str]]):
+        """
+        Verifies that all operators and operands referenced by metadata (bundle) builds
+        are present in the release's attached image builds.
+
+        Args:
+            kind_to_builds: A dictionary mapping build types ('metadata', 'image', 'extras')
+                            to lists of NVRs.
+
+        Raises:
+            ValueError: If any referenced operator or operand NVR is not found in the
+                        attached image builds.
+        """
+        self.logger.info("Verify_attached_operators ...")
+        olm_builds = kind_to_builds.get('metadata')
+        if not olm_builds:
+            # No metadata builds to verify, so the check passes.
+            return
+        image_builds = kind_to_builds['image'] + kind_to_builds['extras']
+        kdb = KonfluxDb()
+        kdb.bind(KonfluxBundleBuildRecord)
+        tasks = [
+            anext(kdb.search_builds_by_fields(where={"nvr": build, "outcome": "success"}, limit=1), None)
+            for build in olm_builds
+        ]
+        olm_records = await asyncio.gather(*tasks)
+        missing_references = []
+        for record in filter(None, olm_records):
+            # Check the main operator NVR
+            if record.operator_nvr not in image_builds:
+                missing_references.append(
+                    f"Bundle {record.nvr} references operator {record.operator_nvr}, which is not in the release."
+                )
+            # Check all operand NVRs
+            for operand in record.operand_nvrs:
+                if operand not in image_builds:
+                    missing_references.append(
+                        f"Bundle {record.nvr} references operand {operand}, which is not in the release."
+                    )
+        if missing_references:
+            error_details = "\n".join(missing_references)
+            self.logger.warning("Verify_attached_operators check failed with the following errors:\n%s", error_details)
+            raise ValueError("Verify_attached_operators check failed. See logs for details.")
+        self.logger.info("Verify_attached_operators complete success")
 
     async def filter_olm_operators(self, nvrs: list[str]) -> list[str]:
         """
