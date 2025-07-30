@@ -925,9 +925,9 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'issuetype': {'name': 'Bug'},
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
-            'customfield_12319940': [
+            'customfield_12323140': [
                 {'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}
-            ],  # customfield_12319940 is Target Version in jira
+            ],  # customfield_12323140 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
             'description': description,

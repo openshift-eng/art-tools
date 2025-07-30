@@ -704,7 +704,7 @@ class JIRABugTracker(BugTracker):
 
     # There are several @property function defined, which requires the values to be available at compile time
     # We later override them at runtime, so that if the field name changes, we'll still get the updated one
-    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_target_version = 'customfield_12323140'  # "Target Version"
     field_release_blocker = 'customfield_12319743'  # "Release Blocker"
     field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
     field_severity = 'customfield_12316142'  # "Severity"
