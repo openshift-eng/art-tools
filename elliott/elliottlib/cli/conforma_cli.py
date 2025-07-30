@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import tempfile
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import click
 from artcommonlib import logutil
@@ -32,6 +32,8 @@ class ConformaVerifyCli:
         policy_path: str = None,
         konflux_kubeconfig: str = None,
         pull_secret: str = None,
+        batch_size: int = 10,
+        fail_fast: bool = False,
     ):
         if not pullspec and not nvrs:
             raise ValueError("Either pullspec or nvrs must be provided")
@@ -44,6 +46,8 @@ class ConformaVerifyCli:
         self.konflux_kubeconfig = konflux_kubeconfig
         self.pull_secret = pull_secret
         self.env = env
+        self.batch_size = batch_size
+        self.fail_fast = fail_fast
 
     @staticmethod
     def get_policy_url(application: str, env: str) -> str:
@@ -59,19 +63,59 @@ class ConformaVerifyCli:
             key = f"fbc-{env}"
         return policy_url_map[key]
 
-    async def run(self) -> Dict[str, Dict]:
-        """Run conforma verification for all NVRs and return results."""
+    def _split_into_batches(self, items: List[str], batch_size: int) -> List[List[str]]:
+        """Split a list into batches of specified size."""
+        batches = []
+        for i in range(0, len(items), batch_size):
+            batches.append(items[i : i + batch_size])
+        return batches
 
-        self.runtime.initialize(build_system='konflux', mode='images')
+    def _merge_results(self, batch_results: List[Dict]) -> Dict:
+        """Merge results from multiple batches."""
+        if not batch_results:
+            return {
+                "success": False,
+                "total_nvrs": 0,
+                "failed_nvrs": 0,
+                "nvr_results": {},
+                "output": {},
+            }
 
-        if self.pullspec:
-            rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
-            nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
-            self.nvrs = []
-            for component, (v, r) in nvr_map.items():
-                self.nvrs.append(f"{component}-{v}-{r}")
+        merged_result = {
+            "success": True,
+            "total_nvrs": 0,
+            "failed_nvrs": 0,
+            "nvr_results": {},
+            "output": {
+                "components": [],
+                "success": True,
+            },
+        }
 
-        LOGGER.info("Verifying %d NVRs with Conforma", len(self.nvrs))
+        for batch_result in batch_results:
+            # Merge success status (all batches must succeed)
+            merged_result["success"] &= batch_result["success"]
+
+            # Merge NVR counts
+            merged_result["total_nvrs"] += batch_result["total_nvrs"]
+            merged_result["failed_nvrs"] += batch_result["failed_nvrs"]
+
+            # Merge NVR results
+            merged_result["nvr_results"].update(batch_result["nvr_results"])
+
+            # Merge output components
+            if "output" in batch_result and "components" in batch_result["output"]:
+                merged_result["output"]["components"].extend(batch_result["output"]["components"])
+
+            # Update overall output success
+            if "output" in batch_result:
+                merged_result["output"]["success"] &= batch_result["output"].get("success", True)
+
+        return merged_result
+
+    async def _run_batch(self, batch_nvrs: List[str], policy_file: str, cosign_pub_file: str) -> Dict:
+        """Run verification for a single batch of NVRs."""
+        LOGGER.info("Processing batch of %d NVRs: %s", len(batch_nvrs), batch_nvrs)
 
         snapshot_pipeline = CreateSnapshotCli(
             runtime=self.runtime,
@@ -81,7 +125,7 @@ class ConformaVerifyCli:
                 'context': None,
             },
             image_repo_pull_secret=self.pull_secret,
-            builds=self.nvrs,
+            builds=batch_nvrs,
             dry_run=True,
             job_url=None,
         )
@@ -92,37 +136,174 @@ class ConformaVerifyCli:
                 len(snapshots),
             )
         snapshot_spec = snapshots[0].spec
-        if not self.policy_path:
-            self.policy_path = self.get_policy_url(snapshot_spec.application, self.env)
-            LOGGER.info(
-                "Found policy for application %s and env %s: %s", snapshot_spec.application, self.env, self.policy_path
-            )
 
-        self.pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
+        pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
 
         # we need to fetch build records so we can map nvrs to pullspecs
-        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, self.nvrs, strict=True)
-        self.nvrs_by_pullspec = {str(record.image_pullspec): record.nvr for record in build_records_by_nvrs.values()}
+        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, batch_nvrs, strict=True)
+        nvrs_by_pullspec = {str(record.image_pullspec): record.nvr for record in build_records_by_nvrs.values()}
 
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             temp_file_path = temp_file.name
             yaml.dump(snapshot_spec.to_dict(), temp_file)
 
-        # Setup verification environment
-        with tempfile.TemporaryDirectory() as temp_dir:
-            policy_file, cosign_pub_file = await self._setup_verification_files(temp_dir)
-            result = await self._verify_snapshot(temp_file_path, policy_file, cosign_pub_file)
+        # Use pre-created verification files
+        result = await self._verify_batch_snapshot(
+            temp_file_path, policy_file, cosign_pub_file, pullspec_by_name, nvrs_by_pullspec
+        )
 
-        results_file = "results.yaml"
-        with open(results_file, 'w') as f:
-            yaml.dump(result, f)
-        LOGGER.info("Detailed results saved to %s", results_file)
+        # Clean up temp file
+        os.unlink(temp_file_path)
 
         return result
+
+    async def _determine_policy_path_if_needed(self) -> None:
+        """Determine policy path if not already set by running a small sample to get application type."""
+        if self.policy_path:
+            return  # Already set
+
+        # We need to run a small sample to determine the application type
+        sample_nvrs = self.nvrs[:1]  # Just use first NVR to determine application
+        LOGGER.info("Determining application type from sample NVR: %s", sample_nvrs[0])
+
+        snapshot_pipeline = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config={
+                'kubeconfig': self.konflux_kubeconfig,
+                'namespace': KONFLUX_DEFAULT_NAMESPACE,
+                'context': None,
+            },
+            image_repo_pull_secret=self.pull_secret,
+            builds=sample_nvrs,
+            dry_run=True,
+            job_url=None,
+        )
+        snapshots = await snapshot_pipeline.run()
+        if len(snapshots) != 1:
+            raise ValueError(
+                "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
+                len(snapshots),
+            )
+        snapshot_spec = snapshots[0].spec
+
+        self.policy_path = self.get_policy_url(snapshot_spec.application, self.env)
+        LOGGER.info(
+            "Determined policy for application %s and env %s: %s", snapshot_spec.application, self.env, self.policy_path
+        )
+
+    async def run(self) -> Dict[str, Dict]:
+        """Run conforma verification for all NVRs in batches and return merged results."""
+
+        self.runtime.initialize(build_system='konflux', mode='images')
+
+        if self.pullspec:
+            rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
+            nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
+            self.nvrs = []
+            for component, (v, r) in nvr_map.items():
+                self.nvrs.append(f"{component}-{v}-{r}")
+
+        LOGGER.info("Verifying %d NVRs with Conforma in batches of %d", len(self.nvrs), self.batch_size)
+
+        # Split NVRs into batches
+        batches = self._split_into_batches(self.nvrs, self.batch_size)
+        LOGGER.info("Processing %d batches", len(batches))
+
+        # Determine policy path if not already set
+        await self._determine_policy_path_if_needed()
+
+        # Setup verification files once for all batches
+        with tempfile.TemporaryDirectory() as temp_dir:
+            LOGGER.info("Setting up verification files (once for all batches)...")
+            policy_file, cosign_pub_file = await self._setup_verification_files(temp_dir)
+
+            # Process each batch
+            batch_results = []
+            for i, batch_nvrs in enumerate(batches, 1):
+                LOGGER.info("Processing batch %d/%d", i, len(batches))
+                try:
+                    batch_result = await self._run_batch(batch_nvrs, policy_file, cosign_pub_file)
+                    batch_results.append(batch_result)
+
+                    # Log batch results for real-time monitoring
+                    LOGGER.info("=== Batch %d/%d Results ===", i, len(batches))
+                    LOGGER.info("Batch success: %s", batch_result['success'])
+                    LOGGER.info("Failed NVRs in batch: %d/%d", batch_result['failed_nvrs'], batch_result['total_nvrs'])
+
+                    if batch_result['nvr_results']:
+                        LOGGER.info("NVR Results:")
+                        for nvr, result in batch_result['nvr_results'].items():
+                            status = "✓ PASS" if result['success'] else "✗ FAIL"
+                            violations_info = ""
+                            if 'violations' in result:
+                                violations_info = f" ({result['violations']['total']} violations: {', '.join(result['violations']['codes'])})"
+                            LOGGER.info("  %s: %s%s", nvr, status, violations_info)
+                    else:
+                        LOGGER.info("  No NVR results available")
+
+                except Exception as e:
+                    LOGGER.error("Failed to process batch %d: %s", i, e)
+                    # Create a failed result for this batch
+                    failed_result = {
+                        "success": False,
+                        "total_nvrs": len(batch_nvrs),
+                        "failed_nvrs": len(batch_nvrs),
+                        "nvr_results": {nvr: {"success": False} for nvr in batch_nvrs},
+                        "output": {},
+                    }
+                    batch_results.append(failed_result)
+
+                    # Log failed batch info
+                    LOGGER.error("=== Batch %d/%d Results ===", i, len(batches))
+                    LOGGER.error("Batch success: False (Exception: %s)", e)
+                    LOGGER.error("Failed NVRs in batch: %d/%d", len(batch_nvrs), len(batch_nvrs))
+                    LOGGER.error("NVR Results:")
+                    for nvr in batch_nvrs:
+                        LOGGER.error("  %s: ✗ FAIL (batch exception)", nvr)
+
+                # Write progressive results after each batch
+                progressive_result = self._merge_results(batch_results)
+                results_file = "results.yaml"
+
+                # Create truncated version for YAML (only first 10 violation codes)
+                truncated_for_yaml = self._truncate_violations_for_yaml(progressive_result)
+                with open(results_file, 'w') as f:
+                    yaml.dump(truncated_for_yaml, f)
+                LOGGER.info(
+                    "Progressive results updated in %s (processed %d/%d batches)", results_file, i, len(batches)
+                )
+
+                if self.fail_fast and not progressive_result["success"]:
+                    LOGGER.warning(
+                        "Failing fast due to failed NVR(s). %d NVRs failed so far. Stopping processing at batch %d/%d.",
+                        progressive_result["failed_nvrs"],
+                        i,
+                        len(batches),
+                    )
+                    break
+
+        # Merge results from all batches (final merge, though results.yaml is already up to date)
+        merged_result = self._merge_results(batch_results)
+
+        # Final log message
+        if len(batch_results) < len(batches):
+            LOGGER.info(
+                "Processing stopped early at batch %d/%d due to fail-fast. Final results in %s",
+                len(batch_results),
+                len(batches),
+                results_file,
+            )
+        else:
+            LOGGER.info("All batches complete. Final results in %s", results_file)
+
+        return merged_result
 
     async def _setup_verification_files(self, temp_dir: str) -> Tuple[str, str]:
         """Download policy.yaml and extract cosign public key."""
         LOGGER.info("Setting up verification files...")
+
+        if not self.policy_path:
+            raise RuntimeError("Policy path must be determined before setting up verification files")
 
         policy_file = os.path.join(temp_dir, "policy.yaml")
         cosign_pub_file = os.path.join(temp_dir, "cosign.pub")
@@ -220,8 +401,15 @@ class ConformaVerifyCli:
         LOGGER.info("Verification files prepared: policy=%s, cosign.pub=%s", policy_file, cosign_pub_file)
         return policy_file, cosign_pub_file
 
-    async def _verify_snapshot(self, snapshot_spec_filepath: str, policy_file: str, cosign_pub_file: str) -> Dict:
-        """Run ec validate for a given snapshot"""
+    async def _verify_batch_snapshot(
+        self,
+        snapshot_spec_filepath: str,
+        policy_file: str,
+        cosign_pub_file: str,
+        pullspec_by_name: Dict,
+        nvrs_by_pullspec: Dict,
+    ) -> Dict:
+        """Run ec validate for a given snapshot batch"""
 
         cmd = [
             "ec",
@@ -243,10 +431,12 @@ class ConformaVerifyCli:
         # Run ec validate command
         rc, stdout, _ = await cmd_gather_async(cmd, stderr=None, check=False)
         if not stdout:
+            # Get NVRs for this batch from nvrs_by_pullspec
+            batch_nvrs = list(nvrs_by_pullspec.values())
             return {
                 "success": False,
-                "total_nvrs": 0,
-                "failed_nvrs": 0,
+                "total_nvrs": len(batch_nvrs),
+                "failed_nvrs": len(batch_nvrs),
                 "nvr_results": {},
                 "output": {},
             }
@@ -258,8 +448,8 @@ class ConformaVerifyCli:
             component_name = component["name"]
             if ":" in component_name:
                 component_name = component_name.split(":")[0].removesuffix("-sha256")
-            main_image_pullspec = self.pullspec_by_name[component_name]
-            nvr = self.nvrs_by_pullspec[main_image_pullspec]
+            main_image_pullspec = pullspec_by_name[component_name]
+            nvr = nvrs_by_pullspec[main_image_pullspec]
 
             if nvr not in nvr_results:
                 nvr_results[nvr] = {
@@ -292,9 +482,9 @@ class ConformaVerifyCli:
         }
 
         if result["success"]:
-            LOGGER.info("✓ Verification passed")
+            LOGGER.info("✓ Batch verification passed")
         else:
-            LOGGER.warning("✗ Verification failed")
+            LOGGER.warning("✗ Batch verification failed")
 
         return result
 
@@ -335,6 +525,19 @@ class ConformaVerifyCli:
     type=click.Choice(["stage", "prod"]),
     default="prod",
 )
+@click.option(
+    '--batch-size',
+    metavar='SIZE',
+    help='Number of NVRs to process in each batch. Defaults to 10.',
+    type=int,
+    default=10,
+)
+@click.option(
+    '--fail-fast',
+    is_flag=True,
+    default=False,
+    help='Stop processing immediately if any NVR fails in a batch.',
+)
 @click.pass_obj
 @click_coroutine
 async def verify_conforma_cli(
@@ -346,21 +549,26 @@ async def verify_conforma_cli(
     konflux_kubeconfig,
     pull_secret,
     env,
+    batch_size,
+    fail_fast,
 ):
     """
     Verify given builds (NVRs) with Conforma
 
     \b
-    $ elliott -g openshift-4.18 conforma verify --nvrs-file nvrs.txt
+    $ elliott -g openshift-4.18 verify-conforma --nvrs-file nvrs.txt
 
     \b
-    $ elliott -g openshift-4.18 conforma verify nvr1 nvr2 nvr3
+    $ elliott -g openshift-4.18 verify-conforma nvr1 nvr2 nvr3
 
     \b
-    $ elliott -g openshift-4.18 conforma verify --konflux-policy /path/to/custom/policy.yaml nvr1 nvr2
+    $ elliott -g openshift-4.18 verify-conforma --konflux-policy /path/to/custom/policy.yaml nvr1 nvr2
 
     \b
-    $ elliott -g openshift-4.18 conforma verify --kubeconfig /path/to/kubeconfig nvr1 nvr2
+    $ elliott -g openshift-4.18 verify-conforma --kubeconfig /path/to/kubeconfig nvr1 nvr2
+
+    \b
+    $ elliott -g openshift-4.18 verify-conforma --batch-size 5 --fail-fast --nvrs-file nvrs.txt
     """
     if env and konflux_policy:
         raise click.BadParameter("Cannot specify both --env and --konflux-policy")
@@ -387,6 +595,8 @@ async def verify_conforma_cli(
         konflux_kubeconfig=konflux_kubeconfig,
         pull_secret=pull_secret,
         env=env,
+        batch_size=batch_size,
+        fail_fast=fail_fast,
     )
     results = await pipeline.run()
 
