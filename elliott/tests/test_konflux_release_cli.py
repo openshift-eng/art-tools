@@ -1,3 +1,4 @@
+from pprint import pprint
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -280,7 +281,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         'topic': shipment_config.shipment.data.releaseNotes.topic,
                         'description': shipment_config.shipment.data.releaseNotes.description,
                         'solution': shipment_config.shipment.data.releaseNotes.solution,
-                        'cves': [],
                     },
                 },
             },
@@ -428,7 +428,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         'topic': shipment_config.shipment.data.releaseNotes.topic,
                         'description': shipment_config.shipment.data.releaseNotes.description,
                         'solution': shipment_config.shipment.data.releaseNotes.solution,
-                        'cves': [],
                     },
                 },
             },

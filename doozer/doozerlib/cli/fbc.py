@@ -563,7 +563,6 @@ class FbcRebaseAndBuildCli:
             group=runtime.group,
             assembly=assembly,
             ocp_version=(runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR),
-            keep_templates=False,  # Not needed for rebase and build
             upcycle=runtime.upcycle,
             push=False,  # We will push after rebase
             commit_message=self.commit_message,

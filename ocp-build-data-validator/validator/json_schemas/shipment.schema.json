@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-07-04 02:42 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-07-31 19:42 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -119,15 +119,8 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "integer"
-            }
-          ],
-          "title": "Id"
+          "title": "Id",
+          "type": "string"
         },
         "source": {
           "title": "Source",
@@ -262,7 +255,7 @@
               "type": "null"
             }
           ],
-          "default": [],
+          "default": null,
           "title": "Cves"
         },
         "references": {

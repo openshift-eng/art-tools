@@ -33,7 +33,7 @@ class AttachCveFlaws:
         default_advisory_type: str,
         output: str,
         noop: bool,
-        reconcile: bool,
+        reconcile: bool = False,
     ):
         self.runtime = runtime
         self.into_default_advisories = into_default_advisories
