@@ -18,7 +18,7 @@ from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
-from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
+from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_bugzilla_bug_ids
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
@@ -33,6 +33,7 @@ class AttachCveFlaws:
         default_advisory_type: str,
         output: str,
         noop: bool,
+        reconcile: bool,
     ):
         self.runtime = runtime
         self.into_default_advisories = into_default_advisories
@@ -40,6 +41,7 @@ class AttachCveFlaws:
         self.default_advisory_type = default_advisory_type
         self.output = output
         self.noop = noop
+        self.reconcile = reconcile
         self.logger = logging.getLogger(__name__)
 
         self.errata_config = self.runtime.get_errata_config()
@@ -75,6 +77,8 @@ class AttachCveFlaws:
                 YAML.dump(release_notes.model_dump(mode='python', exclude_unset=True, exclude_none=True), sys.stdout)
 
         elif self.runtime.build_system == 'brew':
+            if self.reconcile:
+                raise click.UsageError("Reconciliation is not supported for Brew")
             await self.handle_brew_cve_flaws()
 
     async def handle_konflux_cve_flaws(self) -> Optional[ReleaseNotes]:
@@ -110,26 +114,19 @@ class AttachCveFlaws:
 
         # Fetch the bug IDs from the release notes
         bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
-        if not bug_ids:
-            self.logger.info("No bugs found in shipment")
-            return None
         self.logger.info(f"Found {len(bug_ids)} bugs in shipment")
 
-        # Get the bug trackers
-        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira'))
-        if not tracker_bugs:
-            self.logger.info("No tracker bugs found in shipment")
-            return None
+        # Get tracker bugs
+        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira')) if bug_ids else []
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
-        # Get the flaw bugs
-        tracker_flaws, flaw_bugs = get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs)
-        if not flaw_bugs:
-            self.logger.info("No eligible flaw bugs found in shipment")
-            return None
+        # Get flaw bugs
+        tracker_flaws, flaw_bugs = (
+            get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs) if tracker_bugs else ({}, [])
+        )
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
-        # Turn the advisory type into an RHSA
+        # Update the release notes
         self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
         return release_notes
 
@@ -183,38 +180,74 @@ class AttachCveFlaws:
         Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
         """
 
-        if release_notes.type != 'RHSA':
-            # Set the release notes type to RHSA
-            self.logger.info("Converting release notes to RHSA type.")
-            release_notes.type = 'RHSA'
+        if flaw_bugs:
+            if release_notes.type != 'RHSA':
+                # Set the release notes type to RHSA
+                self.logger.info("Converting release notes to RHSA type.")
+                release_notes.type = 'RHSA'
 
-        # Add the CVE component mapping to the cve field
-        cve_component_mapping = self.get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
-        release_notes.cves = [
-            CveAssociation(key=cve_id, component=component)
-            for cve_id, components in cve_component_mapping.items()
-            for component in components
-        ]
-        release_notes.cves.sort(key=lambda x: x.key)  # Sort by CVE ID
+            # Add the CVE component mapping to the cve field
+            cve_component_mapping = self.get_cve_component_mapping(
+                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, konflux=True
+            )
+            release_notes.cves = [
+                CveAssociation(key=cve_id, component=component)
+                for cve_id, components in cve_component_mapping.items()
+                for component in components
+            ]
+            release_notes.cves.sort(key=lambda x: x.key)  # Sort by CVE ID
 
-        add_bug_ids_to_release_notes(release_notes, [b.id for b in flaw_bugs])
+            set_bugzilla_bug_ids(release_notes, [b.id for b in flaw_bugs])
 
-        # Update synopsis, topic and solution
-        cve_boilerplate = get_advisory_boilerplate(
-            runtime=self.runtime, et_data=self.errata_config, art_advisory_key=self.advisory_kind, errata_type='RHSA'
-        )
-        release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
-        highest_impact = get_highest_security_impact(flaw_bugs)
-        release_notes.topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
-        release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
+            # Update synopsis, topic and solution
+            cve_boilerplate = get_advisory_boilerplate(
+                runtime=self.runtime,
+                et_data=self.errata_config,
+                art_advisory_key=self.advisory_kind,
+                errata_type='RHSA',
+            )
+            release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
+            highest_impact = get_highest_security_impact(flaw_bugs)
+            release_notes.topic = cve_boilerplate['topic'].format(
+                IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch
+            )
+            release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
 
-        # Update description
-        formatted_cve_list = '\n'.join(
-            [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
-        )
-        release_notes.description = cve_boilerplate['description'].format(
-            CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-        )
+            # Update description
+            formatted_cve_list = '\n'.join(
+                [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+            )
+            release_notes.description = cve_boilerplate['description'].format(
+                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
+            )
+        elif self.reconcile:
+            # Convert RHSA back to RHBA
+            if release_notes.type == 'RHBA':
+                self.logger.info("Advisory is already RHBA, skipping reconciliation")
+                return
+
+            self.logger.info("Converting RHSA back to RHBA")
+            release_notes.type = 'RHBA'
+
+            # Remove CVE associations
+            self.logger.info("Removing CVE associations")
+            release_notes.cves = None
+
+            # Remove flaw bugs if any are attached
+            set_bugzilla_bug_ids(release_notes, [])
+
+            # Reset release notes
+            self.logger.info("Resetting release notes text fields")
+            boilerplate = get_advisory_boilerplate(
+                runtime=self.runtime,
+                et_data=self.errata_config,
+                art_advisory_key=self.advisory_kind,
+                errata_type='RHBA',
+            )
+            release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
 
     async def handle_brew_cve_flaws(self):
         """
@@ -409,6 +442,9 @@ class AttachCveFlaws:
 @click.option(
     "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
 )
+@click.option(
+    "--reconcile", is_flag=True, help='Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable'
+)
 @click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
 @click.pass_obj
 @click_coroutine
@@ -418,6 +454,7 @@ async def attach_cve_flaws_cli(
     noop: bool,
     default_advisory_type: str,
     into_default_advisories: bool,
+    reconcile: bool,
     output: str,
 ):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
@@ -449,5 +486,6 @@ async def attach_cve_flaws_cli(
         default_advisory_type=default_advisory_type,
         output=output,
         noop=noop,
+        reconcile=reconcile,
     )
     await pipeline.run()

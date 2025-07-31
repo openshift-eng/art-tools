@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
 import gitlab
+from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 
 from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfig
@@ -56,7 +57,9 @@ def get_shipment_configs_from_mr(
         file_content = source_project.files.get(file_path, mr.source_branch)
         content = file_content.decode().decode('utf-8')
 
-        shipment_data = ShipmentConfig(**yaml.load(content))
+        # Convert CommentedMap to regular Python objects before creating Pydantic model
+        yaml_data = Model(yaml.load(content)).primitive()
+        shipment_data = ShipmentConfig(**yaml_data)
         if kind in shipment_configs:
             raise ValueError(f"Multiple shipment configs found for {kind}")
         shipment_configs[kind] = shipment_data
@@ -79,11 +82,28 @@ def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:
     return builds_by_kind
 
 
-def add_bug_ids_to_release_notes(release_notes: ReleaseNotes, bug_ids: Iterable[int | str]):
+def set_bugzilla_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[int | str]):
+    if not all(isinstance(bug_id, int) or bug_id.isdigit() for bug_id in bug_ids):
+        raise ValueError("All bug IDs must be integers")
+
     if not release_notes.issues:
         release_notes.issues = Issues(fixed=[])
-    existing_issues_ids = [b.id for b in release_notes.issues.fixed]
-    for issue_id in sorted(set(bug_ids)):
-        if issue_id not in existing_issues_ids:
-            source = "bugzilla.redhat.com" if (isinstance(issue_id, int) or issue_id.isdigit()) else "issues.redhat.com"
-            release_notes.issues.fixed.append(Issue(id=issue_id, source=source))
+    non_bugzilla_issues = [b for b in release_notes.issues.fixed if b.source != "bugzilla.redhat.com"]
+    fixed = non_bugzilla_issues + [
+        Issue(id=str(issue_id), source="bugzilla.redhat.com") for issue_id in sorted(set(bug_ids))
+    ]
+    fixed.sort(key=lambda x: x.id)
+    if not fixed:
+        release_notes.issues = None
+    else:
+        release_notes.issues = Issues(fixed=fixed)
+
+
+def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
+    non_jira_issues = [b for b in release_notes.issues.fixed if b.source != "issues.redhat.com"]
+    fixed = non_jira_issues + [Issue(id=str(issue_id), source="issues.redhat.com") for issue_id in sorted(set(bug_ids))]
+    fixed.sort(key=lambda x: x.id)
+    if not fixed:
+        release_notes.issues = None
+    else:
+        release_notes.issues = Issues(fixed=fixed)
