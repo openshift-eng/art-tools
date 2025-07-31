@@ -129,3 +129,11 @@ errata_post_erratum_url = errata_url + "/api/v1/erratum"
 errata_get_advisories_for_bug_url = errata_url + "/bugs/{id}/advisories.json"
 
 JIRA_API_FIELD = "https://issues.redhat.com/rest/api/2/field"
+
+JIRA_SECURITY_ALLOWLIST = {
+    "Red Hat Employee",
+    "Restricted",
+    "Red Hat Partner",
+    "Red Hat Engineering Authorized",
+    "Embargoed Security Issue",
+}
