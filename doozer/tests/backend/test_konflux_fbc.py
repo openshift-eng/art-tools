@@ -22,7 +22,6 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         self.group = "test-group"
         self.assembly = "test-assembly"
         self.ocp_version = (4, 9)
-        self.keep_templates = False
         self.upcycle = False
         self.push = False
         self.commit_message = "Test commit message"
@@ -34,7 +33,6 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
             ocp_version=self.ocp_version,
-            keep_templates=self.keep_templates,
             upcycle=self.upcycle,
             push=self.push,
             commit_message=self.commit_message,
@@ -116,31 +114,21 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         await self.importer._update_dir(metadata, build_repo, index_image, logger)
 
         mock_get_package_name.assert_called_once_with(metadata)
-        mock_get_catalog_blobs.assert_called_once_with(index_image, "test-package")
+        mock_get_catalog_blobs.assert_called_once_with(index_image, "test-package", migrate_level="none")
         self.assertEqual(mock_org_catalog_file.getvalue(), '---\nname: test-package\nschema: olm.package\n')
         mock_mkdir.assert_has_calls(
             [
                 call(parents=True, exist_ok=True),
-                call(parents=True, exist_ok=True),
-                call(parents=True, exist_ok=True),
             ]
         )
-        mock_opm.generate_basic_template.assert_called_once()
-        mock_opm.render_catalog_from_template.assert_called_once()
         mock_opm.generate_dockerfile.assert_called_once()
-        mock_rmtree.assert_has_calls(
-            [
-                call(self.base_dir.joinpath("catalog-migrate")),
-                call(self.base_dir.joinpath("catalog-templates")),
-            ]
-        )
 
     @patch("doozerlib.backend.konflux_fbc.opm.render")
     async def test_render_index_image(self, mock_render):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
         mock_render.assert_called_once_with(
-            "test-index-image-pullspec", auth=OpmRegistryAuth(path='/path/to/auth.json')
+            "test-index-image-pullspec", migrate_level="none", auth=OpmRegistryAuth(path='/path/to/auth.json')
         )
 
     def test_filter_catalog_blobs(self):
@@ -191,7 +179,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
                 {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
             ],
         )
-        mock_render_index_image.assert_called_once_with(index_image)
+        mock_render_index_image.assert_called_once_with(index_image, migrate_level="none")
 
     @patch("pathlib.Path.open")
     @patch("pathlib.Path.glob")

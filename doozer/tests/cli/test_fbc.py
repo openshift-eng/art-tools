@@ -26,7 +26,6 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
         self.fbc_import_cli = FbcImportCli(
             runtime=self.runtime,
             index_image="example.com/test/test-index-image:latest",
-            keep_templates=False,
             push=True,
             fbc_repo="https://example.com/test/fbc.git",
             message="Test commit",

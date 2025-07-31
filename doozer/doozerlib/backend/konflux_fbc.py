@@ -47,7 +47,6 @@ class KonfluxFbcImporter:
         group: str,
         assembly: str,
         ocp_version: Tuple[int, int],
-        keep_templates: bool,
         upcycle: bool,
         push: bool,
         commit_message: Optional[str] = None,
@@ -59,7 +58,6 @@ class KonfluxFbcImporter:
         self.group = group
         self.assembly = assembly
         self.ocp_version = ocp_version
-        self.keep_templates = keep_templates
         self.upcycle = upcycle
         self.push = push
         self.commit_message = commit_message
@@ -117,40 +115,22 @@ class KonfluxFbcImporter:
         repo_dir = build_repo.local_dir
         # Get package name of the operator
         package_name = await self._get_package_name(metadata)
+
         # Render the catalog from the index image
-        org_catalog_blobs = await self._get_catalog_blobs_from_index_image(index_image, package_name)
-
-        # Write catalog_blobs to catalog-migrate/<package>/catalog.json
-        org_catalog_dir = repo_dir.joinpath("catalog-migrate", package_name)
-        org_catalog_dir.mkdir(parents=True, exist_ok=True)
-        org_catalog_file_path = org_catalog_dir.joinpath("catalog.yaml")
-        logger.info("Writing original catalog blobs to %s", org_catalog_file_path)
-        with org_catalog_file_path.open('w') as f:
-            yaml.dump_all(org_catalog_blobs, f)
-
-        # Generate basic fbc template to catalog-templates/<package>.yaml
-        templates_dir = repo_dir.joinpath("catalog-templates")
-        templates_dir.mkdir(parents=True, exist_ok=True)
-        template_file = templates_dir.joinpath(f"{package_name}.yaml")
-        await opm.generate_basic_template(org_catalog_file_path, template_file)
-
-        logger.info("Cleaning up catalog-migrate")
-        shutil.rmtree(repo_dir.joinpath("catalog-migrate"))
-
-        # Render final FBC catalog at catalog/<package>/catalog.yaml from template
-        catalog_dir = repo_dir.joinpath("catalog", package_name)
-        catalog_dir.mkdir(parents=True, exist_ok=True)
-        catalog_file = catalog_dir.joinpath("catalog.yaml")
-        logger.info("Rendering catalog from template %s to %s", template_file, catalog_file)
         migrate_level = "none"
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
-        await opm.render_catalog_from_template(template_file, catalog_file, migrate_level=migrate_level, auth=self.auth)
+        catalog_blobs = await self._get_catalog_blobs_from_index_image(
+            index_image, package_name, migrate_level=migrate_level
+        )
 
-        # Clean up catalog-templates
-        if not self.keep_templates:
-            logger.info("Cleaning up catalog-templates")
-            shutil.rmtree(templates_dir)
+        # Write catalog_blobs to catalog/<package>/catalog.json
+        catalog_dir = repo_dir.joinpath("catalog", package_name)
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+        logger.info("Writing catalog blobs to %s", catalog_file_path)
+        with catalog_file_path.open('w') as f:
+            yaml.dump_all(catalog_blobs, f)
 
         # Generate Dockerfile
         df_path = repo_dir.joinpath("catalog.Dockerfile")
@@ -167,10 +147,11 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str) -> List[Dict]:
+    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
+            migrate_level=migrate_level,
         )
         return blobs
 
@@ -199,8 +180,10 @@ class KonfluxFbcImporter:
             filtered[package_name].append(blob)
         return filtered
 
-    async def _get_catalog_blobs_from_index_image(self, index_image: str, package_name):
-        blobs = await self._render_index_image(index_image)
+    async def _get_catalog_blobs_from_index_image(
+        self, index_image: str, package_name: str, migrate_level: str = "none"
+    ):
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
             raise IOError(f"Package {package_name} not found in index image")
