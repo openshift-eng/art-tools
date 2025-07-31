@@ -743,7 +743,7 @@ async def get_microshift_builds(group, assembly, env):
         with open(path) as f:
             result = json.load(f)
 
-    nvrs = cast(List[str], result["builds"])
+    nvrs = cast(List[str], result)
 
     # microshift builds are special in that they build for each assembly after payload is promoted
     # and they include the assembly name in its build name
