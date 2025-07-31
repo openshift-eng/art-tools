@@ -288,6 +288,9 @@
     "operator_index_mode": {
       "type": "string",
       "enum": ["pre-release", "pre-ga", "ga"]
+    },
+    "release_date": {
+      "type": "string"
     }
   },
   "additionalProperties": false
