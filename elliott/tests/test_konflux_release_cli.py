@@ -648,13 +648,14 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             dry_run=self.dry_run,
         )
 
-        # This test checks that pipeline does not create a release when the environment is already shipped
-        with self.assertRaises(ValueError) as context:
-            await cli.run()
+        with patch("elliottlib.cli.konflux_release_cli.LOGGER") as mock_logger:
+            result = await cli.run()
 
-        self.assertIn(
-            "existing release metadata is not empty for prod: {'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag.",
-            str(context.exception),
+        self.assertIsNone(result)
+
+        mock_logger.warning.assert_called_once_with(
+            "existing release metadata is not empty for prod: "
+            "{'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
         )
 
         # assert that release did not get created
