@@ -328,6 +328,7 @@ class GenAssemblyPipeline:
             start_build_sync(
                 build_version=build_version,
                 assembly=self.assembly,
+                build_system=self.build_system,
                 doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
                 # to build-sync because we always create branch on the base repo
                 doozer_data_gitref=branch,
