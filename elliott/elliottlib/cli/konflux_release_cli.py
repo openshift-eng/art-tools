@@ -1,6 +1,7 @@
 import os
 import sys
 from dataclasses import dataclass
+from typing import Optional
 
 import click
 from artcommonlib import logutil
@@ -14,7 +15,7 @@ from doozerlib.backend.konflux_client import (
     KonfluxClient,
 )
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_UI_HOST
-from kubernetes.dynamic import exceptions
+from kubernetes.dynamic import ResourceInstance, exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -64,7 +65,7 @@ class CreateReleaseCli:
         self.force = force
         self.kind = kind
 
-    async def run(self):
+    async def run(self) -> Optional[ResourceInstance]:
         self.runtime.initialize(build_system='konflux', with_shipment=True)
 
         LOGGER.info(f"Loading {self.config_path}...")
@@ -116,10 +117,11 @@ class CreateReleaseCli:
 
         env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
         if env_config.shipped() and not self.force:
-            raise ValueError(
+            LOGGER.warning(
                 f"existing release metadata is not empty for {self.release_env}: "
                 f"{env_config.model_dump()}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
             )
+            return None
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -356,4 +358,5 @@ async def new_release_cli(
         kind=kind,
     )
     release = await pipeline.run()
-    yaml.dump(release.to_dict(), sys.stdout)
+    if release:
+        yaml.dump(release.to_dict(), sys.stdout)
