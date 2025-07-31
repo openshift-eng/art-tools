@@ -808,7 +808,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
             fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]
         )
-        mock_shipment_metadata_update.shipment.data.releaseNotes.issues = Issues(fixed=[])
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
         self.assertEqual(updated_shipments_arg["metadata"], mock_shipment_metadata_update)

@@ -86,9 +86,9 @@ def set_bugzilla_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[int | st
     if not all(isinstance(bug_id, int) or bug_id.isdigit() for bug_id in bug_ids):
         raise ValueError("All bug IDs must be integers")
 
-    if not release_notes.issues:
-        release_notes.issues = Issues(fixed=[])
-    non_bugzilla_issues = [b for b in release_notes.issues.fixed if b.source != "bugzilla.redhat.com"]
+    non_bugzilla_issues = (
+        [b for b in release_notes.issues.fixed if b.source != "bugzilla.redhat.com"] if release_notes.issues else []
+    )
     fixed = non_bugzilla_issues + [
         Issue(id=str(issue_id), source="bugzilla.redhat.com") for issue_id in sorted(set(bug_ids))
     ]
@@ -100,7 +100,9 @@ def set_bugzilla_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[int | st
 
 
 def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
-    non_jira_issues = [b for b in release_notes.issues.fixed if b.source != "issues.redhat.com"]
+    non_jira_issues = (
+        [b for b in release_notes.issues.fixed if b.source != "issues.redhat.com"] if release_notes.issues else []
+    )
     fixed = non_jira_issues + [Issue(id=str(issue_id), source="issues.redhat.com") for issue_id in sorted(set(bug_ids))]
     fixed.sort(key=lambda x: x.id)
     if not fixed:
