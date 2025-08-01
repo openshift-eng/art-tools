@@ -972,19 +972,30 @@ class GenAssemblyCli:
         if env and env not in ['stage', 'prod']:
             raise ValueError(f"Invalid environment: {env}")
 
-        default_shipment = {
-            'advisories': [
-                {'kind': 'image'},
-                {'kind': 'extras'},
-                {'kind': 'metadata'},
-                {'kind': 'fbc'},
-            ],
-        }
+        # Define advisory templates as constants to avoid repeated creation
+        STANDARD_ADVISORIES = [
+            {'kind': 'image'},
+            {'kind': 'extras'},
+            {'kind': 'metadata'},
+            {'kind': 'fbc'},
+        ]
+
+        PRERELEASE_ADVISORIES = [
+            {'kind': 'fbc'},
+            {'kind': 'prerelease'},
+        ]
+
+        # Choose advisory template based on pre_ga_mode
+        advisories = PRERELEASE_ADVISORIES if self.pre_ga_mode == 'prerelease' else STANDARD_ADVISORIES
+
+        # Build shipment dict efficiently
+        shipment = {'advisories': advisories}
+
+        # Add environment if specified
         if env:
-            default_shipment['env'] = env
-        if self.pre_ga_mode == 'prerelease':
-            default_shipment['advisories'].append({'kind': 'prerelease'})
-        return default_shipment
+            shipment['env'] = env
+
+        return shipment
 
     def _get_previous_shipment_info(self) -> dict:
         """
