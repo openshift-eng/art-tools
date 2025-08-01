@@ -107,6 +107,7 @@ class FindBugsCli:
 
         builds_by_advisory_kind = get_builds_by_advisory_kind(self.runtime)
         bugs_by_type, _ = categorize_bugs_by_type(
+            runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
             permitted_bug_ids=included_bug_ids,
