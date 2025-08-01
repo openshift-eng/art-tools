@@ -627,7 +627,7 @@ class BugTracker:
 
     @staticmethod
     def get_corresponding_flaw_bugs(
-        tracker_bugs: List[Bug], flaw_bug_tracker, brew_api=None, strict: bool = True, verbose: bool = False
+        tracker_bugs: List[Bug], flaw_bug_tracker, strict: bool = True, verbose: bool = False
     ) -> (Dict, Dict):
         """Get corresponding flaw bug objects for given list of tracker bug objects.
         flaw_bug_tracker object to fetch flaw bugs from
@@ -649,12 +649,6 @@ class BugTracker:
         for t in tracker_bugs:
             component = t.whiteboard_component
             if not component:
-                trackers_with_invalid_components.add(t.id)
-                continue
-
-            # is this component a valid package name in brew?
-            if brew_api and not brew_api.getPackageID(component):
-                logger.info(f'package `{component}` not found in brew')
                 trackers_with_invalid_components.add(t.id)
                 continue
 
@@ -1515,7 +1509,7 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
     return False
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], brew_api=None) -> (Dict, List):
+def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug]) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -1523,7 +1517,6 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], brew_api=No
     tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
         tracker_bugs,
         flaw_bug_tracker,
-        brew_api,
     )
     logger.info(
         f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'

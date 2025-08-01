@@ -78,7 +78,7 @@ class TestBugTracker(unittest.TestCase):
         )
         brew_api = flexmock()
         brew_api.should_receive("getPackageID").and_return(True)
-        actual = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), brew_api, strict=False)
+        actual = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), strict=False)
         self.assertEqual(expected, actual)
 
     def test_get_corresponding_flaw_bugs_strict(self):
@@ -104,7 +104,6 @@ class TestBugTracker(unittest.TestCase):
             BugTracker.get_corresponding_flaw_bugs,
             tracker_bugs,
             BugzillaBugTracker({}),
-            brew_api,
             strict=True,
         )
 
