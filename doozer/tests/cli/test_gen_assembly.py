@@ -395,11 +395,11 @@ class TestGenAssemblyCli(TestCase):
     def test_get_shipment_info_ec1_from_ec0(self):
         runtime = MagicMock(build_system='konflux')
         shipment_info = {
-            'advisories': [
-                {'kind': 'image', 'live_id': 123},
-                {'kind': 'extras', 'live_id': 456},
-                {'kind': 'metadata', 'live_id': 789},
-                {'kind': 'fbc'},
+            "advisories": [
+                {"kind": "image", "live_id": 123},
+                {"kind": "extras", "live_id": 456},
+                {"kind": "metadata", "live_id": 789},
+                {"kind": "fbc"},
             ]
         }
         runtime.get_releases_config.return_value = Model(

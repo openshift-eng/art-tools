@@ -982,7 +982,7 @@ class GenAssemblyCli:
 
         PRERELEASE_ADVISORIES = [
             {'kind': 'prerelease'},
-            {'kind': 'fbc_prerelease'},
+            {'kind': 'fbc'},
         ]
 
         # Choose advisory template based on pre_ga_mode
