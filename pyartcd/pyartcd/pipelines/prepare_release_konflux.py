@@ -21,13 +21,12 @@ import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.cli.release_gen_payload import (
     assembly_imagestream_base_name_generic,
     default_imagestream_namespace_base_name,
@@ -35,8 +34,8 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.shipment_model import Issue, Issues, ShipmentConfig, Snapshot, SnapshotSpec, Tools
-from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
+from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
+from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_jira_bug_ids
 from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -210,7 +209,7 @@ class PrepareReleaseKonfluxPipeline:
             await self.prepare_rpm_advisory()
             await self.prepare_shipment()
         except Exception as ex:
-            self.logger.error(f"Unable to prepare release: {ex}")
+            self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
             err = ex
         finally:
             self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
@@ -511,7 +510,7 @@ class PrepareReleaseKonfluxPipeline:
             if kind == "fbc":
                 continue
             bug_ids = await self.find_bugs(kind, permissive=permissive)
-            add_bug_ids_to_release_notes(shipment.shipment.data.releaseNotes, bug_ids)
+            set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
         # Update shipment MR with found bugs
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -758,7 +757,8 @@ class PrepareReleaseKonfluxPipeline:
             kind,
         ]
         stdout = await self.execute_command_with_logging(create_cmd)
-        out = yaml.load(stdout)
+        # Convert CommentedMap to regular Python objects before creating Pydantic model
+        out = Model(yaml.load(stdout)).primitive()
         shipment = ShipmentConfig(**out)
 
         if self.inject_build_data_repo:
@@ -888,13 +888,14 @@ class PrepareReleaseKonfluxPipeline:
         attach_cve_flaws_command = self._elliott_base_command + [
             'attach-cve-flaws',
             f'--use-default-advisory={kind}',
+            '--reconcile',
             '--output=yaml',
         ]
 
         self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
         stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
-            shipment.shipment.data.releaseNotes = yaml.load(stdout)
+            shipment.shipment.data.releaseNotes = ReleaseNotes(**Model(yaml.load(stdout)).primitive())
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
@@ -1036,6 +1037,9 @@ class PrepareReleaseKonfluxPipeline:
                 await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
 
                 # Trigger CI pipeline after marking as ready
+                # wait for 30 seconds to ensure the MR is updated
+                self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
+                await asyncio.sleep(30)
                 await self.trigger_ci_pipeline(project, mr.source_branch)
         else:
             self.logger.info("MR is already ready (no draft prefix found)")
