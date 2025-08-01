@@ -4,10 +4,9 @@ import json
 import logging
 import os
 import tempfile
-import typing
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import cast
+from typing import Dict, List, Optional, cast
 
 import aiohttp
 import artcommonlib.util
@@ -16,18 +15,22 @@ import dateutil.parser
 import pycares
 import yaml
 from artcommonlib import exectools
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
+from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge
 from async_lru import alru_cache
 
+from doozerlib import rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
@@ -79,10 +82,11 @@ class ConfigScanSources:
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
-        self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
-        self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
+        self.latest_image_build_records_map: Dict[str, KonfluxBuildRecord] = {}
+        self.latest_rpm_build_records_map: Dict[str, Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
+        self.rhcos_status = []
         self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
     async def run(self):
@@ -103,6 +107,10 @@ class ConfigScanSources:
         self.image_tree = self.generate_dependency_tree(self.runtime.image_tree)
         for level in sorted(self.image_tree.keys()):
             await self.scan_images(self.image_tree[level])
+
+        # Check RHCOS status if the kubeconfig is provided
+        if self.ci_kubeconfig:
+            await self.detect_rhcos_status()
 
         # Print the output report
         self.generate_report()
@@ -349,14 +357,14 @@ class ConfigScanSources:
             tasks.extend([_find_target_build(rpm, f'el{target}') for target in rpm.determine_rhel_targets()])
         await asyncio.gather(*tasks)
 
-    async def find_latest_image_builds(self, image_names: typing.List[str]):
+    async def find_latest_image_builds(self, image_names: List[str]):
         self.logger.info('Gathering latest image build records information...')
         latest_image_builds = await asyncio.gather(
             *[self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names]
         )
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
-    async def scan_images(self, image_names: typing.List[str]):
+    async def scan_images(self, image_names: List[str]):
         # Do not scan images that have been disabled for Konflux operations
         image_names = filter(lambda name: self.runtime.image_map[name].config.konflux.mode != 'disabled', image_names)
 
@@ -729,7 +737,7 @@ class ConfigScanSources:
         return builder_image_nvr
 
     @alru_cache
-    async def get_builder_build_start_time(self, builder_build_nvr: str) -> typing.Optional[datetime]:
+    async def get_builder_build_start_time(self, builder_build_nvr: str) -> Optional[datetime]:
         """
         Given a builder pullspec, determine the build start time.
         First check if the build is tracked inside the Konflux DB.
@@ -994,6 +1002,144 @@ class ConfigScanSources:
             self.logger.warning('Excluding image %s from the report as it is not enabled in Konflux', image_name)
         return enabled
 
+    async def detect_rhcos_status(self):
+        """
+        gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
+        @return a list of status entries like:
+            {
+                'name': "4.2-x86_64-priv",
+                'changed': False,
+                'reason': "could not find an RHCOS build to sync",
+            }
+        """
+        statuses = []
+
+        version = self.runtime.get_minor_version()
+        primary_container = get_primary_container_name(self.runtime)
+        for arch in self.runtime.arches:
+            for private in (False, True):
+                status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, arch, private)
+                    latest_rhcos_value = self.latest_rhcos_node_shasum(version, arch, private)
+                else:
+                    tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, arch, private)
+                    latest_rhcos_value = self.latest_rhcos_build_id(version, arch, private)
+
+                if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
+                    status['updated'] = True
+                    status['changed'] = True
+                    status['reason'] = (
+                        f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
+                    )
+                    statuses.append(status)
+                # check outdate rpms in rhcos
+                pullspec_for_tag = dict()
+                build_id = ""
+                for container_conf in self.runtime.group_config.rhcos.payload_tags:
+                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, arch, private).latest_container(
+                        container_conf
+                    )
+                    pullspec_for_tag[container_conf.name] = pullspec
+                non_latest_rpms = await rhcos.RHCOSBuildInspector(
+                    self.runtime, pullspec_for_tag, arch, build_id
+                ).find_non_latest_rpms(exclude_rhel=True)
+                non_latest_rpms_filtered = []
+
+                # exclude rpm if non_latest_rpms in rhel image rpm list
+                exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+                for installed_rpm, latest_rpm, repo in non_latest_rpms:
+                    if any(excluded in installed_rpm for excluded in exclude_rpms):
+                        self.logger.info(
+                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                        )
+                    else:
+                        non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
+                if non_latest_rpms_filtered:
+                    status['outdated'] = True
+                    status['changed'] = True
+                    status['reason'] = ";\n".join(
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+                    )
+                    statuses.append(status)
+
+        self.rhcos_status = statuses
+
+    def tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:
+        """get latest coreos image diget from tagged RHCOS in given imagestream"""
+        base_namespace = rgp.default_imagestream_namespace_base_name()
+        base_name = rgp.default_imagestream_base_name(version, self.runtime)
+        namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
+        stdout, _ = exectools.cmd_assert(
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
+            retries=3,
+            pollrate=5,
+            strip=True,
+        )
+
+        try:
+            istagdata = json.loads(stdout)
+            # shasum format is sha256:66d827b7f70729ca9dc6f7a2358df8fb37c82380cf36ca9653efff8605cf3a82
+            shasum = istagdata['image']['metadata']['name']
+        except KeyError:
+            self.logger.error('Could not find .metadata.name in RHCOS imagestream:\n%s', stdout)
+            raise
+
+        return shasum
+
+    def latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
+        """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
+        go_arch = go_arch_for_brew_arch(arch)
+        rhcos_index = next(
+            (tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), ""
+        )
+        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch)
+        return rhcos_info['digest']
+
+    def tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:
+        """determine the most recently tagged RHCOS in given imagestream"""
+        base_namespace = rgp.default_imagestream_namespace_base_name()
+        base_name = rgp.default_imagestream_base_name(version, self.runtime)
+        namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
+        stdout, _ = exectools.cmd_assert(
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
+            retries=3,
+            pollrate=5,
+            strip=True,
+        )
+
+        try:
+            istagdata = json.loads(stdout)
+            labels = istagdata['image']['dockerImageMetadata']['Config']['Labels']
+        except KeyError:
+            self.logger.error(
+                'Could not find .image.dockerImageMetadata.Config.Labels in RHCOS imageMetadata:\n%s', stdout
+            )
+            raise
+
+        build_id = None
+        if not (build_id := labels.get('org.opencontainers.image.version', None)):
+            build_id = labels.get('version', None)
+
+        return build_id
+
+    def latest_rhcos_build_id(self, version, arch, private) -> Optional[str]:
+        """
+        Wrapper to return None if anything goes wrong, which will be taken as no change
+        """
+
+        try:
+            return rhcos.RHCOSBuildFinder(self.runtime, version, arch, private).latest_rhcos_build_id()
+
+        except rhcos.RHCOSNotFound as ex:
+            # don't let flakiness in rhcos lookups prevent us from scanning regular builds;
+            # if anything else changed it will sync anyway.
+            self.logger.warning(
+                f"could not determine RHCOS build for {version}-{arch}{'-priv' if private else ''}: {ex}"
+            )
+            return None
+
     def generate_report(self):
         image_results = []
         changing_image_names = [name for name in self.changing_image_names]
@@ -1013,7 +1159,11 @@ class ConfigScanSources:
                     }
                 )
 
-        results = dict(images=image_results)
+        results = dict(
+            images=image_results,
+            rpms=[meta.distgit_key for meta in self.changing_rpms],
+            rhcos=self.rhcos_status,
+        )
 
         self.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
 
