@@ -1,4 +1,5 @@
 import logging
+import os
 
 import click
 import yaml
@@ -94,6 +95,7 @@ class Ocp4ScanPipeline:
             f'--group={group_param}',
             f'--assembly={self.assembly}',
             '--build-system=konflux',
+            f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
@@ -131,6 +133,10 @@ class Ocp4ScanPipeline:
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
+    # KUBECONFIG env var must be defined in order to scan sources
+    if not os.getenv('KUBECONFIG'):
+        raise RuntimeError('Environment variable KUBECONFIG must be defined')
+
     jenkins.init_jenkins()
 
     pipeline = Ocp4ScanPipeline(
