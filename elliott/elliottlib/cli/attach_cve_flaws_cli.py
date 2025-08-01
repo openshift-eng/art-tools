@@ -9,6 +9,7 @@ from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from errata_tool import Erratum
 
 from elliottlib import constants
@@ -22,6 +23,25 @@ from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_bugzilla
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
+
+
+def get_konflux_component_by_component(runtime: Runtime, component_name: str) -> Optional[str]:
+    """Get the konflux build component name from the component name
+    For example, "sriov-network-device-plugin-container" -> "ose-4-18-sriov-network-device-plugin"
+    """
+    if not runtime.image_metas():
+        raise ValueError("No image metas found. Forgot to initialize runtime with mode='images'?")
+
+    image_meta = None
+    for image in runtime.image_metas():
+        if component_name == image.get_component_name():
+            image_meta = image
+            break
+    if not image_meta:
+        return None
+
+    application = KonfluxImageBuilder.get_application_name(runtime.group)
+    return KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
 
 
 class AttachCveFlaws:
@@ -313,10 +333,12 @@ class AttachCveFlaws:
 
     @staticmethod
     def get_cve_component_mapping(
+        runtime: Runtime,
         flaw_bugs: Iterable[Bug],
         attached_tracker_bugs: List[Bug],
         tracker_flaws: Dict[int, Iterable],
         attached_components: Set = None,
+        konflux: bool = False,
     ) -> Dict[str, Set[str]]:
         """
         Get a mapping of CVE IDs to component names based on the attached tracker bugs and flaw bugs.
@@ -329,6 +351,12 @@ class AttachCveFlaws:
             whiteboard_component = tracker.whiteboard_component
             if not whiteboard_component:
                 raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
+
+            if konflux:
+                whiteboard_component = get_konflux_component_by_component(runtime, whiteboard_component)
+                if not whiteboard_component:
+                    raise ValueError(f"Component {whiteboard_component} could not be translated")
+
             if whiteboard_component == "rhcos":
                 # rhcos trackers are special, since they have per-architecture component names
                 # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
@@ -361,7 +389,7 @@ class AttachCveFlaws:
         attached_builds = await self.errata_api.get_builds_flattened(advisory.errata_id)
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
         cve_components_mapping = self.get_cve_component_mapping(
-            flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
         )
 
         await AsyncErrataUtils.associate_builds_with_cves(
@@ -477,7 +505,7 @@ async def attach_cve_flaws_cli(
 
     if sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories])) != 1:
         raise click.BadParameter("Use one of --use-default-advisory or --advisory or --into-default-advisories")
-    runtime.initialize()
+    runtime.initialize(mode="images")
 
     pipeline = AttachCveFlaws(
         runtime=runtime,
