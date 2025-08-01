@@ -652,7 +652,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_find_builds_all.side_effect = find_builds_all
 
-        def find_or_build_bundle_builds(nvrs):
+        def find_or_build_bundle_builds(nvrs, "stream"):
             return ["extras-bundle-nvr"]
 
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
