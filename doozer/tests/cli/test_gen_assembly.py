@@ -382,9 +382,6 @@ class TestGenAssemblyCli(TestCase):
         shipment = gacli._get_shipment_info()
         expected = {
             'advisories': [
-                {'kind': 'image'},
-                {'kind': 'extras'},
-                {'kind': 'metadata'},
                 {'kind': 'fbc'},
                 {'kind': 'prerelease'},
             ],
