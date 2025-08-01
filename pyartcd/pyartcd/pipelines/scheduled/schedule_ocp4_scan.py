@@ -2,6 +2,7 @@ import asyncio
 
 import click
 from artcommonlib import redis
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 
 from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -42,6 +43,12 @@ async def ocp4_scan(runtime: Runtime, version: tuple):
     jenkins.init_jenkins()
     lock_manager = LockManager([redis.redis_url()])
     try:
-        await asyncio.gather(*[run_for(v, runtime, lock_manager) for v in version])
+        await asyncio.gather(
+            *[
+                run_for(v, runtime, lock_manager)
+                for v in version
+                if version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            ]
+        )
     finally:
         await lock_manager.destroy()
