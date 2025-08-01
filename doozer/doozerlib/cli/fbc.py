@@ -225,6 +225,9 @@ class FbcMergeCli:
             else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES, "__merged")
         )
 
+        fbc_git_username = os.environ.get("FBC_GIT_USERNAME")
+        fbc_git_password = os.environ.get("FBC_GIT_PASSWORD")
+
         merger = KonfluxFbcFragmentMerger(
             working_dir=working_dir,
             group=runtime.group,
@@ -233,7 +236,9 @@ class FbcMergeCli:
             dry_run=self.dry_run,
             commit_message=self.message,
             fbc_git_repo=self.fbc_repo,
-            fbc_branch=self.fbc_branch or f"art-{runtime.group}-fbc-stage",
+            fbc_git_branch=self.fbc_branch or f"art-{runtime.group}-fbc-stage",
+            fbc_git_username=fbc_git_username,
+            fbc_git_password=fbc_git_password,
             registry_auth=self.registry_auth,
             konflux_context=self.konflux_context,
             konflux_kubeconfig=self.konflux_kubeconfig,
@@ -270,7 +275,10 @@ class FbcMergeCli:
 )
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
-    '--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO
+    '--fbc-repo',
+    metavar='FBC_REPO',
+    help='The git repository to push the FBC to. Use FBC_GIT_USERNAME and FBC_GIT_PASSWORD environment variables to set credentials.',
+    default=constants.ART_FBC_GIT_REPO,
 )
 @click.option(
     '--fbc-branch',
