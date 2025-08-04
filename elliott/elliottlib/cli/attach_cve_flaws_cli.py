@@ -15,6 +15,7 @@ from errata_tool import Erratum
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -284,7 +285,6 @@ class AttachCveFlaws:
         exit_code = 0
         flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
         self.errata_api = AsyncErrataAPI(self.errata_config.get("server", constants.errata_url))
-        brew_api = self.runtime.build_retrying_koji_client()
 
         for advisory_id in advisories:
             self.logger.info("Getting advisory %s", advisory_id)
@@ -295,7 +295,7 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api)
+            tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers)
 
             try:
                 if flaw_bugs:
@@ -348,14 +348,23 @@ class AttachCveFlaws:
         cve_components_mapping: Dict[str, Set[str]] = {}
 
         for tracker in attached_tracker_bugs:
-            whiteboard_component = tracker.whiteboard_component
-            if not whiteboard_component:
+            if not tracker.whiteboard_component:
                 raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
 
-            if konflux:
-                whiteboard_component = get_konflux_component_by_component(runtime, whiteboard_component)
-                if not whiteboard_component:
+            whiteboard_component = tracker.whiteboard_component
+            if "openshift4/" in whiteboard_component:
+                # this means the component here is the delivery repo name
+                # we need to translate it to build component name
+                new_component = get_component_by_delivery_repo(runtime, whiteboard_component)
+                if not new_component:
                     raise ValueError(f"Component {whiteboard_component} could not be translated")
+                whiteboard_component = new_component
+
+            if konflux:
+                new_component = get_konflux_component_by_component(runtime, whiteboard_component)
+                if not new_component:
+                    raise ValueError(f"Component {whiteboard_component} could not be translated")
+                whiteboard_component = new_component
 
             if whiteboard_component == "rhcos":
                 # rhcos trackers are special, since they have per-architecture component names
