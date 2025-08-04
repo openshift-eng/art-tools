@@ -906,9 +906,9 @@ class GenAssemblyCli:
             raise ValueError("For non standard release you need to manually set release date from job")
         self.logger.info("Release date not provided. Fetching release date from release schedule...")
         try:
-            self.release_date = await get_assembly_release_date_async(self.release_name)
+            self.release_date = await get_assembly_release_date_async(self.gen_assembly_name)
         except Exception as ex:
-            raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
+            raise ValueError(f"Failed to fetch release date from release schedule for {self.gen_assembly_name}: {ex}")
         self.logger.info("Release date: %s", self.release_date)
         return self.release_date
 
