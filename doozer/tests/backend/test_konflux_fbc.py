@@ -414,7 +414,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
-        mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
+        mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build, migrate_level="none")
         # Replace deprecated assertDictContainsSubset with explicit checks
         expected_envs = {
             "__doozer_group": "test-group",
@@ -533,7 +533,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}],
             }
         ]
-        actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build)
+        actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build, migrate_level="none")
         self.assertEqual(
             actual,
             (
@@ -547,7 +547,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 },
             ),
         )
-        mock_render.assert_called_once_with("test-image-pullspec", migrate=True, auth=ANY)
+        mock_render.assert_called_once_with("test-image-pullspec", migrate_level="none", auth=ANY)
 
     def test_categorize_catalog_blobs(self):
         catalog_blobs = [
