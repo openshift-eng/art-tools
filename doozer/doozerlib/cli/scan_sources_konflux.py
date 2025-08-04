@@ -1194,7 +1194,7 @@ class ConfigScanSources:
 @click.option(
     "--ci-kubeconfig",
     metavar='KC_PATH',
-    required=False,
+    required=True,
     help="File containing kubeconfig for looking at release-controller imagestreams",
 )
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
