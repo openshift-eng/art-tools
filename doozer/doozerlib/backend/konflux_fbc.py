@@ -625,6 +625,13 @@ class KonfluxFbcRebaser:
     ) -> str:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
+        group_config = metadata.runtime.group_config
+        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        # OCP 4.17+ requires bundle object to CSV metadata migration.
+        migrate_level = "none"
+        if ocp_version >= (4, 17):
+            migrate_level = "bundle-object-to-csv-metadata"
+
         # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
         delivery_repo_name = metadata.get_olm_bundle_delivery_repo_name()
 
@@ -640,7 +647,9 @@ class KonfluxFbcRebaser:
             raise IOError("Channel name not found in bundle image")
         channel_names = channel_names.split(",")
         default_channel_name = labels.get("operators.operatorframework.io.bundle.channel.default.v1")
-        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(bundle_build)
+        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(
+            bundle_build, migrate_level=migrate_level
+        )
         if olm_package != labels.get("operators.operatorframework.io.bundle.package.v1"):
             raise IOError(
                 f"Package name mismatch: {olm_package} != {labels.get('operators.operatorframework.io.bundle.package.v1')}"
@@ -775,8 +784,6 @@ class KonfluxFbcRebaser:
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
         if not dockerfile_path.is_file():
             logger.info("Dockerfile %s does not exist, creating a new one", dockerfile_path)
-            group_config = metadata.runtime.group_config
-            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
             base_image_format = (
                 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
             )
@@ -872,16 +879,17 @@ class KonfluxFbcRebaser:
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
 
-    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord):
+    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord, migrate_level: str):
         """Fetch the olm.bundle blob for the given bundle build.
 
         :param bundle_build: The bundle build record.
+        :param migrate_level: The migration level to use.
         :return: A tuple of (bundle name, package name, bundle blob).
         """
         registry_auth = opm.OpmRegistryAuth(
             path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
-        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate=True, auth=registry_auth)
+        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate_level=migrate_level, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
             raise IOError(f"Expected exactly one rendered blob, but got {len(rendered_blobs)}")
         olm_bundle_blob = rendered_blobs[0]
