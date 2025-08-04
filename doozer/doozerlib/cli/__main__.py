@@ -46,6 +46,7 @@ from doozerlib.cli.images import (
     images_push_distgit,
     images_rebase,
     images_revert,
+    images_show_ancestors,
     images_show_tree,
     query_rpm_version,
 )
