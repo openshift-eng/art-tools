@@ -95,7 +95,6 @@ class Ocp4ScanPipeline:
             f'--group={group_param}',
             f'--assembly={self.assembly}',
             '--build-system=konflux',
-            f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
@@ -103,6 +102,7 @@ class Ocp4ScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
+                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
             ]
         )
         if self.runtime.dry_run:
