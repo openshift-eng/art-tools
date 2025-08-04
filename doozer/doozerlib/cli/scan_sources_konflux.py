@@ -15,7 +15,7 @@ import dateutil.parser
 import pycares
 import yaml
 from artcommonlib import exectools
-from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch, brew_arch_for_go_arch
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -1017,14 +1017,15 @@ class ConfigScanSources:
         version = self.runtime.get_minor_version()
         primary_container = get_primary_container_name(self.runtime)
         for arch in self.runtime.arches:
+            brew_arch = brew_arch_for_go_arch(arch)
             for private in (False, True):
-                status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
+                status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                    tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, arch, private)
-                    latest_rhcos_value = self.latest_rhcos_node_shasum(version, arch, private)
+                    tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
+                    latest_rhcos_value = self.latest_rhcos_node_shasum(version, brew_arch, private)
                 else:
-                    tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, arch, private)
-                    latest_rhcos_value = self.latest_rhcos_build_id(version, arch, private)
+                    tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
+                    latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
 
                 if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
                     status['updated'] = True
@@ -1037,12 +1038,12 @@ class ConfigScanSources:
                 pullspec_for_tag = dict()
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
-                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, arch, private).latest_container(
+                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, brew_arch, private).latest_container(
                         container_conf
                     )
                     pullspec_for_tag[container_conf.name] = pullspec
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
-                    self.runtime, pullspec_for_tag, arch, build_id
+                    self.runtime, pullspec_for_tag, brew_arch, build_id
                 ).find_non_latest_rpms(exclude_rhel=True)
                 non_latest_rpms_filtered = []
 
@@ -1059,7 +1060,7 @@ class ConfigScanSources:
                     status['outdated'] = True
                     status['changed'] = True
                     status['reason'] = ";\n".join(
-                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({brew_arch}) when {latest_rpm} was available in repo {repo}"
                         for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
                     )
                     statuses.append(status)
