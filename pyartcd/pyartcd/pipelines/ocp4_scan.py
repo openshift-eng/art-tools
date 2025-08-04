@@ -116,12 +116,6 @@ class Ocp4ScanPipeline:
                     build_system="brew",
                 )
 
-            jenkins.start_build_sync(
-                build_version=self.version,
-                assembly="stream",
-                build_system="konflux",
-            )
-
         if changes is False:
             self.logger.info('*** No changes detected')
             jenkins.update_title(' [NO CHANGES]')
