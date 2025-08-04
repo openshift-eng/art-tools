@@ -15,7 +15,7 @@ import dateutil.parser
 import pycares
 import yaml
 from artcommonlib import exectools
-from artcommonlib.arch_util import go_arch_for_brew_arch, brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -1038,9 +1038,9 @@ class ConfigScanSources:
                 pullspec_for_tag = dict()
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
-                    build_id, pullspec = rhcos.RHCOSBuildFinder(self.runtime, version, brew_arch, private).latest_container(
-                        container_conf
-                    )
+                    build_id, pullspec = rhcos.RHCOSBuildFinder(
+                        self.runtime, version, brew_arch, private
+                    ).latest_container(container_conf)
                     pullspec_for_tag[container_conf.name] = pullspec
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
                     self.runtime, pullspec_for_tag, brew_arch, build_id
