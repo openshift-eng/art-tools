@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+import asyncstdlib as a
 import httpx
 import truststore
 from artcommonlib import util as artlib_util
@@ -30,7 +31,7 @@ from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
-from kubernetes.dynamic import resource
+from kubernetes_asyncio.dynamic import resource
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ class KonfluxFbcImporter:
                 yaml.dump_all(catalog_blobs, f)
         elif catalog_dir.exists():
             logger.info("Catalog blobs are empty. Removing existing catalog directory %s", catalog_dir)
-            shutil.rmtree(catalog_dir)
+            await asyncio.to_thread(shutil.rmtree, catalog_dir)
 
         # Generate Dockerfile
         df_path = repo_dir.joinpath("catalog.Dockerfile")
@@ -280,12 +281,15 @@ class KonfluxFbcFragmentMerger:
         self.skip_checks = skip_checks
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
-        self._konflux_client = KonfluxClient.from_kubeconfig(
+
+    @a.cached_property
+    async def _konflux_client(self):
+        return await KonfluxClient.from_kubeconfig(
             config_file=self.konflux_kubeconfig,
             default_namespace=self.konflux_namespace,
             context=self.konflux_context,
             dry_run=self.dry_run,
-            logger=logger,
+            logger=self._logger,
         )
 
     async def run(self, fragments: Collection[str], target_index: str):
@@ -296,7 +300,8 @@ class KonfluxFbcFragmentMerger:
         major = int(self.group_config.get("vars", {}).get("MAJOR"))
         minor = int(self.group_config.get("vars", {}).get("MINOR"))
         logger = self._logger
-        konflux_client = self._konflux_client
+        konflux_client = await self._konflux_client
+        await konflux_client.verify_connection()
 
         repo_dir = self.working_dir
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_git_branch, repo_dir)
@@ -376,6 +381,7 @@ class KonfluxFbcFragmentMerger:
             logger.info(f"Attempt {attempt + 1} of {retries} to start the build...")
             error = None
             created_plr = await self._start_build(
+                konflux_client=konflux_client,
                 build_repo=build_repo,
                 output_image=target_index,
             )
@@ -482,9 +488,8 @@ class KonfluxFbcFragmentMerger:
         }
         return target_idms
 
-    async def _start_build(self, build_repo: BuildRepo, output_image: str):
+    async def _start_build(self, konflux_client: KonfluxClient, build_repo: BuildRepo, output_image: str):
         logger = self._logger
-        konflux_client = self._konflux_client
         commit_sha = build_repo.commit_hash
         assert commit_sha, "Commit SHA should not be empty; Doozer bug?"
 
@@ -1023,8 +1028,11 @@ class KonfluxFbcBuilder:
         self.dry_run = dry_run
         self._record_logger = record_logger
         self._logger = logger.getChild(self.__class__.__name__)
-        self._konflux_client = KonfluxClient.from_kubeconfig(
-            konflux_namespace, konflux_kubeconfig, konflux_context, dry_run=self.dry_run
+
+    @a.cached_property
+    async def _konflux_client(self) -> KonfluxClient:
+        return await KonfluxClient.from_kubeconfig(
+            self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run
         )
 
     @staticmethod
@@ -1047,6 +1055,8 @@ class KonfluxFbcBuilder:
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         logger.info("Building FBC for %s", metadata.distgit_key)
+
+        konflux_client = await self._konflux_client
 
         record = {
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
@@ -1131,7 +1141,7 @@ class KonfluxFbcBuilder:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun, _ = await self._konflux_client.wait_for_pipelinerun(
+                pipelinerun, _ = await konflux_client.wait_for_pipelinerun(
                     pipelinerun_name, namespace=self.konflux_namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
@@ -1176,7 +1186,7 @@ class KonfluxFbcBuilder:
         # Ensure the Application resource exists
         app_name = self.get_application_name(self.group)
         logger.info(f"Using Konflux application: {app_name}")
-        konflux_client = self._konflux_client
+        konflux_client = await self._konflux_client
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists

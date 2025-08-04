@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple, cast
 
 import aiofiles
+import asyncstdlib as a
 import yaml
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
@@ -470,14 +471,21 @@ class KonfluxOlmBundleBuilder:
         self.dry_run = dry_run
         self._record_logger = record_logger
         self._logger = logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(
-            self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run
+
+    @a.cached_property
+    async def _konflux_client(self) -> KonfluxClient:
+        return await KonfluxClient.from_kubeconfig(
+            self.konflux_namespace,
+            self.konflux_kubeconfig,
+            self.konflux_context,
+            dry_run=self.dry_run,
+            logger=self._logger,
         )
 
     async def build(self, metadata: ImageMetadata):
         """Build a bundle with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
-        konflux_client = self._konflux_client
+        konflux_client = await self._konflux_client
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
         df_path = bundle_dir.joinpath("Dockerfile")
 
@@ -668,7 +676,7 @@ class KonfluxOlmBundleBuilder:
         """Start a build with Konflux."""
         if not bundle_build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
-        konflux_client = self._konflux_client
+        konflux_client = await self._konflux_client
         if additional_tags is None:
             additional_tags = []
         target_branch = bundle_build_repo.branch or bundle_build_repo.commit_hash

@@ -2,7 +2,13 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
-from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
+from doozerlib.backend.konflux_client import (
+    API_VERSION,
+    KIND_APPLICATION,
+    KIND_RELEASE,
+    KIND_RELEASE_PLAN,
+    KonfluxClient,
+)
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
@@ -36,10 +42,18 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
             context=None,
         )
 
-        self.konflux_client = AsyncMock()
-        # Patch verify_connection and resource_url to be regular Mocks, not AsyncMock
-        self.konflux_client.verify_connection = MagicMock(return_value=True)
+        self.konflux_client_patcher = patch(
+            "elliottlib.cli.konflux_release_cli.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+
+        # Patch resource_url to be regular Mocks, not AsyncMock
         self.konflux_client.resource_url = MagicMock()
+
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -177,10 +191,17 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.release_env = "prod"
         self.image_repo_pull_secret = {}  # Use a dict as required by CreateReleaseCli
 
-        self.konflux_client = AsyncMock()
-        # Patch verify_connection and resource_url to be regular Mocks, not AsyncMock
-        self.konflux_client.verify_connection = MagicMock(return_value=True)
+        self.konflux_client_patcher = patch(
+            "elliottlib.cli.konflux_release_cli.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+        # Patch resource_url to be regular Mocks, not AsyncMock
         self.konflux_client.resource_url = MagicMock()
+
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")

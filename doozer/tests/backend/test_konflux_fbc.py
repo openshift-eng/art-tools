@@ -1,7 +1,7 @@
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from doozerlib.backend.build_repo import BuildRepo
@@ -660,25 +660,31 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.dry_run = False
         self.record_logger = MagicMock()
         self.logger = MagicMock()
+        self.konflux_client_patcher = patch(
+            "doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+        self.builder = KonfluxFbcBuilder(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly=self.assembly,
+            db=self.db,
+            fbc_repo=self.fbc_repo,
+            konflux_namespace=self.konflux_namespace,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_context=self.konflux_context,
+            image_repo=self.image_repo,
+            skip_checks=self.skip_checks,
+            pipelinerun_template_url=self.pipelinerun_template_url,
+            dry_run=self.dry_run,
+            record_logger=self.record_logger,
+            logger=self.logger,
+        )
 
-        with patch("doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient) as MockKonfluxClient:
-            self.kube_client = MockKonfluxClient.from_kubeconfig.return_value = AsyncMock(spec=KonfluxClient)
-            self.builder = KonfluxFbcBuilder(
-                base_dir=self.base_dir,
-                group=self.group,
-                assembly=self.assembly,
-                db=self.db,
-                fbc_repo=self.fbc_repo,
-                konflux_namespace=self.konflux_namespace,
-                konflux_kubeconfig=self.konflux_kubeconfig,
-                konflux_context=self.konflux_context,
-                image_repo=self.image_repo,
-                skip_checks=self.skip_checks,
-                pipelinerun_template_url=self.pipelinerun_template_url,
-                dry_run=self.dry_run,
-                record_logger=self.record_logger,
-                logger=self.logger,
-            )
+    def tearDown(self):
+        self.konflux_client_patcher.stop()
 
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
@@ -688,9 +694,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo = MagicMock(
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
-        kube_client = self.kube_client
-        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
-        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+        self.konflux_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = self.konflux_client.start_pipeline_run_for_image_build.return_value = MagicMock(
             **{"metadata.name": "test-pipeline-run-name"},
         )
 
@@ -701,8 +706,10 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             arches=["x86_64", "s390x"],
             logger=self.logger,
         )
-        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
-        kube_client.ensure_component.assert_awaited_once_with(
+        self.konflux_client.ensure_application.assert_awaited_once_with(
+            name="fbc-test-group", display_name="fbc-test-group"
+        )
+        self.konflux_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
             application="fbc-test-group",
             component_name="fbc-test-group-foo",
@@ -710,7 +717,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             source_url=build_repo.https_url,
             revision=build_repo.branch,
         )
-        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+        self.konflux_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
             generate_name='fbc-test-group-foo-',
             namespace='test-namespace',
             application_name='fbc-test-group',
@@ -740,9 +747,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo = MagicMock(
             spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
         )
-        kube_client = self.kube_client
-        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
-        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+        self.konflux_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = self.konflux_client.start_pipeline_run_for_image_build.return_value = MagicMock(
             **{"metadata.name": "test-pipeline-run-name"},
         )
 
@@ -753,8 +759,10 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             arches=["x86_64", "s390x"],
             logger=self.logger,
         )
-        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group", display_name="fbc-test-group")
-        kube_client.ensure_component.assert_awaited_once_with(
+        self.konflux_client.ensure_application.assert_awaited_once_with(
+            name="fbc-test-group", display_name="fbc-test-group"
+        )
+        self.konflux_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
             application="fbc-test-group",
             component_name="fbc-test-group-foo",
@@ -762,7 +770,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             source_url=build_repo.https_url,
             revision=build_repo.branch,
         )
-        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+        self.konflux_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
             generate_name='fbc-test-group-foo-',
             namespace='test-namespace',
             application_name='fbc-test-group',
@@ -789,7 +797,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_build(
         self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
     ):
-        mock_konflux_client = self.kube_client
+        mock_konflux_client = self.konflux_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         build_repo = MockBuildRepo.return_value
@@ -865,7 +873,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     async def test_build_with_existing_repo(
         self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
     ):
-        mock_konflux_client = self.kube_client
+        mock_konflux_client = self.konflux_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         build_repo = MockBuildRepo.from_local_dir.return_value
@@ -944,22 +952,28 @@ class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
         self.dry_run = False
         self.record_logger = MagicMock()
         self.logger = MagicMock()
+        self.konflux_client_patcher = patch(
+            "doozerlib.backend.konflux_olm_bundler.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+        self.merger = KonfluxFbcFragmentMerger(
+            working_dir=self.working_dir,
+            group=self.group,
+            group_config=MagicMock(),
+            fbc_git_repo=self.fbc_repo,
+            konflux_namespace=self.konflux_namespace,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_context=self.konflux_context,
+            skip_checks=self.skip_checks,
+            plr_template=self.pipelinerun_template_url,
+            dry_run=self.dry_run,
+            logger=self.logger,
+        )
 
-        with patch("doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient) as MockKonfluxClient:
-            self.kube_client = MockKonfluxClient.from_kubeconfig.return_value = AsyncMock(spec=KonfluxClient)
-            self.merger = KonfluxFbcFragmentMerger(
-                working_dir=self.working_dir,
-                group=self.group,
-                group_config=MagicMock(),
-                fbc_git_repo=self.fbc_repo,
-                konflux_namespace=self.konflux_namespace,
-                konflux_kubeconfig=self.konflux_kubeconfig,
-                konflux_context=self.konflux_context,
-                skip_checks=self.skip_checks,
-                plr_template=self.pipelinerun_template_url,
-                dry_run=self.dry_run,
-                logger=self.logger,
-            )
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
     @patch("httpx.AsyncClient", autospec=True)
