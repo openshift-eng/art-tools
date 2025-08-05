@@ -702,6 +702,22 @@ async def oc_image_info_for_arch_async__caching(
     return await oc_image_info_for_arch_async(pullspec, go_arch, registry_config)
 
 
+async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_config: Optional[str] = None):
+    """
+    Extracts the image specified by pullspec to the destination directory.
+    :param pullspec: The image pullspec to extract.
+    :param path_specs: The specs of paths within the image to extract.
+    :param registry_config: The path to the registry config file.
+    """
+    cmd = ['oc', 'image', 'extract']
+    for path_spec in path_specs:
+        cmd.extend(['--path', path_spec])
+    if registry_config:
+        cmd.extend([f'--registry-config={registry_config}'])
+    cmd.extend(["--", pullspec])
+    await exectools.cmd_assert_async(cmd)
+
+
 async def oc_image_info_show_multiarch_async(
     pullspec: str,
     registry_config: Optional[str] = None,
