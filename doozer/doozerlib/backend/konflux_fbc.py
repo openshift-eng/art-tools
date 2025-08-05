@@ -66,11 +66,14 @@ class KonfluxFbcImporter:
         self.auth = auth
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
-    async def import_from_index_image(self, metadata: ImageMetadata, index_image: str | None = None):
+    async def import_from_index_image(
+        self, metadata: ImageMetadata, index_image: str | None = None, strict: bool = True
+    ):
         """Create a file based catalog (FBC) by importing from an existing index image.
 
         :param metadata: The metadata of the operator image.
         :param index_image: The index image to import from. If not provided, a default index image is used.
+        :param strict: If True, raises an error if the index image is not found.
         """
         # bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -79,6 +82,25 @@ class KonfluxFbcImporter:
             index_image = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=self.ocp_version[0], minor=self.ocp_version[1])
             logger.info(
                 "Using default index image %s for OCP %s.%s", index_image, self.ocp_version[0], self.ocp_version[1]
+            )
+
+        # Get package name of the operator
+        package_name = await self._get_package_name(metadata)
+
+        # Render the catalog from the index image
+        migrate_level = "none"
+        if self.ocp_version >= (4, 17):
+            migrate_level = "bundle-object-to-csv-metadata"
+        catalog_blobs = await self._get_catalog_blobs_from_index_image(
+            index_image, package_name, migrate_level=migrate_level
+        )
+        if not catalog_blobs:
+            if strict:
+                raise IOError(f"Package {package_name} not found in index image {index_image}; Is it published?")
+            logger.info(
+                "No catalog blobs found in index image %s for package %s; will clean up the catalog directory",
+                index_image,
+                package_name,
             )
 
         # Clone the FBC repo
@@ -94,7 +116,7 @@ class KonfluxFbcImporter:
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Update the FBC directory
-        await self._update_dir(metadata, build_repo, index_image, logger)
+        await self._update_dir(build_repo, package_name, catalog_blobs, logger)
 
         # Validate the catalog
         logger.info("Validating the catalog")
@@ -110,28 +132,28 @@ class KonfluxFbcImporter:
             logger.info("Not pushing changes to remote repository")
 
     async def _update_dir(
-        self, metadata: ImageMetadata, build_repo: BuildRepo, index_image: str, logger: logging.Logger
+        self,
+        build_repo: BuildRepo,
+        package_name: str,
+        catalog_blobs: List[Dict] | None,
+        logger: logging.Logger,
     ):
-        """Update the FBC directory with the given operator image metadata and index image."""
+        """Update the FBC directory with the given package name and catalog blobs."""
         repo_dir = build_repo.local_dir
-        # Get package name of the operator
-        package_name = await self._get_package_name(metadata)
 
-        # Render the catalog from the index image
-        migrate_level = "none"
-        if self.ocp_version >= (4, 17):
-            migrate_level = "bundle-object-to-csv-metadata"
-        catalog_blobs = await self._get_catalog_blobs_from_index_image(
-            index_image, package_name, migrate_level=migrate_level
-        )
-
-        # Write catalog_blobs to catalog/<package>/catalog.json
-        catalog_dir = repo_dir.joinpath("catalog", package_name)
-        catalog_dir.mkdir(parents=True, exist_ok=True)
-        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
-        logger.info("Writing catalog blobs to %s", catalog_file_path)
-        with catalog_file_path.open('w') as f:
-            yaml.dump_all(catalog_blobs, f)
+        # Write catalog_blobs to catalog/<package>/catalog.yaml
+        catalog_base_dir = repo_dir.joinpath("catalog")
+        catalog_base_dir.mkdir(parents=True, exist_ok=True)
+        catalog_dir = catalog_base_dir.joinpath(package_name)
+        if catalog_blobs:
+            catalog_dir.mkdir(parents=True, exist_ok=True)
+            catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+            logger.info("Writing catalog blobs to %s", catalog_file_path)
+            with catalog_file_path.open('w') as f:
+                yaml.dump_all(catalog_blobs, f)
+        elif catalog_dir.exists():
+            logger.info("Catalog blobs are empty. Removing existing catalog directory %s", catalog_dir)
+            shutil.rmtree(catalog_dir)
 
         # Generate Dockerfile
         df_path = repo_dir.joinpath("catalog.Dockerfile")
@@ -187,7 +209,7 @@ class KonfluxFbcImporter:
         blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
-            raise IOError(f"Package {package_name} not found in index image")
+            return
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
