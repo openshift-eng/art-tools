@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from os import PathLike
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import httpx
@@ -625,6 +626,13 @@ class KonfluxFbcRebaser:
     ) -> str:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
+        group_config = metadata.runtime.group_config
+        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        # OCP 4.17+ requires bundle object to CSV metadata migration.
+        migrate_level = "none"
+        if ocp_version >= (4, 17):
+            migrate_level = "bundle-object-to-csv-metadata"
+
         # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
         delivery_repo_name = metadata.get_olm_bundle_delivery_repo_name()
 
@@ -640,17 +648,20 @@ class KonfluxFbcRebaser:
             raise IOError("Channel name not found in bundle image")
         channel_names = channel_names.split(",")
         default_channel_name = labels.get("operators.operatorframework.io.bundle.channel.default.v1")
-        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(bundle_build)
+
+        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(
+            bundle_build, migrate_level=migrate_level
+        )
         if olm_package != labels.get("operators.operatorframework.io.bundle.package.v1"):
             raise IOError(
                 f"Package name mismatch: {olm_package} != {labels.get('operators.operatorframework.io.bundle.package.v1')}"
             )
-        olm_csv_metadata = next(
-            (entry for entry in olm_bundle_blob["properties"] if entry["type"] == "olm.csv.metadata"), None
-        )
-        if not olm_csv_metadata:
-            raise IOError(f"CSV metadata not found in bundle {olm_bundle_name}")
-        olm_skip_range = olm_csv_metadata["value"]["annotations"].get("olm.skipRange", None)
+
+        manifests_dir = labels.get("operators.operatorframework.io.bundle.manifests.v1")
+        if not manifests_dir:
+            raise IOError("Manifests directory not found in bundle image labels")
+        csv = await self._load_csv_from_bundle(bundle_build, manifests_dir)
+        olm_skip_range = csv.get("metadata", {}).get("annotations", {}).get("olm.skipRange", None)
 
         # Load referenced images
         konflux_db: KonfluxDb = metadata.runtime.konflux_db
@@ -671,7 +682,8 @@ class KonfluxFbcRebaser:
                 catalog_blobs = list(yaml.load_all(f))
         else:
             logger.info("Catalog file %s does not exist, bootstrap a new one", catalog_file_path)
-            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name or "stable")
+            icon = next(iter(csv.get("spec", {}).get("icon", [])), None)
+            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name, icon)
 
         categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
@@ -775,8 +787,6 @@ class KonfluxFbcRebaser:
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
         if not dockerfile_path.is_file():
             logger.info("Dockerfile %s does not exist, creating a new one", dockerfile_path)
-            group_config = metadata.runtime.group_config
-            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
             base_image_format = (
                 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
             )
@@ -809,18 +819,29 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
 
-    def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
+    def _bootstrap_catalog(
+        self, package_name: str, default_channel: str, icon: Dict[str, str] | None
+    ) -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.
         :param package_name: The name of the package to bootstrap.
+        :param default_channel: The default channel for the package.
+        :param icon: Optional icon data to include in the package. e.g. {"base64data": "...", "mediatype": "..."}
         :return: A dictionary representing the catalog.
         """
         # Following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/v4.13/catalog-template.json
-        package_blob = {
-            "defaultChannel": default_channel,
-            "icon": {
+        if not icon:
+            # Default icon if not provided
+            icon = {
                 "base64data": "PHN2ZyBpZD0iZjc0ZTM5ZDEtODA2Yy00M2E0LTgyZGQtZjM3ZjM1NWQ4YWYzIiBkYXRhLW5hbWU9Ikljb24iIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDM2IDM2Ij4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLmE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCB7CiAgICAgICAgZmlsbDogI2UwMDsKICAgICAgfQogICAgPC9zdHlsZT4KICA8L2RlZnM+CiAgPGc+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNMjUsMTcuMzhIMjMuMjNhNS4yNyw1LjI3LDAsMCwwLTEuMDktMi42NGwxLjI1LTEuMjVhLjYyLjYyLDAsMSwwLS44OC0uODhsLTEuMjUsMS4yNWE1LjI3LDUuMjcsMCwwLDAtMi42NC0xLjA5VjExYS42Mi42MiwwLDEsMC0xLjI0LDB2MS43N2E1LjI3LDUuMjcsMCwwLDAtMi42NCwxLjA5bC0xLjI1LTEuMjVhLjYyLjYyLDAsMCwwLS44OC44OGwxLjI1LDEuMjVhNS4yNyw1LjI3LDAsMCwwLTEuMDksMi42NEgxMWEuNjIuNjIsMCwwLDAsMCwxLjI0aDEuNzdhNS4yNyw1LjI3LDAsMCwwLDEuMDksMi42NGwtMS4yNSwxLjI1YS42MS42MSwwLDAsMCwwLC44OC42My42MywwLDAsMCwuODgsMGwxLjI1LTEuMjVhNS4yNyw1LjI3LDAsMCwwLDIuNjQsMS4wOVYyNWEuNjIuNjIsMCwwLDAsMS4yNCwwVjIzLjIzYTUuMjcsNS4yNywwLDAsMCwyLjY0LTEuMDlsMS4yNSwxLjI1YS42My42MywwLDAsMCwuODgsMCwuNjEuNjEsMCwwLDAsMC0uODhsLTEuMjUtMS4yNWE1LjI3LDUuMjcsMCwwLDAsMS4wOS0yLjY0SDI1YS42Mi42MiwwLDAsMCwwLTEuMjRabS03LDQuNjhBNC4wNiw0LjA2LDAsMSwxLDIyLjA2LDE4LDQuMDYsNC4wNiwwLDAsMSwxOCwyMi4wNloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0yNy45LDI4LjUyYS42Mi42MiwwLDAsMS0uNDQtLjE4LjYxLjYxLDAsMCwxLDAtLjg4LDEzLjQyLDEzLjQyLDAsMCwwLDIuNjMtMTUuMTkuNjEuNjEsMCwwLDEsLjMtLjgzLjYyLjYyLDAsMCwxLC44My4yOSwxNC42NywxNC42NywwLDAsMS0yLjg4LDE2LjYxQS42Mi42MiwwLDAsMSwyNy45LDI4LjUyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI3LjksOC43M2EuNjMuNjMsMCwwLDEtLjQ0LS4xOUExMy40LDEzLjQsMCwwLDAsMTIuMjcsNS45MWEuNjEuNjEsMCwwLDEtLjgzLS4zLjYyLjYyLDAsMCwxLC4yOS0uODNBMTQuNjcsMTQuNjcsMCwwLDEsMjguMzQsNy42NmEuNjMuNjMsMCwwLDEtLjQ0LDEuMDdaIi8+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNNS4zNSwyNC42MmEuNjMuNjMsMCwwLDEtLjU3LS4zNUExNC42NywxNC42NywwLDAsMSw3LjY2LDcuNjZhLjYyLjYyLDAsMCwxLC44OC44OEExMy40MiwxMy40MiwwLDAsMCw1LjkxLDIzLjczYS42MS42MSwwLDAsMS0uMy44M0EuNDguNDgsMCwwLDEsNS4zNSwyNC42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0xOCwzMi42MkExNC42NCwxNC42NCwwLDAsMSw3LjY2LDI4LjM0YS42My42MywwLDAsMSwwLS44OC42MS42MSwwLDAsMSwuODgsMCwxMy40MiwxMy40MiwwLDAsMCwxNS4xOSwyLjYzLjYxLjYxLDAsMCwxLC44My4zLjYyLjYyLDAsMCwxLS4yOS44M0ExNC42NywxNC42NywwLDAsMSwxOCwzMi42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0zMCwyOS42MkgyN2EuNjIuNjIsMCwwLDEtLjYyLS42MlYyNmEuNjIuNjIsMCwwLDEsMS4yNCwwdjIuMzhIMzBhLjYyLjYyLDAsMCwxLDAsMS4yNFoiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik03LDMwLjYyQS42Mi42MiwwLDAsMSw2LjM4LDMwVjI3QS42Mi42MiwwLDAsMSw3LDI2LjM4aDNhLjYyLjYyLDAsMCwxLDAsMS4yNEg3LjYyVjMwQS42Mi42MiwwLDAsMSw3LDMwLjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI5LDkuNjJIMjZhLjYyLjYyLDAsMCwxLDAtMS4yNGgyLjM4VjZhLjYyLjYyLDAsMCwxLDEuMjQsMFY5QS42Mi42MiwwLDAsMSwyOSw5LjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTksMTAuNjJBLjYyLjYyLDAsMCwxLDguMzgsMTBWNy42Mkg2QS42Mi42MiwwLDAsMSw2LDYuMzhIOUEuNjIuNjIsMCwwLDEsOS42Miw3djNBLjYyLjYyLDAsMCwxLDksMTAuNjJaIi8+CiAgPC9nPgo8L3N2Zz4K",
                 "mediatype": "image/svg+xml",
-            },
+            }
+        elif "base64data" not in icon or "mediatype" not in icon:
+            raise ValueError("Icon must contain 'base64data' and 'mediatype' fields")
+
+        default_channel = default_channel or "stable"
+        package_blob = {
+            "defaultChannel": default_channel,
+            "icon": icon,
             "name": package_name,
             "schema": "olm.package",
         }
@@ -872,16 +893,37 @@ class KonfluxFbcRebaser:
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
 
-    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord):
+    async def _load_csv_from_bundle(self, bundle_build: KonfluxBundleBuildRecord, manifests_dir: str):
+        """Load the CSV from the bundle image manifests directory.
+
+        :param bundle_build: The bundle build record.
+        :param manifests_dir: The directory where the manifests are stored in the bundle image.
+        :return: The loaded CSV as a dictionary.
+        """
+        with TemporaryDirectory(prefix="doozer-") as tmpdir:
+            path_specs = [f"{manifests_dir}:{tmpdir}"]
+            await util.oc_image_extract_async(
+                bundle_build.image_pullspec,
+                path_specs=path_specs,
+                registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            )
+            # Find the CSV file in the extracted manifests directory
+            csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
+            if not csv_file:
+                raise IOError(f"CSV file not found in bundle image manifests directory {manifests_dir}")
+            return yaml.load(csv_file.open())
+
+    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord, migrate_level: str):
         """Fetch the olm.bundle blob for the given bundle build.
 
         :param bundle_build: The bundle build record.
+        :param migrate_level: The migration level to use.
         :return: A tuple of (bundle name, package name, bundle blob).
         """
         registry_auth = opm.OpmRegistryAuth(
             path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
-        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate=True, auth=registry_auth)
+        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate_level=migrate_level, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
             raise IOError(f"Expected exactly one rendered blob, but got {len(rendered_blobs)}")
         olm_bundle_blob = rendered_blobs[0]

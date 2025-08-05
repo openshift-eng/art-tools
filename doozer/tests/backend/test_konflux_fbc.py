@@ -297,6 +297,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_called_once()
 
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     @patch("pathlib.Path.mkdir")
@@ -313,6 +314,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_mkdir,
         MockDockerfileParser,
         mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
@@ -342,6 +344,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                         "operators.operatorframework.io.bundle.channels.v1": "test-channel",
                         "operators.operatorframework.io.bundle.channel.default.v1": "test-default-channel",
                         "operators.operatorframework.io.bundle.package.v1": "test-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
                     },
                 },
             },
@@ -410,11 +413,20 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             MagicMock(image_pullspec="example.com/art-images@2"),
         ]
 
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "test-bundle-name",
+                "annotations": {
+                    "olm.skipRange": ">=4.8.0 <4.17.0",
+                },
+            }
+        }
+
         actual = await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
         self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
-        mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
+        mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build, migrate_level="none")
         # Replace deprecated assertDictContainsSubset with explicit checks
         expected_envs = {
             "__doozer_group": "test-group",
@@ -465,6 +477,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         images_mirror_set_file.seek(0)
         images_mirror_set = yaml.load(images_mirror_set_file)
         self.assertEqual(len(images_mirror_set["spec"]["imageDigestMirrors"]), 2)
+
+        mock_load_csv_from_bundle.assert_awaited_once_with(bundle_build, "manifests/")
 
     def test_generate_image_digest_mirror_set(self):
         olm_bundle_blobs = [
@@ -533,7 +547,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}],
             }
         ]
-        actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build)
+        actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build, migrate_level="none")
         self.assertEqual(
             actual,
             (
@@ -547,7 +561,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 },
             ),
         )
-        mock_render.assert_called_once_with("test-image-pullspec", migrate=True, auth=ANY)
+        mock_render.assert_called_once_with("test-image-pullspec", migrate_level="none", auth=ANY)
 
     def test_categorize_catalog_blobs(self):
         catalog_blobs = [

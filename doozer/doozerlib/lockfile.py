@@ -232,11 +232,15 @@ class RpmInfoCollector:
                 continue
 
             found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
+
+            content_set_id = repo.content_set(arch)
+            if content_set_id is None:
+                self.logger.warning(f'repo {repo_name} has no content_set for {arch}, falling back to repo key')
+                content_set_id = f'{repo_name}-{arch}'
+
             rpm_info_list.extend(
                 [
-                    RpmInfo.from_rpm(
-                        rpm, repoid=f'{repo_name}-{arch}', baseurl=repo.baseurl(repotype="unsigned", arch=arch)
-                    )
+                    RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
                     for rpm in found_rpms
                 ]
             )
