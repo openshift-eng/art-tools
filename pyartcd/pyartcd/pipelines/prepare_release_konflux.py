@@ -612,7 +612,7 @@ class PrepareReleaseKonfluxPipeline:
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            f'--assembly=stream',
+            '--assembly=stream',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
@@ -1125,8 +1125,10 @@ class PrepareReleaseKonfluxPipeline:
             filepath = relative_target_dir / filename
             if "prerelease" in shipments_by_kind and advisory_kind == "fbc":
                 # for prerelease, use prerelease rpa
-                shipment_config.shipment.environments.stage.releasePlan += "-pre"
-                shipment_config.shipment.environments.prod.releasePlan += "-pre"
+                if not shipment_config.shipment.environments.stage.releasePlan.endswith("-pre"):
+                    shipment_config.shipment.environments.stage.releasePlan += "-pre"
+                if not shipment_config.shipment.environments.prod.releasePlan.endswith("-pre"):
+                    shipment_config.shipment.environments.prod.releasePlan += "-pre"
             self.logger.info("Updating shipment file: %s", filename)
             shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
             out = StringIO()
@@ -1276,6 +1278,9 @@ class PrepareReleaseKonfluxPipeline:
         """
         Verify that the swept builds match the imagestreams that were updated during build-sync.
         """
+        if self.updated_assembly_group_config.get("operator_index_mode") == "pre-release":
+            self.logger.info("Skipping payload verification for pre-release")
+            return
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
         async def _verify(imagestream):
