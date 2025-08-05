@@ -41,10 +41,22 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             logger=self.logger,
         )
 
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_package_name",
+        new_callable=AsyncMock,
+        return_value="test-package",
+    )
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image",
+        new_callable=AsyncMock,
+        return_value=[{"schema": "olm.package", "name": "test-package"}],
+    )
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._update_dir")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.opm")
-    async def test_import_from_index_image(self, mock_opm, mock_build_repo, mock_update_dir):
+    async def test_import_from_index_image(
+        self, mock_opm, mock_build_repo, mock_update_dir, mock_get_catalog_blobs, mock_get_package_name
+    ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         index_image = "test-index-image"
@@ -64,11 +76,35 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(self.commit_message, allow_empty=True)
         build_repo.push.assert_not_called()
+        mock_update_dir.assert_awaited_once_with(
+            build_repo,
+            "test-package",
+            [{"schema": "olm.package", "name": "test-package"}],
+            ANY,
+        )
+        mock_get_catalog_blobs.assert_awaited_once_with(
+            index_image,
+            "test-package",
+            migrate_level="none",
+        )
+        mock_get_package_name.assert_awaited_once_with(metadata)
 
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_package_name",
+        new_callable=AsyncMock,
+        return_value="test-package",
+    )
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image",
+        new_callable=AsyncMock,
+        return_value=[{"schema": "olm.package", "name": "test-package"}],
+    )
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._update_dir")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.opm")
-    async def test_import_from_index_image_with_push(self, mock_opm, mock_build_repo, mock_update_dir):
+    async def test_import_from_index_image_with_push(
+        self, mock_opm, mock_build_repo, mock_update_dir, mock_get_catalog_blobs, mock_get_package_name
+    ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         index_image = "test-index-image"
@@ -84,6 +120,18 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(self.commit_message, allow_empty=True)
         build_repo.push.assert_called_once()
+        mock_update_dir.assert_awaited_once_with(
+            build_repo,
+            "test-package",
+            [{"schema": "olm.package", "name": "test-package"}],
+            ANY,
+        )
+        mock_get_catalog_blobs.assert_awaited_once_with(
+            index_image,
+            "test-package",
+            migrate_level="none",
+        )
+        mock_get_package_name.assert_awaited_once_with(metadata)
 
     @patch("shutil.rmtree")
     @patch("pathlib.Path.open")
@@ -96,25 +144,21 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     async def test_update_dir(
         self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree
     ):
-        metadata = MagicMock(spec=ImageMetadata)
-        metadata.distgit_key = "test-distgit-key"
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
-        index_image = "test-index-image"
         logger = MagicMock()
 
-        mock_get_package_name.return_value = "test-package"
-        mock_get_catalog_blobs.return_value = [{"schema": "olm.package", "name": "test-package"}]
         mock_opm.generate_basic_template = AsyncMock()
         mock_opm.render_catalog_from_template = AsyncMock()
         mock_opm.generate_dockerfile = AsyncMock()
 
+        package_name = "test-package"
+        catalog_blobs = [{"schema": "olm.package", "name": "test-package"}]
+
         mock_org_catalog_file = mock_open.return_value.__enter__.return_value = StringIO()
 
-        await self.importer._update_dir(metadata, build_repo, index_image, logger)
+        await self.importer._update_dir(build_repo, package_name, catalog_blobs, logger)
 
-        mock_get_package_name.assert_called_once_with(metadata)
-        mock_get_catalog_blobs.assert_called_once_with(index_image, "test-package", migrate_level="none")
         self.assertEqual(mock_org_catalog_file.getvalue(), '---\nname: test-package\nschema: olm.package\n')
         mock_mkdir.assert_has_calls(
             [
