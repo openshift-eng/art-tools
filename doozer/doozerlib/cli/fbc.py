@@ -516,7 +516,6 @@ class FbcRebaseAndBuildCli:
         :param bundle_build: Bundle build record
         :return: NVR of the FBC build
         """
-
         existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
         if existing_fbc_build:
             self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
@@ -526,7 +525,7 @@ class FbcRebaseAndBuildCli:
 
         if self.reset_to_prod:
             self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-            await importer.import_from_index_image(operator_meta, None)
+            await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
 
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
