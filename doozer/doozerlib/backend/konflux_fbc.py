@@ -807,15 +807,14 @@ class KonfluxFbcRebaser:
 
         # Update Dockerfile
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
-        if not dockerfile_path.is_file():
-            logger.info("Dockerfile %s does not exist, creating a new one", dockerfile_path)
-            base_image_format = (
-                BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
-            )
-            base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
-            await opm.generate_dockerfile(
-                build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image
-            )
+        if dockerfile_path.is_file():
+            logger.info("Dockerfile %s already exists, removing it", dockerfile_path)
+            await asyncio.to_thread(dockerfile_path.unlink)
+        base_image_format = (
+            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        )
+        base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
+        await opm.generate_dockerfile(build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image)
 
         logger.info("Updating Dockerfile %s", dockerfile_path)
         dfp = DockerfileParser(str(dockerfile_path))
