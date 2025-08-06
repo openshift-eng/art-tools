@@ -968,6 +968,37 @@ class KonfluxRebaser:
 
         await self._reflow_labels(df_path)
 
+    def _find_matching_artifact(self, metadata: ImageMetadata, url_pattern: str) -> Optional[str]:
+        """Find artifact resource matching URL pattern."""
+        if not metadata.is_artifact_lockfile_enabled():
+            return None
+
+        required_artifacts = metadata.get_required_artifacts()
+        for artifact_url in required_artifacts:
+            if url_pattern.lower() in artifact_url.lower():
+                return artifact_url
+        return None
+
+    def _validate_required_artifacts(
+        self, metadata: ImageMetadata, network_mode: str, artifact_type: str, url_pattern: str
+    ) -> Optional[str]:
+        """Generic validation for required artifacts before Dockerfile modification."""
+        if network_mode != "hermetic":
+            return None
+
+        matching_artifact = self._find_matching_artifact(metadata, url_pattern)
+        if not matching_artifact:
+            from doozerlib.exceptions import DoozerFatalError
+
+            raise DoozerFatalError(
+                f"Hermetic build requires {artifact_type} artifact definition in image metadata. "
+                f"Add {artifact_type} resource URL to konflux.cachi2.artifact_lockfile.resources in {metadata.distgit_key}. "
+                f"Expected URL pattern: {url_pattern}"
+            )
+
+        self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
+        return matching_artifact
+
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         network_mode = metadata.get_konflux_network_mode()
@@ -1206,21 +1237,33 @@ class KonfluxRebaser:
         Konflux does not support cachito, comment it out to support green non-hermetic builds
         For yarn, download it if its missing.
         """
+        network_mode = metadata.get_konflux_network_mode()
         lines = dfp.lines
         updated_lines = []
         line_commented = False
         yarn_line_updated = False
         for line in lines:
             if 'echo "need yarn at ${CACHED_YARN}"' in line:
-                # For nmstate-console-plugin and networking-console-plugin the build will error out if it doesn't see a yarn installation at that exact place
-                # So follow the pattern as other images do, and download yarn for now
-                line = line.replace(
-                    'echo "need yarn at ${CACHED_YARN}"',
-                    "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz",
-                )
+                yarn_artifact = self._validate_required_artifacts(metadata, network_mode, "yarn", "yarn-v")
+
+                if network_mode == "hermetic" and yarn_artifact:
+                    import urllib.parse
+
+                    filename = urllib.parse.urlparse(yarn_artifact).path.split('/')[-1]
+                    line = line.replace(
+                        'echo "need yarn at ${CACHED_YARN}"',
+                        f"npm install -g /cachi2/output/deps/generic/{filename}",
+                    )
+                    self._logger.info(f"yarn line overridden. Using pre-fetched yarn from hermetic path: {filename}")
+                else:
+                    line = line.replace(
+                        'echo "need yarn at ${CACHED_YARN}"',
+                        "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz",
+                    )
+                    self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
+
                 updated_lines.append(line)
                 yarn_line_updated = True
-                self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
                 continue
 
             if yarn_line_updated:
