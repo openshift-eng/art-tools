@@ -341,6 +341,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_called_once()
 
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
@@ -359,6 +361,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         MockDockerfileParser,
         mock_get_referenced_images,
         mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
@@ -523,6 +527,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(images_mirror_set["spec"]["imageDigestMirrors"]), 2)
 
         mock_load_csv_from_bundle.assert_awaited_once_with(bundle_build, "manifests/")
+        mock_path_unlink.assert_called_once_with()
+        mock_generate_dockerfile.assert_awaited_once_with(
+            build_repo.local_dir,
+            'catalog',
+            base_image='registry.redhat.io/openshift4/ose-operator-registry:v1.1',
+            builder_image='registry.redhat.io/openshift4/ose-operator-registry:v1.1',
+        )
 
     def test_generate_image_digest_mirror_set(self):
         olm_bundle_blobs = [
