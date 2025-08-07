@@ -13,6 +13,7 @@ from errata_tool import ErrataException
 
 from elliottlib import bzutil, constants
 from elliottlib.bzutil import Bug, get_flaws
+from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type, get_builds_by_advisory_kind
 from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue
@@ -387,29 +388,9 @@ class BugValidator:
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
 
         # Validate CVE mappings (of CVEs and builds)
-        flaw_id_bugs = {f.id: f for f in first_fix_flaw_bugs}
-        cve_components_mapping: Dict[str, Set[str]] = {}
-        for tracker in attached_trackers:
-            whiteboard_component = tracker.whiteboard_component
-            if not whiteboard_component:
-                raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
-            if whiteboard_component == "rhcos":
-                # rhcos trackers are special, since they have per-architecture component names
-                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                # but the tracker bug has a generic "rhcos" component name
-                # so we need to associate this CVE with all per-architecture component names
-                component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
-            else:
-                component_names = {whiteboard_component}
-            flaw_ids = tracker_flaws[tracker.id]
-            for flaw_id in flaw_ids:
-                if flaw_id not in flaw_id_bugs:  # This means associated flaw wasn't considered a first fix
-                    continue
-                alias = [k for k in flaw_id_bugs[flaw_id].alias if k.startswith('CVE-')]
-                if len(alias) != 1:
-                    raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
-                cve = alias[0]
-                cve_components_mapping.setdefault(cve, set()).update(component_names)
+        cve_components_mapping = AttachCveFlaws.get_cve_component_mapping(
+            self.runtime, first_fix_flaw_bugs, attached_trackers, tracker_flaws, attached_components
+        )
 
         try:
             extra_exclusions, missing_exclusions = await AsyncErrataUtils.validate_cves_and_get_exclusions_diff(
