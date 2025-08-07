@@ -29,6 +29,7 @@ class BuildStrategy(Enum):
     ALL = 'all'
     ONLY = 'only'
     EXCEPT = 'except'
+    NONE = 'none'
 
     def __str__(self):
         return self.value
@@ -111,6 +112,8 @@ class KonfluxOcp4Pipeline:
             image_param = ''  # Doozer runtime will consider all images
         elif self.build_plan.build_strategy == BuildStrategy.ONLY:
             image_param = f'--images={",".join(self.build_plan.images_included)}'
+        elif self.build_plan.build_strategy == BuildStrategy.NONE:
+            image_param = False
         else:
             image_param = f'--exclude={",".join(self.build_plan.images_excluded)}'
         return image_param
