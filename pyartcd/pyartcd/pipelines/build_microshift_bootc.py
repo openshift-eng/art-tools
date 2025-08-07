@@ -112,6 +112,10 @@ class BuildMicroShiftBootcPipeline:
             f"docker://{bootc_build.image_pullspec}",
             "--raw",
         ]
+
+        if konflux_registry_auth_file:
+            cmd += [f'--authfile={konflux_registry_auth_file}']
+
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
         digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
