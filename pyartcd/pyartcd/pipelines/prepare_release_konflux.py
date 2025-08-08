@@ -612,7 +612,7 @@ class PrepareReleaseKonfluxPipeline:
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            '--assembly=stream',
+            f'--assembly={self.assembly}',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
