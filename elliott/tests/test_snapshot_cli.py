@@ -2,7 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.model import Model
-from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli
 
 
@@ -22,9 +22,15 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.runtime.get_major_minor.return_value = (4, 18)
         self.runtime.konflux_db = MagicMock()
 
-        self.konflux_client = AsyncMock()
-        # Patch verify_connection to be a regular Mock, not AsyncMock
-        self.konflux_client.verify_connection = Mock(return_value=True)
+        self.konflux_client_patcher = patch(
+            "elliottlib.cli.snapshot_cli.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
@@ -181,9 +187,15 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         self.runtime.get_major_minor.return_value = (self.major, self.minor)
         self.runtime.konflux_db = MagicMock()
 
-        self.konflux_client = AsyncMock()
-        # Patch verify_connection to be a regular Mock, not AsyncMock
-        self.konflux_client.verify_connection = Mock(return_value=True)
+        self.konflux_client_patcher = patch(
+            "elliottlib.cli.snapshot_cli.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("elliottlib.cli.snapshot_cli.KonfluxDb")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
