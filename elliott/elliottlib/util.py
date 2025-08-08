@@ -12,12 +12,14 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.format_util import green_prefix, green_print, red_prefix
 from artcommonlib.logutil import get_logger
 from errata_tool import Erratum
 
 from elliottlib import brew
 from elliottlib.exceptions import BrewBuildException
+from elliottlib.shipment_utils import get_shipment_config_from_mr
 
 # -----------------------------------------------------------------------------
 # Constants and defaults
@@ -607,3 +609,40 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
         advisory_boilerplate = boilerplate[art_advisory_key]
 
     return advisory_boilerplate
+
+
+def get_advisory_docs_info(runtime, advisory_kind):
+    """
+    Extract advisory documentation info (type and live_id) from shipment config.
+
+    :param runtime: Runtime object with assembly and releases config
+    :param advisory_kind: The kind of advisory ('image', 'rpm', 'extras')
+    :return: tuple of (advisory_type, live_id, current_year)
+    """
+
+    # Read shipment block from the assembly config
+    assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, 'group', {})
+    shipment_url = assembly_group_config.get('shipment', {}).get('url')
+    if not shipment_url:
+        raise ValueError(f"Shipment URL not found in assembly config for {advisory_kind}")
+
+    # Extract advisory info from shipment config
+    def get_advisory_info_from_shipment(kind: str):
+        shipment = get_shipment_config_from_mr(shipment_url, kind)
+        return shipment.shipment.data.releaseNotes.type, shipment.shipment.data.releaseNotes.live_id
+
+    # If you look at the template: https://github.com/openshift-eng/ocp-build-data/blob/main/config/advisory_templates.yml
+    # Image advisory has a link to the RPM advisory and the RPM advisory has a link to the image advisory
+    if advisory_kind == 'image':
+        advisory_type, live_id = get_advisory_info_from_shipment('rpm')
+    elif advisory_kind in ['rpm', 'extras']:
+        advisory_type, live_id = get_advisory_info_from_shipment('image')
+    else:
+        advisory_type, live_id = None, None
+
+    # Set defaults for backwards compatibility
+    advisory_type = advisory_type or 'RH[X]A'
+    current_year = datetime.datetime.now().year
+    live_id = live_id or 'NNNN'
+
+    return advisory_type, live_id, current_year
