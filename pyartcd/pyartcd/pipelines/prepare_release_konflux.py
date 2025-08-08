@@ -619,6 +619,8 @@ class PrepareReleaseKonfluxPipeline:
             f"--message={message}",
             "--output=json",
         ]
+        if self.assembly_group_config.get("operator_index_mode") == "pre-release":
+            cmd += ["--force"]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--"] + nvrs
