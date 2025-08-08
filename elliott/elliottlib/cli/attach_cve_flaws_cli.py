@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 import sys
@@ -55,6 +56,7 @@ class AttachCveFlaws:
         output: str,
         noop: bool,
         reconcile: bool = False,
+        live_id: str = "",
     ):
         self.runtime = runtime
         self.into_default_advisories = into_default_advisories
@@ -63,6 +65,7 @@ class AttachCveFlaws:
         self.output = output
         self.noop = noop
         self.reconcile = reconcile
+        self.live_id = live_id
         self.logger = logging.getLogger(__name__)
 
         self.errata_config = self.runtime.get_errata_config()
@@ -265,10 +268,18 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHBA',
             )
+
+            # For backwards compatibility, set defaults in case the variables are empty
+            advisory_type = release_notes.type if release_notes.type else 'RH[X]A'
+            current_year = datetime.datetime.now().year if datetime.datetime.now().year else 'YYYY'
+            live_id = self.live_id if self.live_id else 'NNNN'
+
             release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
             release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
             release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.description = boilerplate['description'].format(
+                MINOR=self.minor, PATCH=self.patch, ADVISORY_TYPE=advisory_type, YEAR=current_year, LIVE_ID=live_id
+            )
 
     async def handle_brew_cve_flaws(self):
         """
@@ -483,6 +494,7 @@ class AttachCveFlaws:
     "--reconcile", is_flag=True, help='Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable'
 )
 @click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
+@click.option('--live-id', type=str, required=False, help='Pass long the live id if reserved')
 @click.pass_obj
 @click_coroutine
 async def attach_cve_flaws_cli(
@@ -493,6 +505,7 @@ async def attach_cve_flaws_cli(
     into_default_advisories: bool,
     reconcile: bool,
     output: str,
+    live_id: str,
 ):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
 
@@ -524,5 +537,6 @@ async def attach_cve_flaws_cli(
         output=output,
         noop=noop,
         reconcile=reconcile,
+        live_id=live_id,
     )
     await pipeline.run()
