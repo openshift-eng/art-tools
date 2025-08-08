@@ -236,7 +236,7 @@ async def find_builds_cli(
     )
 
     if as_json:
-        _json_dump(as_json, builds)
+        _json_dump(as_json, [build.nvr for build in builds])
         return
     canonical_nvrs = [b.nvr for b in builds]
 

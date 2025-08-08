@@ -161,6 +161,10 @@ class BuildMicroShiftBootcPipeline:
                 "*",
                 "--include",
                 "bootc-pullspec.txt",
+                "--cache-control",
+                "no-cache, no-store, must-revalidate",
+                "--metadata-directive",
+                "REPLACE",
                 str(local_path),
                 f"s3://art-srv-enterprise{s3_path}",
             ]
@@ -186,6 +190,7 @@ class BuildMicroShiftBootcPipeline:
             local_path = Path(local_dir, "bootc-pullspec.txt")
             with open(local_path, "w") as f:
                 f.write(pullspec)
+            self._logger.info(f"write {pullspec} to {local_path}")
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 
