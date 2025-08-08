@@ -612,7 +612,7 @@ class PrepareReleaseKonfluxPipeline:
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            f'--assembly={self.assembly}',
+            f'--assembly=stream',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
@@ -650,6 +650,8 @@ class PrepareReleaseKonfluxPipeline:
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
         ]
+        if self.assembly_group_config.get("operator_index_mode") == "pre-release":
+            cmd += ["--force"]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
