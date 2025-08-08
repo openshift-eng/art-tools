@@ -22,7 +22,7 @@ from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
 from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
-from elliottlib.util import get_advisory_boilerplate
+from elliottlib.util import get_advisory_boilerplate, get_advisory_docs_info
 
 YAML = new_roundtrip_yaml_handler()
 
@@ -233,6 +233,9 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHSA',
             )
+            # Get advisory docs info from shipment config
+            advisory_type, live_id, current_year = get_advisory_docs_info(self.runtime, self.advisory_kind)
+
             release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
             highest_impact = get_highest_security_impact(flaw_bugs)
             release_notes.topic = cve_boilerplate['topic'].format(
@@ -244,8 +247,14 @@ class AttachCveFlaws:
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
+
             release_notes.description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
+                CVES=formatted_cve_list,
+                MINOR=self.minor,
+                PATCH=self.patch,
+                ADVISORY_TYPE=advisory_type,
+                YEAR=current_year,
+                LIVE_ID=live_id,
             )
         elif self.reconcile:
             # Convert RHSA back to RHBA
@@ -271,10 +280,16 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHBA',
             )
+
+            # Get advisory docs info from shipment config
+            advisory_type, live_id, current_year = get_advisory_docs_info(self.runtime, self.advisory_kind)
+
             release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
             release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
             release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.description = boilerplate['description'].format(
+                MINOR=self.minor, PATCH=self.patch, ADVISORY_TYPE=advisory_type, YEAR=current_year, LIVE_ID=live_id
+            )
 
     async def handle_brew_cve_flaws(self):
         """

@@ -17,7 +17,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
 )
-from elliottlib.util import get_advisory_boilerplate
+from elliottlib.util import get_advisory_boilerplate, get_advisory_docs_info
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -63,9 +63,15 @@ class InitShipmentCli:
             advisory_boilerplate = get_advisory_boilerplate(
                 runtime=self.runtime, et_data=et_data, art_advisory_key=self.kind, errata_type="RHBA"
             )
+
+            # Get advisory docs info from shipment config
+            advisory_type, live_id, current_year = get_advisory_docs_info(self.runtime, self.kind)
+
             synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
             advisory_topic = advisory_boilerplate['topic'].format(MINOR=minor, PATCH=patch)
-            advisory_description = advisory_boilerplate['description'].format(MINOR=minor, PATCH=patch)
+            advisory_description = advisory_boilerplate['description'].format(
+                MINOR=minor, PATCH=patch, ADVISORY_TYPE=advisory_type, YEAR=current_year, LIVE_ID=live_id
+            )
             advisory_solution = advisory_boilerplate['solution'].format(MINOR=minor, PATCH=patch)
 
             data = Data(
