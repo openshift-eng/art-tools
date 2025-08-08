@@ -59,6 +59,7 @@ class RebuildHintCode(Enum):
     PACKAGE_CHANGE = (True, 13)
     ARCHES_CHANGE = (True, 14)
     DEPENDENCY_NEWER = (True, 15)
+    TASK_BUNDLE_OUTDATED = (True, 16)
 
 
 class RebuildHint(NamedTuple):
