@@ -890,6 +890,7 @@ class PrepareReleaseKonfluxPipeline:
             f'--use-default-advisory={kind}',
             '--reconcile',
             '--output=yaml',
+            f'--live-id={shipment.shipment.data.releaseNotes.live_id}',
         ]
 
         self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
