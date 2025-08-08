@@ -259,7 +259,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
             bugs=bugs,
             builds_by_advisory_kind=None,
             major_version=self.major_version,
@@ -330,7 +329,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
             bugs=bugs,
             builds_by_advisory_kind=None,
             major_version=self.major_version,
@@ -408,7 +406,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,
@@ -436,7 +433,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
             categorize_bugs_by_type(
-                runtime=None,
                 bugs=bugs,
                 builds_by_advisory_kind=None,
                 major_version=self.major_version,
@@ -457,7 +453,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'invalid summary'):
             categorize_bugs_by_type(
-                runtime=None,
                 bugs=bugs,
                 builds_by_advisory_kind=None,
                 major_version=self.major_version,
@@ -511,7 +506,6 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,
