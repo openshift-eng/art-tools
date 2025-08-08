@@ -1123,12 +1123,6 @@ class PrepareReleaseKonfluxPipeline:
             target_dir = self.shipment_data_repo._directory / relative_target_dir
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = relative_target_dir / filename
-            if "prerelease" in shipments_by_kind and advisory_kind == "fbc":
-                # for prerelease, use prerelease rpa
-                if not shipment_config.shipment.environments.stage.releasePlan.endswith("-pre"):
-                    shipment_config.shipment.environments.stage.releasePlan += "-pre"
-                if not shipment_config.shipment.environments.prod.releasePlan.endswith("-pre"):
-                    shipment_config.shipment.environments.prod.releasePlan += "-pre"
             self.logger.info("Updating shipment file: %s", filename)
             shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
             out = StringIO()
