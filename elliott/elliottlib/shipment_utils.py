@@ -15,7 +15,7 @@ yaml = new_roundtrip_yaml_handler()
 
 
 def get_shipment_configs_from_mr(
-    mr_url: str, kinds: Tuple[str, ...] = ("image", "extras", "metadata", "fbc", "microshift-bootc")
+    mr_url: str, kinds: Tuple[str, ...] = ("image", "extras", "metadata", "fbc", "microshift-bootc", "prerelease")
 ) -> Dict[str, ShipmentConfig]:
     """Fetch shipment configs from a merge request URL.
     :param mr_url: URL of the merge request
