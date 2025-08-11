@@ -14,7 +14,12 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, sync_to_quay
+from artcommonlib.util import (
+    get_ocp_version_from_group,
+    new_roundtrip_yaml_handler,
+    sync_to_quay,
+    tag_image_from_pullspec,
+)
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, oc
@@ -124,8 +129,10 @@ class BuildMicroShiftBootcPipeline:
         if not self.runtime.dry_run:
             if bootc_build.embargoed:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
+                await tag_image_from_pullspec(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                await tag_image_from_pullspec(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
                 # sync per-arch bootc-pullspec.txt to mirror
                 await asyncio.gather(
                     *(
