@@ -18,7 +18,6 @@ from artcommonlib.util import (
     get_ocp_version_from_group,
     new_roundtrip_yaml_handler,
     sync_to_quay,
-    tag_image_from_pullspec,
 )
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
@@ -129,10 +128,8 @@ class BuildMicroShiftBootcPipeline:
         if not self.runtime.dry_run:
             if bootc_build.embargoed:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
-                await tag_image_from_pullspec(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
-                await tag_image_from_pullspec(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
                 # sync per-arch bootc-pullspec.txt to mirror
                 await asyncio.gather(
                     *(

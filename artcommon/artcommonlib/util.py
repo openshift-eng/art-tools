@@ -480,9 +480,8 @@ async def sync_to_quay(source_pullspec, destination_repo):
 
     await asyncio.wait_for(cmd_assert_async(cmd), timeout=7200)
 
-
-async def tag_image_from_pullspec(pullspec: str, destination_repo: str):
-    shasum = pullspec.split("@sha256:")[1]
+    # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
+    shasum = source_pullspec.split("@sha256:")[1]
     LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}")
     cmd = [
         'oc',
@@ -492,7 +491,6 @@ async def tag_image_from_pullspec(pullspec: str, destination_repo: str):
         f"{destination_repo}@sha256:{shasum}",
         f"{destination_repo}:sha256-{shasum}",
     ]
-    konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
     await asyncio.wait_for(cmd_assert_async(cmd), timeout=7200)
