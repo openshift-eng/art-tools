@@ -995,10 +995,6 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in shipment data. MR will not be updated.")
             return False
 
-        # Update the MR description
-        description_update = f"Updated by job: {self.job_url}\n\n" if self.job_url else commit_message
-        mr.description = f"{mr.description}\n\n{description_update}"
-
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have updated MR description: %s", mr.description)
         else:
@@ -1111,6 +1107,8 @@ class PrepareReleaseKonfluxPipeline:
             await self.shipment_data_repo.write_file(filepath, out.getvalue())
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
+        if self.job_url and self.job_url not in commit_message:
+            commit_message += f"\n{self.job_url}"
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
     async def create_update_build_data_pr(self) -> bool:
