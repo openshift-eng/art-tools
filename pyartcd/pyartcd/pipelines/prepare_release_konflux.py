@@ -995,10 +995,6 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in shipment data. MR will not be updated.")
             return False
 
-        # Update the MR description
-        description_update = f"Updated by job: {self.job_url}\n\n" if self.job_url else commit_message
-        mr.description = f"{mr.description}\n\n{description_update}"
-
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have updated MR description: %s", mr.description)
         else:
@@ -1040,33 +1036,43 @@ class PrepareReleaseKonfluxPipeline:
                 # wait for 30 seconds to ensure the MR is updated
                 self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
                 await asyncio.sleep(30)
-                await self.trigger_ci_pipeline(project, mr.source_branch)
+                await self.trigger_ci_pipeline(mr)
         else:
             self.logger.info("MR is already ready (no draft prefix found)")
 
-    async def trigger_ci_pipeline(self, project, branch: str):
-        """Trigger a GitLab CI pipeline for the specified project and branch.
+    async def trigger_ci_pipeline(self, mr):
+        """Trigger a GitLab Merge Request pipeline using the MR API.
 
         Args:
-            project: GitLab project object
-            branch: The branch name to trigger the pipeline for
+            mr: GitLab merge request object
         """
         try:
-            self.logger.info("Triggering CI pipeline for branch %s in project %s", branch, project.path_with_namespace)
+            self.logger.info(
+                "Triggering CI pipeline for MR !%s on branch %s",
+                mr.iid,
+                mr.source_branch,
+            )
 
             if self.dry_run:
-                self.logger.info("[DRY-RUN] Would have triggered CI pipeline for branch: %s", branch)
+                self.logger.info(
+                    "[DRY-RUN] Would have triggered MR pipeline for MR !%s (branch: %s)",
+                    mr.iid,
+                    mr.source_branch,
+                )
                 return
 
-            # Create a new pipeline for the specified branch
-            pipeline = project.pipelines.create({'ref': branch})
+            # Create a new pipeline for this merge request using MR API
+            pipeline = mr.pipelines.create({'ref': mr.source_branch})
 
-            self.logger.info("CI pipeline triggered successfully: %s", pipeline.web_url)
-            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline.web_url}")
+            pipeline_url = pipeline.web_url
+            self.logger.info("CI MR pipeline triggered successfully: %s", pipeline_url)
+            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
 
         except Exception as ex:
-            self.logger.warning(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
-            await self._slack_client.say_in_thread(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
+            self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Failed to trigger CI pipeline for MR branch {mr.source_branch}: {ex}"
+            )
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -1101,6 +1107,8 @@ class PrepareReleaseKonfluxPipeline:
             await self.shipment_data_repo.write_file(filepath, out.getvalue())
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
+        if self.job_url and self.job_url not in commit_message:
+            commit_message += f"\n{self.job_url}"
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
     async def create_update_build_data_pr(self) -> bool:

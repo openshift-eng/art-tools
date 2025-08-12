@@ -653,7 +653,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         mock_logger.warning.assert_called_once_with(
             "existing release metadata is not empty for prod: "
-            "{'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
+            "{'releasePlan': 'test-prod-rp', 'advisory': {'internal_url': 'https://foo-bar-internal', 'url': 'https://foo-bar'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
         )
 
         # assert that release did not get created
