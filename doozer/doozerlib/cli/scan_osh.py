@@ -362,7 +362,9 @@ class ScanOshCli:
         cmds = []
 
         for nvr in nvrs:
-            cmd = f"osh-cli mock-build --config=auto --profile custom-ocp --nvr {nvr} --nowait"
+            # default priority is 10, set it to 9 so that OCP scans don't cause
+            # long scan delays for other OSH users
+            cmd = f"osh-cli mock-build --config=auto --priority=9 --profile custom-ocp --nvr {nvr} --nowait"
             cmds.append(cmd)
             self.runtime.logger.debug(f"Generating command: {cmd}")
 
