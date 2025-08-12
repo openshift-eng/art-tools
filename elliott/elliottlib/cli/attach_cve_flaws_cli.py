@@ -143,7 +143,14 @@ class AttachCveFlaws:
 
         # Get flaw bugs
         tracker_flaws, flaw_bugs = (
-            get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs) if tracker_bugs else ({}, [])
+            get_flaws(
+                self.runtime.get_bug_tracker('bugzilla'),
+                tracker_bugs,
+                self.runtime.assembly_type,
+                self.runtime.assembly,
+            )
+            if tracker_bugs
+            else ({}, [])
         )
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
@@ -295,7 +302,9 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers)
+            tracker_flaws, flaw_bugs = get_flaws(
+                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
+            )
 
             try:
                 if flaw_bugs:
