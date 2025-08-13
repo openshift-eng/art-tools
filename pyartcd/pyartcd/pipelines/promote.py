@@ -30,6 +30,7 @@ from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
+from elliottlib.shipment_utils import get_shipment_config_from_mr
 from github import Github, GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
@@ -44,7 +45,6 @@ from tenacity import (
     wait_fixed,
 )
 
-from elliott.elliottlib.shipment_utils import get_shipment_config_from_mr
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira_client import JIRAClient
@@ -275,7 +275,7 @@ class PromotePipeline:
 
             image_advisory = impetus_advisories.get("image", 0)
             shipment_config = group_config.get("shipment")
-            full_advisory_id = ""
+            errata_url, full_advisory_id = "", ""
 
             # do a sanity check
             if shipment_config and image_advisory != 0:
@@ -297,6 +297,7 @@ class PromotePipeline:
                 year = datetime.now().strftime("%Y")
                 full_advisory_id = f"{advisory_type}-{year}:{live_id}"
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
+                # TODO: ensure that shipment MR is in a ready state
             else:
                 # Ensure the image advisory is in QE (or later) state.
                 if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
@@ -317,58 +318,57 @@ class PromotePipeline:
 
                         full_advisory_id = self.get_live_id(image_advisory_info)
 
-                # Verify attached bugs
-                if self.skip_attached_bug_check:
-                    logger.info("Skip checking attached bugs.")
-                else:
-                    logger.info("Verifying attached bugs...")
-                    advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+            if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
+                if not full_advisory_id:
+                    raise VerificationError("Could not find live ID from image advisory. Please investigate.")
+                errata_url = f"https://access.redhat.com/errata/{full_advisory_id}"  # don't quote
+                logger.info("Using errata URL: %s", errata_url)
 
-                    # FIXME: We used to skip blocking bug check for the latest minor version,
-                    # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
-                    # from preparing z-stream releases for the latest minor version.
-                    # Per https://coreos.slack.com/archives/GDBRP5YJH/p1662036090856369?thread_ts=1662024464.786929&cid=GDBRP5YJH,
-                    # we would like to try not skipping it by commenting out the following lines and see what will happen.
-                    # major, minor = util.isolate_major_minor_in_group(self.group)
-                    # next_minor = f"{major}.{minor + 1}"
-                    # logger.info("Checking if %s is GA'd...", next_minor)
-                    # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
-                    # if not graph_data.get("nodes"):
-                    #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
-                    #     no_verify_blocking_bugs = True
-                    # else:
-                    #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
+            # Verify attached bugs
+            if self.skip_attached_bug_check:
+                logger.info("Skip checking attached bugs.")
+            else:
+                logger.info("Verifying attached bugs...")
+                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
 
-                    no_verify_blocking_bugs = False
-                    if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] or self.assembly.endswith(
-                        ".0"
-                    ):
-                        no_verify_blocking_bugs = True
+                # FIXME: We used to skip blocking bug check for the latest minor version,
+                # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
+                # from preparing z-stream releases for the latest minor version.
+                # Per https://coreos.slack.com/archives/GDBRP5YJH/p1662036090856369?thread_ts=1662024464.786929&cid=GDBRP5YJH,
+                # we would like to try not skipping it by commenting out the following lines and see what will happen.
+                # major, minor = util.isolate_major_minor_in_group(self.group)
+                # next_minor = f"{major}.{minor + 1}"
+                # logger.info("Checking if %s is GA'd...", next_minor)
+                # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
+                # if not graph_data.get("nodes"):
+                #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
+                #     no_verify_blocking_bugs = True
+                # else:
+                #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
 
-                    verify_flaws = True
-                    if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
-                        verify_flaws = False
+                no_verify_blocking_bugs = False
+                if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
+                    no_verify_blocking_bugs = True
 
-                    try:
-                        await self.verify_attached_bugs(
-                            advisories, no_verify_blocking_bugs=no_verify_blocking_bugs, verify_flaws=verify_flaws
+                verify_flaws = True
+                if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
+                    verify_flaws = False
+
+                try:
+                    await self.verify_attached_bugs(
+                        advisories, no_verify_blocking_bugs=no_verify_blocking_bugs, verify_flaws=verify_flaws
+                    )
+                except ChildProcessError as err:
+                    logger.warn("Error verifying attached bugs: %s", err)
+
+                    if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                        await self._slack_client.say_in_thread(
+                            f"Attached bugs have some issues. Permitting since assembly is of type {assembly_type}"
                         )
-                    except ChildProcessError as err:
-                        logger.warn("Error verifying attached bugs: %s", err)
-
-                        if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-                            await self._slack_client.say_in_thread(
-                                f"Attached bugs have some issues. Permitting since assembly is of type {assembly_type}"
-                            )
-                            await self._slack_client.say_in_thread(str(err))
-                        else:
-                            justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
-                            justifications.append(justification)
-
-            if not full_advisory_id:
-                raise VerificationError("Could not find live ID from image advisory. Please investigate.")
-            errata_url = f"https://access.redhat.com/errata/{full_advisory_id}"  # don't quote
-            logger.info("Using errata URL: %s", errata_url)
+                        await self._slack_client.say_in_thread(str(err))
+                    else:
+                        justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
+                        justifications.append(justification)
 
             # Promote release images
             metadata = {}

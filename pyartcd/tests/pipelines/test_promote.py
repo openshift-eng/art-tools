@@ -436,7 +436,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             }
         )
 
-        with self.assertRaisesRegex(VerificationError, "doesn't have a live ID"):
+        with self.assertRaisesRegex(VerificationError, "Could not find live ID from image advisory"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
