@@ -98,11 +98,6 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.build_system", self.build_system)
         current_span.set_attribute("build-sync.assembly", self.assembly)
 
-        # Skipping for konflux at the moment
-        # TODO to be removed once Konflux is the primary build system
-        if self.build_system == 'konflux':
-            return
-
         # Keeping in try-except so that job doesn't fail because of any error here
         try:
             _, _, repository = split_git_url(self.data_path)
