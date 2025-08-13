@@ -727,14 +727,14 @@ class KonfluxClient:
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
         :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
-        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 1 hour)
+        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 2 hour)
         :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
         """
         if overall_timeout_timedelta is None:
             overall_timeout_timedelta = datetime.timedelta(hours=5)
 
         if pending_timeout_timedelta is None:
-            pending_timeout_timedelta = datetime.timedelta(hours=1)
+            pending_timeout_timedelta = datetime.timedelta(hours=2)
 
         namespace = namespace or self.default_namespace
         if self.dry_run:
