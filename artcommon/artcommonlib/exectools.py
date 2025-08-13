@@ -586,7 +586,7 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
         if check:
             raise ChildProcessError(msg)
         else:
-            logger.warning(msg)
+            logger.debug(msg)
     else:
         span.add_event("command_succeeded", {"duration_seconds": duration_seconds})
 
