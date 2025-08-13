@@ -491,6 +491,7 @@ class PrepareReleaseKonfluxPipeline:
             shipment_url = await self.create_shipment_mr(shipments_by_kind, env)
             await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
             self.updated_assembly_group_config.shipment.url = shipment_url
+            await self.create_update_build_data_pr()
         else:
             self.logger.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
             updated = await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
