@@ -10,6 +10,7 @@ import sys
 import tarfile
 import traceback
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote
@@ -43,6 +44,7 @@ from tenacity import (
     wait_fixed,
 )
 
+from elliott.elliottlib.shipment_utils import get_shipment_config_from_mr
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira_client import JIRAClient
@@ -271,76 +273,102 @@ class PromotePipeline:
                             f"Unable to move {impetus} advisory {advisory} to QE. Details in log."
                         )
 
-            # Ensure the image advisory is in QE (or later) state.
             image_advisory = impetus_advisories.get("image", 0)
-            errata_url = ""
+            shipment_config = group_config.get("shipment")
+            full_advisory_id = ""
 
-            if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
-                if image_advisory <= 0:
-                    err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
-                    justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
-                    justifications.append(justification)
-                else:
-                    logger.info("Verifying associated image advisory %s...", image_advisory)
-                    image_advisory_info = await self.get_advisory_info(image_advisory)
-                    try:
-                        if assembly_type != AssemblyTypes.CANDIDATE:
-                            self.verify_advisory_status(image_advisory_info)
-                    except VerificationError as err:
-                        logger.warn("%s", err)
-                        justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
-                        justifications.append(justification)
+            # do a sanity check
+            if shipment_config and image_advisory != 0:
+                raise ValueError("Shipment config is defined but image advisory is also defined!")
 
-                    live_id = self.get_live_id(image_advisory_info)
-                    if not live_id:
-                        raise VerificationError(f"Advisory {image_advisory_info['id']} doesn't have a live ID.")
-                    errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
+            if shipment_config:
+                shipment_url = shipment_config.get("url")
+                if not shipment_url:
+                    raise ValueError("Shipment config is defined but url is not defined!")
+                image_shipment = get_shipment_config_from_mr(shipment_url, "image")
+                if not image_shipment:
+                    raise ValueError("Could not find image shipment config in merge request!")
+                live_id = image_shipment.shipment.data.releaseNotes.live_id
+                if not live_id:
+                    raise ValueError("Could not find live ID in image shipment config!")
 
-            # Verify attached bugs
-            if self.skip_attached_bug_check:
-                logger.info("Skip checking attached bugs.")
+                # construct full advisory id like RHBA-2025:13660
+                advisory_type = image_shipment.shipment.data.releaseNotes.type
+                year = datetime.now().strftime("%Y")
+                full_advisory_id = f"{advisory_type}-{year}:{live_id}"
+                logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
             else:
-                logger.info("Verifying attached bugs...")
-                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
-
-                # FIXME: We used to skip blocking bug check for the latest minor version,
-                # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
-                # from preparing z-stream releases for the latest minor version.
-                # Per https://coreos.slack.com/archives/GDBRP5YJH/p1662036090856369?thread_ts=1662024464.786929&cid=GDBRP5YJH,
-                # we would like to try not skipping it by commenting out the following lines and see what will happen.
-                # major, minor = util.isolate_major_minor_in_group(self.group)
-                # next_minor = f"{major}.{minor + 1}"
-                # logger.info("Checking if %s is GA'd...", next_minor)
-                # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
-                # if not graph_data.get("nodes"):
-                #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
-                #     no_verify_blocking_bugs = True
-                # else:
-                #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
-
-                no_verify_blocking_bugs = False
-                if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
-                    no_verify_blocking_bugs = True
-
-                verify_flaws = True
-                if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
-                    verify_flaws = False
-
-                try:
-                    await self.verify_attached_bugs(
-                        advisories, no_verify_blocking_bugs=no_verify_blocking_bugs, verify_flaws=verify_flaws
-                    )
-                except ChildProcessError as err:
-                    logger.warn("Error verifying attached bugs: %s", err)
-
-                    if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-                        await self._slack_client.say_in_thread(
-                            f"Attached bugs have some issues. Permitting since assembly is of type {assembly_type}"
-                        )
-                        await self._slack_client.say_in_thread(str(err))
-                    else:
-                        justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
+                # Ensure the image advisory is in QE (or later) state.
+                if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
+                    if image_advisory <= 0:
+                        err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
+                        justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
                         justifications.append(justification)
+                    else:
+                        logger.info("Verifying associated image advisory %s...", image_advisory)
+                        image_advisory_info = await self.get_advisory_info(image_advisory)
+                        try:
+                            if assembly_type != AssemblyTypes.CANDIDATE:
+                                self.verify_advisory_status(image_advisory_info)
+                        except VerificationError as err:
+                            logger.warn("%s", err)
+                            justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
+                            justifications.append(justification)
+
+                        full_advisory_id = self.get_live_id(image_advisory_info)
+
+                # Verify attached bugs
+                if self.skip_attached_bug_check:
+                    logger.info("Skip checking attached bugs.")
+                else:
+                    logger.info("Verifying attached bugs...")
+                    advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+
+                    # FIXME: We used to skip blocking bug check for the latest minor version,
+                    # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
+                    # from preparing z-stream releases for the latest minor version.
+                    # Per https://coreos.slack.com/archives/GDBRP5YJH/p1662036090856369?thread_ts=1662024464.786929&cid=GDBRP5YJH,
+                    # we would like to try not skipping it by commenting out the following lines and see what will happen.
+                    # major, minor = util.isolate_major_minor_in_group(self.group)
+                    # next_minor = f"{major}.{minor + 1}"
+                    # logger.info("Checking if %s is GA'd...", next_minor)
+                    # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
+                    # if not graph_data.get("nodes"):
+                    #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
+                    #     no_verify_blocking_bugs = True
+                    # else:
+                    #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
+
+                    no_verify_blocking_bugs = False
+                    if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] or self.assembly.endswith(
+                        ".0"
+                    ):
+                        no_verify_blocking_bugs = True
+
+                    verify_flaws = True
+                    if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
+                        verify_flaws = False
+
+                    try:
+                        await self.verify_attached_bugs(
+                            advisories, no_verify_blocking_bugs=no_verify_blocking_bugs, verify_flaws=verify_flaws
+                        )
+                    except ChildProcessError as err:
+                        logger.warn("Error verifying attached bugs: %s", err)
+
+                        if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                            await self._slack_client.say_in_thread(
+                                f"Attached bugs have some issues. Permitting since assembly is of type {assembly_type}"
+                            )
+                            await self._slack_client.say_in_thread(str(err))
+                        else:
+                            justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
+                            justifications.append(justification)
+
+            if not full_advisory_id:
+                raise VerificationError("Could not find live ID from image advisory. Please investigate.")
+            errata_url = f"https://access.redhat.com/errata/{full_advisory_id}"  # don't quote
+            logger.info("Using errata URL: %s", errata_url)
 
             # Promote release images
             metadata = {}
