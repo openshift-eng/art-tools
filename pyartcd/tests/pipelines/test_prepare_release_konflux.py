@@ -758,7 +758,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_init_shipment.assert_any_call("fbc")
         self.assertEqual(mock_init_shipment.call_count, 4)
         self.assertEqual(mock_find_builds_all.call_count, 1)
-        self.assertEqual(mock_find_or_build_bundle_builds.call_count, 2)
+        self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
         self.assertEqual(mock_find_or_build_fbc_builds.call_count, 1)
         mock_get_snapshot.assert_any_call(['extras-nvr'])
         mock_get_snapshot.assert_any_call(['image-nvr'])
