@@ -297,7 +297,7 @@ class PromotePipeline:
                 year = datetime.now().strftime("%Y")
                 full_advisory_id = f"{advisory_type}-{year}:{live_id}"
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
-                # TODO: ensure that shipment MR is in a ready state
+                # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
             else:
                 # Ensure the image advisory is in QE (or later) state.
                 if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
