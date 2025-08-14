@@ -205,8 +205,8 @@ class PrepareReleaseKonfluxPipeline:
         await self.check_blockers()
         err = None
         try:
-            # await self.handle_jira_ticket()
-            # await self.prepare_rpm_advisory()
+            await self.handle_jira_ticket()
+            await self.prepare_rpm_advisory()
             await self.prepare_shipment()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
@@ -514,7 +514,7 @@ class PrepareReleaseKonfluxPipeline:
         if self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
             permissive = True
         for kind, shipment in shipments_by_kind.items():
-            if kind == "fbc" or kind == "prerelease":
+            if kind in ["fbc", "prerelease"]:
                 continue
             bug_ids = await self.find_bugs(kind, permissive=permissive)
             set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
@@ -612,7 +612,7 @@ class PrepareReleaseKonfluxPipeline:
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            f'--assembly=stream',
+            '--assembly=stream',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
@@ -650,8 +650,6 @@ class PrepareReleaseKonfluxPipeline:
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
         ]
-        if self.assembly_group_config.get("operator_index_mode") == "pre-release":
-            cmd += ["--force"]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
@@ -1276,8 +1274,8 @@ class PrepareReleaseKonfluxPipeline:
         """
         Verify that the swept builds match the imagestreams that were updated during build-sync.
         """
-        if self.updated_assembly_group_config.get("operator_index_mode") == "pre-release":
-            self.logger.info("Skipping payload verification for pre-release")
+        if "image" not in [config.kind for config in self.updated_assembly_group_config.shipment.advisories]:
+            self.logger.info("Skipping payload verification because image kind is not in shipment config")
             return
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
