@@ -786,6 +786,35 @@ async def get_group_images(
         return json.loads(out)['images']
 
 
+async def get_group_rpms(
+    group: str,
+    assembly: str,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> List[str]:
+    """
+    Get the list of RPMs for a given group and assembly.
+    """
+
+    with TemporaryDirectory() as doozer_working:
+        group_param = f'--group={group}'
+        if doozer_data_gitref:
+            group_param += f'@{doozer_data_gitref}'
+        command = [
+            'doozer',
+            f'--working-dir={doozer_working}',
+            f'--data-path={doozer_data_path}',
+            group_param,
+            f'--assembly={assembly}',
+            'rpms:print',
+            '--output=rpms.txt',
+        ]
+        await exectools.cmd_assert_async(command)
+        with open('rpms.txt', 'r') as f:
+            out = f.read()
+        return out.splitlines()
+
+
 async def increment_rebase_fail_counter(image, version, build_system):
     """
     Increment the fail counter for a given image in Redis.
