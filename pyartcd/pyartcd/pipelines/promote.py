@@ -494,9 +494,8 @@ class PromotePipeline:
                     title = "Promote the tested nightly"
                     subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
                     if not subtask:
-                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
-
-                    if subtask.fields.status.name != "Closed":
+                        self._logger.warning("Promote release subtask not found in release_jira: %s", release_jira)
+                    elif subtask.fields.status.name != "Closed":
                         self._jira_client.add_comment(
                             subtask,
                             "promote release job : {}".format(os.environ.get("BUILD_URL")),
