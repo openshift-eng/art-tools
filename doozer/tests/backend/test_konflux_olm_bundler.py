@@ -8,6 +8,7 @@ import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from doozerlib import constants
+from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
 
 
@@ -506,23 +507,28 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.image_repo = "test-image-repo"
         self.skip_checks = False
         self.dry_run = False
-        self.konflux_client = AsyncMock()
-        with patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient") as mock_konflux_client:
-            mock_konflux_client.return_value = self.konflux_client
-            mock_konflux_client.from_kubeconfig.return_value = self.konflux_client
-            self.builder = KonfluxOlmBundleBuilder(
-                base_dir=self.base_dir,
-                group=self.group,
-                assembly=self.assembly,
-                source_resolver=self.source_resolver,
-                db=self.db,
-                konflux_namespace=self.konflux_namespace,
-                konflux_kubeconfig=self.konflux_kubeconfig,
-                konflux_context=self.konflux_context,
-                image_repo=self.image_repo,
-                skip_checks=self.skip_checks,
-                dry_run=self.dry_run,
-            )
+        self.konflux_client_patcher = patch(
+            "doozerlib.backend.konflux_olm_bundler.KonfluxClient", spec=KonfluxClient, new_callable=AsyncMock
+        )
+        self.MockKonfluxClient = self.konflux_client_patcher.start()
+        self.MockKonfluxClient.SUPPORTED_ARCHES = KonfluxClient.SUPPORTED_ARCHES
+        self.konflux_client = self.MockKonfluxClient.from_kubeconfig.return_value = self.MockKonfluxClient.return_value
+        self.builder = KonfluxOlmBundleBuilder(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly=self.assembly,
+            source_resolver=self.source_resolver,
+            db=self.db,
+            konflux_namespace=self.konflux_namespace,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_context=self.konflux_context,
+            image_repo=self.image_repo,
+            skip_checks=self.skip_checks,
+            dry_run=self.dry_run,
+        )
+
+    def tearDown(self) -> None:
+        self.konflux_client_patcher.stop()
 
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
     async def test_start_build(self, mock_dockerfile_parser):

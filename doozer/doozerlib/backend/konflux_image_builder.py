@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 
+import asyncstdlib as a
 from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
@@ -26,7 +27,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
-from kubernetes.dynamic import resource
+from kubernetes_asyncio.dynamic import resource
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -74,17 +75,21 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
         self._record_logger = record_logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=config.namespace,
-            config_file=config.kubeconfig,
-            context=config.context,
-            dry_run=config.dry_run,
+
+    @a.cached_property
+    async def _konflux_client(self):
+        return await KonfluxClient.from_kubeconfig(
+            default_namespace=self._config.namespace,
+            config_file=self._config.kubeconfig,
+            context=self._config.context,
+            dry_run=self._config.dry_run,
         )
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        konflux_client = await self._konflux_client
         metadata.build_status = False
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
         df_path = dest_dir.joinpath("Dockerfile")
@@ -179,7 +184,7 @@ class KonfluxImageBuilder:
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
-                record["task_url"] = self._konflux_client.resource_url(pipelinerun)
+                record["task_url"] = konflux_client.resource_url(pipelinerun)
                 await self.update_konflux_db(
                     metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
                 )
@@ -189,7 +194,7 @@ class KonfluxImageBuilder:
                 if metadata.config.konflux.build_timeout:
                     timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
 
-                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(
+                pipelinerun, pod_list = await konflux_client.wait_for_pipelinerun(
                     pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
@@ -405,17 +410,18 @@ class KonfluxImageBuilder:
         git_branch = build_repo.branch or build_repo.commit_hash
         git_url = build_repo.https_url
         git_commit = build_repo.commit_hash
+        konflux_client = await self._konflux_client
 
         # Ensure the Application resource exists
         app_name = self.get_application_name(self._config.group_name)
         logger.info(f"Using application: {app_name}")
-        await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
+        await konflux_client.ensure_application(name=app_name, display_name=app_name)
 
         # Ensure the component resource exists
         component_name = self.get_component_name(app_name, metadata.distgit_key)
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
-        await self._konflux_client.ensure_component(
+        await konflux_client.ensure_component(
             name=component_name,
             application=app_name,
             component_name=component_name,
@@ -436,7 +442,7 @@ class KonfluxImageBuilder:
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
-        pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
+        pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,
@@ -456,7 +462,7 @@ class KonfluxImageBuilder:
             annotations={"art-network-mode": metadata.get_konflux_network_mode()},
         )
 
-        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
+        logger.info(f"Created PipelineRun: {konflux_client.resource_url(pipelinerun)}")
         return pipelinerun
 
     @staticmethod
@@ -554,6 +560,7 @@ class KonfluxImageBuilder:
         self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        konflux_client = await self._konflux_client
         if not metadata.runtime.konflux_db:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return None
@@ -575,7 +582,7 @@ class KonfluxImageBuilder:
         pipelinerun_name = pipelinerun['metadata']['name']
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
         pipelinerun_uid = pipelinerun['metadata']['uid']
-        build_pipeline_url = self._konflux_client.resource_url(pipelinerun)
+        build_pipeline_url = konflux_client.resource_url(pipelinerun)
         build_component = pipelinerun['metadata']['labels']['appstudio.openshift.io/component']
 
         build_record_params = {
