@@ -972,50 +972,57 @@ class ConfigScanSources:
                 self.logger.info(f'Task {task_name} not found in current template')
                 continue
 
-            if used_sha != current_sha:
-                self.logger.info(
-                    f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
-                )
-                # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
-                task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
-                if task_age_days and task_age_days >= 10:
-                    # Staggered rebuild logic: probability increases as age increases
-                    #   - At 10 days: 1 in 21 chance (~5%)
-                    #   - At 15 days: 1 in 16 chance (~6%)
-                    #   - At 20 days: 1 in 11 chance (~9%)
-                    #   - At 25 days: 1 in 6 chance (~17%)
-                    #   - At 29 days: 1 in 2 chance (50%)
-                    #   - At 30+ days: Always rebuild (100%)
-                    self.logger.info(
-                        f'Task bundle {task_name} is {task_age_days} days old (>= 10 days), applying staggered rebuild logic'
-                    )
-                    rebuild_probability_denominator = max(30 - task_age_days, 1)
-                    should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
-
-                    if should_rebuild:
-                        self.logger.info(
-                            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
-                        )
-                        self.add_image_meta_change(
-                            image_meta,
-                            RebuildHint(
-                                RebuildHintCode.TASK_BUNDLE_OUTDATED,
-                                f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
-                                f'and newer version is available (staggered rebuild)',
-                            ),
-                        )
-                        return
-                    else:
-                        self.logger.info(
-                            f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
-                            f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
-                        )
-                elif task_age_days:
-                    self.logger.info(
-                        f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
-                    )
-            else:
+            if used_sha == current_sha:
                 self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
+                continue
+
+            self.logger.info(
+                f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
+            )
+
+            # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
+            task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
+            if not task_age_days:
+                continue
+
+            if task_age_days < 10:
+                self.logger.info(
+                    f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
+                )
+                continue
+
+            # Staggered rebuild logic: probability increases as age increases
+            #   - At 10 days: 1 in 21 chance (~5%)
+            #   - At 15 days: 1 in 16 chance (~6%)
+            #   - At 20 days: 1 in 11 chance (~9%)
+            #   - At 25 days: 1 in 6 chance (~17%)
+            #   - At 29 days: 1 in 2 chance (50%)
+            #   - At 30+ days: Always rebuild (100%)
+            self.logger.info(
+                f'Task bundle {task_name} is {task_age_days} days old (>= 10 days), applying staggered rebuild logic'
+            )
+            rebuild_probability_denominator = max(30 - task_age_days, 1)
+            should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
+
+            if not should_rebuild:
+                self.logger.info(
+                    f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
+                    f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
+                )
+                continue
+
+            self.logger.info(
+                f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
+            )
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(
+                    RebuildHintCode.TASK_BUNDLE_OUTDATED,
+                    f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
+                    f'and newer version is available (staggered rebuild)',
+                ),
+            )
+            return
 
     async def get_current_task_bundle_shas(self) -> Dict[str, str]:
         """
