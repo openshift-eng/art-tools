@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 from doozerlib.image import ImageMetadata
@@ -38,6 +38,9 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         # Mock image metadata
         self.image_meta = MagicMock(spec=ImageMetadata)
         self.image_meta.distgit_key = "test-image"
+        # Mock config with for_release attribute
+        self.image_meta.config = MagicMock()
+        self.image_meta.config.for_release = True
 
         # Mock build record
         self.build_record = MagicMock(spec=KonfluxBuildRecord)
@@ -223,6 +226,62 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not call get_age when SHAs match
         mock_get_age.assert_not_called()
         self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('artcommonlib.util.get_konflux_slsa_attestation')
+    async def test_scan_task_bundle_changes_for_release_none(self, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is None."""
+        # Set for_release to None
+        self.image_meta.config.for_release = None
+
+        mock_get_attestation.return_value = self.sample_attestation
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call get_attestation when for_release is None (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            pullspec=self.build_record.image_pullspec, registry_auth_file=self.scanner.registry_auth_file
+        )
+
+    @patch('artcommonlib.util.get_konflux_slsa_attestation')
+    async def test_scan_task_bundle_changes_for_release_missing(self, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is Missing."""
+        # Set for_release to Missing
+        self.image_meta.config.for_release = Missing
+
+        mock_get_attestation.return_value = self.sample_attestation
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call get_attestation when for_release is Missing (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            pullspec=self.build_record.image_pullspec, registry_auth_file=self.scanner.registry_auth_file
+        )
+
+    @patch('artcommonlib.util.get_konflux_slsa_attestation')
+    async def test_scan_task_bundle_changes_for_release_true(self, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is True."""
+        # for_release is already set to True in setUp, but let's be explicit
+        self.image_meta.config.for_release = True
+
+        mock_get_attestation.return_value = self.sample_attestation
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call get_attestation when for_release is True (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            pullspec=self.build_record.image_pullspec, registry_auth_file=self.scanner.registry_auth_file
+        )
+
+    @patch('artcommonlib.util.get_konflux_slsa_attestation')
+    async def test_scan_task_bundle_changes_for_release_false(self, mock_get_attestation):
+        """Test that task bundle scanning is skipped when for_release is False."""
+        # Set for_release to False
+        self.image_meta.config.for_release = False
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should NOT call get_attestation when for_release is False (skipped)
+        mock_get_attestation.assert_not_called()
 
 
 class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):

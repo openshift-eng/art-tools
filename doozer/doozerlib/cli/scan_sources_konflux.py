@@ -919,6 +919,14 @@ class ConfigScanSources:
         self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
+        # Skip if image is not being released
+        # Conforma is concerned only about images that are being released
+        for_release = image_meta.config.for_release
+        if for_release is False:
+            # for_release is set to False in image config for images that we don't want to ship
+            self.logger.info(f"Skipping scanning task bundle for {image_meta.distgit_key} since its unreleased")
+            return
+
         try:
             # Get SLSA attestation for the build
             self.logger.info(f'Fetching SLSA attestation for {build_record.image_pullspec}')
