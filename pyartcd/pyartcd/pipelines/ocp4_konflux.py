@@ -626,8 +626,7 @@ class KonfluxOcp4Pipeline:
         )
 
         if self.runtime.dry_run:
-            self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
-            return
+            cmd.append('--dry-run')
 
         # Rebase and build RPMs
         self.runtime.logger.info('Building RPMs')
