@@ -422,7 +422,7 @@ class KonfluxOcp4Pipeline:
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ALL:
             self.build_plan.rpms_included = []
             self.build_plan.rpms_excluded = []
-            jenkins.update_description('Images: building all RPMs.<br/>')
+            jenkins.update_description('Building all RPMs.<br/>')
 
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ONLY:
             self.build_plan.rpms_included = self.rpm_list
