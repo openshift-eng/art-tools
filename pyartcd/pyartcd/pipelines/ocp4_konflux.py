@@ -254,10 +254,10 @@ class KonfluxOcp4Pipeline:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
 
+        cmd.append('--latest-parent-version')
+        cmd.extend(self.include_exclude_param(kind='images'))
         cmd.extend(
             [
-                '--latest-parent-version',
-                self.include_exclude_param(kind='images'),
                 'beta:images:konflux:build',
                 "--konflux-namespace=ocp-art-tenant",
             ]
