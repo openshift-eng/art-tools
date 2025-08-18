@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import sys
@@ -155,8 +156,13 @@ class AttachCveFlaws:
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
         # Update the release notes
-        self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
-        return release_notes
+        updated_release_notes = copy.deepcopy(release_notes)
+        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+        if updated_release_notes == release_notes:
+            self.logger.info("No changes made to the release notes")
+            return None
+
+        return updated_release_notes
 
     def get_release_notes_from_mr(self, mr_url: str) -> ReleaseNotes:
         """Fetch release notes from a merge request URL."""
@@ -190,7 +196,7 @@ class AttachCveFlaws:
         )
         return attached_tracker_bugs
 
-    def update_advisory_konflux(
+    def update_release_notes(
         self,
         release_notes: ReleaseNotes,
         flaw_bugs: Iterable[Bug],
