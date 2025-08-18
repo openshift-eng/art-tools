@@ -228,14 +228,23 @@ def _merger(a, b):
     raise TypeError(f'Unexpected value type: {type(a)}: {a}')
 
 
-def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> ListModel:
+def assembly_permits(releases_config: Model, group_config: Model, assembly: typing.Optional[str]) -> ListModel:
     """
     :param releases_config: The content of releases.yml in Model form.
+    :param group_config: The content of group.yml in Model form.
     :param assembly: The name of the assembly to assess
     Returns computed permits config model for a given assembly. If no
     permits are defined ListModel([]) is returned.
     """
-    defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
+
+    phase = group_config.software_lifecycle.phase
+    if phase is not Missing and phase == 'pre-release':
+        defined_permits = assembly_config_struct(releases_config, assembly, 'prerelease_permits', [])
+        if not defined_permits:
+            defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
+    else:
+        defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
+
     for permit in defined_permits:
         if permit.code == AssemblyIssueCode.IMPERMISSIBLE.name:
             raise ValueError(f'IMPERMISSIBLE cannot be permitted in any assembly (assembly: {assembly})')
