@@ -446,9 +446,7 @@ class KonfluxOcp4Pipeline:
             n_rpms = self.build_plan.active_rpm_count - len(self.build_plan.rpms_excluded)
             jenkins.update_title(f'[{n_rpms} RPMs]')
             if len(self.build_plan.images_excluded) <= 10:
-                jenkins.update_description(
-                    f'Building all RPMs except {",".join(self.build_plan.rpms_excluded)}.<br/>'
-                )
+                jenkins.update_description(f'Building all RPMs except {",".join(self.build_plan.rpms_excluded)}.<br/>')
             else:
                 jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
 
