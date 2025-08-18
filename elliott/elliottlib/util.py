@@ -635,7 +635,7 @@ def get_advisory_docs_info(runtime, advisory_kind):
     # Image advisory has a link to the RPM advisory and the RPM advisory has a link to the image advisory
     if advisory_kind == 'image':
         advisory_type, live_id = get_advisory_info_from_shipment('rpm')
-    elif advisory_kind in ['rpm', 'extras']:
+    elif advisory_kind in ['extras']: # TODO: Add 'rpm' to this list, once it moves over to konflux
         advisory_type, live_id = get_advisory_info_from_shipment('image')
     else:
         advisory_type, live_id = None, None
