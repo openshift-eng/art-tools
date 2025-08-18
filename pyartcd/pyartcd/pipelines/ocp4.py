@@ -310,6 +310,12 @@ class Ocp4Pipeline:
             self.runtime.logger.info('Not building RPMs.')
             return
 
+        if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
+            )
+            return
+
         cmd = self._doozer_base_command.copy()
         cmd.extend(self._include_exclude('rpms', self.build_plan.rpms_included, self.build_plan.rpms_excluded))
         cmd.extend(
