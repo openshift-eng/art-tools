@@ -279,6 +279,63 @@ class KonfluxOcp4Pipeline:
             SKIP_MULTI_ARCH_PAYLOAD=False,
         )
 
+    async def sweep_bugs(self):
+        """
+        Find MODIFIED bugs for the target-releases, and set them to ON_QA
+        """
+
+        if self.assembly != 'stream':
+            self.runtime.logger.info('Not setting bugs to ON_QA since assembly is not stream')
+            return
+
+        cmd = [
+            'elliott',
+            f'--group=openshift-{self.version}',
+            "find-bugs:qe",
+        ]
+        if self.runtime.dry_run:
+            cmd.append('--dry-run')
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            if self.runtime.dry_run:
+                return
+
+            self.slack_client.bind_channel(f'openshift-{self.version}')
+            await self.slack_client.say(f'Bug sweep failed for {self.version}. Please investigate')
+
+    async def sweep_golang_bugs(self):
+        # find-bugs:golang only modifies bug state after verifying
+        # that the bug is fixed in the builds found in latest nightly / rpms in candidate tag
+        # therefore we do not need to check which builds are successful to run this
+        if self.assembly != 'stream':
+            self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
+            return
+
+        cmd = [
+            'elliott',
+            '--assembly',
+            'stream',
+            f'--group=openshift-{self.version}',
+            "find-bugs:golang",
+            "--analyze",
+            "--update-tracker",
+        ]
+
+        if self.runtime.dry_run:
+            cmd.append('--dry-run')
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            if self.runtime.dry_run:
+                return
+            self.slack_client.bind_channel(f'openshift-{self.version}')
+            await self.slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
+
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
@@ -475,6 +532,8 @@ class KonfluxOcp4Pipeline:
         finally:
             await self.mirror_images()
             await self.sync_images()
+            await self.sweep_bugs()
+            await self.sweep_golang_bugs()
             self.trigger_bundle_build()
             await self.clean_up()
 
