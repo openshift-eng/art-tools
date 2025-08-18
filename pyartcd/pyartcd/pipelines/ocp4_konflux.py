@@ -652,8 +652,15 @@ class KonfluxOcp4Pipeline:
         finally:
             await self.mirror_images()
             await self.sync_images()
-            await self.sweep_bugs()
-            await self.sweep_golang_bugs()
+
+            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                await self.sweep_bugs()
+                await self.sweep_golang_bugs()
+            else:
+                LOGGER.info(
+                    f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
+                )
+
             self.trigger_bundle_build()
             await self.clean_up()
 
