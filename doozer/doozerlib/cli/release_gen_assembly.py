@@ -785,6 +785,7 @@ class GenAssemblyCli:
         else:  # konflux
             advisories = {
                 'rpm': -1,
+                'rhcos': -1,
             }
             # for konflux, prerelease advisories are noted in the `shipment` field.
             # No need to add it to the advisories map.

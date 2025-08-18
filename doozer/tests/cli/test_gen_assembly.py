@@ -332,12 +332,13 @@ class TestGenAssemblyCli(TestCase):
             advisories,
             {
                 'rpm': -1,
+                'rhcos': -1,
             },
         )
         self.assertEqual(release_jira, "ART-0")
 
     def test_get_advisories_release_jira_candidate_reuse(self):
-        runtime = MagicMock()
+        runtime = MagicMock(build_system='brew')
         advisories = {'image': 123, 'rpm': 456, 'extras': 789, 'metadata': 654}
         release_jira = "ART-123"
         runtime.get_releases_config.return_value = Model(

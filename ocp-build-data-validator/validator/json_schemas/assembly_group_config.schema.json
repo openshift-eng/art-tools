@@ -109,7 +109,17 @@
         "advance?": {
           "$ref": "#/properties/advisories/properties/advance"
         },
-        "advance-": {}
+        "advance-": {},
+        "rhcos": {
+          "type": "integer"
+        },
+        "rhcos!": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "rhcos?": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "rhcos-": {}
       },
       "additionalProperties": false
     },

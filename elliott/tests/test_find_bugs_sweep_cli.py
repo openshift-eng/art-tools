@@ -1,6 +1,6 @@
 import traceback
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from click.testing import CliRunner
@@ -215,6 +215,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
     def setUp(self):
         self.major_version = 4
         self.minor_version = 11
+        self.runtime = MagicMock(get_default_advisories=MagicMock(return_value={"rpm": -1, "image": -1}))
 
     def test_categorize_no_trackers(self):
         bugs = [
@@ -259,7 +260,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
+            runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=None,
             major_version=self.major_version,
@@ -330,7 +331,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
+            runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=None,
             major_version=self.major_version,
@@ -408,7 +409,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
+            runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,
@@ -436,7 +437,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
             categorize_bugs_by_type(
-                runtime=None,
+                runtime=self.runtime,
                 bugs=bugs,
                 builds_by_advisory_kind=None,
                 major_version=self.major_version,
@@ -457,7 +458,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'invalid summary'):
             categorize_bugs_by_type(
-                runtime=None,
+                runtime=self.runtime,
                 bugs=bugs,
                 builds_by_advisory_kind=None,
                 major_version=self.major_version,
@@ -511,7 +512,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=None,
+            runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
             major_version=self.major_version,

@@ -3,6 +3,7 @@ aiofiles
 aiohttp[speedups] >= 3.6
 aiohttp_retry
 aioredlock >= 0.7.3
+asyncstdlib
 click == 8.1.8
 awscli >= 1.37.0
 contextvars
