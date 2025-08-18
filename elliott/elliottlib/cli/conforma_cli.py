@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import os
 import sys
@@ -487,6 +488,18 @@ class ConformaVerifyCli:
             LOGGER.warning("✗ Batch verification failed")
 
         return result
+
+    def _truncate_violations_for_yaml(self, result: Dict) -> Dict:
+        """Create a truncated version of results for YAML output (only first 10 violation codes)."""
+        truncated = copy.deepcopy(result)
+
+        if "nvr_results" in truncated:
+            for nvr_data in truncated["nvr_results"].values():
+                if "violations" in nvr_data and "codes" in nvr_data["violations"]:
+                    # Keep only first 10 violation codes for cleaner YAML output
+                    nvr_data["violations"]["codes"] = nvr_data["violations"]["codes"][:10]
+
+        return truncated
 
 
 @cli.command("verify-conforma", short_help="Verify given builds (NVRs) with Conforma")
