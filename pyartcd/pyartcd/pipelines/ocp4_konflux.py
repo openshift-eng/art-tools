@@ -607,6 +607,14 @@ class KonfluxOcp4Pipeline:
             LOGGER.warning('No RPMs will be built')
             return
 
+        # If the version is not in the override list, skip the RPM rebase and build
+        # TODO this can be removed once all versions are handled by ocp4-konflux
+        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
+            )
+            return
+
         cmd = self._doozer_base_command.copy()
         cmd.extend(self.include_exclude_param('rpms'))
         cmd.extend(
