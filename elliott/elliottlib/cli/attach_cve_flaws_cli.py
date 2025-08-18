@@ -19,8 +19,8 @@ from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
-from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
-from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_bugzilla_bug_ids
+from elliottlib.shipment_model import CveAssociation, ReleaseNotes
+from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
@@ -161,14 +161,7 @@ class AttachCveFlaws:
     def get_release_notes_from_mr(self, mr_url: str) -> ReleaseNotes:
         """Fetch release notes from a merge request URL."""
 
-        kinds = (
-            (self.default_advisory_type,)
-            if self.default_advisory_type
-            else ("rpm", "image", "extras", "microshift", "metadata")
-        )
-        shipment_configs: Dict[str, ShipmentConfig] = get_shipment_configs_from_mr(mr_url, kinds)
-        shipment_config = shipment_configs.get(self.default_advisory_type)
-
+        shipment_config = get_shipment_config_from_mr(mr_url, self.default_advisory_type)
         if not shipment_config:
             raise ValueError(f"No shipment config found for kind: {self.default_advisory_type}")
 
