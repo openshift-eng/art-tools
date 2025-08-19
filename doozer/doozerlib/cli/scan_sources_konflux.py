@@ -85,7 +85,7 @@ class ConfigScanSources:
         self.latest_image_build_records_map: Dict[str, KonfluxBuildRecord] = {}
         self.latest_rpm_build_records_map: Dict[str, Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
-        self.changing_rpms = set()
+        self.changing_rpm_names = set()
         self.rhcos_status = []
         self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
@@ -831,7 +831,7 @@ class ConfigScanSources:
     async def scan_rpm_changes(self, image_meta: ImageMetadata):
         # Check if the build used any of the ART built rpms that are changing
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-        for rpm in self.changing_rpms:
+        for rpm in self.changing_rpm_names:
             if rpm in {parse_nvr(package)['name']: package for package in build_record.installed_packages}:
                 self.add_image_meta_change(
                     image_meta,
@@ -932,7 +932,13 @@ class ConfigScanSources:
             # RPM has never been built
             if not latest_build_record:
                 self.logger.warning('No build found for RPM %s in %s', rpm_name, self.runtime.group)
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.NO_LATEST_BUILD,
+                        reason=f'Component {rpm_name} has no latest build for assembly {self.runtime.assembly}',
+                    ),
+                )
                 return
 
             # Scan for any build in this assembly which includes the git commit.
@@ -943,7 +949,13 @@ class ConfigScanSources:
 
             if not upstream_commit_build_record:
                 self.logger.warning('No build for RPM %s from upstream commit %s', rpm_name, upstream_commit_hash)
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.NEW_UPSTREAM_COMMIT,
+                        reason=f'New upstream commit {upstream_commit_hash} for {rpm_name} needs to be built',
+                    ),
+                )
                 return
 
             # Does most recent build match the one from the latest upstream commit?
@@ -952,7 +964,14 @@ class ConfigScanSources:
                 self.logger.warning(
                     'Latest build for RPM %s does not match upstream commit %s', rpm_name, upstream_commit_hash
                 )
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
+                        reason=f'Latest build {latest_build_record.nvr} does not match upstream commit build '
+                        f'{upstream_commit_build_record.nvr}; commit reverted?',
+                    ),
+                )
                 return
 
         tasks = []
@@ -993,6 +1012,14 @@ class ConfigScanSources:
                 descendant_meta,
                 RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, f'Ancestor {meta.distgit_key} is changing'),
             )
+
+    def add_rpm_meta_change(self, meta: RPMMetadata, rebuild_hint: RebuildHint):
+        # If the rebuild hint does not require a rebuild, do nothing
+        if not rebuild_hint.rebuild:
+            return
+
+        self.changing_rpm_names.add(meta.distgit_key)
+        self.add_assessment_reason(meta, rebuild_hint)
 
     def is_image_enabled(self, image_name: str) -> bool:
         image_meta = self.runtime.image_map[image_name]
@@ -1143,11 +1170,11 @@ class ConfigScanSources:
 
     def generate_report(self):
         image_results = []
-        changing_image_names = [name for name in self.changing_image_names]
 
         # Filter out images that are disabled or wip at the konflux level
-        changing_image_names = list(filter(lambda image_name: self.is_image_enabled(image_name), changing_image_names))
-
+        changing_image_names = list(
+            filter(lambda image_name: self.is_image_enabled(image_name), self.changing_image_names)
+        )
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names
@@ -1160,9 +1187,22 @@ class ConfigScanSources:
                     }
                 )
 
+        rpm_results = []
+        for rpm_meta in self.all_rpm_metas:
+            dgk = rpm_meta.distgit_key
+            is_changing = dgk in self.changing_rpm_names
+            if is_changing:
+                rpm_results.append(
+                    {
+                        'name': dgk,
+                        'changed': is_changing,
+                        'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}'),
+                    }
+                )
+
         results = dict(
             images=image_results,
-            rpms=[meta.distgit_key for meta in self.changing_rpms],
+            rpms=rpm_results,
             rhcos=self.rhcos_status,
         )
 
