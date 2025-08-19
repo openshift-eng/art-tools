@@ -289,7 +289,12 @@ def start_ocp4(
 
 
 def start_ocp4_konflux(
-    build_version: str, assembly: str, image_list: list, limit_arches: list = None, **kwargs
+    build_version: str,
+    assembly: str,
+    image_list: list,
+    rpm_list: list = None,
+    limit_arches: list = None,
+    **kwargs,
 ) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
@@ -299,9 +304,16 @@ def start_ocp4_konflux(
     # Build only changed images or none
     if image_list:
         params['IMAGE_LIST'] = ','.join(image_list)
+
+    # Build changed RPMs if any
+    if rpm_list:
+        params['RPM_BUILD_STRATEGY'] = 'only'
+        params['RPM_LIST'] = ','.join(rpm_list)
+
     # Limit arches when requested
     if limit_arches:
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
+
     # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
     params['SKIP_PLASHETS'] = False
 
