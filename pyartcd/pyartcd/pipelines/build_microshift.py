@@ -153,7 +153,9 @@ class BuildMicroShiftPipeline:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         release_version = VersionInfo.parse(release_name)
         advisory_type = "RHEA" if release_version.patch == 0 else "RHBA"
-        release_date = assembly_config_struct(Model(self.releases_config), self.assembly, "group", {}).get("release_date")
+        release_date = assembly_config_struct(Model(self.releases_config), self.assembly, "group", {}).get(
+            "release_date"
+        )
         et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
         boilerplate = get_advisory_boilerplate(
             runtime=self, et_data=et_data, art_advisory_key="microshift", errata_type=advisory_type
