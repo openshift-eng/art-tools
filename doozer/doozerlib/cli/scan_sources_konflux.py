@@ -16,6 +16,7 @@ import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -92,8 +93,12 @@ class ConfigScanSources:
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
-            # TODO: to be removed once this job is the only one we use for scanning
-            raise DoozerFatalError('ocp4-scan for Konflux is not yet allowed to rebase into openshfit-priv!')
+            major, minor = self.runtime.get_major_minor_fields()
+            version = f'{major}.{minor}'
+            if version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                raise DoozerFatalError(
+                    'ocp4-scan for Konflux is not allowed to rebase into openshfit-priv version %s', version
+                )
             self.rebase_into_priv()
 
         # Gather latest builds for ART-managed RPMs
@@ -1116,7 +1121,7 @@ class ConfigScanSources:
 
         return shasum
 
-    def latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
+    def latest_rhcos_node_shasum(self, arch) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         rhcos_index = next(

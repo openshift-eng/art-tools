@@ -8,6 +8,7 @@ import click
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
@@ -15,6 +16,7 @@ from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, rhcos, util
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime
@@ -54,6 +56,12 @@ class ConfigScanSources:
 
             # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
             if self.rebase_priv:
+                major, minor = self.runtime.get_major_minor_fields()
+                version = f'{major}.{minor}'
+                if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                    raise DoozerFatalError(
+                        'ocp4-scan for Brew is not allowed to rebase into openshfit-priv version %s', version
+                    )
                 self.rebase_into_priv()
 
             # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
