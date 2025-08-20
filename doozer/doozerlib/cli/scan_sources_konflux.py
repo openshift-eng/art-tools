@@ -238,6 +238,10 @@ class ConfigScanSources:
         raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
     def rebase_into_priv(self):
+        if self.dry_run:
+            self.logger.info('Would have rebased into openshift-priv')
+            return
+
         self.logger.info('Rebasing public upstream contents into openshift-priv')
         upstream_mappings = exectools.parallel_exec(
             lambda meta, _: (
