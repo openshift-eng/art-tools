@@ -1057,8 +1057,13 @@ class ConfigScanSources:
             brew_arch = brew_arch_for_go_arch(arch)
             for private in (False, True):
                 status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
+                tagged_rhcos_value = None
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                    tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
+                    try:
+                        tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
+                    except Exception as e:
+                        self.logger.warning(f"Could not get tagged RHCOS from imagestream: {e}. Will assume that it needs to be rebuilt")
+
                     latest_rhcos_value = self.latest_rhcos_node_shasum(arch)
                 else:
                     tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
