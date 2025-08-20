@@ -96,10 +96,11 @@ class ConfigScanSources:
             major, minor = self.runtime.get_major_minor_fields()
             version = f'{major}.{minor}'
             if version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-                raise DoozerFatalError(
+                self.logger.warning(
                     'ocp4-scan for Konflux is not allowed to rebase into openshfit-priv version %s', version
                 )
-            self.rebase_into_priv()
+            else:
+                self.rebase_into_priv()
 
         # Gather latest builds for ART-managed RPMs
         await self.find_latest_rpms_builds()
