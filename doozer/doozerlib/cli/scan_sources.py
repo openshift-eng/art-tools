@@ -632,7 +632,7 @@ class ConfigScanSources:
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                     tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
-                    latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_node_shasum(version)
                 else:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
@@ -725,7 +725,7 @@ class ConfigScanSources:
 
         return shasum
 
-    def _latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
+    def _latest_rhcos_node_shasum(self, arch) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         rhcos_index = next(
