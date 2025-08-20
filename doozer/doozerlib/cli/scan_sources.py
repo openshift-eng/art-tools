@@ -636,7 +636,7 @@ class ConfigScanSources:
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                     tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
-                    latest_rhcos_value = self._latest_rhcos_node_shasum(version)
+                    latest_rhcos_value = self._latest_rhcos_node_shasum(arch)
                 else:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)

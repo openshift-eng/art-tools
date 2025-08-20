@@ -1059,7 +1059,7 @@ class ConfigScanSources:
                 status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                     tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
-                    latest_rhcos_value = self.latest_rhcos_node_shasum(version)
+                    latest_rhcos_value = self.latest_rhcos_node_shasum(arch)
                 else:
                     tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
                     latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
