@@ -406,7 +406,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         # Run the function
         with patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage:
-            await pipeline.prepare_rpm_advisory()
+            await pipeline.prepare_et_advisory("rpm")
 
         # Assertions
         self.assertEqual(
@@ -415,7 +415,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
         pipeline.create_advisory.assert_awaited_once()
-        pipeline._slack_client.say_in_thread.assert_any_await("RPM advisory 12345 created with release date 2024-07-01")
+        pipeline._slack_client.say_in_thread.assert_any_await(
+            "ET rpm advisory 12345 created with release date 2024-07-01"
+        )
         pipeline.run_cmd_with_retry.assert_any_await(
             [item for item in pipeline._elliott_base_command if item != '--build-system=konflux'],
             ["find-builds", "--kind=rpm", "--attach=12345", "--clean"],
@@ -664,14 +666,11 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_find_or_build_fbc_builds.side_effect = find_or_build_fbc_builds
 
-        def find_bugs(kind, **_):
-            return {
-                "image": ["IMAGEBUG"],
-                "extras": ["EXTRASBUG"],
-                "metadata": [],
-            }.get(kind)
-
-        mock_find_bugs.side_effect = find_bugs
+        mock_find_bugs.return_value = {
+            "image": ["IMAGEBUG"],
+            "extras": ["EXTRASBUG"],
+            "metadata": [],
+        }
 
         mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
         mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
@@ -794,9 +793,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_errata_api_instance.close.assert_called_once()
 
         # assert bug finding was done and MR updated with the right shipment configs
-        mock_find_bugs.assert_any_call("extras", permissive=False)
-        mock_find_bugs.assert_any_call("image", permissive=False)
-        mock_find_bugs.assert_any_call("metadata", permissive=False)
+        mock_find_bugs.assert_any_call()
         self.assertEqual(mock_find_bugs.call_count, 3)
 
         self.assertEqual(mock_update_shipment_mr.call_count, 2)
