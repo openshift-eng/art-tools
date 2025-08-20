@@ -59,10 +59,11 @@ class ConfigScanSources:
                 major, minor = self.runtime.get_major_minor_fields()
                 version = f'{major}.{minor}'
                 if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-                    raise DoozerFatalError(
+                    self.runtime.logger.warning(
                         'ocp4-scan for Brew is not allowed to rebase into openshfit-priv version %s', version
                     )
-                self.rebase_into_priv()
+                else:
+                    self.rebase_into_priv()
 
             # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
             self.scan_for_upstream_changes(koji_api)
