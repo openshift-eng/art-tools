@@ -329,15 +329,15 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
     :param runtime: Runtime object
     :return: Dict of {advisory_kind: [builds]} where builds is a list of NVRs (str) and kind is e.g. "rpm", "image", "extras", "microshift", "metadata"
     """
-
-    builds_by_advisory_kind: Dict[str, List[str]] = {}
+    # fetch builds from ET advisories
+    builds_by_kind: Dict[str, List[str]] = {}
     if runtime.build_system == 'brew':
         advisory_ids = runtime.get_default_advisories()
         for kind, kind_advisory_id in advisory_ids.items():
             if int(kind_advisory_id) <= 0:
                 logger.info(f"{kind} advisory is not initialized: {kind_advisory_id}")
                 continue
-            builds_by_advisory_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
+            builds_by_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
     elif runtime.build_system == 'konflux':
         # fetch builds from shipments
         assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
@@ -347,8 +347,8 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
             logger.warning("No shipment URL found in assembly config, cannot fetch builds for advisories.")
         else:
             logger.info(f"Fetching builds from shipment URL: {mr_url}")
-            builds_by_advisory_kind = get_builds_from_mr(mr_url)
-    return builds_by_advisory_kind
+            builds_by_kind = get_builds_from_mr(mr_url)
+    return builds_by_kind
 
 
 def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
@@ -432,6 +432,11 @@ def categorize_bugs_by_type(
     if non_tracker_extras:
         bugs_by_type["extras"].update(non_tracker_extras)
     non_tracker_bugs -= bugs_by_type["extras"]
+
+    # If there is a distinct RHCOS advisory, RHCOS bugs should go there instead of the image advisory
+    if "rhcos" in runtime.get_default_advisories():
+        bugs_by_type["rhcos"] = rhcos_bugs(non_tracker_bugs)
+        non_tracker_bugs -= bugs_by_type["rhcos"]
 
     # microshift bugs go to microshift advisory
     bugs_by_type["microshift"] = {b for b in non_tracker_bugs if b.component and b.component.startswith('MicroShift')}
@@ -593,6 +598,16 @@ def extras_bugs(bugs: type_bug_set) -> type_bug_set:
         elif bug.sub_component and (bug.component, bug.sub_component) in extras_subcomponents:
             extra_bugs.add(bug)
     return extra_bugs
+
+
+def rhcos_bugs(bugs: type_bug_set) -> type_bug_set:
+    # RHCOS bugs should be swept to the "rhcos" advisory until RHCOS is moved to Konflux.
+    # A way to identify RHCOS-related bugs is by its "Component" value.
+    rhcos_components = {
+        "RHCOS",
+    }
+    rhcos_bugs = {bug for bug in bugs if bug.component in rhcos_components}
+    return rhcos_bugs
 
 
 def print_report(bugs: type_bug_list, output: str = 'text') -> None:
