@@ -550,10 +550,10 @@ class AssemblyInspector:
             for rpm_meta in self.runtime.rpm_metas():
                 if el_ver in rpm_meta.determine_rhel_targets():
                     latest_build = rpm_meta.get_latest_brew_build(default=None, el_target=el_ver)
-                    if not latest_build:
-                        raise IOError(
-                            f'RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected'
-                        )
+                    # if not latest_build:
+                    #     raise IOError(
+                    #         f'RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected'
+                    #     )
                     assembly_rpm_dicts[rpm_meta.distgit_key] = latest_build
                 else:
                     # The RPM does not claim to build for this rhel version, so return None as a value.
