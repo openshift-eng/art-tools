@@ -151,6 +151,10 @@ class GenAssemblyPipeline:
 
             # Create a PR
             pr = await self._create_or_update_pull_request(assembly_definition)
+            if not pr:
+                # No PR update was made
+                self._logger.warning("No PR update was made")
+                return
 
             # Sends a slack message
             message = (
