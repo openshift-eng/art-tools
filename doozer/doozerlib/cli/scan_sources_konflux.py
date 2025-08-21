@@ -1278,11 +1278,7 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
 
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
-
-    if runtime.group_config.canonical_builders_from_upstream:
-        runtime.initialize(mode="both", clone_distgits=True)
-    else:
-        runtime.initialize(mode='both', clone_distgits=False)
+    runtime.initialize(mode='both', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:
         await ConfigScanSources(
