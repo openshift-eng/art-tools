@@ -185,6 +185,7 @@ class MetadataBase(object):
         el_target: Optional[Union[str, int]] = None,
         honor_is: bool = True,
         complete_before_event: Optional[int] = None,
+        major_minor_permissive: bool = False,
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
@@ -245,7 +246,10 @@ class MetadataBase(object):
                 # RPMs do not have a 'v' in front of their version; images do.
                 ver_prefix = ''  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
 
-            pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
+            if major_minor_permissive:
+                pattern_prefix = f'{component_name}-{ver_prefix}.'
+            else:
+                pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
 
             if assembly is None:
                 assembly = self.runtime.assembly
