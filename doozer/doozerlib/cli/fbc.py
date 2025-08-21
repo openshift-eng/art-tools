@@ -4,9 +4,10 @@ import logging
 import os
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -14,7 +15,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
 from doozerlib.backend.konflux_fbc import (
@@ -35,7 +36,6 @@ from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
-yaml = opm.yaml
 
 
 class FbcImportCli:
@@ -166,6 +166,8 @@ async def fbc_import(
 
 
 class FbcMergeCli:
+    DEFAULT_STAGE_FBC_REPO = "quay.io/openshift-art/stage-fbc-fragments"
+
     def __init__(
         self,
         runtime: Runtime,
@@ -200,10 +202,12 @@ class FbcMergeCli:
         self.skip_checks = skip_checks
         self.plr_template = plr_template
         self.target_index = target_index
-        if not self.fragments:
-            raise ValueError("At least one fragment must be provided.")
-        # Default OCP version, can be changed based on the target index
-        self.ocp_version: tuple[int, int] = (4, 18)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def _list_tags(self):
+        cmd = ["skopeo", "list-tags", f"docker://{self.DEFAULT_STAGE_FBC_REPO}"]
+        _, out, _ = await exectools.cmd_gather_async(cmd)
+        return json.loads(out)["Tags"]
 
     async def run(self):
         # Initialize runtime
@@ -217,8 +221,7 @@ class FbcMergeCli:
         ):
             raise ValueError("MAJOR and MINOR must be set in group vars.")
         major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
-        # target_index = self.target_index or f"{constants.KONFLUX_DEFAULT_FBC_REPO}:ocp-{major}.{minor}"
-        target_index = f"quay.io/openshift-art/stage-fbc-fragments:ocp-{major}.{minor}"
+        target_index = self.target_index or f"{self.DEFAULT_STAGE_FBC_REPO}:ocp-{major}.{minor}"
         working_dir = (
             Path(self.dest_dir)
             if self.dest_dir
@@ -227,6 +230,17 @@ class FbcMergeCli:
 
         fbc_git_username = os.environ.get("FBC_GIT_USERNAME")
         fbc_git_password = os.environ.get("FBC_GIT_PASSWORD")
+
+        fragments = self.fragments
+        if not fragments:
+            # No explicit fragments provided, list all tags in the stage repo and use matching ones
+            tags = await self._list_tags()
+            prefix = f"ocp__{major}.{minor}__"
+            matching_tags = [tag for tag in tags if tag.startswith(prefix)]
+            if not matching_tags:
+                raise IOError("No matching tags found")
+            LOGGER.info("Found %s matching tags: %s", len(matching_tags), matching_tags)
+            fragments = [f"{self.DEFAULT_STAGE_FBC_REPO}:{tag}" for tag in matching_tags]
 
         merger = KonfluxFbcFragmentMerger(
             working_dir=working_dir,
@@ -246,7 +260,7 @@ class FbcMergeCli:
             skip_checks=self.skip_checks,
             plr_template=self.plr_template,
         )
-        await merger.run(self.fragments, target_index)
+        await merger.run(fragments, target_index)
 
 
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
@@ -300,7 +314,7 @@ class FbcMergeCli:
     default=None,
     help='The target index image to merge fragments into. If not specified, a default index will be used.',
 )
-@click.argument("fragments", nargs=-1, required=True)
+@click.argument("fragments", nargs=-1, required=False)
 @click_coroutine
 async def fbc_merge(
     runtime: Runtime,
@@ -320,6 +334,8 @@ async def fbc_merge(
 ):
     """
     Merge FBC fragments from multiple index images into a single FBC repository.
+
+    If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
     cli = FbcMergeCli(
         runtime=runtime,
