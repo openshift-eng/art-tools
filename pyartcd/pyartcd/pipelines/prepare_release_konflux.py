@@ -359,6 +359,7 @@ class PrepareReleaseKonfluxPipeline:
                 f"ET {impetus} advisory {advisory_num} created with release date {self.release_date}"
             )
             self.updated_assembly_group_config.advisories[impetus] = advisory_num
+            await self.create_update_build_data_pr()
 
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
 
