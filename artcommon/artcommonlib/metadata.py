@@ -247,7 +247,7 @@ class MetadataBase(object):
                 ver_prefix = ''  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
 
             if major_minor_permissive:
-                pattern_prefix = f'{component_name}-{ver_prefix}.'
+                pattern_prefix = f'{component_name}.'
             else:
                 pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
 
