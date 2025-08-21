@@ -63,7 +63,6 @@ class PrepareReleaseKonfluxPipeline:
         runtime: Runtime,
         group: str,
         assembly: str,
-        date: Optional[str] = None,
         build_data_repo_url: Optional[str] = None,
         shipment_data_repo_url: Optional[str] = None,
         inject_build_data_repo: bool = False,
@@ -71,7 +70,6 @@ class PrepareReleaseKonfluxPipeline:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
-        self.date = date
         self.group = group
         self.inject_build_data_repo = inject_build_data_repo
 
@@ -192,7 +190,7 @@ class PrepareReleaseKonfluxPipeline:
 
     @cached_property
     def release_date(self):
-        return self.date or self.assembly_group_config.get("release_date")
+        return self.assembly_group_config.get("release_date")
 
     @property
     def assembly_group_config(self) -> Model:
@@ -1451,9 +1449,6 @@ class PrepareReleaseKonfluxPipeline:
     help="The assembly to operate on e.g. 4.18.5",
 )
 @click.option(
-    "--date", metavar="YYYY-MMM-DD", required=False, default=None, help="Expected release date (e.g. 2020-Nov-25)"
-)
-@click.option(
     '--build-data-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
@@ -1472,7 +1467,6 @@ async def prepare_release(
     runtime: Runtime,
     group: str,
     assembly: str,
-    date: str,
     build_data_repo_url: Optional[str],
     inject_build_data_repo: bool,
     shipment_data_repo_url: Optional[str],
@@ -1492,7 +1486,6 @@ async def prepare_release(
             runtime=runtime,
             group=group,
             assembly=assembly,
-            date=date,
             build_data_repo_url=build_data_repo_url,
             shipment_data_repo_url=shipment_data_repo_url,
             inject_build_data_repo=inject_build_data_repo,
