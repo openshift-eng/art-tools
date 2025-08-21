@@ -20,23 +20,23 @@ from pyartcd.runtime import Runtime
 @click_coroutine
 async def advisory_drop(runtime: Runtime, group: str, advisory: str, comment: str):
     # repair-bugs
-    cmd = [
-        'elliott',
-        '--group',
-        group,
-        'repair-bugs',
-        '--advisory',
-        advisory,
-        '--auto',
-        '--comment',
-        comment,
-        '--close-placeholder',
-        '--from',
-        'RELEASE_PENDING',
-        '--to',
-        'VERIFIED',
-    ]
-    await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+    # cmd = [
+    #     'elliott',
+    #     '--group',
+    #     group,
+    #     'repair-bugs',
+    #     '--advisory',
+    #     advisory,
+    #     '--auto',
+    #     '--comment',
+    #     comment,
+    #     '--close-placeholder',
+    #     '--from',
+    #     'RELEASE_PENDING',
+    #     '--to',
+    #     'VERIFIED',
+    # ]
+    # await exectools.cmd_assert_async(cmd, env=os.environ.copy())
     # drop advisory
     cmd = [
         'elliott',
