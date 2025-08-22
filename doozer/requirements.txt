@@ -1,5 +1,6 @@
 aiofiles
 async-lru
+asyncstdlib
 bashlex
 click == 8.1.8
 dockerfile-parse >= 0.0.13
@@ -9,8 +10,8 @@ httpx
 httpx_gssapi
 importlib-resources
 koji
-kubernetes ~= 28.0
-kubernetes-asyncio ~= 28.0
+kubernetes ~= 29.0
+kubernetes-asyncio ~= 29.0
 nest-asyncio >= 1.6.0
 openshift ~= 0.13.2
 opentelemetry-sdk

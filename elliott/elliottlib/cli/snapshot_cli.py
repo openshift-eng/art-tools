@@ -6,6 +6,7 @@ from functools import lru_cache
 from itertools import chain
 from typing import List
 
+import asyncstdlib as a
 import click
 from artcommonlib import logutil
 from artcommonlib.konflux.konflux_build_record import (
@@ -24,8 +25,8 @@ from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.util import oc_image_info_for_arch_async
-from kubernetes.dynamic import exceptions
-from kubernetes.dynamic.resource import ResourceInstance
+from kubernetes_asyncio.dynamic import exceptions
+from kubernetes_asyncio.dynamic.resource import ResourceInstance
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -104,22 +105,27 @@ class CreateSnapshotCli:
         self.dry_run = dry_run
         self.job_url = job_url
         self.image_repo_pull_secret = image_repo_pull_secret
-        self.konflux_client = KonfluxClient.from_kubeconfig(
+
+    @a.cached_property
+    async def konflux_client(self):
+        return await KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
             config_file=self.konflux_config['kubeconfig'],
             context=self.konflux_config['context'],
             dry_run=self.dry_run,
         )
-        self.konflux_client.verify_connection()
 
     async def run(self):
         self.runtime.initialize(build_system='konflux', mode='images')
+        konflux_client = await self.konflux_client
+
+        await konflux_client.verify_connection()
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
         # Ensure the Snapshot CRD is accessible
         try:
-            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+            await konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
         except exceptions.ResourceNotFoundError:
             raise RuntimeError(
                 f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?"
@@ -132,10 +138,8 @@ class CreateSnapshotCli:
 
         snapshot_objs = await self.new_snapshots(build_records)
         # TODO: `_create` is a private method, should be replaced with a public method in the future
-        snapshot_objs = await asyncio.gather(
-            *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
-        )
-        snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
+        snapshot_objs = await asyncio.gather(*(konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs))
+        snapshot_urls = [konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
         if self.dry_run:
             LOGGER.info("[DRY-RUN] Would have created Konflux Snapshots: %s", ", ".join(snapshot_urls))
         else:
@@ -165,13 +169,14 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
+        konflux_client = await self.konflux_client
         major, minor = self.runtime.get_major_minor()
         snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster
             app_name = record.get_konflux_application_name()
-            await self.konflux_client.get_application__caching(app_name, strict=True)
+            await konflux_client.get_application__caching(app_name, strict=True)
 
             # get component name and make sure it exists in cluster
             comp_name = record.get_konflux_component_name()
@@ -180,19 +185,19 @@ class CreateSnapshotCli:
             # TODO: (2025-07-16) now that we have started storing component name in DB, we can remove this fallback
             # in a couple of weeks
             try:
-                await self.konflux_client.get_component__caching(comp_name, strict=True)
+                await konflux_client.get_component__caching(comp_name, strict=True)
             except Exception as e:
                 if isinstance(record, KonfluxBuildRecord):
                     comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
-                    await self.konflux_client.get_component__caching(comp_name, strict=True)
+                    await konflux_client.get_component__caching(comp_name, strict=True)
                 elif isinstance(record, KonfluxBundleBuildRecord):
                     comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
                     try:
-                        await self.konflux_client.get_component__caching(comp_name, strict=True)
+                        await konflux_client.get_component__caching(comp_name, strict=True)
                     except Exception:
                         # if we still can't find the component, use the old component name
                         comp_name = KonfluxOlmBundleBuilder.get_old_component_name(app_name, record.name)
-                        await self.konflux_client.get_component__caching(comp_name, strict=True)
+                        await konflux_client.get_component__caching(comp_name, strict=True)
                 else:
                     # fbc component name is determined from the image it builds for, which is not stored in the DB
                     # rather than hack something up, let it fail for now
@@ -402,28 +407,33 @@ class GetSnapshotCli:
         self.dry_run = dry_run
         self.snapshot = snapshot
         self.image_repo_pull_secret = image_repo_pull_secret
-        self.konflux_client = KonfluxClient.from_kubeconfig(
+
+    @a.cached_property
+    async def konflux_client(self):
+        return await KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
             config_file=self.konflux_config['kubeconfig'],
             context=self.konflux_config['context'],
             dry_run=self.dry_run,
         )
-        self.konflux_client.verify_connection()
 
     async def run(self):
         self.runtime.initialize()
+        konflux_client = await self.konflux_client
+        await konflux_client.verify_connection()
+
         if self.runtime.konflux_db is None:
             raise RuntimeError('Konflux DB is not initialized')
 
         # Ensure the Snapshot CRD is accessible
         try:
-            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+            await konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
         except exceptions.ResourceNotFoundError:
             raise RuntimeError(
                 f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?"
             )
 
-        snapshot_obj = await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
+        snapshot_obj = await konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
         nvrs = await self.extract_nvrs_from_snapshot(snapshot_obj)
 
         # validate that the nvrs exist in the DB tables

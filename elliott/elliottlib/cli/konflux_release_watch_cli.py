@@ -24,22 +24,21 @@ class WatchReleaseCli:
         self.konflux_config = konflux_config
         self.timeout = timeout
         self.dry_run = dry_run
-        self.konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=self.konflux_config['namespace'],
-            config_file=self.konflux_config['kubeconfig'],
-            context=self.konflux_config['context'],
-            dry_run=self.dry_run,
-        )
-        self.konflux_client.verify_connection()
 
     async def run(self) -> tuple[bool, dict]:
         """
         Run the watch release pipeline.
         :return: A tuple of (success: bool, release_obj: dict)
         """
-
+        konflux_client = await KonfluxClient.from_kubeconfig(
+            default_namespace=self.konflux_config['namespace'],
+            config_file=self.konflux_config['kubeconfig'],
+            context=self.konflux_config['context'],
+            dry_run=self.dry_run,
+        )
         self.runtime.initialize(no_group=True, build_system='konflux')
-        release_obj = await self.konflux_client.wait_for_release(
+        await konflux_client.verify_connection()
+        release_obj = await konflux_client.wait_for_release(
             self.release, overall_timeout_timedelta=timedelta(hours=self.timeout)
         )
 
