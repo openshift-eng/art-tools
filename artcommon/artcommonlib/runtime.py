@@ -62,6 +62,10 @@ class GroupRuntime(ABC):
         except Exception as err:
             self._logger.warning('Cannot connect to the Konflux DB: %s', str(err))
 
+            # if we are running with Konflux build system, we should fail hard
+            if self.build_system == 'konflux':
+                raise
+
     @property
     @abstractmethod
     def group_config(self):
