@@ -473,6 +473,14 @@ class KonfluxOcp4Pipeline:
             jenkins.update_title(' [MASS REBUILD]')
 
     def check_building_rpms(self):
+        # If the version is not in the override list, skip the RPM rebase and build
+        # TODO this can be removed once all versions are handled by ocp4-konflux
+        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
+            )
+            self.build_plan.rpm_build_strategy = BuildStrategy.NONE
+
         if self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
             jenkins.update_title('[NO RPMs]')
 
@@ -670,14 +678,6 @@ class KonfluxOcp4Pipeline:
             self.build_plan.rpm_build_strategy == BuildStrategy.ONLY and not self.build_plan.rpms_included
         ) or self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
             LOGGER.warning('No RPMs will be built')
-            return
-
-        # If the version is not in the override list, skip the RPM rebase and build
-        # TODO this can be removed once all versions are handled by ocp4-konflux
-        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-            self.runtime.logger.info(
-                'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
-            )
             return
 
         cmd = self._doozer_base_command.copy()

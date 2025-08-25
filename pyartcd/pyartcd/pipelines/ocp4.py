@@ -219,6 +219,12 @@ class Ocp4Pipeline:
         jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
         self.runtime.logger.info('Pinned builds (whether source changed or not)')
 
+        if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
+            )
+            self.build_plan.build_rpms = None
+
         if not self.build_plan.build_rpms:
             jenkins.update_description('RPMs: not building.<br/>')
 
@@ -308,12 +314,6 @@ class Ocp4Pipeline:
     async def _rebase_and_build_rpms(self):
         if not self.build_plan.build_rpms:
             self.runtime.logger.info('Not building RPMs.')
-            return
-
-        if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-            self.runtime.logger.info(
-                'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
-            )
             return
 
         cmd = self._doozer_base_command.copy()
