@@ -770,6 +770,7 @@ class KonfluxImageBuilder:
                         'pod_name': pod_name,
                         'pipeline_run_uid': pipeline_run_uid,
                         'success': all_containers_finished and exit_code_sum == 0,
+                        'record_id': build_record.record_id,
                     }
                     rows.append(taskrun_record)
 
