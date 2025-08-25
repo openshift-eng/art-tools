@@ -901,11 +901,9 @@ class KonfluxRebaser:
             if in_mod_block:
                 continue
 
-            # remove any old instances of empty.repo mods that aren't in mod block
-            if 'empty.repo' not in line:
-                if line.endswith('\n'):
-                    line = line[0:-1]  # remove trailing newline, if exists
-                filtered_content.append(line)
+            if line.endswith('\n'):
+                line = line[0:-1]  # remove trailing newline, if exists
+            filtered_content.append(line)
 
         df_lines = filtered_content
 
@@ -1166,7 +1164,7 @@ class KonfluxRebaser:
             konflux_lines += [
                 "USER 0",
                 "RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true",
-                f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
+                f"COPY .oit/art-{self.repo_type}.repo /etc/yum.repos.d/",
                 # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
                 f"RUN curl {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME}",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
@@ -1220,7 +1218,7 @@ class KonfluxRebaser:
             lines = [
                 "\n# Start Konflux-specific steps",
                 "USER 0",
-                "RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true",
+                "RUN rm -f /etc/yum.repos.d/art-* && mv /tmp/art/yum_temp/* /etc/yum.repos.d/ || true",
                 "RUN rm -rf /tmp/art",
                 f"{user_to_set if user_to_set else ''}",
                 "# End Konflux-specific steps\n\n",
@@ -1318,7 +1316,7 @@ class KonfluxRebaser:
         non_shipping_repos = metadata.config.get('non_shipping_repos', [])
 
         for t in repos.repotypes:
-            rc_path = dest_dir.joinpath('.oit', f'{t}.repo')
+            rc_path = dest_dir.joinpath('.oit', f'art-{t}.repo')
             async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
                 content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=True)
                 await rc.write(content)
