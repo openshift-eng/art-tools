@@ -193,9 +193,17 @@ class KonfluxOcp4Pipeline:
         return True
 
     async def rebase_images(self, version: str, input_release: str):
+        # Skip rebase if the flag is set
+        if self.skip_rebase:
+            LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
+            return
+
+        # If no images are being built, skip the rebase step
         if not self.building_images():
             LOGGER.warning('No images will be rebased')
             return
+
+        LOGGER.info(f"Rebasing images for OCP {self.version} with release {self.release}")
 
         cmd = self._doozer_base_command.copy()
         if self.arches:
@@ -248,6 +256,8 @@ class KonfluxOcp4Pipeline:
         if not self.building_images():
             LOGGER.warning('No images will be built')
             return
+
+        LOGGER.info(f"Building images for OCP {self.version} with release {self.release}")
 
         cmd = self._doozer_base_command.copy()
         if self.arches:
@@ -580,13 +590,17 @@ class KonfluxOcp4Pipeline:
         self.runtime.logger.info('Queued in for mass rebuild lock')
 
         return await locks.enqueue_for_lock(
-            coro=self.build_images(),
+            coro=self.rebase_and_build_images(),
             lock=Lock.KONFLUX_MASS_REBUILD,
             lock_name=Lock.KONFLUX_MASS_REBUILD.value,
             lock_id=self.lock_identifier,
             ocp_version=self.version,
             version_queue_name=queue,
         )
+
+    async def rebase_and_build_images(self):
+        await self.rebase_images(f"v{self.version}.0", self.release)
+        await self.build_images()
 
     async def mirror_images(self):
         """
@@ -643,20 +657,11 @@ class KonfluxOcp4Pipeline:
                 block_until_complete=True,
             )
 
-        # Rebase images
-        if self.skip_rebase:
-            LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
-        else:
-            LOGGER.info(f"Rebasing images for OCP {self.version} with release {self.release}")
-            await self.rebase_images(f"v{self.version}.0", self.release)
-
-        # Build images
-        LOGGER.info(f"Building images for OCP {self.version} with release {self.release}")
         try:
             if self.mass_rebuild:
                 await self.request_mass_rebuild()
             else:
-                await self.build_images()
+                await self.rebase_and_build_images()
 
         finally:
             await self.mirror_images()
