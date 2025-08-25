@@ -6,7 +6,6 @@ import urllib.parse
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
-from sqlalchemy.testing.plugin.plugin_base import engines
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
@@ -80,9 +79,9 @@ class ImagesHealthPipeline:
         key = image_meta.distgit_key
         builds = await self.query(image_meta, engine)
         if not builds:
-            self.logger.info(
-                'Image build for %s has never been attempted during last %s days', image_meta.distgit_key, DELTA_DAYS
-            )
+            message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
+            self.logger.info(message)
+            self.add_concern(key, engine, message)
             return
 
         latest_success_idx = -1
