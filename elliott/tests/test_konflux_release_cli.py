@@ -243,7 +243,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-timestamp"
+        created_snapshot_name = "ose-4-18-prod-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -257,6 +257,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
                 },
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": self.release_env,
+                    "art.redhat.com/kind": "image",
+                },
             },
             "spec": shipment_config.shipment.snapshot.spec.model_dump(exclude_none=True),
         }
@@ -265,9 +270,14 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-prod-timestamp',
+                'name': 'ose-4-18-prod-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": self.release_env,
+                    "art.redhat.com/kind": "image",
+                },
             },
             'spec': {
                 'releasePlan': shipment_config.shipment.environments.prod.releasePlan,
@@ -299,6 +309,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
+            kind="image",
         )
 
         result = await cli.run()
@@ -391,7 +402,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-timestamp"
+        created_snapshot_name = "ose-4-18-stage-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -405,6 +416,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
                 },
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": "stage",
+                    "art.redhat.com/kind": "image",
+                },
             },
             "spec": shipment_config.shipment.snapshot.spec.model_dump(exclude_none=True),
         }
@@ -413,9 +429,14 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-stage-timestamp',
+                'name': 'ose-4-18-stage-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": "stage",
+                    "art.redhat.com/kind": "image",
+                },
             },
             'spec': {
                 'releasePlan': shipment_config.shipment.environments.stage.releasePlan,
@@ -446,6 +467,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
+            kind="image",
         )
 
         result = await cli.run()
@@ -519,6 +541,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
+            kind="image",
         )
 
         with self.assertRaises(ValueError) as context:
@@ -572,6 +595,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret={},
             dry_run=self.dry_run,
+            kind="image",
         )
 
         with self.assertRaises(ValueError) as context:
@@ -644,6 +668,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
+            kind="image",
         )
 
         with patch("elliottlib.cli.konflux_release_cli.LOGGER") as mock_logger:
@@ -653,7 +678,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         mock_logger.warning.assert_called_once_with(
             "existing release metadata is not empty for prod: "
-            "{'releasePlan': 'test-prod-rp', 'advisory': {'url': 'https://foo-bar', 'internal_url': 'https://foo-bar-internal'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
+            "{'releasePlan': 'test-prod-rp', 'advisory': {'internal_url': 'https://foo-bar-internal', 'url': 'https://foo-bar'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
         )
 
         # assert that release did not get created

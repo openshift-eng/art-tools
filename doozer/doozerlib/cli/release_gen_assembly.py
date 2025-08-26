@@ -785,6 +785,7 @@ class GenAssemblyCli:
         else:  # konflux
             advisories = {
                 'rpm': -1,
+                'rhcos': -1,
             }
             # for konflux, prerelease advisories are noted in the `shipment` field.
             # No need to add it to the advisories map.
@@ -1045,5 +1046,20 @@ class GenAssemblyCli:
             shipment.pop('url', None)
         elif self.assembly_type != AssemblyTypes.CUSTOM:
             shipment = self._get_default_shipment()
-
+            advisories = shipment['advisories']
+            # If shipment advisories already exist, reuse them
+            if self.gen_assembly_name in self.releases_config.releases:
+                release = self.releases_config.releases[self.gen_assembly_name]
+                previous_advisories = {ad["kind"]: ad for ad in release.assembly.group.shipment.advisories.primitive()}
+                if previous_advisories:
+                    for advisory in advisories:
+                        # preGA advisories (prerelease) associated with an assembly should not be reused
+                        # they should be shipped or dropped if not shipping
+                        if advisory["kind"] == "prerelease":
+                            continue
+                        # Reuse advisory if it exists in previous advisories
+                        previous_ad = previous_advisories.get(advisory["kind"])
+                        if not previous_ad:
+                            continue
+                        advisory.update(previous_ad)
         return shipment

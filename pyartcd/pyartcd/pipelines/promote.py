@@ -10,6 +10,7 @@ import sys
 import tarfile
 import traceback
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote
@@ -29,6 +30,7 @@ from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
+from elliottlib.shipment_utils import get_shipment_config_from_mr
 from github import Github, GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
@@ -271,30 +273,56 @@ class PromotePipeline:
                             f"Unable to move {impetus} advisory {advisory} to QE. Details in log."
                         )
 
-            # Ensure the image advisory is in QE (or later) state.
             image_advisory = impetus_advisories.get("image", 0)
-            errata_url = ""
+            shipment_config = group_config.get("shipment")
+            errata_url, full_advisory_id = "", ""
+
+            # do a sanity check
+            if shipment_config and image_advisory != 0:
+                raise ValueError("Shipment config is defined but image advisory is also defined!")
+
+            if shipment_config:
+                shipment_url = shipment_config.get("url")
+                if not shipment_url:
+                    raise ValueError("Shipment config is defined but url is not defined!")
+                image_shipment = get_shipment_config_from_mr(shipment_url, "image")
+                if not image_shipment:
+                    raise ValueError("Could not find image shipment config in merge request!")
+                live_id = image_shipment.shipment.data.releaseNotes.live_id
+                if not live_id:
+                    raise ValueError("Could not find live ID in image shipment config!")
+
+                # construct full advisory id like RHBA-2025:13660
+                advisory_type = image_shipment.shipment.data.releaseNotes.type
+                year = datetime.now().strftime("%Y")
+                full_advisory_id = f"{advisory_type}-{year}:{live_id}"
+                logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
+                # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
+            else:
+                # Ensure the image advisory is in QE (or later) state.
+                if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
+                    if image_advisory <= 0:
+                        err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
+                        justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
+                        justifications.append(justification)
+                    else:
+                        logger.info("Verifying associated image advisory %s...", image_advisory)
+                        image_advisory_info = await self.get_advisory_info(image_advisory)
+                        try:
+                            if assembly_type != AssemblyTypes.CANDIDATE:
+                                self.verify_advisory_status(image_advisory_info)
+                        except VerificationError as err:
+                            logger.warn("%s", err)
+                            justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
+                            justifications.append(justification)
+
+                        full_advisory_id = self.get_live_id(image_advisory_info)
 
             if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
-                if image_advisory <= 0:
-                    err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
-                    justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
-                    justifications.append(justification)
-                else:
-                    logger.info("Verifying associated image advisory %s...", image_advisory)
-                    image_advisory_info = await self.get_advisory_info(image_advisory)
-                    try:
-                        if assembly_type != AssemblyTypes.CANDIDATE:
-                            self.verify_advisory_status(image_advisory_info)
-                    except VerificationError as err:
-                        logger.warn("%s", err)
-                        justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
-                        justifications.append(justification)
-
-                    live_id = self.get_live_id(image_advisory_info)
-                    if not live_id:
-                        raise VerificationError(f"Advisory {image_advisory_info['id']} doesn't have a live ID.")
-                    errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
+                if not full_advisory_id:
+                    raise VerificationError("Could not find live ID from image advisory. Please investigate.")
+                errata_url = f"https://access.redhat.com/errata/{full_advisory_id}"  # don't quote
+                logger.info("Using errata URL: %s", errata_url)
 
             # Verify attached bugs
             if self.skip_attached_bug_check:
@@ -466,9 +494,8 @@ class PromotePipeline:
                     title = "Promote the tested nightly"
                     subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
                     if not subtask:
-                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
-
-                    if subtask.fields.status.name != "Closed":
+                        self._logger.warning("Promote release subtask not found in release_jira: %s", release_jira)
+                    elif subtask.fields.status.name != "Closed":
                         self._jira_client.add_comment(
                             subtask,
                             "promote release job : {}".format(os.environ.get("BUILD_URL")),

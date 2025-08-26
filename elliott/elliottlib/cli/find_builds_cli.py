@@ -78,6 +78,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
 )
 @click.option('--payload', required=False, is_flag=True, help='Only attach payload images')
 @click.option('--non-payload', required=False, is_flag=True, help='Only attach non-payload images')
+@click.option('--only-rhcos', required=False, is_flag=True, help='Only attach RHCOS images')
 @click.option('--include-shipped', required=False, is_flag=True, help='Do not filter out shipped builds')
 @click.option('--all-image-types', required=False, is_flag=True, help='Find all types of builds')
 @click.option('--member-only', is_flag=True, help='(For rpms) Only sweep member rpms')
@@ -104,6 +105,7 @@ async def find_builds_cli(
     no_cdn_repos,
     payload,
     non_payload,
+    only_rhcos: bool,
     include_shipped,
     all_image_types: bool,
     member_only: bool,
@@ -151,8 +153,8 @@ async def find_builds_cli(
     advisory_id_provided = advisory_id is not None
     if advisory_id_provided and default_advisory_type:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
-    if payload and non_payload:
-        raise click.BadParameter('Use only one of --payload or --non-payload.')
+    if sum([payload, non_payload, only_rhcos]) > 1:
+        raise click.BadParameter('Use only one of --payload, --non-payload, or --rhcos.')
     if builds and builds_file:
         raise click.BadParameter('Use only one of --build or --builds-file.')
     if clean:
@@ -217,10 +219,11 @@ async def find_builds_cli(
         )
     else:
         if kind == 'image':
-            nvrps = await _fetch_builds_by_kind_image(
-                runtime, tag_pv_map, brew_session, payload, non_payload, include_shipped
-            )
-            if payload:
+            if not only_rhcos:
+                nvrps = await _fetch_builds_by_kind_image(
+                    runtime, tag_pv_map, brew_session, payload, non_payload, include_shipped
+                )
+            if payload or only_rhcos:
                 rhcos_nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
                 rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(
                     rhcos_nvrs, tag_pv_map, include_shipped=include_shipped, brew_session=brew_session
@@ -236,7 +239,7 @@ async def find_builds_cli(
     )
 
     if as_json:
-        _json_dump(as_json, builds)
+        _json_dump(as_json, [build.nvr for build in builds])
         return
     canonical_nvrs = [b.nvr for b in builds]
 

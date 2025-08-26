@@ -84,9 +84,6 @@ class Ocp4ScanPipeline:
         self.rhcos_changed is also updated accordingly
         """
 
-        # Run doozer konflux:scan-sources. --rebase-priv is always disabled for now, as it might conflict
-        # with rebase operations triggered by regular ocp4-scan. In the future, we'll have to add the --rebase-priv
-        # options to the Doozer invocation
         cmd = self.doozer_base_command.copy()
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
@@ -95,6 +92,7 @@ class Ocp4ScanPipeline:
                 'beta:config:konflux:scan-sources',
                 '--yaml',
                 f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
+                '--rebase-priv',
             ]
         )
         if self.runtime.dry_run:
@@ -139,14 +137,14 @@ class Ocp4ScanPipeline:
             self.inconsistent_rhcos_rpms = e
 
     def handle_source_changes(self):
-        if not self.changes.get('images', None):
-            self.logger.info('*** No changes detected')
+        if not self.changes:
             return
 
         jenkins.update_title(' [SOURCE CHANGES]')
         self.logger.info('Detected at least one updated image')
 
         image_list = self.changes.get('images', [])
+        rpm_list = self.changes.get('rpms', [])
 
         # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:
@@ -162,6 +160,7 @@ class Ocp4ScanPipeline:
             build_version=self.version,
             assembly='stream',
             image_list=image_list,
+            rpm_list=rpm_list,
         )
 
     async def handle_rhcos_changes(self):

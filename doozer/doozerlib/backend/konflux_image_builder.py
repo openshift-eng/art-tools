@@ -175,6 +175,7 @@ class KonfluxImageBuilder:
                     building_arches=building_arches,
                     output_image=output_image,
                     additional_tags=additional_tags,
+                    nvr=nvr,
                     dest_dir=dest_dir,
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
@@ -394,6 +395,7 @@ class KonfluxImageBuilder:
         building_arches: list[str],
         output_image: str,
         additional_tags: list[str],
+        nvr: str,
         dest_dir: Optional[Path] = None,
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -453,7 +455,7 @@ class KonfluxImageBuilder:
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
             sast=sast,
-            annotations={"art-network-mode": metadata.get_konflux_network_mode()},
+            annotations={"art-network-mode": metadata.get_konflux_network_mode(), "art-nvr": nvr},
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
@@ -768,6 +770,7 @@ class KonfluxImageBuilder:
                         'pod_name': pod_name,
                         'pipeline_run_uid': pipeline_run_uid,
                         'success': all_containers_finished and exit_code_sum == 0,
+                        'record_id': build_record.record_id,
                     }
                     rows.append(taskrun_record)
 

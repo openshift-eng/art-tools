@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import asyncstdlib as a
 import click
 import gitlab
 import semver
@@ -62,7 +63,6 @@ class PrepareReleaseKonfluxPipeline:
         runtime: Runtime,
         group: str,
         assembly: str,
-        date: Optional[str] = None,
         build_data_repo_url: Optional[str] = None,
         shipment_data_repo_url: Optional[str] = None,
         inject_build_data_repo: bool = False,
@@ -70,7 +70,6 @@ class PrepareReleaseKonfluxPipeline:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
-        self.date = date
         self.group = group
         self.inject_build_data_repo = inject_build_data_repo
 
@@ -100,7 +99,6 @@ class PrepareReleaseKonfluxPipeline:
         self.releases_config = None
         self.release_version = None
         self.group_config = None
-        self._bug_ids_by_kind = None
         self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
@@ -119,6 +117,15 @@ class PrepareReleaseKonfluxPipeline:
             group_param,
             f'--assembly={self.assembly}',
             '--build-system=konflux',
+            f'--working-dir={self.elliott_working_dir}',
+            f'--data-path={self.build_data_repo_pull_url}',
+        ]
+
+        self._elliott_base_command_for_brew = [
+            'elliott',
+            group_param,
+            f'--assembly={self.assembly}',
+            '--build-system=brew',
             f'--working-dir={self.elliott_working_dir}',
             f'--data-path={self.build_data_repo_pull_url}',
         ]
@@ -183,7 +190,7 @@ class PrepareReleaseKonfluxPipeline:
 
     @cached_property
     def release_date(self):
-        return self.date or self.assembly_group_config.get("release_date")
+        return self.assembly_group_config.get("release_date")
 
     @property
     def assembly_group_config(self) -> Model:
@@ -206,7 +213,7 @@ class PrepareReleaseKonfluxPipeline:
         err = None
         try:
             await self.handle_jira_ticket()
-            await self.prepare_rpm_advisory()
+            await self.prepare_et_advisories()
             await self.prepare_shipment()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
@@ -303,28 +310,43 @@ class PrepareReleaseKonfluxPipeline:
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 
-    async def prepare_rpm_advisory(self):
+    async def prepare_et_advisories(self):
         """
-        Prepare and manage the RPM advisory for the current assembly.
+        Prepare and manage all ET advisories for the current assembly.
+        """
+        for impetus, advisory_num in self.assembly_group_config.get("advisories", {}).items():
+            if impetus not in {"rpm", "rhcos"}:
+                self.logger.info(
+                    "Skipping unsupported %s advisory %s for assembly %s ...", impetus, advisory_num, self.assembly
+                )
+                continue
+            self.logger.info("Preparing %s advisory for assembly %s ...", impetus, self.assembly)
+            await self.prepare_et_advisory(impetus)
+
+    async def prepare_et_advisory(self, impetus: str):
+        """
+        Prepare and manage a single ET advisory for the current assembly.
 
         This function performs the following steps:
-        1. Checks if an RPM advisory exists for the assembly; if not, creates one and updates the build data.
-        2. Sweeps RPM builds into the advisory.
+        1. Checks if an advisory exists for the assembly; if not, creates one and updates the build data.
+        2. Sweeps builds into the advisory.
         3. Sweeps bugs into the advisory.
         4. Attaches CVE flaw bugs to the advisory.
         5. Attempts to change the advisory state to QE.
         6. Attempts to trigger a push of the advisory to the CDN stage.
 
+        Args:
+            impetus (str): The impetus for the advisory.
         Raises:
             ValueError: If the release date is missing from the assembly config.
         """
-        rpm_num = self.assembly_group_config.get("advisories", {}).get("rpm")
-        if rpm_num is None:
-            self.logger.info("Can't find rpm entry in assembly config, skip prepare rpm advisory.")
+        advisory_num = self.assembly_group_config.get("advisories", {}).get(impetus)
+        if advisory_num is None:
+            self.logger.info("Can't find advisory entry '%s' in assembly config, skip prepare advisory.", impetus)
             return
 
-        if rpm_num < 0:
-            # create rpm advisory
+        if advisory_num < 0:
+            # create advisory
             if not self.release_date:
                 raise ValueError("Can't find release date in assembly config, skip prepare rpm advisory.")
             else:
@@ -332,67 +354,79 @@ class PrepareReleaseKonfluxPipeline:
             advisory_type = (
                 "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
             )
-            rpm_num = await self.create_advisory(advisory_type, "rpm", self.release_date)
+            advisory_num = await self.create_advisory(advisory_type, impetus, self.release_date)
             await self._slack_client.say_in_thread(
-                f"RPM advisory {rpm_num} created with release date {self.release_date}"
+                f"ET {impetus} advisory {advisory_num} created with release date {self.release_date}"
             )
-            self.updated_assembly_group_config.advisories.rpm = rpm_num
+            self.updated_assembly_group_config.advisories[impetus] = advisory_num
 
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
 
         # sweep builds
-        self.logger.info("Sweep builds into the the rpm advisory ...")
-        operate_cmd = ["find-builds", "--kind=rpm", f"--attach={rpm_num}", "--clean"]
+        self.logger.info("Sweep builds into the the %s advisory ...", impetus)
+        sweep_opts = []
+        match impetus:
+            case "rpm":
+                kind = "rpm"
+            case "image" | "extras" | "rhcos":
+                kind = "image"
+                if impetus == "image":
+                    sweep_opts.append("--payload")
+                elif impetus == "extras":
+                    sweep_opts.append("--non-payload")
+                elif impetus == "rhcos":
+                    sweep_opts.append("--only-rhcos")
+            case _:
+                raise ValueError(f"Unknown impetus {impetus} for advisory preparation.")
+        operate_cmd = ["find-builds", f"--kind={kind}", f"--attach={advisory_num}", "--clean"] + sweep_opts
         if self.dry_run:
             operate_cmd += ["--dry-run"]
         await self.run_cmd_with_retry(base_command, operate_cmd)
 
         # find bugs
-        self.logger.info("Finding bugs for rpm advisory ...")
-        bug_ids = []
-        operate_cmd = base_command + ["find-bugs", "--permissive", "--output=json"]
-        stdout = await self.execute_command_with_logging(operate_cmd)
-        if stdout:
-            bug_ids = json.loads(stdout).get("rpm", [])
+        self.logger.info("Finding bugs for %s advisory ...", impetus)
+        bug_ids = (await self.find_bugs(build_system='brew', permissive=True)).get(impetus, [])
 
         if bug_ids:
-            self.logger.info(f"Found {len(bug_ids)} rpm bugs: {bug_ids}")
+            self.logger.info(f"Found {len(bug_ids)} {impetus} bugs: {bug_ids}")
         else:
-            self.logger.info("No bugs found for rpm advisory.")
+            self.logger.info("No bugs found for %s advisory.", impetus)
 
         # attach bugs
         if bug_ids:
-            self.logger.info(f"Attaching {len(bug_ids)} rpm bugs: {bug_ids}")
-            operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={rpm_num}"]
+            self.logger.info("Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids)
+            operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
 
             # attach cve flaws
-            self.logger.info("Attaching CVE flaws to rpm advisory ...")
-            operate_cmd = ["attach-cve-flaws", f"--advisory={rpm_num}"]
+            self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
+            operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(base_command, operate_cmd)
 
         # change status to qe
         try:
-            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(rpm_num)]
+            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(advisory_num)]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(base_command, operate_cmd)
         except Exception as ex:
-            self.logger.warning(f"Unable to move rpm advisory {rpm_num} to QE: {ex}")
-            await self._slack_client.say_in_thread(f"Unable to move rpm advisory {rpm_num} to QE. Details in log.")
+            self.logger.warning(f"Unable to move {impetus} advisory {advisory_num} to QE: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Unable to move {impetus} advisory {advisory_num} to QE. Details in log."
+            )
             return
 
         # push to CDN stage
         try:
-            push_cdn_stage(rpm_num)
+            push_cdn_stage(advisory_num)
         except Exception as ex:
-            self.logger.warning(f"Unable to trigger push rpm advisory {rpm_num} to CDN stage: {ex}")
+            self.logger.warning(f"Unable to trigger push rpm advisory {advisory_num} to CDN stage: {ex}")
             await self._slack_client.say_in_thread(
-                f"Unable to trigger push rpm advisory {rpm_num} to CDN stage. Details in log."
+                f"Unable to trigger push rpm advisory {advisory_num} to CDN stage. Details in log."
             )
 
     async def create_advisory(
@@ -437,7 +471,8 @@ class PrepareReleaseKonfluxPipeline:
 
         self.validate_shipment_config(self.shipment_config)
 
-        shipment_config = self.shipment_config.copy()  # make a copy to avoid modifying the original
+        # make a copy to avoid modifying the original
+        shipment_config = self.shipment_config.copy()
         env = shipment_config.get("env", "prod")
         shipment_url = shipment_config.get("url")
 
@@ -498,6 +533,7 @@ class PrepareReleaseKonfluxPipeline:
             shipment_url = await self.create_shipment_mr(shipments_by_kind, env)
             await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
             self.updated_assembly_group_config.shipment.url = shipment_url
+            await self.create_update_build_data_pr()
         else:
             self.logger.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
             updated = await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -510,13 +546,10 @@ class PrepareReleaseKonfluxPipeline:
         # - shipment MR is created with all the right builds
         # - shipment MR is committed to build-data
         # Then the output of Bug-Finder is committed to shipment MR
-        permissive = False
-        if self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
-            permissive = True
         for kind, shipment in shipments_by_kind.items():
             if kind in ["fbc", "prerelease"]:
                 continue
-            bug_ids = await self.find_bugs(kind, permissive=permissive)
+            bug_ids = (await self.find_bugs()).get(kind, [])
             set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
         # Update shipment MR with found bugs
@@ -888,27 +921,31 @@ class PrepareReleaseKonfluxPipeline:
 
         return kind_to_builds
 
-    async def find_bugs(self, kind: str, permissive: bool = False) -> Optional[List[str]]:
-        """Find bugs for the given advisory kind.
-        :param kind: The shipment kind for which to find bugs
-        :param permissive: Ignore invalid bugs that are found and continue
+    @a.functools.lru_cache
+    async def find_bugs(self, build_system='konflux', permissive: bool | None = None) -> Dict[str, List[str]]:
+        """Find bugs for the current assembly.
+
+        :param build_system: The build system to use (default: 'konflux').
+        :param permissive: Whether to use permissive mode. None means use default behavior.
+        :return: A dictionary mapping advisory kinds to lists of bug IDs
         """
-
-        if self._bug_ids_by_kind is None:
-            find_bugs_cmd = self._elliott_base_command + [
-                "find-bugs",
-                "--output=json",
-            ]
-            if permissive:
-                find_bugs_cmd.append("--permissive")
-
-            stdout = await self.execute_command_with_logging(find_bugs_cmd)
-            self._bug_ids_by_kind = {}
-            if stdout:
-                for advisory_kind, bugs in json.loads(stdout).items():
-                    self._bug_ids_by_kind[advisory_kind] = bugs
-
-        return self._bug_ids_by_kind.get(kind)
+        match build_system:
+            case 'konflux':
+                base_command = self._elliott_base_command
+            case 'brew':
+                base_command = self._elliott_base_command_for_brew
+            case _:
+                raise ValueError(f"Unsupported build system: {build_system}")
+        if permissive is None:
+            permissive = self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE)
+        find_bugs_cmd = base_command + [
+            "find-bugs",
+            "--output=json",
+        ]
+        if permissive:
+            find_bugs_cmd.append("--permissive")
+        stdout = await self.execute_command_with_logging(find_bugs_cmd)
+        return json.loads(stdout)
 
     async def attach_cve_flaws(self, kind: str, shipment: ShipmentConfig):
         """Attach CVE flaws to the given shipment.
@@ -1026,10 +1063,6 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in shipment data. MR will not be updated.")
             return False
 
-        # Update the MR description
-        description_update = f"Updated by job: {self.job_url}\n\n" if self.job_url else commit_message
-        mr.description = f"{mr.description}\n\n{description_update}"
-
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have updated MR description: %s", mr.description)
         else:
@@ -1071,33 +1104,43 @@ class PrepareReleaseKonfluxPipeline:
                 # wait for 30 seconds to ensure the MR is updated
                 self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
                 await asyncio.sleep(30)
-                await self.trigger_ci_pipeline(project, mr.source_branch)
+                await self.trigger_ci_pipeline(mr)
         else:
             self.logger.info("MR is already ready (no draft prefix found)")
 
-    async def trigger_ci_pipeline(self, project, branch: str):
-        """Trigger a GitLab CI pipeline for the specified project and branch.
+    async def trigger_ci_pipeline(self, mr):
+        """Trigger a GitLab Merge Request pipeline using the MR API.
 
         Args:
-            project: GitLab project object
-            branch: The branch name to trigger the pipeline for
+            mr: GitLab merge request object
         """
         try:
-            self.logger.info("Triggering CI pipeline for branch %s in project %s", branch, project.path_with_namespace)
+            self.logger.info(
+                "Triggering CI pipeline for MR !%s on branch %s",
+                mr.iid,
+                mr.source_branch,
+            )
 
             if self.dry_run:
-                self.logger.info("[DRY-RUN] Would have triggered CI pipeline for branch: %s", branch)
+                self.logger.info(
+                    "[DRY-RUN] Would have triggered MR pipeline for MR !%s (branch: %s)",
+                    mr.iid,
+                    mr.source_branch,
+                )
                 return
 
-            # Create a new pipeline for the specified branch
-            pipeline = project.pipelines.create({'ref': branch})
+            # Create a new pipeline for this merge request using MR API
+            pipeline = mr.pipelines.create({'ref': mr.source_branch})
 
-            self.logger.info("CI pipeline triggered successfully: %s", pipeline.web_url)
-            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline.web_url}")
+            pipeline_url = pipeline.web_url
+            self.logger.info("CI MR pipeline triggered successfully: %s", pipeline_url)
+            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
 
         except Exception as ex:
-            self.logger.warning(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
-            await self._slack_client.say_in_thread(f"Failed to trigger CI pipeline for branch {branch}: {ex}")
+            self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {ex}")
+            await self._slack_client.say_in_thread(
+                f"Failed to trigger CI pipeline for MR branch {mr.source_branch}: {ex}"
+            )
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -1132,6 +1175,8 @@ class PrepareReleaseKonfluxPipeline:
             await self.shipment_data_repo.write_file(filepath, out.getvalue())
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
+        if self.job_url and self.job_url not in commit_message:
+            commit_message += f"\n{self.job_url}"
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
     async def create_update_build_data_pr(self) -> bool:
@@ -1438,9 +1483,6 @@ class PrepareReleaseKonfluxPipeline:
     help="The assembly to operate on e.g. 4.18.5",
 )
 @click.option(
-    "--date", metavar="YYYY-MMM-DD", required=False, default=None, help="Expected release date (e.g. 2020-Nov-25)"
-)
-@click.option(
     '--build-data-repo-url',
     help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
 )
@@ -1459,7 +1501,6 @@ async def prepare_release(
     runtime: Runtime,
     group: str,
     assembly: str,
-    date: str,
     build_data_repo_url: Optional[str],
     inject_build_data_repo: bool,
     shipment_data_repo_url: Optional[str],
@@ -1479,7 +1520,6 @@ async def prepare_release(
             runtime=runtime,
             group=group,
             assembly=assembly,
-            date=date,
             build_data_repo_url=build_data_repo_url,
             shipment_data_repo_url=shipment_data_repo_url,
             inject_build_data_repo=inject_build_data_repo,

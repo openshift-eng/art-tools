@@ -43,7 +43,7 @@ class AssemblyInspector:
         self._external_rpm_build_cache: Dict[
             str, Dict[str, Optional[Dict]]
         ] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
-        self._permits = assembly_permits(self.runtime.releases_config, self.runtime.assembly)
+        self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
         self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
 

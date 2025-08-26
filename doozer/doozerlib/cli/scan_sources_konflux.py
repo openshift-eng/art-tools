@@ -16,6 +16,7 @@ import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -85,16 +86,21 @@ class ConfigScanSources:
         self.latest_image_build_records_map: Dict[str, KonfluxBuildRecord] = {}
         self.latest_rpm_build_records_map: Dict[str, Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
-        self.changing_rpms = set()
+        self.changing_rpm_names = set()
         self.rhcos_status = []
         self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
-            # TODO: to be removed once this job is the only one we use for scanning
-            raise DoozerFatalError('ocp4-scan for Konflux is not yet allowed to rebase into openshfit-priv!')
-            self.rebase_into_priv()
+            major, minor = self.runtime.get_major_minor_fields()
+            version = f'{major}.{minor}'
+            if version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                self.logger.warning(
+                    'ocp4-scan for Konflux is not allowed to rebase into openshfit-priv version %s', version
+                )
+            else:
+                self.rebase_into_priv()
 
         # Gather latest builds for ART-managed RPMs
         await self.find_latest_rpms_builds()
@@ -232,6 +238,10 @@ class ConfigScanSources:
         raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
     def rebase_into_priv(self):
+        if self.dry_run:
+            self.logger.info('Would have rebased into openshift-priv')
+            return
+
         self.logger.info('Rebasing public upstream contents into openshift-priv')
         upstream_mappings = exectools.parallel_exec(
             lambda meta, _: (
@@ -831,7 +841,7 @@ class ConfigScanSources:
     async def scan_rpm_changes(self, image_meta: ImageMetadata):
         # Check if the build used any of the ART built rpms that are changing
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-        for rpm in self.changing_rpms:
+        for rpm in self.changing_rpm_names:
             if rpm in {parse_nvr(package)['name']: package for package in build_record.installed_packages}:
                 self.add_image_meta_change(
                     image_meta,
@@ -932,7 +942,13 @@ class ConfigScanSources:
             # RPM has never been built
             if not latest_build_record:
                 self.logger.warning('No build found for RPM %s in %s', rpm_name, self.runtime.group)
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.NO_LATEST_BUILD,
+                        reason=f'Component {rpm_name} has no latest build for assembly {self.runtime.assembly}',
+                    ),
+                )
                 return
 
             # Scan for any build in this assembly which includes the git commit.
@@ -943,7 +959,13 @@ class ConfigScanSources:
 
             if not upstream_commit_build_record:
                 self.logger.warning('No build for RPM %s from upstream commit %s', rpm_name, upstream_commit_hash)
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.NEW_UPSTREAM_COMMIT,
+                        reason=f'New upstream commit {upstream_commit_hash} for {rpm_name} needs to be built',
+                    ),
+                )
                 return
 
             # Does most recent build match the one from the latest upstream commit?
@@ -952,7 +974,14 @@ class ConfigScanSources:
                 self.logger.warning(
                     'Latest build for RPM %s does not match upstream commit %s', rpm_name, upstream_commit_hash
                 )
-                self.changing_rpms.add(rpm_name)
+                self.add_rpm_meta_change(
+                    rpm_meta,
+                    RebuildHint(
+                        code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
+                        reason=f'Latest build {latest_build_record.nvr} does not match upstream commit build '
+                        f'{upstream_commit_build_record.nvr}; commit reverted?',
+                    ),
+                )
                 return
 
         tasks = []
@@ -994,6 +1023,14 @@ class ConfigScanSources:
                 RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, f'Ancestor {meta.distgit_key} is changing'),
             )
 
+    def add_rpm_meta_change(self, meta: RPMMetadata, rebuild_hint: RebuildHint):
+        # If the rebuild hint does not require a rebuild, do nothing
+        if not rebuild_hint.rebuild:
+            return
+
+        self.changing_rpm_names.add(meta.distgit_key)
+        self.add_assessment_reason(meta, rebuild_hint)
+
     def is_image_enabled(self, image_name: str) -> bool:
         image_meta = self.runtime.image_map[image_name]
         mode = image_meta.config.konflux.mode
@@ -1022,7 +1059,7 @@ class ConfigScanSources:
                 status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                     tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
-                    latest_rhcos_value = self.latest_rhcos_node_shasum(version, brew_arch, private)
+                    latest_rhcos_value = self.latest_rhcos_node_shasum(arch)
                 else:
                     tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
                     latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
@@ -1089,7 +1126,7 @@ class ConfigScanSources:
 
         return shasum
 
-    def latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
+    def latest_rhcos_node_shasum(self, arch) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         rhcos_index = next(
@@ -1143,11 +1180,11 @@ class ConfigScanSources:
 
     def generate_report(self):
         image_results = []
-        changing_image_names = [name for name in self.changing_image_names]
 
         # Filter out images that are disabled or wip at the konflux level
-        changing_image_names = list(filter(lambda image_name: self.is_image_enabled(image_name), changing_image_names))
-
+        changing_image_names = list(
+            filter(lambda image_name: self.is_image_enabled(image_name), self.changing_image_names)
+        )
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names
@@ -1160,9 +1197,22 @@ class ConfigScanSources:
                     }
                 )
 
+        rpm_results = []
+        for rpm_meta in self.all_rpm_metas:
+            dgk = rpm_meta.distgit_key
+            is_changing = dgk in self.changing_rpm_names
+            if is_changing:
+                rpm_results.append(
+                    {
+                        'name': dgk,
+                        'changed': is_changing,
+                        'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}'),
+                    }
+                )
+
         results = dict(
             images=image_results,
-            rpms=[meta.distgit_key for meta in self.changing_rpms],
+            rpms=rpm_results,
             rhcos=self.rhcos_status,
         )
 
@@ -1228,11 +1278,7 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
 
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
-
-    if runtime.group_config.canonical_builders_from_upstream:
-        runtime.initialize(mode="both", clone_distgits=True)
-    else:
-        runtime.initialize(mode='both', clone_distgits=False)
+    runtime.initialize(mode='both', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:
         await ConfigScanSources(

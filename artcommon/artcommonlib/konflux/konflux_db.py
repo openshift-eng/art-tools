@@ -345,7 +345,7 @@ class KonfluxDb:
         # If we got here, no builds have been found in the whole 36 months period
         if strict:
             raise IOError(f"Build record for {name} not found.")
-        self.logger.warning(
+        self.logger.debug(
             'No builds found for %s in %s with status %s in assembly %s and target %s',
             name,
             group,

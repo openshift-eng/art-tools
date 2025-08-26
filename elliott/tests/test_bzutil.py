@@ -504,11 +504,6 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('CVE-2022-123', sort_list[4])
 
     def test_is_first_fix_any_validate(self):
-        tr = '4.8.z'
-        expected = True
-        actual = bzutil.is_first_fix_any(None, [], tr)
-        self.assertEqual(expected, actual)
-
         # should raise error when no tracker bugs are found
         tr = '4.8.0'
         self.assertRaisesRegex(

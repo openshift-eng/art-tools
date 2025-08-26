@@ -102,8 +102,8 @@ class Data(StrictBaseModel):
 class EnvAdvisory(StrictBaseModel):
     """Information about the advisory that got shipped to the environment"""
 
-    url: str
     internal_url: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ShipmentEnv(StrictBaseModel):

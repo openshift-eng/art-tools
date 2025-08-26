@@ -67,6 +67,12 @@ def get_shipment_configs_from_mr(
     return shipment_configs
 
 
+def get_shipment_config_from_mr(mr_url: str, kind: str) -> ShipmentConfig | None:
+    """Fetch a specific shipment config from a merge request URL."""
+    shipment_configs = get_shipment_configs_from_mr(mr_url)
+    return shipment_configs.get(kind)
+
+
 def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:
     """Fetch builds from a merge request URL."""
 

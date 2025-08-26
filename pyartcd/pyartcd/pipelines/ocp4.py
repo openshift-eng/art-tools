@@ -219,6 +219,12 @@ class Ocp4Pipeline:
         jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
         self.runtime.logger.info('Pinned builds (whether source changed or not)')
 
+        if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
+            )
+            self.build_plan.build_rpms = None
+
         if not self.build_plan.build_rpms:
             jenkins.update_description('RPMs: not building.<br/>')
 
@@ -645,6 +651,12 @@ class Ocp4Pipeline:
             )
 
     async def _sweep(self):
+        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            self.runtime.logger.info(
+                'Skipping bug sweep for %s since it is being handled by ocp4-konflux', {self.version}
+            )
+            return
+
         if self.all_image_build_failed:
             self.runtime.logger.warning('All image builds failed: skipping sweep')
             return

@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import sys
@@ -19,8 +20,8 @@ from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
-from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
-from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_bugzilla_bug_ids
+from elliottlib.shipment_model import CveAssociation, ReleaseNotes
+from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
@@ -143,25 +144,30 @@ class AttachCveFlaws:
 
         # Get flaw bugs
         tracker_flaws, flaw_bugs = (
-            get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs) if tracker_bugs else ({}, [])
+            get_flaws(
+                self.runtime.get_bug_tracker('bugzilla'),
+                tracker_bugs,
+                self.runtime.assembly_type,
+                self.runtime.assembly,
+            )
+            if tracker_bugs
+            else ({}, [])
         )
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
         # Update the release notes
-        self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
-        return release_notes
+        updated_release_notes = copy.deepcopy(release_notes)
+        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+        if updated_release_notes == release_notes:
+            self.logger.info("No changes made to the release notes")
+            return None
+
+        return updated_release_notes
 
     def get_release_notes_from_mr(self, mr_url: str) -> ReleaseNotes:
         """Fetch release notes from a merge request URL."""
 
-        kinds = (
-            (self.default_advisory_type,)
-            if self.default_advisory_type
-            else ("rpm", "image", "extras", "microshift", "metadata")
-        )
-        shipment_configs: Dict[str, ShipmentConfig] = get_shipment_configs_from_mr(mr_url, kinds)
-        shipment_config = shipment_configs.get(self.default_advisory_type)
-
+        shipment_config = get_shipment_config_from_mr(mr_url, self.default_advisory_type)
         if not shipment_config:
             raise ValueError(f"No shipment config found for kind: {self.default_advisory_type}")
 
@@ -190,7 +196,7 @@ class AttachCveFlaws:
         )
         return attached_tracker_bugs
 
-    def update_advisory_konflux(
+    def update_release_notes(
         self,
         release_notes: ReleaseNotes,
         flaw_bugs: Iterable[Bug],
@@ -295,7 +301,9 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers)
+            tracker_flaws, flaw_bugs = get_flaws(
+                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
+            )
 
             try:
                 if flaw_bugs:
