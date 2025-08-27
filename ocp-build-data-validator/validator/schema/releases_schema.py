@@ -39,6 +39,10 @@ def _demerge(data):
 
 
 def validate(_, data):
+    for assembly_name, assembly in data.get('releases', {}).items():
+        if "group!" in assembly.get('assembly', {}).keys():
+            return f"Found forbidden key 'group!' in release '{assembly_name}'"
+
     # Load Json schemas
     path = importlib_resources.files("validator") / "json_schemas"
     schemas = {source.name: json.load(open(source)) for source in path.iterdir() if source.name.endswith(".json")}
