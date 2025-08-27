@@ -1679,7 +1679,8 @@ class GenPayloadCli:
                 # nightly to a new one.
                 def is_accepted(tag):
                     # Returns true if the imagestream tag has been accepted.
-                    return tag.get('annotations', dict()).get('release.openshift.io/phase', 'Unknown') == 'Accepted'
+                    annotations = tag.get('annotations') or {}  # Handle `annotations: null`
+                    return annotations.get('release.openshift.io/phase', 'Unknown') == 'Accepted'
 
                 release_tags: List = obj_model.spec["tags"]._primitive()
                 new_release_tags = release_tags[-5:]  # Preserve the most recent five
