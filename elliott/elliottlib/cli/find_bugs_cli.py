@@ -64,7 +64,7 @@ async def find_bugs_cli(
         runtime=runtime,
         permissive=permissive,
         output=output,
-        cve_only,
+        cve_only=cve_only,
     )
     await cli.run()
 
