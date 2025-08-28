@@ -1038,8 +1038,8 @@ class KonfluxFbcBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        # 'fbc-openshift-4-18-ose-installer-terraform' -> 'fbc-ose-4-18-ose-installer-terraform'
-        name = name.replace('openshift-', 'ose-')
+        # 'fbc-openshift-4-17-openshift-kubernetes-nmstate-operator' -> 'fbc-ose-4-17-openshift-kubernetes-nmstate-operator'
+        name = f"fbc-ose-{name[14:]}" if name.startswith("fbc-openshift-") else name
         return name
 
     async def build(self, metadata: ImageMetadata):
