@@ -1682,7 +1682,17 @@ class GenPayloadCli:
                     annotations = tag.get('annotations') or {}  # Handle `annotations: null`
                     return annotations.get('release.openshift.io/phase', 'Unknown') == 'Accepted'
 
-                release_tags: List = obj_model.spec["tags"]._primitive()
+                imagestream_tags: List = obj_model.spec["tags"]._primitive()
+
+                # Filter out only nightly tags, other (i.e. non-nightly) tags like "tickle" are preserved
+                release_tags = []
+                other_tags = []
+                for tag in imagestream_tags:
+                    if 'nightly-multi' in tag.get('name', ''):
+                        release_tags.append(tag)
+                    else:
+                        other_tags.append(tag)
+
                 new_release_tags = release_tags[-5:]  # Preserve the most recent five
 
                 latest_accepted = list(filter(is_accepted, new_release_tags))
@@ -1718,7 +1728,7 @@ class GenPayloadCli:
                             )
                             return
 
-                obj_model.spec["tags"] = new_release_tags
+                obj_model.spec["tags"] = other_tags + new_release_tags
 
                 # When spec tags are removed, their entry under the imagestream.status field should also
                 # be removed by the imagestream controller. The release controller will delete the
