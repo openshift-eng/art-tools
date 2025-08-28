@@ -81,6 +81,7 @@ class GitRepository:
         env = os.environ.copy()
         env.update(GIT_NO_PROMPTS)
         repo_dir = str(self._directory)
+        await exectools.cmd_assert_gather(["git", "-C", repo_dir, "branch", "-D", branch], env=env)
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "checkout", "-b", branch], env=env)
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
