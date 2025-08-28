@@ -807,32 +807,36 @@ manifests:
                     spec=dict(
                         tags=[
                             dict(
-                                name=as_multi_release_name("spam0"),
+                                name=as_multi_release_name("spam0-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam1"),
+                                name=as_multi_release_name("spam1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam2"),
+                                name=as_multi_release_name("spam2-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam3"),
+                                name=as_multi_release_name("spam3-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam4"),
+                                name=as_multi_release_name("spam4-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam5"),
+                                name=as_multi_release_name("spam5-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam6"),
+                                name=as_multi_release_name("spam6-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name="tickle",  # non-nightly tag
+                                annotations=None,
                             ),
                         ]
                     ),
@@ -848,10 +852,11 @@ manifests:
             return False
 
         await gpcli.apply_multi_imagestream_update("final_pullspec", "is_name", "multi_release_name")
-        self.assertFalse(contains(name=as_multi_release_name("spam1")), "old rejected should have been pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam2")), "recent rejected not pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam6")), "new accepted not pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam0")), "older 2nd accepted not pruned")
+        self.assertFalse(contains(name=as_multi_release_name("spam1-nightly")), "old rejected should have been pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam2-nightly")), "recent rejected not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam6-nightly")), "new accepted not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam0-nightly")), "older 2nd accepted not pruned")
+        self.assertTrue(contains(name="tickle"), "non-nightly tag should be preserved")
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
@@ -877,47 +882,47 @@ manifests:
                     spec=dict(
                         tags=[
                             dict(
-                                name=as_multi_release_name("spam-1"),
+                                name=as_multi_release_name("spam-1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam0"),
+                                name=as_multi_release_name("spam0-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam1"),
+                                name=as_multi_release_name("spam1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam2"),
+                                name=as_multi_release_name("spam2-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam3"),
+                                name=as_multi_release_name("spam3-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam4"),
+                                name=as_multi_release_name("spam4-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam5"),
+                                name=as_multi_release_name("spam5-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam6"),
+                                name=as_multi_release_name("spam6-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam7"),
+                                name=as_multi_release_name("spam7-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam8"),
+                                name=as_multi_release_name("spam8-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam9"),
+                                name=as_multi_release_name("spam9-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                         ]
@@ -936,14 +941,16 @@ manifests:
             return False
 
         self.assertFalse(
-            contains(name=as_multi_release_name("spam-1")), "oldest accepted release should have been pruned"
+            contains(name=as_multi_release_name("spam-1-nightly")), "oldest accepted release should have been pruned"
         )
-        self.assertTrue(contains(name=as_multi_release_name("spam1")), "accepted release should not have been pruned")
         self.assertTrue(
-            contains(name=as_multi_release_name("spam4")), "2nd accepted release should not have been pruned"
+            contains(name=as_multi_release_name("spam1-nightly")), "accepted release should not have been pruned"
+        )
+        self.assertTrue(
+            contains(name=as_multi_release_name("spam4-nightly")), "2nd accepted release should not have been pruned"
         )
         self.assertFalse(
-            contains(name=as_multi_release_name("spam0")), "oldest rejected release should have been pruned"
+            contains(name=as_multi_release_name("spam0-nightly")), "oldest rejected release should have been pruned"
         )
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
