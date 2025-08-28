@@ -40,6 +40,7 @@ def get_fixed_in_version_go_db(go_vuln_id: str):
     res = requests.get(go_vuln_db_api_url)
     for entry in res.json()['affected']:
         if entry['package']['ecosystem'] != "Go" or entry['package']['name'] != "stdlib":
+            LOGGER.info(f"[{go_vuln_id}] Skipping {entry['package']['name']} because it's not stdlib")
             continue
         for r in entry['ranges']:
             if r['type'] == "SEMVER":
@@ -276,7 +277,10 @@ class FindBugsGolangCli:
             self._logger.warning(f"rpm {rpm_name} not found for assembly {self._runtime.assembly}. Is it a valid rpm?")
             return False, None
 
+        self._logger.info(f"Found {len(nvrs)} NVRs for {rpm_name}: {sorted([f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs])}. Checking if fix is in NVRs...")
+
         go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
+        self._logger.info(f"Found {len(go_nvr_map)} parent golang NVRs: {sorted(go_nvr_map.keys())}")
         if self.fixed_in_nvrs:
             final_fixed_nvrs = []
             final_fixed_in_nvrs = []
@@ -399,6 +403,7 @@ class FindBugsGolangCli:
             tr = ','.join(target_release)
             logger.info(
                 f"Searching for open security trackers with target version {tr}. "
+                f"Excluding bug statuses: {self.exclude_bug_statuses}. "
                 "Then will filter to just the golang CVEs and trackers"
             )
 
@@ -414,7 +419,10 @@ class FindBugsGolangCli:
                 f'{exclude_status_clause}'
             )
 
+            logger.info(f"JIRA query: {query}")
+
             bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
+            logger.info(f"Found {len(bugs)} issues from JIRA search")
 
         def is_valid(b: JIRABug):
             if not b.cve_id:
@@ -445,12 +453,23 @@ class FindBugsGolangCli:
                 return False
             return True
 
-        bugs = [b for b in bugs if is_valid(b)]
-        logger.debug(f"Found {len(bugs)} total tracker bugs. Filtering them to golang trackers")
+        initial_bug_count = len(bugs)
+        valid_bugs = []
+        filtered_bugs = []
+        for b in bugs:
+            if is_valid(b):
+                valid_bugs.append(b)
+            else:
+                filtered_bugs.append(b.id)
+        bugs = valid_bugs
+        logger.info(f"After filtering invalid bugs: {len(bugs)}/{initial_bug_count} remaining")
+        if filtered_bugs:
+            logger.info(f"Filtered out bugs: {filtered_bugs}")
         if not bugs:
             return
 
         cves = sorted(set([b.cve_id for b in bugs]), reverse=True)
+        logger.info(f"Found {len(cves)} unique CVEs to check against golang vulnerability database")
         cve_table = PrettyTable()
         cve_table.align = "l"
         cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Compatible"]
@@ -535,7 +554,18 @@ class FindBugsGolangCli:
         table = PrettyTable()
         table.align = "l"
         table.field_names = ["Jira ID", "CVE", "pscomponent", "Status", "Age (days)"]
-        bugs = [b for b in bugs if b.cve_id in golang_cves_fixed_in]
+        bugs_before_golang_filter = len(bugs)
+        golang_bugs = []
+        non_golang_bugs = []
+        for b in bugs:
+            if b.cve_id in golang_cves_fixed_in:
+                golang_bugs.append(b)
+            else:
+                non_golang_bugs.append(b.id)
+        bugs = golang_bugs
+        logger.info(f"After filtering to golang stdlib CVEs: {len(bugs)}/{bugs_before_golang_filter} remaining")
+        if non_golang_bugs:
+            logger.info(f"Filtered out non-golang stdlib bugs: {non_golang_bugs}")
         for b in bugs:
             table.add_row([b.id, b.cve_id, b.whiteboard_component, b.status, b.created_days_ago()])
         self._logger.info(f"Found {len(bugs)} golang trackers in Jira")
