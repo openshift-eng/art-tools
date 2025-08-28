@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+import asyncstdlib as a
 import click
 from artcommonlib import logutil
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
@@ -15,7 +16,7 @@ from doozerlib.backend.konflux_client import (
     KonfluxClient,
 )
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_UI_HOST
-from kubernetes.dynamic import ResourceInstance, exceptions
+from kubernetes_asyncio.dynamic import ResourceInstance, exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -54,19 +55,27 @@ class CreateReleaseCli:
         self.image_repo_pull_secret = image_repo_pull_secret
         self.dry_run = dry_run
         self.job_url = job_url
-        self.konflux_client = KonfluxClient.from_kubeconfig(
+        self.release_env = release_env
+        self.force = force
+        self.kind = kind
+
+    @a.cached_property
+    async def konflux_client(self) -> KonfluxClient:
+        """
+        Return a KonfluxClient instance initialized with the provided configuration.
+        """
+        return await KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
             config_file=self.konflux_config['kubeconfig'],
             context=self.konflux_config['context'],
             dry_run=self.dry_run,
         )
-        self.konflux_client.verify_connection()
-        self.release_env = release_env
-        self.force = force
-        self.kind = kind
 
     async def run(self) -> Optional[ResourceInstance]:
         self.runtime.initialize(build_system='konflux', with_shipment=True)
+
+        konflux_client = await self.konflux_client
+        await konflux_client.verify_connection()
 
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
@@ -97,17 +106,17 @@ class CreateReleaseCli:
 
         # Ensure CRDs are accessible
         try:
-            await self.konflux_client._get_api(API_VERSION, KIND_APPLICATION)
-            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
-            await self.konflux_client._get_api(API_VERSION, KIND_RELEASE)
-            await self.konflux_client._get_api(API_VERSION, KIND_RELEASE_PLAN)
+            await konflux_client._get_api(API_VERSION, KIND_APPLICATION)
+            await konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+            await konflux_client._get_api(API_VERSION, KIND_RELEASE)
+            await konflux_client._get_api(API_VERSION, KIND_RELEASE_PLAN)
         except exceptions.ResourceNotFoundError:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
         # make sure application exists
         LOGGER.info(f"Fetching application {meta.application} ...")
         try:
-            await self.konflux_client._get(API_VERSION, KIND_APPLICATION, meta.application)
+            await konflux_client._get(API_VERSION, KIND_APPLICATION, meta.application)
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
@@ -124,9 +133,9 @@ class CreateReleaseCli:
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
         snapshot_obj = await self.create_snapshot(config.shipment)
-        created_snapshot = await self.konflux_client._create(snapshot_obj)
+        created_snapshot = await konflux_client._create(snapshot_obj)
         snapshot_name = created_snapshot.metadata.name
-        snapshot_url = self.konflux_client.resource_url(created_snapshot)
+        snapshot_url = konflux_client.resource_url(created_snapshot)
         if self.dry_run:
             LOGGER.info("[DRY-RUN] Would have created Konflux Snapshot at %s", snapshot_url)
         else:
@@ -140,8 +149,8 @@ class CreateReleaseCli:
         )
 
         release_obj = await self.new_release(release_config)
-        created_release = await self.konflux_client._create(release_obj)
-        release_url = self.konflux_client.resource_url(created_release)
+        created_release = await konflux_client._create(release_obj)
+        release_url = konflux_client.resource_url(created_release)
         if self.dry_run:
             LOGGER.info("[DRY-RUN] Would have created Konflux Release at %s", release_url)
         else:
@@ -209,18 +218,19 @@ class CreateReleaseCli:
     async def new_release(self, release_config: ReleaseConfig) -> dict:
         release_plan = release_config.release_plan
         snapshot = release_config.snapshot
+        konflux_client = await self.konflux_client
 
         # make sure releasePlan exists
         LOGGER.info(f"Fetching release plan {release_plan} ...")
         try:
-            await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan)
+            await konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan)
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {release_plan} in the cluster. Does it exist?")
 
         # make sure snapshot exists
         LOGGER.info(f"Fetching snapshot {snapshot} ...")
         try:
-            await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot)
+            await konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot)
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {snapshot} in the cluster. Does it exist?")
 
