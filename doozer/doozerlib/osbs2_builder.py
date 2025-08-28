@@ -172,7 +172,7 @@ class OSBS2Builder:
         repo_type = profile["repo_type"]
         repo_list = profile["repo_list"]
         if repo_type and not repo_list:  # If --repo was not specified on the command line
-            repo_file = f".oit/{repo_type}.repo"
+            repo_file = f".oit/art-{repo_type}.repo"
             if not self.dry_run:
                 existence, repo_url = dg.cgit_file_available(repo_file)
             else:

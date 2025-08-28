@@ -391,7 +391,7 @@ class DistGitRepo(object):
         self.sha = sha.strip()
         return self.sha
 
-    def cgit_file_available(self, filename: str = ".oit/signed.repo") -> Tuple[bool, str]:
+    def cgit_file_available(self, filename: str = ".oit/art-signed.repo") -> Tuple[bool, str]:
         """Check if the specified file associated with the commit hash pushed to distgit is available on cgit
         :return: (existence, url)
         """
@@ -412,7 +412,7 @@ class DistGitRepo(object):
         stop=stop_after_attempt(60),
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
-    def wait_on_cgit_file(self, filename: str = ".oit/signed.repo"):
+    def wait_on_cgit_file(self, filename: str = ".oit/art-signed.repo"):
         """Poll cgit for the specified file associated with the commit hash pushed to distgit"""
         existence, _ = self.cgit_file_available(filename)
         return existence
@@ -810,7 +810,7 @@ class ImageDistGitRepo(DistGitRepo):
         non_shipping_repos = self.config.get('non_shipping_repos', [])
 
         for t in repos.repotypes:
-            with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
+            with self.dg_path.joinpath('.oit', f'art-{t}.repo').open('w', encoding="utf-8") as rc:
                 content = repos.repo_file(t, enabled_repos=enabled_repos)
                 rc.write(content)
 
@@ -1300,7 +1300,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         cmd = builder
         self.logger.info("Building image: %s" % target_image)
-        cmd += '{dir}/.oit/{repo_type}.repo:/etc/yum.repos.d/{repo_type}.repo -t {name}{tag} -t {name}:latest .'
+        cmd += '{dir}/.oit/art-{repo_type}.repo:/etc/yum.repos.d/{repo_type}.repo -t {name}{tag} -t {name}:latest .'
 
         name_split = target_image.split(':')
         name = name_split[0]
