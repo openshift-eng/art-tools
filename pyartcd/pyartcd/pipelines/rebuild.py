@@ -476,7 +476,8 @@ class RebuildPipeline:
     def _generate_repo_file_for_image(self, file: TextIOWrapper, plashets: Iterable[PlashetBuildResult], arches):
         # Copy content of .oit/art-signed.repo in the distgit repo
         source_path = (
-            Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / f"distgits/containers/{self.dg_key}/.oit/art-signed.repo"
+            Path(self._doozer_env_vars["DOOZER_WORKING_DIR"])
+            / f"distgits/containers/{self.dg_key}/.oit/art-signed.repo"
         )
         repo_content = source_path.read_text()
 
