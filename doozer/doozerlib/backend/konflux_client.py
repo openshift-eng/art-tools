@@ -17,6 +17,7 @@ from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -409,6 +410,7 @@ class KonfluxClient:
         return await self._create_or_replace(component)
 
     @alru_cache
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get_pipelinerun_template(self, template_url: str):
         """Get a PipelineRun template.
 
