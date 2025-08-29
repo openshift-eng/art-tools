@@ -5,6 +5,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime
 from typing import Dict, Optional, Set, Tuple
 
 import click
@@ -108,6 +109,46 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
 
+    def mirror_image(cmd_start: str, upstream_dest: str):
+        full_cmd_1 = f'{cmd_start} {upstream_dest}'
+        if dry_run:
+            print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
+        else:
+            exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
+
+        if upstream_dest.startswith('registry.ci.openshift.org/'):
+            # If the image is being mirrored the CI imagestreams, we must also mirror it
+            # to the quay.io/openshift/ci (aka QCI) repository. QCI is the location from which
+            # imagestream references will be resolved for CI operations. Eventually, the
+            # internal registry on the app.ci cluster will not be used at all.
+            # upstream_dest might look something like: registry.ci.openshift.org/ocp/{MAJOR}.{MINOR}:base-rhel9
+            # We want to transform this into: quay.io/openshift/ci:<datetime>_prune_art__ocp_{MAJOR}.{MINOR}:base-rhel9
+            # This tag convention allows images to be pruned over time if they are no longer being
+            # used. See https://github.com/openshift/release/blob/244558fe310225fa8d9895c0c70a279cc104c612/hack/qci_registry_pruner.py#L3-L25
+            # We also mirror to a floating tag that will be overwritten as new images are
+            # mirrored: quay.io/openshift/ci:art__ocp_{MAJOR}.{MINOR}:base-rhel9 . This ensures that
+            # at least one copy of the image will stay around until a new version is mirrored
+            # to the same tag, regardless of whether the prune tag is removed.
+
+            _, org_repo_tag = upstream_dest.split('/', 1)  # isolate "ocp/{MAJOR}.{MINOR}:base-rhel9"
+
+            # Use re.sub() to replace any character in the set [:/] with '_'
+            org_repo_tag = re.sub(r"[:/]", "_", org_repo_tag)  # => ocp_{MAJOR}.{MINOR}_base-rhel9
+            prune_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            prunable_qci_upstream_dest = f"quay.io/openshift/ci:{prune_timestamp}_prune_art__{org_repo_tag}"
+            full_cmd_2 = f'{cmd_start} {prunable_qci_upstream_dest}'
+            if dry_run:
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_2}')
+            else:
+                exectools.cmd_assert(full_cmd_2, retries=3, realtime=True)
+
+            floating_qci_upstream_dest = f"quay.io/openshift/ci:art__{org_repo_tag}"
+            full_cmd_3 = f'{cmd_start} {floating_qci_upstream_dest}'
+            if dry_run:
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_3}')
+            else:
+                exectools.cmd_assert(full_cmd_3, retries=3, realtime=True)
+
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
@@ -133,13 +174,10 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                     )
                 else:
                     for upstream_image_mirror_dest in config.upstream_image_mirror:
-                        priv_cmd = f'oc image mirror {config.upstream_image} {upstream_image_mirror_dest}'
+                        priv_cmd = f'oc image mirror {config.upstream_image}'
                         if runtime.registry_config_dir is not None:
                             priv_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-                        if dry_run:
-                            print(f'For {upstream_entry_name}, would have run: {priv_cmd}')
-                        else:
-                            exectools.cmd_assert(priv_cmd, retries=3, realtime=True)
+                        mirror_image(priv_cmd, upstream_image_mirror_dest)
 
             # If the configuration specifies an upstream_image_base, then ART is responsible for mirroring
             # that location and NOT the upstream_image. A buildconfig from gen-buildconfig is responsible
@@ -180,25 +218,19 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             if config.mirror_manifest_list is True:
                 as_manifest_list = '--keep-manifest-list'
 
-            cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec} {upstream_dest}'
+            cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec}'
 
             if runtime.registry_config_dir is not None:
                 cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-            if dry_run:
-                print(f'For {upstream_entry_name}, would have run: {cmd}')
-            else:
-                exectools.cmd_assert(cmd, retries=3, realtime=True)
+            mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
                 # oc image mirror will filter out missing arches (as long as the manifest is there) regardless of specifying --skip-missing
-                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec} {upstream_dest}-arm64'
+                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec}'
                 if runtime.registry_config_dir is not None:
                     arm_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-                if dry_run:
-                    print(f'For {upstream_entry_name}, would have run: {arm_cmd}')
-                else:
-                    exectools.cmd_assert(arm_cmd, retries=3, realtime=True, timeout=1800)
+                mirror_image(arm_cmd, f'{upstream_dest}-arm64')
 
 
 @images_streams.command(
