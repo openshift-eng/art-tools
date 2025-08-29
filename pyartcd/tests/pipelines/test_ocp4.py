@@ -316,11 +316,12 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
     @patch("pyartcd.util.load_group_config", return_value={'software_lifecycle': {'phase': 'release'}})
+    @patch("pyartcd.oc.qci_registry_login")
     @patch("pyartcd.oc.registry_login")
     @patch("pyartcd.record.parse_record_log")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_and_rebase_images(
-        self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, *_
+        self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, qci_login_mock, *_
     ):
         parse_record_log_mock.return_value = {}
 
@@ -351,6 +352,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             ],
         )
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # Exclude images
         cmd_assert_mock.reset_mock()
@@ -375,6 +377,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             ],
         )
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # Dry run
         cmd_assert_mock.reset_mock()
@@ -385,6 +388,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         await self.ocp4._build_images()
         cmd_assert_mock.assert_not_awaited()
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # ApiServer rebuilt
         cmd_assert_mock.reset_mock()
@@ -397,6 +401,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         self.ocp4.build_plan.images_excluded = []
         await self.ocp4._build_images()
         registry_login_mock.assert_awaited_once()
+        qci_login_mock.assert_awaited_once()
         cmd_assert_mock.assert_awaited_with(
             [
                 'doozer',
