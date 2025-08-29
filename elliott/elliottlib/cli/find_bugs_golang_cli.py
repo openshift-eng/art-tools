@@ -405,6 +405,13 @@ class FindBugsGolangCli:
         else:
             self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
 
+    @staticmethod
+    def valid_go_report_entry(bug, entry):
+        if bug.whiteboard_component != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            return entry.get('building_rpm_count', 0) > 0
+        else:
+            return entry.get('building_image_count', 1) > 0
+
     async def run(self):
         logger = self._logger
 
@@ -640,12 +647,9 @@ class FindBugsGolangCli:
                 # this is a hacky way to determine if backport compiler build is needed
                 # if it is an rpm tracker, then check if there is a compatible golang version in buildroot
                 # compatible means that the golang version is the same major and minor version
-                if bug.whiteboard_component != constants.GOLANG_BUILDER_CVE_COMPONENT:
-                    condition = lambda entry: entry.get('building_rpm_count', 0) > 0
-                else:
-                    condition = lambda entry: entry.get('building_image_count', 1) > 0
-
-                for go_version in [entry['go_version'] for entry in golang_report if condition(entry)]:
+                for go_version in [
+                    entry['go_version'] for entry in golang_report if self.valid_go_report_entry(bug, entry)
+                ]:
                     go_v = Version.parse(go_version)
                     if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
                         logger.info(
