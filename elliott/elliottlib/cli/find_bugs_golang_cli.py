@@ -5,6 +5,7 @@ from typing import Dict, List, Set, Tuple, Union
 
 import click
 import requests
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli.get_nightlies import find_rc_nightlies
@@ -86,6 +87,7 @@ class FindBugsGolangCli:
         force_update_tracker: bool,
         art_jira: str,
         exclude_bug_statuses: List[str],
+        jql_filter: str,
         dry_run: bool,
     ):
         self._runtime = runtime
@@ -99,6 +101,7 @@ class FindBugsGolangCli:
         self.force_update_tracker = force_update_tracker
         self.art_jira = art_jira
         self.exclude_bug_statuses = exclude_bug_statuses
+        self.jql_filter = jql_filter
         self.dry_run = dry_run
 
         # cache
@@ -272,12 +275,25 @@ class FindBugsGolangCli:
         nvrs = []
         for nvrp in self.rpm_nvrps:
             if nvrp[0] == rpm_name:
+                # if this is an art built rpm
+                # we want to check the rhel version of the NVR
+                # and only add it if it is in the list of rhel versions that build for the rpm
+                if rpm_name in self._runtime.rpm_map:
+                    el_version = isolate_el_version_in_release(nvrp[2])
+                    el_targets = self._runtime.rpm_map[rpm_name].determine_rhel_targets()
+                    if el_version not in el_targets:
+                        self._logger.info(
+                            f"Ignoring nvr {nvrp[0]}-{nvrp[1]}-{nvrp[2]} since el{el_version} not in targets for {rpm_name}"
+                        )
+                        continue
                 nvrs.append((nvrp[0], nvrp[1], nvrp[2]))
         if not nvrs:
             self._logger.warning(f"rpm {rpm_name} not found for assembly {self._runtime.assembly}. Is it a valid rpm?")
             return False, None
 
-        self._logger.info(f"Found {len(nvrs)} NVRs for {rpm_name}: {sorted([f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs])}. Checking if fix is in NVRs...")
+        self._logger.info(
+            f"Found {len(nvrs)} NVRs for {rpm_name}: {sorted([f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs])}. Checking if fix is in NVRs..."
+        )
 
         go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
         self._logger.info(f"Found {len(go_nvr_map)} parent golang NVRs: {sorted(go_nvr_map.keys())}")
@@ -415,9 +431,12 @@ class FindBugsGolangCli:
                 'project = "OCPBUGS" '
                 'and statusCategory != done '
                 'and labels = "SecurityTracking" '
+                'and component = "Release" '
                 f'and "Target Version" in ({tr}) '
                 f'{exclude_status_clause}'
             )
+            if self.jql_filter:
+                query += f' and filter = "{self.jql_filter}"'
 
             logger.info(f"JIRA query: {query}")
 
@@ -686,6 +705,7 @@ class FindBugsGolangCli:
     help="Exclude bugs in these statuses. By default Verified,ON_QA are excluded."
     "Pass empty string to include all open statuses or comma separated list of statuses to exclude",
 )
+@click.option("--jql-filter", help="JQL filter to apply to the search")
 @click.option("--dry-run", "--noop", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 @click_coroutine
@@ -701,6 +721,7 @@ async def find_bugs_golang_cli(
     components: List[str],
     art_jira: str,
     exclude_bug_statuses: str,
+    jql_filter: str,
     dry_run: bool,
 ):
     """Find golang security tracker bugs in jira and determine if they are fixed.
@@ -735,6 +756,9 @@ async def find_bugs_golang_cli(
     --exclude-bug-statuses: Exclude bugs in these statuses. If you wanted to analyze and report on all open bugs
     you would pass --exclude-bug-statuses="". Only used when not using --tracker-id.
 
+    --jql-filter: JQL filter to apply to the search. This is useful when you want to apply a specific named filter
+    to the search.
+
     # Fetch open golang tracker bugs in 4.14
 
     $ elliott -g openshift-4.14 find-bugs:golang
@@ -757,12 +781,16 @@ async def find_bugs_golang_cli(
     $ elliott -g openshift-4.14 find-bugs:golang --analyze --update-tracker --art-jira ART-1234 --dry-run
 
     """
-    if exclude_bug_statuses is not None:
-        if tracker_ids:
-            raise click.BadParameter("Cannot use --exclude-bug-statuses with --tracker-id")
-        exclude_bug_statuses = exclude_bug_statuses.split(',') if exclude_bug_statuses else []
-    else:
-        exclude_bug_statuses = ['Verified', 'ON_QA']
+    if tracker_ids and exclude_bug_statuses is not None:
+        raise click.BadParameter("Cannot use --exclude-bug-statuses with --tracker-id")
+
+    exclude_bug_statuses = (
+        exclude_bug_statuses.split(',')
+        if exclude_bug_statuses
+        else ['Verified', 'ON_QA']
+        if exclude_bug_statuses is None
+        else []
+    )
 
     if fixed_in_nvrs:
         if not analyze:
@@ -802,6 +830,7 @@ async def find_bugs_golang_cli(
         force_update_tracker=force_update_tracker,
         art_jira=art_jira,
         exclude_bug_statuses=exclude_bug_statuses,
+        jql_filter=jql_filter,
         dry_run=dry_run,
     )
     await cli.run()
