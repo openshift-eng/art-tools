@@ -111,6 +111,9 @@ class RebuildGolangRPMsPipeline:
             _LOGGER.info(
                 f'These ART rpms are on previous golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}'
             )
+            _LOGGER.info(
+                "Note: RPM NVRs are fetched from candidate tags so they may include nvrs for old rhel versions that are no longer rpm targets. If an old NVR like that is the only reason to rebuild, then it is safe to ignore it. find-bugs:golang --analyze will automatically filter out these old NVRs."
+            )
             self.rebuild_art_rpms(art_rpms_for_rebuild)
 
         if not non_art_rpms_for_rebuild:

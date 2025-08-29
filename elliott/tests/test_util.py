@@ -92,7 +92,7 @@ class TestUtil(unittest.TestCase):
                             'parent_image_builds': {
                                 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder@sha256:8e1cfc7198db25b97ce6f42e147b5c07d9725015ea971d04c91fe1249b565c80': {
                                     'id': 1977952,
-                                    'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca',
+                                    'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.p0.el8.g4d4caca',
                                 },
                                 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-base:v4.11.0-202205301910.p0.gf1330f6.assembly.stream': {
                                     'id': 2031610,
@@ -104,18 +104,18 @@ class TestUtil(unittest.TestCase):
                 }
             ],
         )
-        expected = {'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca': {nvrs[0]}}
+        expected = {'openshift-golang-builder-container-v1.18.0-202204191948.p0.el8.g4d4caca': {nvrs[0]}}
         actual = util.get_golang_container_nvrs(nvrs, None)
         self.assertEqual(expected, actual)
 
     def test_get_golang_container_nvrs_builder(self):
-        nvrs = [('openshift-golang-builder-container', 'v1.18.0', '202204191948.sha1patch.el8.g4d4caca')]
+        nvrs = [('openshift-golang-builder-container', 'v1.18.0', '202204191948.p0.el8.g4d4caca')]
         flexmock(brew).should_receive("get_build_objects").and_return(
             [
                 {
                     'id': 2052289,
                     'name': 'openshift-golang-builder-container',
-                    'release': '202204191948.sha1patch.el8.g4d4caca',
+                    'release': '202204191948.p0.el8.g4d4caca',
                     'version': 'v1.18.0',
                 }
             ],
