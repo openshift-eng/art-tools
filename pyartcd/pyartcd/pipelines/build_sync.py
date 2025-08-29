@@ -171,7 +171,7 @@ class BuildSyncPipeline:
             await self.comment_on_assembly_pr(text_body)
 
         # Make sure we're logged into the OC registry
-        await registry_login(self.runtime)
+        await registry_login()
 
         # Should we retrigger current nightly?
         if self.retrigger_current_nightly:

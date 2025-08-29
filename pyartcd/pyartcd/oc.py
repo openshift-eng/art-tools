@@ -53,16 +53,39 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
     return info
 
 
-async def registry_login(runtime: Runtime):
+async def registry_login():
+    """
+    Login into OC registry using KUBECONFIG env var
+    """
+
     try:
         await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
 
     except KeyError:
-        runtime.logger.error('KUBECONFIG env var must be defined!')
+        logger.error('KUBECONFIG env var must be defined!')
         raise
 
     except ChildProcessError:
-        runtime.logger.error('Failed to login into OC registry')
+        logger.error('Failed to login into OC registry')
+        raise
+
+
+async def qci_registry_login():
+    """
+    Log in to quay.io with credentials necessary to push to DPTP's QCI registry (quay.io/openshift/ci)
+    """
+
+    try:
+        await exectools.cmd_gather_async(
+            f'oc registry login --registry=quay.io/openshift --auth-basic={os.environ["QCI_USER"]}:{os.environ["QCI_PASSWORD"]}'
+        )
+
+    except KeyError:
+        logger.error('QCI_USER and QCI_PASSWORD env vars must be defined!')
+        raise
+
+    except ChildProcessError:
+        logger.error('Failed to login into QCI registry')
         raise
 
 

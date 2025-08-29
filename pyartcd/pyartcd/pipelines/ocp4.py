@@ -567,7 +567,12 @@ class Ocp4Pipeline:
             self.runtime.logger.warning('apiserver rebuilt: mirroring streams to CI...')
 
             # Make sure our api.ci token is fresh
-            await oc.registry_login(self.runtime)
+            await oc.registry_login()
+
+            # Log into QCI registry
+            await oc.qci_registry_login()
+
+            # Mirror out ART equivalent images to CI
             cmd = self._doozer_base_command.copy()
             cmd.extend(['images:streams', 'mirror'])
             await exectools.cmd_assert_async(cmd)

@@ -83,7 +83,7 @@ class BuildMicroShiftBootcPipeline:
 
     async def run(self):
         # Make sure our api.ci token is fresh
-        await oc.registry_login(self.runtime)
+        await oc.registry_login()
         self.releases_config = await load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
