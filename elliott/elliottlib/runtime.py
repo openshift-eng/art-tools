@@ -6,7 +6,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from multiprocessing import Lock, RLock
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import click
 import yaml
@@ -95,6 +95,14 @@ class Runtime(GroupRuntime):
 
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
+
+    def get_major_minor_fields(self) -> Tuple[int, int]:
+        """
+        Returns: (int(MAJOR), int(MINOR)) if the vars are defined in the group config.
+        """
+        major = int(self.group_config.vars['MAJOR'])
+        minor = int(self.group_config.vars['MINOR'])
+        return major, minor
 
     def get_major_minor_patch(self):
         pattern = r"\d+.\d+.\d+"

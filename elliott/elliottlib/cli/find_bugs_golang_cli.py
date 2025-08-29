@@ -89,6 +89,7 @@ class FindBugsGolangCli:
         exclude_bug_statuses: List[str],
         jql_filter: str,
         dry_run: bool,
+        csv_output: bool,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -103,6 +104,7 @@ class FindBugsGolangCli:
         self.exclude_bug_statuses = exclude_bug_statuses
         self.jql_filter = jql_filter
         self.dry_run = dry_run
+        self.csv_output = csv_output
 
         # cache
         self.pullspec = pullspec
@@ -150,7 +152,7 @@ class FindBugsGolangCli:
                 return None
         return {Version.parse(v) for v in set(fixed_in_versions)}
 
-    def _is_fixed(self, bug: JIRABug, tracker_fixed_in: Set[Version], go_nvr_map) -> (bool, str):
+    def _is_fixed(self, bug: JIRABug, tracker_fixed_in: Set[Version], go_nvr_map) -> (bool, str, List[str], List[str]):
         versions_to_build_map = {}
         total_builds = 0
         for go_build in go_nvr_map.keys():
@@ -243,7 +245,7 @@ class FindBugsGolangCli:
                                 message = f"{nvr} has shipped with OCP advisory {advisory['name']} - {synopsis}."
                                 self._logger.info(message)
 
-            build_artifacts = f"These nvrs {sorted(nvrs)}"
+            build_artifacts = sorted(nvrs)
 
         comment = (
             f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} "
@@ -252,9 +254,12 @@ class FindBugsGolangCli:
             f"Fix is determined to be in builder versions {[str(v) for v in fixed_in_versions]}."
         )
 
-        return fixed, comment
+        parent_golang_builds = [str(v) for v in fixed_in_versions] if fixed else [str(v) for v in not_fixed_in]
+        return fixed, comment, build_artifacts, parent_golang_builds
 
-    async def is_fixed_rpm(self, bug: JIRABug, rpm_name: str, tracker_fixed_in: Set[Version] = None) -> (bool, str):
+    async def is_fixed_rpm(
+        self, bug: JIRABug, rpm_name: str, tracker_fixed_in: Set[Version] = None
+    ) -> (bool, str, List[str], List[str]):
         if not self.rpm_nvrps:
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
@@ -289,7 +294,7 @@ class FindBugsGolangCli:
                 nvrs.append((nvrp[0], nvrp[1], nvrp[2]))
         if not nvrs:
             self._logger.warning(f"rpm {rpm_name} not found for assembly {self._runtime.assembly}. Is it a valid rpm?")
-            return False, None
+            return False, None, [], []
 
         self._logger.info(
             f"Found {len(nvrs)} NVRs for {rpm_name}: {sorted([f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs])}. Checking if fix is in NVRs..."
@@ -324,11 +329,13 @@ class FindBugsGolangCli:
                     f"Component NVRs {final_fixed_nvrs} in ART candidate tags found to be built with golang "
                     f"builds containing fix: {final_fixed_in_nvrs}"
                 )
-            return fixed, comment
+            return fixed, comment, final_fixed_nvrs, final_fixed_in_nvrs
         else:
             return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
 
-    async def is_fixed_golang_builder(self, bug: JIRABug, tracker_fixed_in: Set[Version] = None) -> (bool, str):
+    async def is_fixed_golang_builder(
+        self, bug: JIRABug, tracker_fixed_in: Set[Version] = None
+    ) -> (bool, str, List[str], List[str]):
         if not self.pullspec:
             self._logger.info('Fetching latest accepted nightly...')
             # we fetch pending and rejected nightlies as well since
@@ -348,9 +355,9 @@ class FindBugsGolangCli:
             except Exception as e:
                 self._logger.error(
                     "Does pullspec exist? To override use --pullspec. "
-                    f"Could not fetch go build nvrs for {self.pullspec}: {e}"
+                    f"Could not fetch go build nvrs for {self.pullspec}: {e}. Will ignore {bug.id}"
                 )
-                raise e
+                return False, '', [], []
             nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
             self.go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
 
@@ -387,9 +394,9 @@ class FindBugsGolangCli:
                     f"{bug.cve_id} is fixed in golang builder(s) {fixed_in_builds} which are found to be "
                     f"the parent images in {self.pullspec}. Bug is considered fixed."
                 )
-                return True, comment
+                return True, comment, f"{len(fixed_builds)}/{total_builds} fixed builds", fixed_in_builds
 
-            return False, ''
+            return False, '', f"{len(fixed_builds)}/{total_builds} fixed builds", "N/A"
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
@@ -604,7 +611,6 @@ class FindBugsGolangCli:
                 )
 
             incompatible_fix_bugs = sorted(b.id for b in bugs if b.cve_id not in self.compatible_cves)
-            bugs = [b for b in bugs if b.cve_id in self.compatible_cves]
             if incompatible_fix_bugs:
                 logger.warning(
                     f"These bugs have fixed-in versions incompatible with in-use golang versions for {ocp_version}. "
@@ -615,17 +621,34 @@ class FindBugsGolangCli:
         if not bugs:
             exit(0)
 
+        table = PrettyTable()
+        table.align = "l"
+        table.field_names = [
+            "Jira ID",
+            "Target Version",
+            "CVE",
+            "pscomponent",
+            "Status",
+            "Fixed",
+            "ART managed",
+            "Backported compiler build needed",
+            "NVRs",
+            "Expected Golang",
+            "Actual Golang",
+        ]
+
         fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
         for bug in bugs:
             component = bug.whiteboard_component
+            art_managed = (component == constants.GOLANG_BUILDER_CVE_COMPONENT) or (component in self._runtime.rpm_map)
             logger.info(f"{bug.id} has security component: {component}")
-            fixed, comment = False, ''
+            fixed, comment, component_builds, parent_golang_builds = False, '', [], []
 
             if self.fixed_in_nvrs:
                 if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
-                    fixed, comment = await self.is_fixed_golang_builder(bug)
+                    fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_golang_builder(bug)
                 else:
-                    fixed, comment = await self.is_fixed_rpm(bug, component)
+                    fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_rpm(bug, component)
             else:
                 tracker_fixed_in = golang_cves_fixed_in.get(bug.cve_id)
                 if not tracker_fixed_in:
@@ -634,9 +657,29 @@ class FindBugsGolangCli:
                 logger.info(f"{bug.id} is fixed in: {[str(v) for v in tracker_fixed_in]}")
 
                 if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
-                    fixed, comment = await self.is_fixed_golang_builder(bug, tracker_fixed_in=tracker_fixed_in)
+                    fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_golang_builder(
+                        bug, tracker_fixed_in=tracker_fixed_in
+                    )
                 else:
-                    fixed, comment = await self.is_fixed_rpm(bug, component, tracker_fixed_in=tracker_fixed_in)
+                    fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_rpm(
+                        bug, component, tracker_fixed_in=tracker_fixed_in
+                    )
+
+            table.add_row(
+                [
+                    bug.id,
+                    _fmt(bug.target_release),
+                    bug.cve_id,
+                    bug.whiteboard_component,
+                    bug.status,
+                    fixed,
+                    art_managed,
+                    bug.cve_id not in self.compatible_cves,
+                    component_builds,
+                    _fmt(golang_cves_fixed_in[bug.cve_id]),
+                    _fmt(parent_golang_builds),
+                ]
+            )
 
             art_ticket_message = ''
             if self.art_jira:
@@ -659,6 +702,10 @@ class FindBugsGolangCli:
             self._logger.info(f'Bugs determined to be not fixed with current builds: {sorted(unfixed_bugs)}')
         if updated_bugs:
             self._logger.info(f'{"DRY-RUN: " if self.dry_run else ""}Bugs updated: {sorted(updated_bugs)}')
+
+        self._logger.info(f"\n{table}")
+        if self.csv_output:
+            print(table.get_formatted_string("csv"))
 
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
@@ -707,6 +754,7 @@ class FindBugsGolangCli:
 )
 @click.option("--jql-filter", help="JQL filter to apply to the search")
 @click.option("--dry-run", "--noop", is_flag=True, default=False, help="Don't change anything")
+@click.option("--csv-output", is_flag=True, default=False, help="Output in CSV format")
 @click.pass_obj
 @click_coroutine
 async def find_bugs_golang_cli(
@@ -723,6 +771,7 @@ async def find_bugs_golang_cli(
     exclude_bug_statuses: str,
     jql_filter: str,
     dry_run: bool,
+    csv_output: bool,
 ):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -832,5 +881,6 @@ async def find_bugs_golang_cli(
         exclude_bug_statuses=exclude_bug_statuses,
         jql_filter=jql_filter,
         dry_run=dry_run,
+        csv_output=csv_output,
     )
     await cli.run()
