@@ -111,7 +111,6 @@ class FindBugsGolangCli:
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
         self.go_nvr_map = {}
         self.rpm_nvrps = None
-        self.compatible_cves = set()
 
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
         self.bz_tracker: BugzillaBugTracker = self._runtime.get_bug_tracker("bugzilla")
@@ -498,7 +497,7 @@ class FindBugsGolangCli:
         logger.info(f"Found {len(cves)} unique CVEs to check against golang vulnerability database")
         cve_table = PrettyTable()
         cve_table.align = "l"
-        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Compatible"]
+        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions"]
         golang_cves_fixed_in = {}
         for cve_id in cves:
             go_vuln_id = get_cve_from_go_db(cve_id)
@@ -526,11 +525,6 @@ class FindBugsGolangCli:
             title = cve_data['bugzilla']['description']
             comp_in_title = get_component_from_bug_title(title)
 
-            # Check rough compatibility of fixed-in versions with in-use golang versions
-            # example, if fixed-in is 1.21.x and in-use are [1.20.y, 1.19.z] then they are incompatible
-            # this is a rough check to exit early if there is no compatible version found
-            # we will do a more detailed check later
-            compatible = False
             flaw_bug = self.get_flaw_bug(flaw_id)
             fixed_in_version_bz = self.flaw_fixed_in(flaw_bug)
             if fixed_in_version_go_db != fixed_in_version_bz:
@@ -540,23 +534,7 @@ class FindBugsGolangCli:
                     f"Bugzilla: {_fmt(fixed_in_version_bz)}. Will use go vulnerability database as the source of truth."
                 )
 
-            if self.fixed_in_nvrs:
-                compatible = True
-            else:
-                for fixed_in_version in fixed_in_version_go_db:
-                    for go_version in [entry['go_version'] for entry in golang_report]:
-                        go_v = Version.parse(go_version)
-                        if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
-                            compatible = True
-                            break
-                    if compatible:
-                        break
-            if compatible:
-                self.compatible_cves.add(cve_id)
-            else:
-                logger.warning(f"{cve_id} is not compatible with in-use golang versions for {ocp_version}.")
-
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(fixed_in_version_go_db), compatible])
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(fixed_in_version_go_db)])
 
         self._logger.info(f"Found {len(golang_cves_fixed_in)} golang CVEs")
         self._logger.info(f"\n{cve_table}")
@@ -610,14 +588,6 @@ class FindBugsGolangCli:
                     f"the corresponding CVEs are fixed in: {invalid_bugs}"
                 )
 
-            incompatible_fix_bugs = sorted(b.id for b in bugs if b.cve_id not in self.compatible_cves)
-            if incompatible_fix_bugs:
-                logger.warning(
-                    f"These bugs have fixed-in versions incompatible with in-use golang versions for {ocp_version}. "
-                    "Run with --fixed-in-nvr to specify the golang compiler nvr(s) the corresponding "
-                    f"CVEs are fixed in: {incompatible_fix_bugs}"
-                )
-
         if not bugs:
             exit(0)
 
@@ -665,6 +635,27 @@ class FindBugsGolangCli:
                         bug, component, tracker_fixed_in=tracker_fixed_in
                     )
 
+            backport_needed = True
+            for fixed_in_version in golang_cves_fixed_in[bug.cve_id]:
+                # this is a hacky way to determine if backport compiler build is needed
+                # if it is an rpm tracker, then check if there is a compatible golang version in buildroot
+                # compatible means that the golang version is the same major and minor version
+                if bug.whiteboard_component != constants.GOLANG_BUILDER_CVE_COMPONENT:
+                    condition = lambda entry: entry.get('building_rpm_count', 0) > 0
+                else:
+                    condition = lambda entry: entry.get('building_image_count', 1) > 0
+
+                for go_version in [entry['go_version'] for entry in golang_report if condition(entry)]:
+                    go_v = Version.parse(go_version)
+                    if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
+                        logger.info(
+                            f"For {bug.id} {bug.cve_id} {str(fixed_in_version)} is compatible with {go_version}. Therefore backport compiler build is not needed"
+                        )
+                        backport_needed = False
+                        break
+                if not backport_needed:
+                    break
+
             table.add_row(
                 [
                     bug.id,
@@ -674,7 +665,7 @@ class FindBugsGolangCli:
                     bug.status,
                     fixed,
                     art_managed,
-                    bug.cve_id not in self.compatible_cves,
+                    backport_needed,
                     component_builds,
                     _fmt(golang_cves_fixed_in[bug.cve_id]),
                     _fmt(parent_golang_builds),

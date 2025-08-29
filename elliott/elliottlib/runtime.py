@@ -193,7 +193,8 @@ class Runtime(GroupRuntime):
         self.group_config = self.get_group_config()
         if self.group_config.name != self.group:
             raise IOError(
-                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)"
+                f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
+                "may have copied this group without updating group.yml (make sure to check branch)"
             )
 
         self.product = self.group_config.product or "ocp"
