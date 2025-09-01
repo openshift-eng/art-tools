@@ -923,16 +923,13 @@ class ConfigScanSources:
         """
 
         async def find_rpm_commit_hash(rpm: RPMMetadata):
-            with Dir(rpm.distgit_repo().dg_path):
-                _, out, _ = await cmd_gather_async(['git', 'log', '-n', '1', '--pretty=%B'], cwd=Dir.getcwd())
-
+            with Dir(rpm.distgit_repo().source_path()):
                 try:
-                    return [
-                        line.split(' ') for line in out.splitlines() if line.startswith('io.openshift.build.commit.id')
-                    ][0][-1]
+                    _, out, _ = await cmd_gather_async(['git', 'rev-parse', 'HEAD'], cwd=Dir.getcwd())
+                    return out.strip()
 
-                except IndexError:
-                    raise DoozerFatalError('Could not determine commitish for rpm %s', rpm.rpm_name)
+                except Exception as e:
+                    raise DoozerFatalError('Could not determine commitish for rpm %s: %s', rpm.rpm_name, e)
 
         async def check_rpm_target(rpm_meta: RPMMetadata, el_target):
             rpm_name = rpm_meta.name
@@ -949,6 +946,38 @@ class ConfigScanSources:
                         reason=f'Component {rpm_name} has no latest build for assembly {self.runtime.assembly}',
                     ),
                 )
+                return
+
+            # Check if most recent build failed
+            latest_failed_build_record = await rpm_meta.get_latest_build(
+                el_target=el_target, engine=Engine.BREW.value, outcome=KonfluxBuildOutcome.FAILURE
+            )
+            rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or 6
+            now = datetime.now(timezone.utc)
+
+            if latest_failed_build_record and latest_failed_build_record.start_time > latest_build_record.start_time:
+                # There is a failed build more recent than the latest successful one
+                self.logger.warning('Latest build for RPM %s in %s has failed', rpm_name, self.runtime.group)
+
+                if latest_failed_build_record.start_time + timedelta(hours=rebuild_interval) > now:
+                    # Latest failed build is too recent: delay next attempt
+                    self.add_rpm_meta_change(
+                        rpm_meta,
+                        RebuildHint(
+                            code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
+                            reason=f'Waiting at least {rebuild_interval} hours after last failed build',
+                        ),
+                    )
+
+                else:
+                    # It's been long enough since the last failed build: try again
+                    self.add_rpm_meta_change(
+                        rpm_meta,
+                        RebuildHint(
+                            code=RebuildHintCode.LAST_BUILD_FAILED,
+                            reason=f'Latest build {latest_failed_build_record.nvr} for {rpm_name} has failed',
+                        ),
+                    )
                 return
 
             # Scan for any build in this assembly which includes the git commit.
