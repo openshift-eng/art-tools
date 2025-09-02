@@ -579,7 +579,7 @@ class GenPayloadCli:
 
             if assembly_inspector.does_permit(issue):
                 # If mismatched siblings are permitted, exclude them from the payload update
-                self.logger.warning(f"Ignoring {mismatched.get_nvr()} mismatch due to pre-release phase")
+                self.logger.warning(f"Ignoring {mismatched.get_nvr()} mismatch due to configured permit")
                 self.mismatched_siblings.append(component)
 
         self.assembly_issues.extend(issues)
