@@ -358,19 +358,17 @@ class ArtNotifyPipeline:
 
         failures = {}
 
-        async def _get_failures_for_engine(engine):
-            redis_branch = f'count:rebase-failure:{engine}'
-            self.logger.info(f'Reading from {redis_branch}...')
-            failed_images = await redis.get_keys(f'{redis_branch}:*')
+        redis_branch = 'count:rebase-failure:konflux'
+        self.logger.info(f'Reading from {redis_branch}...')
+        failed_images = await redis.get_keys(f'{redis_branch}:*')
 
-            if failed_images:
-                fail_counters = await redis.get_multiple_values(failed_images)
-                for image, fail_counter in zip(failed_images, fail_counters):
-                    image_name = image.split(':')[-1]
-                    version = image.split(':')[-2]
-                    failures.setdefault(engine, {}).setdefault(version, {})[image_name] = fail_counter
+        if failed_images:
+            fail_counters = await redis.get_multiple_values(failed_images)
+            for image, fail_counter in zip(failed_images, fail_counters):
+                image_name = image.split(':')[-1]
+                version = image.split(':')[-2]
+                failures.setdefault('konflux', {}).setdefault(version, {})[image_name] = fail_counter
 
-        await asyncio.gather(*[_get_failures_for_engine(engine) for engine in ['brew', 'konflux']])
         return failures
 
     async def _notify_rebase_failures(self):
