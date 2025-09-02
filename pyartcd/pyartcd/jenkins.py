@@ -188,15 +188,22 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
+
+    if not build_path:
+        logger.warning('Empty build path received')
+        return False
+
     job_path, build_number = build_path.rstrip("/").rsplit("/", 1)
     job_name = job_path.rsplit("/", 1)[1]
     job_url = jenkins_client.base_server_url() + "/" + job_path
+
     try:
         job = Job(job_url, job_name, jenkins_client)
     except requests.exceptions.HTTPError as err:
         if err.response.status_code == 404:
             return False
         raise
+
     try:
         build = job.get_build(int(build_number))
     except NotFound:
