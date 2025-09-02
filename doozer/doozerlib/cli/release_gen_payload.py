@@ -419,6 +419,9 @@ class GenPayloadCli:
         self.payload_permitted = False
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
+        # Track mismatched siblings.
+        # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
+        self.mismatched_siblings = []
 
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
@@ -562,15 +565,23 @@ class GenPayloadCli:
         group_images: List = list(assembly_inspector.get_group_release_images().values())
         issues = []
         for mismatched, sibling in self.payload_generator.find_mismatched_siblings(group_images):
+            component = mismatched.get_image_meta().distgit_key
+
             issue = AssemblyIssue(
                 f"{mismatched.get_nvr()} was built from a different upstream "
                 f"source commit ({mismatched.get_source_git_commit()[:7]}) "
                 f"than one of its siblings {sibling.get_nvr()} "
                 f"from {sibling.get_source_git_commit()[:7]}",
-                component=mismatched.get_image_meta().distgit_key,
+                component=component,
                 code=AssemblyIssueCode.MISMATCHED_SIBLINGS,
             )
             issues.append(issue)
+
+            if assembly_inspector.does_permit(issue):
+                # If mismatched siblings are permitted, exclude them from the payload update
+                self.logger.warning(f"Ignoring {mismatched.get_nvr()} mismatch due to configured permit")
+                self.mismatched_siblings.append(component)
+
         self.assembly_issues.extend(issues)
         span.set_attribute("doozer.result.issues", list(map(lambda it: it.to_dict(), issues)))
 
@@ -1059,8 +1070,16 @@ class GenPayloadCli:
             await exectools.cmd_assert_async(cmd)
 
         for payload_entry in payload_entries.values():
+            if payload_entry.image_meta and payload_entry.image_meta.distgit_key in self.mismatched_siblings:
+                self.logger.warning(
+                    f"Skipping mirroring of {payload_entry.image_meta.distgit_key} "
+                    f"due to mismatched sibling source commits."
+                )
+                continue
+
             if not payload_entry.image_inspector:
                 continue  # Nothing to mirror (e.g. RHCOS)
+
             mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
             if payload_entry.dest_manifest_list_pullspec:
                 # For heterogeneous release payloads, if a component builds for all arches
