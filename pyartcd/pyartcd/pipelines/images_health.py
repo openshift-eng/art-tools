@@ -62,29 +62,20 @@ class ImagesHealthPipeline:
         self.runtime.logger.info('images:health output for openshift-%s:\n%s', self.version, out)
 
         if any([self.send_to_release_channel, self.send_to_forum_ocp_art]):
-            await asyncio.gather(*[self._send_notifications(engine) for engine in ['brew', 'konflux']])
+            await self._send_notifications()
 
-    def send_for_engine(self, engine):
-        if engine == "konflux":
-            return True
-        if engine == "brew":
-            return self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-        raise ValueError(f'Engine {engine} not recognized')
-
-    async def _send_notifications(self, engine):
+    async def _send_notifications(self):
         slack_client = self.runtime.new_slack_client()
-        engine_report = self.report.get(engine, None)
+        engine_report = self.report.get('konflux', None)
 
         if not engine_report:
             if self.send_to_release_channel:
                 slack_client.bind_channel(self.version)
-                await slack_client.say(
-                    f':white_check_mark: [{engine}] All images are healthy for openshift-{self.version}'
-                )
+                await slack_client.say(f':white_check_mark: All images are healthy for openshift-{self.version}')
             return
 
         msg = (
-            f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. '
+            f':alert: There are some issues to look into for openshift-{self.version}. '
             f'{len(engine_report)} components have failed!'
         )
 
@@ -97,8 +88,8 @@ class ImagesHealthPipeline:
             response = await slack_client.say(msg)
             await slack_client.say(report, thread_ts=response['ts'])
 
-        # For now, only notify public channels about Brew failures
-        if self.send_to_forum_ocp_art and self.send_for_engine(engine):
+        # Notify public channels about failures
+        if self.send_to_forum_ocp_art:
             slack_client.bind_channel('#forum-ocp-art')
             response = await slack_client.say(msg)
             await slack_client.say(report, thread_ts=response['ts'])
