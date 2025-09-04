@@ -20,16 +20,17 @@ from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import (
     AssemblyTypes,
     assembly_basis_event,
-    assembly_group_config,
     assembly_streams_config,
     assembly_type,
 )
+from artcommonlib.config import BuildDataLoader
 from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
 from jira import JIRA
+from semver import Version
 
 from doozerlib import brew, dblib, state, util
 from doozerlib.brew import brew_event_from_datetime
@@ -220,20 +221,8 @@ class Runtime(GroupRuntime):
             self.rhpkg_config = ''
 
     def get_releases_config(self):
-        if self.releases_config is not None:
-            return self.releases_config
-
-        load = self.gitdata.load_data(key='releases')
-        data = load.data if load else {}
-        if self.releases:  # override filename specified on command line.
-            rcp = pathlib.Path(self.releases)
-            data = yaml.safe_load(rcp.read_text())
-
-        if load:
-            self.releases_config = Model(data)
-        else:
-            self.releases_config = Model()
-
+        if self.releases_config is None:
+            self.releases_config = Model(self._build_data_loader.load_releases_config(self.releases))
         return self.releases_config
 
     @property
@@ -245,28 +234,20 @@ class Runtime(GroupRuntime):
         self._group_config = config
 
     def get_group_config(self) -> Model:
-        # group.yml can contain a `vars` section which should be a
-        # single level dict containing keys to str.format(**dict) replace
-        # into the YAML content. If `vars` found, the format will be
-        # preformed and the YAML model will reloaded from that result
-        tmp_config = Model(self.gitdata.load_data(key='group').data)
-        replace_vars = self._get_replace_vars(tmp_config)
-        try:
-            group_yml = yaml.safe_dump(tmp_config.primitive(), default_flow_style=False)
-            raw_group_config = yaml.full_load(group_yml.format(**replace_vars))
-            tmp_config = Model(dict(raw_group_config))
-            if self.build_system == 'konflux' and tmp_config.konflux is not Missing:
-                tmp_config = Model(deep_merge(tmp_config.primitive(), tmp_config.konflux.primitive()))
-        except KeyError as e:
-            raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
+        replace_vars = self.get_replace_vars(None)
+        group_config = self._build_data_loader.load_group_config(
+            self.assembly,
+            self.get_releases_config(),
+            additional_vars=replace_vars,
+        )
+        return Model(group_config)
 
-        return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
+    def get_errata_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        return self._build_data_loader.load_config("erratatool", default={}, replace_vars=replace_vars)
 
-    def get_errata_config(self, **kwargs):
-        return self.gitdata.load_data(key='erratatool', **kwargs).data
-
-    def _get_replace_vars(self, group_config: Model):
-        replace_vars = group_config.vars or Model()
+    def get_replace_vars(self, group_config: Model | None):
+        replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         # If assembly mode is enabled, `runtime_assembly` will become the assembly name.
         replace_vars['runtime_assembly'] = ''
         # If running against an assembly for a named release, release_name will become the release name.
@@ -274,9 +255,12 @@ class Runtime(GroupRuntime):
         if self.assembly:
             replace_vars['runtime_assembly'] = self.assembly
             if self.assembly_type is not AssemblyTypes.STREAM:
-                replace_vars['release_name'] = util.get_release_name_for_assembly(
+                release_name = replace_vars['release_name'] = util.get_release_name_for_assembly(
                     self.group, self.get_releases_config(), self.assembly
                 )
+                # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
+                if 'PATCH' not in replace_vars:
+                    replace_vars['PATCH'] = Version.parse(release_name).patch
         return replace_vars
 
     def init_state(self):
@@ -421,8 +405,6 @@ class Runtime(GroupRuntime):
 
         # get_releases_config also inits self.releases_config
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
-
-        self.group_dir = self.gitdata.data_dir
         self.group_config = self.get_group_config()
 
         if self.group_config.name != self.group:
@@ -445,16 +427,16 @@ class Runtime(GroupRuntime):
             # ignore this argument throughout doozer.
             self.assembly = None
 
-        replace_vars = self._get_replace_vars(self.group_config).primitive()
+        replace_vars = self.get_replace_vars(self.group_config)
 
         # only initialize group and assembly configs and nothing else
         if config_only:
             return
 
         # Read in the streams definition for this group if one exists
-        streams_data = self.gitdata.load_data(key='streams', replace_vars=replace_vars)
+        streams_data = self._build_data_loader.load_config("streams", self.group, replace_vars=replace_vars)
         if streams_data:
-            org_stream_model = Model(dict_to_model=streams_data.data)
+            org_stream_model = Model(dict_to_model=streams_data)
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
 
         strict_mode = True
@@ -523,7 +505,7 @@ class Runtime(GroupRuntime):
                 for key, val in source_dict.items():
                     self.source_resolver.register_source_alias(key, val)
 
-        with Dir(self.group_dir):
+        with Dir(self.data_dir):
             # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
             def flatten_list(names):
                 if not names:
@@ -680,7 +662,7 @@ class Runtime(GroupRuntime):
                         self.component_map[metadata.get_component_name()] = metadata
                 if not self.image_map:
                     self._logger.warning(
-                        "No image metadata directories found for given options within: {}".format(self.group_dir)
+                        "No image metadata directories found for given options within: {}".format(self.data_dir)
                     )
 
                 for image in self.image_map.values():
@@ -714,7 +696,7 @@ class Runtime(GroupRuntime):
                     self.component_map[metadata.get_component_name()] = metadata
                 if not self.rpm_map:
                     self._logger.warning(
-                        "No rpm metadata directories found for given options within: {}".format(self.group_dir)
+                        "No rpm metadata directories found for given options within: {}".format(self.data_dir)
                     )
 
         # Make sure that the metadata is not asking us to check out the same exact distgit & branch.
@@ -735,6 +717,11 @@ class Runtime(GroupRuntime):
 
         self.initialized = True
 
+    def get_bug_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        bug_config = self._build_data_loader.load_config("bug", default={}, replace_vars=replace_vars)
+        return bug_config
+
     def build_jira_client(self) -> JIRA:
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
@@ -742,7 +729,7 @@ class Runtime(GroupRuntime):
         major, minor = self.get_major_minor_fields()
         if major == 4 and minor < 6:
             raise ValueError("ocp-build-data/bug.yml is not expected to be available for 4.X versions < 4.6")
-        bug_config = Model(self.gitdata.load_data(key='bug').data)
+        bug_config = Model(self.get_bug_config())
         server = bug_config.jira_config.server or 'https://issues.redhat.com'
 
         token_auth = os.environ.get("JIRA_TOKEN")
@@ -1022,7 +1009,7 @@ class Runtime(GroupRuntime):
         if distgit_name in self.image_map:
             return self.image_map[distgit_name]
 
-        replace_vars = self._get_replace_vars(self.group_config).primitive()
+        replace_vars = self.get_replace_vars(self.group_config)
         data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
         if not data_obj:
             raise DoozerFatalError('Unable to resolve image metadata for {}'.format(distgit_name))
@@ -1254,7 +1241,16 @@ class Runtime(GroupRuntime):
             reclone=self.upcycle,
             logger=self._logger,
         )
-        self.data_dir = self.gitdata.data_dir
+        self._build_data_loader = BuildDataLoader(
+            data_path=self.data_path,
+            clone_dir=self.working_dir,
+            commitish=self.group_commitish,
+            build_system=self.build_system,
+            upcycle=self.upcycle,
+            gitdata=self.gitdata,
+            logger=self._logger,
+        )
+        self.data_dir = self._build_data_loader.data_dir
 
     def get_rpm_config(self) -> dict:
         config = {}

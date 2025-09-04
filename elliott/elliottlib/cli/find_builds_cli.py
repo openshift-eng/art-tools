@@ -199,8 +199,7 @@ async def find_builds_cli(
             click.echo(data)
         return
 
-    replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
-    et_data = runtime.get_errata_config(replace_vars=replace_vars)
+    et_data = runtime.get_errata_config()
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
 
     if default_advisory_type is not None:
