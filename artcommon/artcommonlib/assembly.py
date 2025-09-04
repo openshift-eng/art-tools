@@ -129,27 +129,7 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
     """
     if not assembly or not isinstance(releases_config, Model):
         return Missing
-
-    _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
-
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
-        # Recursive apply ancestor assemblies
-        parent_config_struct = assembly_config_struct(releases_config, target_assembly.basis.assembly, key, default)
-        if key in target_assembly:
-            key_struct = target_assembly[key]
-            if hasattr(key_struct, "primitive"):
-                key_struct = key_struct.primitive()
-            key_struct = _merger(
-                key_struct,
-                parent_config_struct.primitive()
-                if hasattr(parent_config_struct, "primitive")
-                else parent_config_struct,
-            )
-        else:
-            key_struct = parent_config_struct
-    else:
-        key_struct = target_assembly.get(key, default)
+    key_struct = assembly_field(releases_config.primitive(), assembly, key, default)
     if isinstance(default, dict):
         return Model(dict_to_model=key_struct)
     elif isinstance(default, list):
@@ -160,15 +140,20 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
         raise ValueError(f'Unknown how to derive for default type: {type(default)}')
 
 
-def _check_recursion(releases_config: Model, assembly: str):
-    found = []
+def _check_recursion(releases_config: dict, assembly: str):
+    if not isinstance(releases_config, dict):
+        raise TypeError("releases_config must be a dict")
+    if not isinstance(assembly, str):
+        raise TypeError("assembly must be a str")
+    found = set()
+    releases = releases_config.get("releases", {})
     next_assembly = assembly
-    while next_assembly and isinstance(releases_config, Model):
+    while next_assembly and next_assembly in releases:
         if next_assembly in found:
             raise ValueError(f'Infinite recursion in {assembly} detected; {next_assembly} detected twice in chain')
-        found.append(next_assembly)
-        target_assembly = releases_config.releases[next_assembly].assembly
-        next_assembly = target_assembly.basis.assembly
+        found.add(next_assembly)
+        target_assembly = releases.get(next_assembly, {}).get("assembly")
+        next_assembly = target_assembly.get("basis", {}).get("assembly")
 
 
 def _merger(a, b):
@@ -193,8 +178,8 @@ def _merger(a, b):
     if isinstance(a, Model):
         a = a.primitive()
 
-    if type(a) is list:
-        if type(c) is not list:
+    if isinstance(a, list):
+        if not isinstance(c, list):
             return a
         for entry in a:
             if entry not in c:  # do not include duplicates
@@ -204,8 +189,8 @@ def _merger(a, b):
             return sorted(c)
         return c
 
-    if type(a) is dict:
-        if type(c) is not dict:
+    if isinstance(a, dict):
+        if not isinstance(c, dict):
             return a
         for k, v in a.items():
             if k.endswith('!'):  # full dominant key
@@ -259,27 +244,41 @@ def assembly_rhcos_config(releases_config: Model, assembly: str) -> Model:
     :param assembly: The name of the assembly to assess
     Returns the computed rhcos config model for a given assembly.
     """
-    return _assembly_field("rhcos", releases_config, assembly)
+    return assembly_config_struct(releases_config, assembly, 'rhcos', {})
 
 
-def _assembly_field(field_name: str, releases_config: Model, assembly: str) -> Model:
-    """
-    :param field_name: the field name
+def assembly_field(releases_config: dict, assembly: typing.Optional[str], key: str, default: typing.Any) -> typing.Any:
+    """If a key is directly under the 'assembly' (e.g. rhcos), then this method will
+    recurse the inheritance tree to build you a final version of that key's value.
+
+    This function differs from assembly_config_struct in that it returns the raw value rather than a merged model.
+
+    if default is a non-empty dict or list, it will be merged with the found value.
+
+    If the field is not found in the assembly, default will be returned.
+    If any of releases_config and assembly are None, default will be returned.
+
     :param releases_config: The content of releases.yml in Model form.
     :param assembly: The name of the assembly to assess
-    Returns the computed rhcos config model for a given assembly.
+    :param key: the field name
+    :param default: the default value to return if the field is not found
+    :return: the computed field for a given assembly.
     """
-    if not assembly or not isinstance(releases_config, Model):
-        return Missing
-
+    if assembly is None or releases_config is None:
+        return default
+    if not isinstance(assembly, str):
+        raise TypeError("assembly must be a string")
+    if not isinstance(releases_config, dict):
+        raise TypeError("releases_config must be a dict or None")
     _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
-    config_dict = target_assembly.get(field_name, {})
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
+    target_assembly = releases_config.get('releases', {}).get(assembly, {}).get('assembly', {})
+    if basis_assembly := target_assembly.get('basis', {}).get('assembly'):
         # Recursive apply ancestor assemblies
-        basis_rhcos_config = _assembly_field(field_name, releases_config, target_assembly.basis.assembly)
-        config_dict = _merger(config_dict, basis_rhcos_config.primitive())
-    return Model(dict_to_model=config_dict)
+        parent_val = assembly_field(releases_config, basis_assembly, key, default)
+        val = _merger(target_assembly[key], parent_val) if key in target_assembly else parent_val
+    else:
+        val = _merger(target_assembly[key], default) if key in target_assembly else default
+    return val
 
 
 def assembly_basis_event(
@@ -349,22 +348,8 @@ def assembly_group_config(releases_config: Model, assembly: typing.Optional[str]
     :param assembly: The name of the assembly
     :param group_config: The group config to merge into a new group config (original Model will not be altered)
     """
-
-    if not assembly or not isinstance(releases_config, Model):
-        return group_config
-
-    _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
-
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
-        # Recursively apply ancestor assemblies
-        group_config = assembly_group_config(releases_config, target_assembly.basis.assembly, group_config)
-
-    target_assembly_group = target_assembly.group
-    if not target_assembly_group:
-        return group_config
-
-    return Model(dict_to_model=_merger(target_assembly_group.primitive(), group_config.primitive()))
+    raw_group_config = group_config.primitive() if hasattr(group_config, 'primitive') else group_config
+    return assembly_config_struct(releases_config, assembly, 'group', raw_group_config)
 
 
 def assembly_basis(releases_config: Model, assembly: typing.Optional[str]) -> Model:
@@ -383,7 +368,7 @@ def assembly_issues_config(releases_config: Model, assembly: str) -> Model:
     :param assembly: The name of the assembly to assess
     Returns the a computed issues config model for a given assembly.
     """
-    return _assembly_field("issues", releases_config, assembly)
+    return assembly_config_struct(releases_config, assembly, 'issues', {})
 
 
 def assembly_streams_config(releases_config: Model, assembly: typing.Optional[str], streams_config: Model) -> Model:
@@ -394,11 +379,8 @@ def assembly_streams_config(releases_config: Model, assembly: typing.Optional[st
     :param assembly: The name of the assembly
     :param streams_config: The streams config to merge into a new streams config (original Model will not be altered)
     """
-    target_assembly_streams = assembly_config_struct(releases_config, assembly, 'streams', {})
-    if not target_assembly_streams:
-        return streams_config
-
-    return Model(dict_to_model=_merger(target_assembly_streams.primitive(), streams_config.primitive()))
+    val = assembly_config_struct(releases_config, assembly, 'streams', streams_config.primitive())
+    return Model(dict_to_model=val)
 
 
 def assembly_metadata_config(
