@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 from artcommonlib import exectools
+from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
 
 from pyartcd import constants, util
 from pyartcd.constants import PLASHET_REMOTES
@@ -140,6 +141,38 @@ def plashet_config_for_major_minor(major, minor):
     }
 
 
+def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
+    repos = []
+    for name, config in plashet_config.items():
+        repo = Repo(
+            name=name,
+            type="plashet",
+        )
+        repo.plashet = PlashetRepo(
+            slug=config.get("slug"),
+            assembly_aware=True,
+            embargo_aware=True,
+            include_embargoed=config.get("include_embargoed", False),
+            include_previous_packages=config.get("include_previous_packages", []),
+            source=BrewSource(
+                type="brew",
+                from_tags=[
+                    BrewTag(
+                        name=(tag := config.get("tag")),
+                        product_version=config.get("product_version"),
+                        release_tag=config.get(
+                            "release_tag", tag.removesuffix("-candidate") if tag.endswith("-candidate") else tag
+                        ),
+                        inherit=config.get("inherit", False),
+                    )
+                ],
+                embargoed_tags=config.get("embargoed_tags", []),
+            ),
+        )
+        repos.append(repo)
+    return repos
+
+
 async def build_plashets(
     stream: str,
     release: str,
@@ -195,14 +228,34 @@ async def build_plashets(
         assembly = 'stream'
         logger.warning("Assembly name reset to 'stream' because assemblies are not enabled in ocp-build-data.")
 
-    # Get plashet repos
-    group_repos = group_config.get('repos', {}).keys()
-    if repos:
-        logger.info(f"Filtering plashet repos to only the given ones: {repos}")
-        group_repos = [repo for repo in group_repos if repo in repos]
-    group_plashet_config = plashet_config_for_major_minor(major, minor)
-    plashet_config = {repo: group_plashet_config[repo] for repo in group_plashet_config if repo in group_repos}
-    logger.info("Building plashet repos: %s", ", ".join(plashet_config.keys()))
+    # Get plashet repo configs
+    if "all_repos" in group_config:
+        # This is new-style repo config.
+        # i.e. Plashet configs are defined in separate files in ocp-build-data
+        # and each repo has its own config file.
+        # Those repo definitions are stored in the "all_repos" key of the group config.
+        logger.info("Using new-style plashet configs")
+        all_repos = group_config['all_repos']
+        plashet_configs = [
+            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == 'plashet'
+        ]
+        if repos:
+            repo_set = set(repos)
+            plashet_configs = [repo for repo in plashet_configs if repo.name in repo_set]
+    else:  # Fall back to old-style config
+        logger.info("Using old-style plashet configs in group.yml")
+        group_repos = group_config.get('repos', {}).keys()
+        if repos:
+            logger.info(f"Filtering plashet repos to only the given ones: {repos}")
+            group_repos = [repo for repo in group_repos if repo in repos]
+        old_style_config = plashet_config_for_major_minor(major, minor)
+        old_style_config = {
+            repo: old_style_config[repo] for repo in plashet_config_for_major_minor(major, minor) if repo in group_repos
+        }
+        plashet_configs = convert_plashet_config_to_new_style(old_style_config)
+
+    plashet_repo_names = [repo.name for repo in plashet_configs]
+    logger.info("Building plashet repos: %s", ", ".join(plashet_repo_names))
 
     # Check release state
     signing_mode = await util.get_signing_mode(group_config=group_config)
@@ -210,6 +263,7 @@ async def build_plashets(
     # Create plashet repos on ocp-artifacts
     # We can't safely run doozer config:plashet from-tags in parallel as this moment.
     # Build plashet repos one by one.
+
     plashets_built = {}  # hold the information of all built plashet repos
     timestamp = datetime.strptime(revision, '%Y%m%d%H%M%S')
     signing_advisory = group_config.get('signing_advisory', '0')
@@ -218,9 +272,11 @@ async def build_plashets(
     if data_gitref:
         group_param += f'@{data_gitref}'
 
-    for repo_type, config in plashet_config.items():
-        logger.info('Building plashet repo for %s', repo_type)
-        slug = config['slug']
+    for repo in plashet_configs:
+        logger.info('Building plashet repo for %s', repo.name)
+        assert repo.type == "plashet" and repo.plashet is not None
+        config = repo.plashet
+        slug = config.slug or repo.name
         name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
         base_dir = Path(working_dir, f'plashets/{major}.{minor}/{assembly}/{slug}')
         local_path = await build_plashet_from_tags(
@@ -229,20 +285,20 @@ async def build_plashets(
             base_dir=base_dir,
             name=name,
             arches=arches,
-            include_embargoed=config['include_embargoed'],
+            include_embargoed=config.include_embargoed,
             signing_mode=signing_mode,
             signing_advisory=signing_advisory,
-            embargoed_tags=config['embargoed_tags'],
-            tag_pvs=((config["tag"], config['product_version']),),
-            include_previous_packages=config['include_previous_packages'],
+            embargoed_tags=config.source.embargoed_tags,
+            tag_pvs=((config.source.from_tags[0].name, config.source.from_tags[0].product_version),),
+            include_previous_packages=config.include_previous_packages,
             data_path=data_path,
             dry_run=dry_run,
             doozer_working=doozer_working,
         )
 
-        logger.info('Plashet repo for %s created: %s', repo_type, local_path)
+        logger.info('Plashet repo for %s created: %s', repo.name, local_path)
         symlink_path = create_latest_symlink(base_dir=base_dir, plashet_name=name)
-        logger.info('Symlink for %s created: %s', repo_type, symlink_path)
+        logger.info('Symlink for %s created: %s', repo.name, symlink_path)
 
         remote_base_dir = Path(f'/mnt/data/pub/RHOCP/plashets/{major}.{minor}/{assembly}/{slug}')
         logger.info('Copying %s to remote host...', base_dir)
@@ -256,7 +312,7 @@ async def build_plashets(
             ]
         )
 
-        plashets_built[repo_type] = {
+        plashets_built[repo.name] = {
             'plashetDirName': revision,
             'localPlashetPath': str(local_path),
         }
