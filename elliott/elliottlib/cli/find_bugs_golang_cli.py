@@ -261,8 +261,7 @@ class FindBugsGolangCli:
     ) -> (bool, str, List[str], List[str]):
         if not self.rpm_nvrps:
             # fetch assembly selected nvrs
-            replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
-            et_data = self._runtime.get_errata_config(replace_vars=replace_vars)
+            et_data = self._runtime.get_errata_config()
             tag_pv_map = et_data.get('brew_tag_product_version_mapping')
             brew_session = self._runtime.build_retrying_koji_client(caching=True)
             self.rpm_nvrps = await _fetch_builds_by_kind_rpm(

@@ -127,8 +127,7 @@ class FindUnconsumedRpms:
         rpm_component_names = {b["name"] for b in rpm_builds}
 
         # Compare tagged rpms
-        replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
-        et_data = self._runtime.get_errata_config(replace_vars=replace_vars)
+        et_data = self._runtime.get_errata_config()
         tag_pv_map = et_data.get('brew_tag_product_version_mapping')
         finder = BuildFinder(koji_api, logger=logger)
         extra_components = {}
