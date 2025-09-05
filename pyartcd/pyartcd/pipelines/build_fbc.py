@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
-
+import re
 import click
 from artcommonlib import exectools
 
@@ -75,12 +75,16 @@ class BuildFbcPipeline:
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
+        if re.match(r'^\d', self.version):
+            group = f"openshift-{self.version}"
+        else:
+            group = self.version
         cmd = [
             'doozer',
             '--build-system=konflux',
             f'--working-dir={self.runtime.doozer_working}',
             f'--assembly={self.assembly}',
-            f'--group=openshift-{self.version}{"@" + self.data_gitref if self.data_gitref else ""}',
+            f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
         ]
         if self.data_path:
             cmd.append(f'--data-path={self.data_path}')
