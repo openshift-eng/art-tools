@@ -1431,7 +1431,7 @@ def sort_cve_bugs(bugs):
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
-def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembly: str):
+def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], major: str):
     if not tracker_bugs:
         # This shouldn't happen
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
@@ -1449,7 +1449,6 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembl
     response.raise_for_status()
     data = response.json()
 
-    major, _ = util.minor_version_tuple(assembly)
     ocp_product_name = f"Red Hat OpenShift Container Platform {major}"
     components_not_yet_fixed = []
     pyxis_base_url = (
@@ -1507,7 +1506,7 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembl
 
 
 def get_flaws(
-    flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], assembly_type: AssemblyTypes, assembly: str
+    flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], assembly_type: AssemblyTypes, assembly: str, major_version: int
 ) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
@@ -1541,7 +1540,7 @@ def get_flaws(
         first_fix_flaw_bugs = [
             flaw_bug_info['bug']
             for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], assembly)
+            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], major_version)
         ]
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
