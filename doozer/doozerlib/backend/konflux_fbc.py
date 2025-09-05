@@ -1108,8 +1108,7 @@ class KonfluxFbcBuilder:
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
-            # FBC needs to be built for all supported arches.
-            arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+            arches = metadata.get_arches()
             for attempt in range(1, retries + 1):
                 logger.info("Build attempt %d/%d", attempt, retries)
                 pipelinerun, url = await self._start_build(
