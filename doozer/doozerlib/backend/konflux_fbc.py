@@ -913,7 +913,6 @@ class KonfluxFbcRebaser:
                     repo, digest = related_image["image"].split('@', 1)
                     dest_repos[digest] = repo
                 else:
-                    # Skip is non-OCP operator
                     continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
