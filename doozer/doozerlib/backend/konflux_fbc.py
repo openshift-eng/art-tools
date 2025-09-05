@@ -378,7 +378,6 @@ class KonfluxFbcFragmentMerger:
             created_plr = await self._start_build(
                 build_repo=build_repo,
                 output_image=target_index,
-                arches=self.group_config.get("arches"),
             )
             plr_name = created_plr["metadata"]["name"]
             plr_url = konflux_client.resource_url(created_plr)
@@ -512,7 +511,7 @@ class KonfluxFbcFragmentMerger:
         )
         logger.info(f"Created component {comp_name} in application {app_name}")
 
-        arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        arches = self.group_config.get("arches"),
         created_plr = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
