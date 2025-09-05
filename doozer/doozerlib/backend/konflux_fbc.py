@@ -378,6 +378,7 @@ class KonfluxFbcFragmentMerger:
             created_plr = await self._start_build(
                 build_repo=build_repo,
                 output_image=target_index,
+                arches=self.group_config.get("arches"),
             )
             plr_name = created_plr["metadata"]["name"]
             plr_url = konflux_client.resource_url(created_plr)
