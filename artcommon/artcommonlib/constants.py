@@ -16,7 +16,7 @@ GIT_NO_PROMPTS = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 
-ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "4.19", "4.20"]
+ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "4.19", "4.20", "4.21"]
 
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
