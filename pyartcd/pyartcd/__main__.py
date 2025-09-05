@@ -9,6 +9,7 @@ from pyartcd.pipelines import (
     build_merged_fbc,
     build_microshift,
     build_microshift_bootc,
+    build_oadp,
     build_plashets,
     build_rhcos,
     build_sync,
