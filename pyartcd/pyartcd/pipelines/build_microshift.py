@@ -98,7 +98,7 @@ class BuildMicroShiftPipeline:
 
     async def run(self):
         # Make sure our api.ci token is fresh
-        await oc.registry_login(self.runtime)
+        await oc.registry_login()
 
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})

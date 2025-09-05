@@ -61,7 +61,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         koji_api.buildContainer.return_value = 12345
 
         task_id, task_url = osbs2._start_build(dg, "rhaos-4.12-rhel-8-containers-candidate", profile, koji_api)
-        dg.cgit_file_available.assert_called_once_with(".oit/signed.repo")
+        dg.cgit_file_available.assert_called_once_with(".oit/art-signed.repo")
         koji_api.gssapi_login.assert_called_once_with()
         koji_api.buildContainer.assert_called_once_with(
             f"{constants.DISTGIT_GIT_URL}/containers/foo#deadbeef",

@@ -224,7 +224,10 @@ class Ocp4Pipeline:
                 'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
             )
             self.build_plan.build_rpms = None
+            self.build_plan.rpms_included = []
+            self.build_plan.rpms_excluded = []
 
+        # Update description with building RPMs
         if not self.build_plan.build_rpms:
             jenkins.update_description('RPMs: not building.<br/>')
 
@@ -237,6 +240,7 @@ class Ocp4Pipeline:
         else:
             jenkins.update_description('RPMs: building all.<br/>')
 
+        # Update title with building RPMs
         if self.build_plan.rpms_included:
             jenkins.update_title(self._display_tag_for(self.build_plan.rpms_included, 'RPM'))
 
@@ -246,8 +250,10 @@ class Ocp4Pipeline:
         elif self.build_plan.build_rpms:
             jenkins.update_title(' [all RPMs]')
 
-        jenkins.update_description('Will create RPM compose.<br/>')
+        else:
+            jenkins.update_title(' [no RPMs]')
 
+        # Update description with building images
         if not self.build_plan.build_images:
             jenkins.update_description('Images: not building.<br/>')
 
@@ -268,6 +274,7 @@ class Ocp4Pipeline:
         else:
             jenkins.update_description('Images: building all.<br/>')
 
+        # Update title with building images
         if self.build_plan.images_included:
             jenkins.update_title(self._display_tag_for(self.build_plan.images_included, 'image'))
 
@@ -276,6 +283,13 @@ class Ocp4Pipeline:
 
         elif self.build_plan.build_images:
             jenkins.update_title(' [all images]')
+
+        else:
+            jenkins.update_title(' [no images]')
+
+        # Update description with plashets info
+        if not self.skip_plashets:
+            jenkins.update_description('Will create RPM compose.<br/>')
 
     def _report(self, msg: str):
         """
@@ -567,7 +581,12 @@ class Ocp4Pipeline:
             self.runtime.logger.warning('apiserver rebuilt: mirroring streams to CI...')
 
             # Make sure our api.ci token is fresh
-            await oc.registry_login(self.runtime)
+            await oc.registry_login()
+
+            # Log into QCI registry
+            await oc.qci_registry_login()
+
+            # Mirror out ART equivalent images to CI
             cmd = self._doozer_base_command.copy()
             cmd.extend(['images:streams', 'mirror'])
             await exectools.cmd_assert_async(cmd)
@@ -792,7 +811,9 @@ class Ocp4Pipeline:
         await self._sync_images()
 
         # Find MODIFIED bugs for the target-releases, and set them to ON_QA
-        await self._sweep()
+        # but only if there were RPMs or images built
+        if self.build_plan.build_rpms or self.build_plan.build_images:
+            await self._sweep()
 
         # All good
         self._report_success()
