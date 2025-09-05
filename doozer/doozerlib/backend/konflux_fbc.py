@@ -511,7 +511,7 @@ class KonfluxFbcFragmentMerger:
         )
         logger.info(f"Created component {comp_name} in application {app_name}")
 
-        arches = self.group_config.get("arches"),
+        arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
         created_plr = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
