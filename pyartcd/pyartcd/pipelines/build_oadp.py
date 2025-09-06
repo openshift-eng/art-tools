@@ -91,6 +91,10 @@ class BuildOadpPipeline:
             f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
         ]
         
+        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        if konflux_registry_auth_file:
+            build_cmd.append(f"--registry-config={konflux_registry_auth_file}")
+        
         if self.kubeconfig:
             build_cmd.extend([
                 f"--konflux-kubeconfig={self.kubeconfig}",
