@@ -446,6 +446,7 @@ class KonfluxBundleCli:
             dry_run=self.dry_run,
         )
 
+
         builder = KonfluxOlmBundleBuilder(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group=runtime.group,
