@@ -71,12 +71,13 @@ class BuildOadpPipeline:
             f"--release={release}",
             f"--message=\'Updating Dockerfile version and release {version}-{release}\'",
         ]
-        # if not self.runtime.dry_run:
-        #     rebase_cmd.append("--push")
+        if not self.runtime.dry_run:
+            rebase_cmd.append("--push")
 
         await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
         self._logger.info(f"Successfully rebased {self.image_name}")
 
+        return
         # Build OADP image
         self._logger.info(f"Building {self.image_name} image for assembly {self.assembly}")
         build_cmd = [
