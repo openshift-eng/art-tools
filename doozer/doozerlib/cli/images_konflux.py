@@ -411,7 +411,6 @@ class KonfluxBundleCli:
         logger.info("Rebasing OLM bundle...")
         nvr = await rebaser.rebase(image_meta, operator_build, input_release)
         logger.info("Building OLM bundle...")
-        return nvr
         await builder.build(image_meta)
         logger.info("Bundle build complete")
         return nvr
