@@ -411,6 +411,7 @@ class KonfluxBundleCli:
         logger.info("Rebasing OLM bundle...")
         nvr = await rebaser.rebase(image_meta, operator_build, input_release)
         logger.info("Building OLM bundle...")
+        return nvr
         await builder.build(image_meta)
         logger.info("Bundle build complete")
         return nvr
@@ -445,6 +446,7 @@ class KonfluxBundleCli:
             image_repo=self.image_repo,
             dry_run=self.dry_run,
         )
+
 
         builder = KonfluxOlmBundleBuilder(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
