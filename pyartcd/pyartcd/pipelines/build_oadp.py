@@ -55,70 +55,71 @@ class BuildOadpPipeline:
         version = "v1.0.0"  # Default version, can be made configurable if needed
         release = default_release_suffix()
 
-        # Uncomment after bundle rebase test
-        # # Rebase OADP image
-        # self._logger.info(f"Rebasing {self.image_name} image for assembly {self.assembly}")
-        # rebase_cmd = [
-        #     "doozer",
-        #     f"--assembly={self.assembly}",
-        #     f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-        #     "--build-system=konflux",
-        #     f"--group={self.group}",
-        #     "--latest-parent-version",
-        #     f"--images={self.image_name}",
-        #     "beta:images:konflux:rebase",
-        #     f"--version={version}",
-        #     f"--release={release}",
-        #     f"--message='Updating Dockerfile version and release {version}-{release}'",
-        # ]
-        # if not self.runtime.dry_run:
-        #     rebase_cmd.append("--push")
-        #
-        # await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
-        # self._logger.info(f"Successfully rebased {self.image_name}")
-        #
-        # # Build OADP image
-        # self._logger.info(f"Building {self.image_name} image for assembly {self.assembly}")
-        # build_cmd = [
-        #     "doozer",
-        #     f"--assembly={self.assembly}",
-        #     f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-        #     "--build-system=konflux",
-        #     f"--group={self.group}",
-        #     "--latest-parent-version",
-        #     f"--images={self.image_name}",
-        #     "beta:images:konflux:build",
-        #     f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
-        # ]
-        #
-        # # Use kubeconfig from CLI parameter or environment variable
-        # kubeconfig = self.kubeconfig or os.environ.get('KONFLUX_SA_KUBECONFIG')
-        # if not kubeconfig:
-        #     raise ValueError(
-        #         "KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds"
-        #     )
-        #
-        # build_cmd.extend(
-        #     [
-        #         "--konflux-kubeconfig",
-        #         kubeconfig,
-        #         "--konflux-namespace",
-        #         "ocp-art-tenant",
-        #     ]
-        # )
-        # if self.runtime.dry_run:
-        #     build_cmd.append("--dry-run")
-        #
-        # # Ensure KONFLUX_ART_IMAGES_AUTH_FILE is passed through environment
-        # build_env = self._doozer_env_vars.copy()
-        # konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        # if konflux_registry_auth_file:
-        #     build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
-        #
-        # await exectools.cmd_assert_async(build_cmd, env=build_env)
-        # self._logger.info(f"Successfully built {self.image_name}")
+        # Rebase OADP image
+        self._logger.info(f"Rebasing {self.image_name} image for assembly {self.assembly}")
+        rebase_cmd = [
+            "doozer",
+            f"--assembly={self.assembly}",
+            f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
+            "--build-system=konflux",
+            f"--group={self.group}",
+            "--latest-parent-version",
+            f"--images={self.image_name}",
+            "beta:images:konflux:rebase",
+            f"--version={version}",
+            f"--release={release}",
+            f"--message='Updating Dockerfile version and release {version}-{release}'",
+        ]
+        if not self.runtime.dry_run:
+            rebase_cmd.append("--push")
+
+        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+        self._logger.info(f"Successfully rebased {self.image_name}")
+
+        # Build OADP image
+        self._logger.info(f"Building {self.image_name} image for assembly {self.assembly}")
+        build_cmd = [
+            "doozer",
+            f"--assembly={self.assembly}",
+            f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
+            "--build-system=konflux",
+            f"--group={self.group}",
+            "--latest-parent-version",
+            f"--images={self.image_name}",
+            "beta:images:konflux:build",
+            f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
+        ]
+
+        # Use kubeconfig from CLI parameter or environment variable
+        kubeconfig = self.kubeconfig or os.environ.get('KONFLUX_SA_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError(
+                "KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds"
+            )
+
+        build_cmd.extend(
+            [
+                "--konflux-kubeconfig",
+                kubeconfig,
+                "--konflux-namespace",
+                "ocp-art-tenant",
+            ]
+        )
+        if self.runtime.dry_run:
+            build_cmd.append("--dry-run")
+
+        # Ensure KONFLUX_ART_IMAGES_AUTH_FILE is passed through environment
+        build_env = self._doozer_env_vars.copy()
+        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        if konflux_registry_auth_file:
+            build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
+
+        await exectools.cmd_assert_async(build_cmd, env=build_env)
+        self._logger.info(f"Successfully built {self.image_name}")
 
         # Build OADP bundle image
+        # TODO: Need to add support to build specific bundle NVRs
+        # TODO: Possibly move the bundle build to a separate job
         self._logger.info(f"Building {self.image_name} image for assembly {self.assembly}")
         bundle_rebase_cmd = [
             "doozer",
