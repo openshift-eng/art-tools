@@ -91,19 +91,27 @@ class BuildOadpPipeline:
             f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
         ]
         
-        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        if konflux_registry_auth_file:
-            build_cmd.append(f"--registry-config={konflux_registry_auth_file}")
-        
-        if self.kubeconfig:
-            build_cmd.extend([
-                f"--konflux-kubeconfig={self.kubeconfig}",
-                "--konflux-namespace=ocp-art-tenant",
-            ])
+        # Use kubeconfig from CLI parameter or environment variable
+        kubeconfig = self.kubeconfig or os.environ.get('KONFLUX_SA_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError("KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds")
+
+        build_cmd.extend([
+            "--konflux-kubeconfig",
+            kubeconfig,
+            "--konflux-namespace",
+            "ocp-art-tenant",
+        ])
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
         
-        await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
+        # Ensure KONFLUX_ART_IMAGES_AUTH_FILE is passed through environment
+        build_env = self._doozer_env_vars.copy()
+        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        if konflux_registry_auth_file:
+            build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
+        
+        await exectools.cmd_assert_async(build_cmd, env=build_env)
         self._logger.info(f"Successfully built {self.image_name}")
 
 
