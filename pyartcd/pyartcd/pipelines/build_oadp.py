@@ -35,7 +35,6 @@ class BuildOadpPipeline:
 
         self._working_dir = self.runtime.working_dir.absolute()
 
-
         # sets environment variables for Doozer
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
@@ -69,7 +68,7 @@ class BuildOadpPipeline:
             "beta:images:konflux:rebase",
             f"--version={version}",
             f"--release={release}",
-            f"--message=\'Updating Dockerfile version and release {version}-{release}\'",
+            f"--message='Updating Dockerfile version and release {version}-{release}'",
         ]
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
@@ -90,27 +89,31 @@ class BuildOadpPipeline:
             "beta:images:konflux:build",
             f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
         ]
-        
+
         # Use kubeconfig from CLI parameter or environment variable
         kubeconfig = self.kubeconfig or os.environ.get('KONFLUX_SA_KUBECONFIG')
         if not kubeconfig:
-            raise ValueError("KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds")
+            raise ValueError(
+                "KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds"
+            )
 
-        build_cmd.extend([
-            "--konflux-kubeconfig",
-            kubeconfig,
-            "--konflux-namespace",
-            "ocp-art-tenant",
-        ])
+        build_cmd.extend(
+            [
+                "--konflux-kubeconfig",
+                kubeconfig,
+                "--konflux-namespace",
+                "ocp-art-tenant",
+            ]
+        )
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
-        
+
         # Ensure KONFLUX_ART_IMAGES_AUTH_FILE is passed through environment
         build_env = self._doozer_env_vars.copy()
         konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         if konflux_registry_auth_file:
             build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
-        
+
         await exectools.cmd_assert_async(build_cmd, env=build_env)
         self._logger.info(f"Successfully built {self.image_name}")
 
