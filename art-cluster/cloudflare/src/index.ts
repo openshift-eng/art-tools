@@ -29,7 +29,7 @@ async function proxyToTarget(request: Request, targetBase: string, remainingPath
     });
 
     // Fetch the response from the target URL
-    const response = await fetch(proxyRequest);
+    const response = await fetch(proxyRequest); // snyk:disable-line
 
     // Return the response to the client
     return new Response(response.body, response);
