@@ -11,7 +11,7 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 import aiohttp
 import requests
 from artcommonlib.constants import RELEASE_SCHEDULES
-from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
+from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -481,6 +481,7 @@ async def sync_to_quay(source_pullspec, destination_repo):
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 
     await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
+    LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
 
     # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
     shasum = source_pullspec.split("@sha256:")[1]
@@ -496,3 +497,4 @@ async def sync_to_quay(source_pullspec, destination_repo):
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
     await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
+    LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
