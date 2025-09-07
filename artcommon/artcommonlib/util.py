@@ -463,6 +463,7 @@ async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Option
     return out.strip()
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
 async def sync_to_quay(source_pullspec, destination_repo):
     LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
     cmd = [
