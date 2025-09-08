@@ -147,11 +147,11 @@ class BuildMicroShiftBootcPipeline:
                 "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
             )
 
-        # Pin the image to the assembly if not STREAM and not already pinned
-        if self.assembly_type != AssemblyTypes.STREAM and not getattr(bootc_build, 'already_pinned', False):
+        # Pin the image to the assembly if not STREAM
+        if self.assembly_type != AssemblyTypes.STREAM:
             # Check if we need to create a PR to pin the build
-            pinned_image = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
-            if bootc_build.nvr != pinned_image.get('nvr'):
+            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
+            if bootc_build.nvr != pinned_nvr:
                 self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
                 pr_url = await self._create_or_update_pull_request_for_image(bootc_build.nvr)
                 message = f"PR to pin microshift-bootc image to the {self.assembly} assembly has been merged: {pr_url}"
@@ -306,16 +306,21 @@ class BuildMicroShiftBootcPipeline:
 
         # Check if an image is already pinned and don't rebuild unless forced
         if not self.force and self.assembly_type != AssemblyTypes.STREAM:
-            pinned_image = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
-            if pinned_image:
-                message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_image}. Use FORCE to rebuild."
+            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
+            if pinned_nvr:
+                message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_nvr}. Use FORCE to rebuild."
                 self._logger.info(message)
                 await self.slack_client.say_in_thread(message)
-                # Return a mock build record with the pinned NVR for consistency
-                mock_build = KonfluxBuildRecord()
-                mock_build.nvr = pinned_image.get('nvr', 'pinned-image')
-                mock_build.already_pinned = True  # Flag to indicate this was already pinned
-                return mock_build
+
+                # Fetch the actual build record from Konflux DB using the pinned NVR
+                if not self.konflux_db:
+                    self.konflux_db = KonfluxDb()
+                    self.konflux_db.bind(KonfluxBuildRecord)
+                    self._logger.info('Konflux DB initialized for pinned build lookup')
+
+                build = await self.konflux_db.get_build_record_by_nvr(pinned_nvr, strict=True)
+                self._logger.info("Found existing build record for pinned NVR: %s", pinned_nvr)
+                return build
 
         # check if an image build already exists in Konflux DB
         if not self.force:
