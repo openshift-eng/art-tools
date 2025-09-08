@@ -62,6 +62,13 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
+
+        # Check if GitHub token is available (unless in dry-run mode)
+        if not runtime.dry_run:
+            github_token = os.environ.get("GITHUB_TOKEN")
+            if not github_token or not github_token.strip():
+                raise ValueError("GITHUB_TOKEN environment variable is required to create pull requests")
+
         self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -494,13 +501,9 @@ class BuildMicroShiftBootcPipeline:
         upstream_repo.update_file("releases.yml", body, output.read(), fork_file.sha, branch=branch)
 
         # Create and merge PR
-        try:
-            pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
-            pr.merge()
-            return pr.html_url
-        except GithubException as e:
-            self._logger.warning(f"Failed to create or merge PR: {e}")
-            return f"Failed to create PR: {e}"
+        pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
+        pr.merge()
+        return pr.html_url
 
 
 @cli.command("build-microshift-bootc")
