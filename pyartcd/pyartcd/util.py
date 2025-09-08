@@ -169,6 +169,16 @@ def get_rpm_if_pinned_directly(releases_config: Dict, assembly_name: str, rpm_na
     return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 
+def get_image_if_pinned_directly(releases_config: Dict, assembly_name: str, image_name: str) -> dict:
+    # this does not consider inherited assemblies
+    # use with caution
+    try:
+        pinned_images = Model(releases_config).releases[assembly_name].assembly.members.images
+        return next((image['metadata']['is'] for image in pinned_images if image['distgit_key'] == image_name), dict())
+    except (KeyError, AttributeError):
+        return dict()
+
+
 async def kinit():
     logger.info('Initializing ocp-build kerberos credentials')
 

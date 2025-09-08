@@ -1,4 +1,6 @@
 import asyncio
+import copy
+import io
 import json
 import logging
 import os
@@ -20,6 +22,7 @@ from artcommonlib.util import (
     sync_to_quay,
 )
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
+from github import Github, GithubException
 
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -28,6 +31,7 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import (
     default_release_suffix,
     get_assembly_type,
+    get_image_if_pinned_directly,
     get_microshift_builds,
     get_release_name_for_assembly,
     isolate_el_version_in_release,
@@ -58,6 +62,7 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
+        self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
 
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -141,6 +146,16 @@ class BuildMicroShiftBootcPipeline:
             self._logger.warning(
                 "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
             )
+
+        # Pin the image to the assembly if not STREAM and not already pinned
+        if self.assembly_type != AssemblyTypes.STREAM and not getattr(bootc_build, 'already_pinned', False):
+            # Check if we need to create a PR to pin the build
+            pinned_image = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
+            if bootc_build.nvr != pinned_image.get('nvr'):
+                self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
+                pr_url = await self._create_or_update_pull_request_for_image(bootc_build.nvr)
+                message = f"PR to pin microshift-bootc image to the {self.assembly} assembly has been merged: {pr_url}"
+                await self.slack_client.say_in_thread(message)
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -289,6 +304,19 @@ class BuildMicroShiftBootcPipeline:
             self._logger.info("Skipping bootc image build for version < 4.18")
             return
 
+        # Check if an image is already pinned and don't rebuild unless forced
+        if not self.force and self.assembly_type != AssemblyTypes.STREAM:
+            pinned_image = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
+            if pinned_image:
+                message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_image}. Use FORCE to rebuild."
+                self._logger.info(message)
+                await self.slack_client.say_in_thread(message)
+                # Return a mock build record with the pinned NVR for consistency
+                mock_build = KonfluxBuildRecord()
+                mock_build.nvr = pinned_image.get('nvr', 'pinned-image')
+                mock_build.already_pinned = True  # Flag to indicate this was already pinned
+                return mock_build
+
         # check if an image build already exists in Konflux DB
         if not self.force:
             build = await self.get_latest_bootc_build()
@@ -371,6 +399,103 @@ class BuildMicroShiftBootcPipeline:
 
         # now that build is complete, fetch it
         return await self.get_latest_bootc_build()
+
+    def extract_git_repo(self, data_path: str):
+        """
+        extract git repo name from data path
+        https://github.com/openshift-eng/ocp-build-data --> openshift-eng, ocp-build-data
+        """
+        data_path = data_path.rstrip(".git")
+        parts = data_path.rstrip("/").split("/")
+        if len(parts) < 2:
+            raise ValueError(f"Invalid git repo URL: {data_path}")
+        return parts[-2], parts[-1]
+
+    def _pin_image_nvr(self, nvr: str, releases_config) -> dict:
+        """Update releases.yml to pin the specified image NVR.
+        Example:
+            releases:
+                4.18.1:
+                    assembly:
+                        members:
+                            images:
+                            - distgit_key: microshift-bootc
+                              metadata:
+                                is:
+                                  nvr: microshift-bootc-4.18.1-202311300751.p0.g7ebffc3.assembly.4.18.1.el9
+        """
+        dg_key = "microshift-bootc"
+        image_pin = {
+            "distgit_key": dg_key,
+            "metadata": {
+                "is": {"nvr": nvr},
+            },
+            "why": "Pin microshift-bootc image to assembly",
+        }
+
+        images_entry = (
+            releases_config["releases"][self.assembly]
+            .setdefault("assembly", {})
+            .setdefault("members", {})
+            .setdefault("images", [])
+        )
+
+        # Check if microshift-bootc entry already exists
+        microshift_bootc_entry = next(filter(lambda img: img.get("distgit_key") == dg_key, images_entry), None)
+        if microshift_bootc_entry is None:
+            images_entry.append(image_pin)
+            return image_pin
+        else:
+            # Update existing entry
+            microshift_bootc_entry["metadata"]["is"] = image_pin["metadata"]["is"]
+            return microshift_bootc_entry
+
+    async def _create_or_update_pull_request_for_image(self, nvr: str):
+        branch = f"auto-pin-microshift-bootc-{self.group}-{self.assembly}"
+        title = f"Pin microshift-bootc image for {self.group} {self.assembly}"
+        body = f"Created by job run {jenkins.get_build_url()}"
+        if self.runtime.dry_run:
+            self._logger.warning(
+                "[DRY RUN] Would have created pull-request with head '%s', title '%s', body '%s'",
+                branch,
+                title,
+                body,
+            )
+            return "https://github.example.com/foo/bar/pull/1234"
+
+        user, repo = self.extract_git_repo(self._doozer_env_vars["DOOZER_DATA_PATH"])
+        upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
+        release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
+        source_file_content = copy.deepcopy(release_file_content)
+        self._pin_image_nvr(nvr, release_file_content)
+
+        if source_file_content == release_file_content:
+            self._logger.warning("PR is not created: upstream already updated, nothing to change.")
+            return "Nothing to change"
+
+        # Delete existing branch if it exists
+        for b in upstream_repo.get_branches():
+            if b.name == branch:
+                upstream_repo.get_git_ref(f"heads/{branch}").delete()
+
+        # Create new branch
+        upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
+
+        # Update releases.yml
+        output = io.BytesIO()
+        yaml.dump(release_file_content, output)
+        output.seek(0)
+        fork_file = upstream_repo.get_contents("releases.yml", ref=branch)
+        upstream_repo.update_file("releases.yml", body, output.read(), fork_file.sha, branch=branch)
+
+        # Create and merge PR
+        try:
+            pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
+            pr.merge()
+            return pr.html_url
+        except GithubException as e:
+            self._logger.warning(f"Failed to create or merge PR: {e}")
+            return f"Failed to create PR: {e}"
 
 
 @cli.command("build-microshift-bootc")
