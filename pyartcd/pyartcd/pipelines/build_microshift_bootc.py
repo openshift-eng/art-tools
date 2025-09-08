@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import traceback
 from pathlib import Path
 from typing import Optional, cast
@@ -161,8 +162,7 @@ class BuildMicroShiftBootcPipeline:
             if bootc_build.nvr != pinned_nvr:
                 self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
                 pr_url = await self._create_or_update_pull_request_for_image(bootc_build.nvr)
-                message = f"PR to pin microshift-bootc image to the {self.assembly} assembly has been merged: {pr_url}"
-                await self.slack_client.say_in_thread(message)
+                # Note: PR creation and merge status are reported separately in _create_or_update_pull_request_for_image
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -500,10 +500,68 @@ class BuildMicroShiftBootcPipeline:
         fork_file = upstream_repo.get_contents("releases.yml", ref=branch)
         upstream_repo.update_file("releases.yml", body, output.read(), fork_file.sha, branch=branch)
 
-        # Create and merge PR
+        # Create PR
         pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
-        pr.merge()
+        self._logger.info("Created PR to pin microshift-bootc image: %s", pr.html_url)
+        await self.slack_client.say_in_thread(f"PR created to pin microshift-bootc image: {pr.html_url}")
+
+        # Wait for CI tests to pass, then merge
+        await self._wait_for_pr_merge(pr)
         return pr.html_url
+
+    async def _wait_for_pr_merge(self, pr):
+        """Wait for a PR to pass CI tests and then merge it, with timeout."""
+        timeout = 30 * 60  # 30 minutes
+        start_time = time.time()
+        check_interval = 30  # Check every 30 seconds
+
+        self._logger.info("Waiting for PR CI tests to pass before merging: %s", pr.html_url)
+        await self.slack_client.say_in_thread(f"Waiting for CI tests to pass for PR: {pr.html_url}")
+
+        while True:
+            if (time.time() - start_time) > timeout:
+                error_msg = f"Timeout waiting for PR CI tests to pass (30 minutes): {pr.html_url}"
+                self._logger.error(error_msg)
+                await self.slack_client.say_in_thread(f"❌ {error_msg}")
+                raise TimeoutError(error_msg)
+
+            # Refresh PR to get latest status
+            pr = self.github_client.get_repo(
+                f"{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[0]}/{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[1]}"
+            ).get_pull(pr.number)
+
+            # Check if PR was closed/merged by someone else
+            if pr.state == "closed":
+                if pr.merged:
+                    self._logger.info("PR was already merged: %s", pr.html_url)
+                    await self.slack_client.say_in_thread(f"✅ PR was merged: {pr.html_url}")
+                    return
+                else:
+                    error_msg = f"PR was closed without merging: {pr.html_url}"
+                    self._logger.error(error_msg)
+                    await self.slack_client.say_in_thread(f"❌ {error_msg}")
+                    raise RuntimeError(error_msg)
+
+            # Try to merge - let GitHub tell us if CI is ready
+            try:
+                merge_result = pr.merge()
+                if merge_result.merged:
+                    self._logger.info("PR successfully merged: %s", pr.html_url)
+                    await self.slack_client.say_in_thread(f"✅ PR merged successfully: {pr.html_url}")
+                    return
+                else:
+                    self._logger.info("PR merge not ready: %s", merge_result.message)
+            except GithubException as e:
+                if e.status == 405 and "Required status check" in str(e):
+                    self._logger.info("CI checks still running, waiting...")
+                elif e.status == 405 and "Pull Request is not mergeable" in str(e):
+                    self._logger.info("PR not mergeable yet (conflicts or checks), waiting...")
+                else:
+                    # Other errors should be reported but we continue waiting
+                    self._logger.warning("Merge attempt failed: %s", e)
+                    await self.slack_client.say_in_thread(f"⚠️ Merge attempt failed: {e}")
+
+            await asyncio.sleep(check_interval)
 
 
 @cli.command("build-microshift-bootc")
