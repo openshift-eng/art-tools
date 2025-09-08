@@ -4,6 +4,7 @@ import os
 import time
 from enum import Enum
 from typing import Optional
+from urllib.parse import unquote, urlparse
 
 import requests
 from jenkinsapi.build import Build
@@ -111,6 +112,79 @@ def get_job_name():
     return os.environ.get("JOB_NAME")
 
 
+def get_job_name_and_build_number_from_path(build_path: str) -> tuple[Optional[str], Optional[str]]:
+    if not build_path:
+        logger.warning('Empty build path received')
+        return None, None
+
+    path = build_path
+    if build_path.startswith('http://') or build_path.startswith('https://'):
+        path = urlparse(build_path).path
+
+    # path is now something like '/job/aos-cd-builds/job/build%252Focp4-konflux/16686/'
+    path = path.strip('/')
+
+    try:
+        job_path_str, build_number = path.rsplit("/", 1)
+    except ValueError:
+        logger.warning('Invalid build path: %s', build_path)
+        return None, None
+
+    # If job_path_str is like 'job/aos-cd-builds/job/build%2Focp4-konflux'
+    # We need to convert it to a job name like 'aos-cd-builds/build%2Focp4-konflux'
+    job_name = job_path_str
+    if job_name.startswith('job/'):
+        job_name = job_name[4:]
+    job_name = job_name.replace('/job/', '/')
+
+    # The job name from URL path is double-encoded. We need to decode it once.
+    job_name = unquote(job_name)
+
+    return job_name, build_number
+
+
+def get_build_parameters(build_path: str) -> Optional[dict]:
+    """
+    Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
+    and returns the build parameters
+    """
+
+    init_jenkins()
+
+    job_name, build_number = get_job_name_and_build_number_from_path(build_path)
+    if not job_name:
+        return None
+
+    try:
+        job = jenkins_client.get_job(job_name)
+    except (requests.exceptions.HTTPError, NotFound) as err:
+        # Check for 404
+        if isinstance(err, requests.exceptions.HTTPError):
+            if err.response.status_code == 404:
+                logger.warning('Job %s not found', job_name)
+                return None
+        else:  # issubclass(type(err), NotFound)
+            logger.warning('Job %s not found', job_name)
+            return None
+        # Reraise other errors
+        raise
+
+    try:
+        build = job.get_build(int(build_number))
+    except (NotFound, ValueError):
+        return None
+
+    params = {}
+    build_data = build._data
+    for action in build_data.get('actions', []):
+        if action.get('_class') == 'hudson.model.ParametersAction':
+            for param in action.get('parameters', []):
+                if 'value' in param:
+                    params[param['name']] = param['value']
+            break  # Found parameters, no need to check other actions
+    return params
+
+
 def check_env_vars(func):
     """
     Enforces that BUILD_URL and JOB_NAME are set
@@ -179,7 +253,6 @@ def set_build_description(build: Build, description: str):
 def is_build_running(build_path: str) -> bool:
     """
     Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
-    E.g. https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46902/api/json
 
     The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
 
@@ -190,24 +263,23 @@ def is_build_running(build_path: str) -> bool:
 
     init_jenkins()
 
-    if not build_path:
-        logger.warning('Empty build path received')
+    job_name, build_number = get_job_name_and_build_number_from_path(build_path)
+    if not job_name:
         return False
 
-    job_path, build_number = build_path.rstrip("/").rsplit("/", 1)
-    job_name = job_path.rsplit("/", 1)[1]
-    job_url = jenkins_client.base_server_url() + "/" + job_path
-
     try:
-        job = Job(job_url, job_name, jenkins_client)
-    except requests.exceptions.HTTPError as err:
-        if err.response.status_code == 404:
+        job = jenkins_client.get_job(job_name)
+    except (requests.exceptions.HTTPError, NotFound) as err:
+        if isinstance(err, requests.exceptions.HTTPError):
+            if err.response.status_code == 404:
+                return False
+        else:
             return False
         raise
 
     try:
         build = job.get_build(int(build_number))
-    except NotFound:
+    except (NotFound, ValueError):
         return False
     return build.is_running()
 
