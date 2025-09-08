@@ -581,6 +581,7 @@ def update_title(title: str, append: bool = True):
 
 
 @check_env_vars
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def update_description(description: str, append: bool = True):
     """
     Set build description to <description>. If append is True, retrieve current description,
