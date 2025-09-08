@@ -284,7 +284,7 @@ class KonfluxOcp4Pipeline:
             cmd.extend(['--plr-template', plr_template_url])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
-        await exectools.cmd_assert_async(cmd)
+        await exectools.cmd_gather_async(cmd)
 
         LOGGER.info("All builds completed successfully")
 
