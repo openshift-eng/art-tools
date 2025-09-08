@@ -12,6 +12,7 @@ from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
 from jenkinsapi.utils.crumb_requester import CrumbRequester
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
 
@@ -556,6 +557,7 @@ def start_build_fbc(
 
 
 @check_env_vars
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def update_title(title: str, append: bool = True):
     """
     Set build title to <title>. If append is True, retrieve current title,
@@ -579,6 +581,7 @@ def update_title(title: str, append: bool = True):
 
 
 @check_env_vars
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def update_description(description: str, append: bool = True):
     """
     Set build description to <description>. If append is True, retrieve current description,
