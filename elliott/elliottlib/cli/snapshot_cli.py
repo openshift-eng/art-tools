@@ -113,7 +113,7 @@ class CreateSnapshotCli:
         self.konflux_client.verify_connection()
 
     async def run(self):
-        self.runtime.initialize(build_system='konflux', mode='images')
+        self.runtime.initialize(build_system='konflux', mode='images', disabled=True)
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
