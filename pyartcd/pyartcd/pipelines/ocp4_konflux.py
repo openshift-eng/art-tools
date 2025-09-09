@@ -599,8 +599,16 @@ class KonfluxOcp4Pipeline:
         )
 
     async def rebase_and_build_images(self):
+        if self.mass_rebuild:
+            await self.slack_client.say(
+                f':construction: Starting image builds for {self.version} mass rebuild :construction:'
+            )
+
         await self.rebase_images(f"v{self.version}.0", self.release)
         await self.build_images()
+
+        if self.mass_rebuild:
+            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
 
     async def mirror_images(self):
         """
