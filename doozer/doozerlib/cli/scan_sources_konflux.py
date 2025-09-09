@@ -961,7 +961,9 @@ class ConfigScanSources:
 
         return task_bundles
 
-    async def _check_single_task_bundle(self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str) -> Optional[RebuildHint]:
+    async def _check_single_task_bundle(
+        self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str
+    ) -> Optional[RebuildHint]:
         """
         Check if a single task bundle should trigger a rebuild based on its age and staggered rebuild logic.
         Returns a RebuildHint if a rebuild should be triggered, None otherwise.
@@ -976,9 +978,7 @@ class ConfigScanSources:
             return None
 
         if task_age_days < 10:
-            self.logger.info(
-                f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
-            )
+            self.logger.info(f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild')
             return None
 
         # Staggered rebuild logic: probability increases as age increases
@@ -1028,7 +1028,9 @@ class ConfigScanSources:
         # Fetch SLSA attestation
         attestation = await self._fetch_slsa_attestation(build_record)
         if not attestation:
-            self.logger.warning(f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check')
+            self.logger.warning(
+                f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check'
+            )
             return
 
         # Extract task bundles from attestation
@@ -1050,7 +1052,7 @@ class ConfigScanSources:
 
         # Check each task bundle for outdated versions concurrently
         self.logger.info(f'Comparing task bundle versions for {image_meta.distgit_key}')
-        
+
         # Filter out task bundles that are up-to-date or not found in current template
         outdated_task_bundles = []
         for task_name, used_sha in task_bundles.items():
@@ -1062,17 +1064,19 @@ class ConfigScanSources:
             if used_sha == current_sha:
                 self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
                 continue
-                
+
             outdated_task_bundles.append((task_name, used_sha, current_sha))
 
         if not outdated_task_bundles:
             return
 
         # Process all outdated task bundles concurrently
-        rebuild_hints = await asyncio.gather(*[
-            self._check_single_task_bundle(image_meta, task_name, used_sha, current_sha)
-            for task_name, used_sha, current_sha in outdated_task_bundles
-        ])
+        rebuild_hints = await asyncio.gather(
+            *[
+                self._check_single_task_bundle(image_meta, task_name, used_sha, current_sha)
+                for task_name, used_sha, current_sha in outdated_task_bundles
+            ]
+        )
 
         # Check if any task bundle requires a rebuild
         for rebuild_hint in rebuild_hints:
