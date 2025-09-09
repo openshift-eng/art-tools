@@ -228,23 +228,23 @@ class KonfluxFbcImporter:
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
-        
+
         # Use OLM bundle structure for OADP groups, traditional structure for others
         use_olm_bundle_structure = self.group.startswith("oadp-")
-        
+
         if use_olm_bundle_structure and not csv_config.get('manifests-dir'):
             # OADP OLM bundle structure: Get package name from metadata/annotations.yaml
             if not csv_config.get('bundle-dir'):
                 raise ValueError(f"[{metadata.distgit_key}] No bundle-dir defined in the operator's update-csv for OADP structure")
-            
+
             bundle_dir = source_dir.joinpath(csv_config['bundle-dir'])
             annotations_path = bundle_dir / "metadata" / "annotations.yaml"
             if not annotations_path.exists():
                 raise FileNotFoundError(f"[{metadata.distgit_key}] No metadata/annotations.yaml found in OLM bundle structure at {annotations_path}")
-            
+
             with annotations_path.open() as f:
                 annotations = yaml.load(f)
-            
+
             package_name = annotations['annotations']['operators.operatorframework.io.bundle.package.v1']
             if not package_name:
                 raise IOError(f"Package name not found in {annotations_path}")
@@ -253,7 +253,7 @@ class KonfluxFbcImporter:
             # Traditional structure: manifests/bundle/ with package.yaml
             if not csv_config.get('manifests-dir'):
                 raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-            
+
             source_path = source_dir.joinpath(csv_config['manifests-dir'])
             package_yaml_file = next(source_path.glob('**/*package.yaml'))
             with package_yaml_file.open() as f:
@@ -768,18 +768,6 @@ class KonfluxFbcRebaser:
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
 
-            # For an operator bundle that uses replaces -- such as OADP
-            # Update "replaces" in the channel
-            replaces = None
-            if 'oadp-' in olm_bundle_name:
-                # Find the current head - the entry that is not replaced by any other entry
-                bundle_with_replaces = [it for it in channel['entries']]
-                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
-                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
-                if current_head:
-                    # The new bundle should replace the current head
-                    replaces = current_head['name']
-
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
@@ -794,8 +782,6 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
-            if replaces:
-                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
@@ -930,6 +916,7 @@ class KonfluxFbcRebaser:
         ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
+        # TODO: Understand what this is doing
         dest_repos = {}
         for bundle_blob in olm_bundle_blobs:
             for related_image in bundle_blob.get("relatedImages", []):
@@ -937,7 +924,6 @@ class KonfluxFbcRebaser:
                     repo, digest = related_image["image"].split('@', 1)
                     dest_repos[digest] = repo
                 else:
-                    # Skip is non-OCP operator
                     continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
@@ -957,9 +943,7 @@ class KonfluxFbcRebaser:
                             source_repo,
                         ],
                     }
-                    # If source is same as destination, we don't need to add an IDMS mapping
-                    for sha, source_repo in source_repos.items()
-                    if sha in dest_repos and source_repo != dest_repos[sha]
+                    for sha, source_repo in source_repos.items() if sha in dest_repos
                 ],
             },
         }
