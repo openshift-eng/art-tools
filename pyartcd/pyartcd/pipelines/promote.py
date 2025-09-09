@@ -11,12 +11,14 @@ import tarfile
 import traceback
 from collections import OrderedDict
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import click
+import gitlab
 import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import (
@@ -29,8 +31,8 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.util import isolate_major_minor_in_group
-from elliottlib.shipment_utils import get_shipment_config_from_mr
+from artcommonlib.util import isolate_major_minor_in_group, new_roundtrip_yaml_handler
+from elliottlib.shipment_utils import get_shipment_config_from_mr, get_shipment_configs_from_mr
 from github import Github, GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
@@ -620,6 +622,35 @@ class PromotePipeline:
             self._logger.info("Skipping AWS backup for this payload")
         else:
             await self.ocp_doomsday_backup()
+
+        # Print payload SHAs for each architecture
+        self._logger.info("=== PAYLOAD SHAS ===")
+        payload_shas = {}
+        for arch, content in data["content"].items():
+            digest = content["digest"]
+            pullspec = content["pullspec"]
+            payload_shas[arch] = digest
+            self._logger.info("Arch %s: %s (%s)", arch, digest, pullspec)
+        self._logger.info("===================")
+
+        # Update shipment MR with payload SHAs if shipment config exists
+        self._logger.info("Checking for shipment configuration in assembly %s...", self.assembly)
+        assembly_config = releases_config.get("releases", {}).get(self.assembly, {})
+        shipment_config = assembly_config.get("assembly", {}).get("group", {}).get("shipment")
+        if shipment_config and shipment_config.get("url"):
+            shipment_url = shipment_config["url"]
+            self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+            self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
+            try:
+                await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                self._logger.info("Successfully updated shipment MR with payload SHAs")
+            except Exception as ex:
+                self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+        else:
+            self._logger.info(
+                "No shipment configuration found in assembly %s, skipping shipment MR update", self.assembly
+            )
 
         json.dump(data, sys.stdout)
 
@@ -2076,6 +2107,169 @@ class PromotePipeline:
             self._logger.info("Successfully triggered ocp-doomsday-registry pipline on cluster")
         else:
             self._logger.error("Error while triggering ocp-doomsday-registry pipline on cluster")
+
+    async def update_shipment_with_payload_shas(self, shipment_url: str, payload_shas: Dict[str, str]):
+        """Update shipment MR with payload SHA digests from successful promote job.
+
+        :param shipment_url: The URL of the existing shipment MR to update
+        :param payload_shas: Dict mapping architecture names to their SHA256 digests
+        """
+        self._logger.info("Updating shipment MR with payload SHAs: %s", shipment_url)
+
+        gitlab_token = os.getenv("GITLAB_TOKEN")
+        if not gitlab_token:
+            raise ValueError("GITLAB_TOKEN environment variable is required for updating shipment MR")
+
+        # Parse the shipment URL to extract project and MR details
+        parsed_url = urlparse(shipment_url)
+        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+        mr_id = parsed_url.path.split('/')[-1]
+        gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+        # Connect to GitLab
+        gl = gitlab.Gitlab(gitlab_url, private_token=gitlab_token)
+        gl.auth()
+
+        # Load the existing MR
+        project = gl.projects.get(target_project_path)
+        mr = project.mergerequests.get(mr_id)
+        source_project = gl.projects.get(mr.source_project_id)
+
+        # Load shipment configs from MR
+        shipments_by_kind = get_shipment_configs_from_mr(shipment_url)
+
+        # Update the image shipment with SHA information (only image shipments need SHAs)
+        if "image" in shipments_by_kind:
+            image_shipment = shipments_by_kind["image"]
+
+            # Build format dictionary for SHA replacement
+            format_dict = {}
+            for arch, sha in payload_shas.items():
+                if arch == "multi":
+                    continue  # Skip multi-arch as it's not a specific architecture
+
+                # Map architecture names to format variables
+                if arch == "x86_64":
+                    format_dict["x864_DIGEST"] = sha
+                elif arch == "s390x":
+                    format_dict["s390x_DIGEST"] = sha
+                elif arch == "ppc64le":
+                    format_dict["ppc64le_DIGEST"] = sha
+                elif arch == "aarch64":
+                    format_dict["aarch64_DIGEST"] = sha
+                else:
+                    self._logger.warning("Unknown architecture %s, skipping template replacement", arch)
+                    continue
+
+                self._logger.info("Prepared format variable: %s -> %s", arch, sha)
+
+            # Update the description with format replacement
+            current_description = image_shipment.shipment.data.releaseNotes.description
+
+            try:
+                updated_description = current_description.format(**format_dict)
+                templates_replaced = len([k for k in format_dict.keys() if f"{{{k}}}" in current_description])
+
+                if templates_replaced > 0:
+                    image_shipment.shipment.data.releaseNotes.description = updated_description
+                    self._logger.info(
+                        "Successfully replaced %d format placeholders with payload SHAs", templates_replaced
+                    )
+                else:
+                    self._logger.warning(
+                        "No format placeholders found in description. Expected placeholders: %s",
+                        list(f"{{{var}}}" for var in format_dict.keys()),
+                    )
+            except KeyError as ex:
+                self._logger.error("Missing format variable in description: %s", ex)
+                raise ValueError(f"Description contains placeholder {ex} but no corresponding SHA was found")
+
+            # Get the file path for the image shipment in the MR
+            diff_info = mr.diffs.list(all=True)[0]
+            diff = mr.diffs.get(diff_info.id)
+            image_file_path = None
+
+            for file_diff in diff.diffs:
+                file_path = file_diff.get('new_path') or file_diff.get('old_path')
+                if file_path and file_path.endswith(('.yaml', '.yml')) and 'image' in file_path:
+                    image_file_path = file_path
+                    break
+
+            if image_file_path:
+                # Create a new MR to update the shipment with SHAs
+                try:
+                    if self.runtime.dry_run:
+                        self._logger.info(
+                            "[DRY RUN] Would have created MR to update shipment file %s with payload SHAs",
+                            image_file_path,
+                        )
+                        return
+
+                    # Create a new branch for the SHA update
+                    from datetime import datetime, timezone
+
+                    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+                    sha_branch = f"update-shas-{self.assembly}-{timestamp}"
+
+                    # Create branch from the shipment MR's source branch
+                    source_project.branches.create({'branch': sha_branch, 'ref': mr.source_branch})
+                    self._logger.info("Created SHA update branch: %s", sha_branch)
+
+                    # Get the current file content (for file operations)
+                    source_project.files.get(image_file_path, mr.source_branch)
+
+                    # Convert shipment config back to YAML
+                    shipment_dump = image_shipment.model_dump(exclude_unset=True, exclude_none=True)
+                    yaml_handler = new_roundtrip_yaml_handler()
+
+                    out = StringIO()
+                    yaml_handler.dump(shipment_dump, out)
+                    updated_content = out.getvalue()
+
+                    # Update the file in the new branch
+                    source_project.files.update(
+                        file_path=image_file_path,
+                        branch=sha_branch,
+                        content=updated_content,
+                        commit_message=f"Update shipment with payload SHAs for {self.assembly}",
+                    )
+
+                    # Create MR to merge SHA updates into the shipment MR branch
+                    sha_mr_title = f"Update {self.assembly} shipment with payload SHAs"
+                    sha_mr_description = f"""This MR updates the shipment configuration with payload SHAs from the successful promote job.
+
+**Release**: {self.assembly}
+**Promote Job**: {os.environ.get('BUILD_URL', 'N/A')}
+
+**Updated SHAs:**
+"""
+                    for arch, sha in format_dict.items():
+                        sha_mr_description += f"- {arch}: {sha}\n"
+
+                    sha_mr = source_project.mergerequests.create(
+                        {
+                            'source_branch': sha_branch,
+                            'target_branch': mr.source_branch,
+                            'title': sha_mr_title,
+                            'description': sha_mr_description,
+                            'remove_source_branch': True,
+                        }
+                    )
+
+                    sha_mr_url = sha_mr.web_url
+                    self._logger.info("Created SHA update MR: %s", sha_mr_url)
+                    await self._slack_client.say_in_thread(
+                        f"Created MR to update shipment with payload SHAs: {sha_mr_url}"
+                    )
+
+                except Exception as ex:
+                    self._logger.error("Failed to create SHA update MR: %s", ex)
+                    raise
+            else:
+                self._logger.error("Could not find image shipment file in MR")
+                raise ValueError("Could not find image shipment file in MR")
+        else:
+            self._logger.warning("No image shipment found in MR - SHAs not updated")
 
 
 @cli.command("promote")
