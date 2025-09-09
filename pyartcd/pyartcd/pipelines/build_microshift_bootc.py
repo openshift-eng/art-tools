@@ -782,15 +782,12 @@ class BuildMicroShiftBootcPipeline:
         target_branch = "main"
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
 
-        # Ensure we're on the correct branch (it should already be set up)
-        current_branch = await self.shipment_data_repo.get_current_branch()
-        if current_branch != source_branch:
-            # Check if branch exists and switch to it, or create it
-            branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
-            if branch_exists:
-                await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
-            else:
-                await self.shipment_data_repo.create_branch(source_branch)
+        # Check if branch exists and switch to it, or create it
+        branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
+        if branch_exists:
+            await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
+        else:
+            await self.shipment_data_repo.create_branch(source_branch)
 
         # Update shipment data repo with shipment config
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
