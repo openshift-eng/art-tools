@@ -916,9 +916,6 @@ class ConfigScanSources:
         Check if task bundles used in the build are outdated compared to current versions
         and if old task bundles are more than 10 days old, trigger a rebuild.
         """
-        self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
-        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-
         # Skip if image is not being released
         # Conforma is concerned only about images that are being released
         for_release = image_meta.config.for_release
@@ -926,6 +923,9 @@ class ConfigScanSources:
             # for_release is set to False in image config for images that we don't want to ship
             self.logger.info(f"Skipping scanning task bundle for {image_meta.distgit_key} since its unreleased")
             return
+
+        self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         try:
             # Get SLSA attestation for the build
@@ -940,10 +940,19 @@ class ConfigScanSources:
 
         try:
             # Parse attestation to get materials (task bundles)
+            # For example
+            # $ cosign download attestation <build pullspec> | jq -r ' .payload | @base64d | fromjson | .predicate.materials'
+            # [{
+            #     "digest": {
+            #       "sha256": "4a601aeec58a1dd89c271e728fd8f0d84777825b46940c3aec27f15bab3edacf"
+            #     },
+            #     "uri": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta"
+            #   },
+            # ...]
             payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
             materials = payload_json["predicate"]["materials"]
         except Exception as e:
-            self.logger.warning(f"Failed to parse SLSA attestation for task bundle check: {e}")
+            self.logger.warning("Failed to parse SLSA attestation for task bundle check: %s", e)
             return
 
         # Extract tekton-catalog task bundles
