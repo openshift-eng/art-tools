@@ -943,7 +943,8 @@ class KonfluxFbcRebaser:
                             source_repo,
                         ],
                     }
-                    for sha, source_repo in source_repos.items() if sha in dest_repos
+                    # If source is ame as destination, we don't need to add an IDMS mapping
+                    for sha, source_repo in source_repos.items() if sha in dest_repos and source_repo != dest_repos[sha]
                 ],
             },
         }
