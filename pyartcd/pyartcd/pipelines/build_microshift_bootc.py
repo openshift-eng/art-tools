@@ -1,32 +1,44 @@
 import asyncio
 import copy
+import glob
 import io
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 import traceback
+from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import Optional, cast
+from urllib.parse import urlparse
 
 import click
+import gitlab
 import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Model
 from artcommonlib.util import (
+    convert_remote_git_to_ssh,
     get_ocp_version_from_group,
     new_roundtrip_yaml_handler,
     sync_to_quay,
 )
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
+from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import Github, GithubException
 
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.git import GitRepository
 from pyartcd.plashets import plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
@@ -52,6 +64,7 @@ class BuildMicroShiftBootcPipeline:
         assembly: str,
         force: bool,
         force_plashet_sync: bool,
+        prepare_shipment: bool,
         data_path: str,
         slack_client,
         logger: Optional[logging.Logger] = None,
@@ -61,6 +74,7 @@ class BuildMicroShiftBootcPipeline:
         self.assembly = assembly
         self.force = force
         self.force_plashet_sync = force_plashet_sync
+        self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
 
@@ -80,6 +94,23 @@ class BuildMicroShiftBootcPipeline:
         # determines OCP version
         self._ocp_version = get_ocp_version_from_group(group)
 
+        # Shipment infrastructure setup
+        self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
+        self.product = 'ocp'  # assume that product is ocp for now
+        self._shipment_data_repo_dir = self._working_dir / "shipment-data-push"
+
+        # Setup shipment data repo URLs
+        self.shipment_data_repo_pull_url = self.runtime.config.get("shipment_config", {}).get(
+            "shipment_data_url"
+        ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+        self.shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
+            "shipment_data_push_url"
+        ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+
+        # Initialize GitRepository for shipment data (will be setup later if needed)
+        self.shipment_data_repo = None
+        self.gitlab_token = None
+
         # sets environment variables for Elliott and Doozer
         self._elliott_env_vars = os.environ.copy()
         self._elliott_env_vars["ELLIOTT_WORKING_DIR"] = str(self._working_dir / "elliott-working")
@@ -93,6 +124,17 @@ class BuildMicroShiftBootcPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
+
+        # Setup Elliott base command for shipment operations
+        group_param = f'--group={group}'
+        self._elliott_base_command = [
+            'elliott',
+            group_param,
+            f'--assembly={self.assembly}',
+            '--build-system=konflux',
+            f'--working-dir={self._working_dir / "elliott-working"}',
+            f'--data-path={data_path or constants.OCP_BUILD_DATA_URL}',
+        ]
 
     async def run(self):
         # Make sure our api.ci token is fresh
@@ -161,8 +203,10 @@ class BuildMicroShiftBootcPipeline:
             pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
             if bootc_build.nvr != pinned_nvr:
                 self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
-                pr_url = await self._create_or_update_pull_request_for_image(bootc_build.nvr)
-                # Note: PR creation and merge status are reported separately in _create_or_update_pull_request_for_image
+                await self._create_or_update_pull_request_for_image(bootc_build.nvr)
+
+            if self.prepare_shipment:
+                await self._prepare_shipment(bootc_build)
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -563,6 +607,300 @@ class BuildMicroShiftBootcPipeline:
 
             await asyncio.sleep(check_interval)
 
+    async def _prepare_shipment(self, bootc_build):
+        """Prepare shipment for microshift-bootc"""
+        await self.slack_client.say_in_thread(f"Start preparing shipment for assembly {self.assembly}..")
+
+        # Step 1: Check environment variables and setup
+        await self._setup_shipment_environment()
+
+        # Step 2: Setup shipment data repository first
+        await self._setup_shipment_data_repo()
+
+        # Step 3: Check for existing shipment branch and try to load existing config
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
+        shipment_config = await self._load_or_init_shipment_config(source_branch)
+
+        # Step 4: Use the provided bootc build
+        self._logger.info("Using bootc build: %s", bootc_build.nvr)
+
+        # Step 5: Create snapshot from bootc build
+        snapshot = await self._create_snapshot(bootc_build.nvr)
+        shipment_config.shipment.snapshot = snapshot
+
+        # Step 6: Create shipment MR
+        shipment_mr_url = await self._create_shipment_mr(shipment_config)
+
+        await self.slack_client.say_in_thread(f"Shipment MR created: {shipment_mr_url}")
+        await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
+
+    async def _setup_shipment_environment(self):
+        """Setup environment variables and tokens required for shipment operations"""
+        # Check for GitLab token
+        self.gitlab_token = os.getenv("GITLAB_TOKEN")
+        if not self.gitlab_token and not self.runtime.dry_run:
+            raise ValueError("GITLAB_TOKEN environment variable is required to create shipment MR")
+
+        self._logger.info("Shipment environment setup completed")
+
+    async def _load_or_init_shipment_config(self, source_branch: str) -> ShipmentConfig:
+        """Load existing shipment config from branch or initialize new one"""
+        # Check if branch already exists upstream
+        branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
+
+        if branch_exists:
+            self._logger.info('Branch %s exists, checking for existing shipment config...', source_branch)
+            await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
+
+            # Try to find existing shipment YAML file
+            shipment_config = await self._load_existing_shipment_config()
+            if shipment_config:
+                self._logger.info("Found existing shipment configuration, reusing it")
+                return shipment_config
+            else:
+                self._logger.info("No existing shipment configuration found in branch, will initialize new one")
+        else:
+            self._logger.info('Branch %s does not exist, will create new branch and shipment config', source_branch)
+
+        # Initialize new shipment configuration if not found
+        return await self._init_shipment_config()
+
+    async def _load_existing_shipment_config(self) -> Optional[ShipmentConfig]:
+        """Try to load existing shipment config from current branch"""
+        try:
+            # Look for shipment files in the expected directory structure
+            # Pattern: shipment/{product}/{group}/{application}/prod/{assembly}.microshift-bootc.*.yaml
+            product = 'ocp'
+            group = self.group.replace('openshift-', '')  # e.g., openshift-4.18 -> 4.18
+            application = 'microshift'  # or could be derived from metadata
+            env = 'prod'
+
+            shipment_dir = self.shipment_data_repo._directory / "shipment" / product / group / application / env
+
+            if not shipment_dir.exists():
+                self._logger.info("Shipment directory does not exist: %s", shipment_dir)
+                return None
+
+            # Look for files matching the pattern: {assembly}.microshift-bootc.*.yaml
+            pattern = f"{self.assembly}.microshift-bootc.*.yaml"
+            matching_files = glob.glob(str(shipment_dir / pattern))
+
+            if not matching_files:
+                self._logger.info("No existing shipment files found matching pattern: %s", pattern)
+                return None
+
+            # Use the most recent file (by filename, which includes timestamp)
+            latest_file = max(matching_files)
+            self._logger.info("Loading existing shipment config from: %s", latest_file)
+
+            with open(latest_file, 'r') as f:
+                shipment_data = yaml.load(f.read())
+
+            # Convert to ShipmentConfig object
+            shipment_config = ShipmentConfig(**shipment_data)
+            return shipment_config
+
+        except Exception as e:
+            self._logger.warning("Failed to load existing shipment config: %s", e)
+            return None
+
+    async def _init_shipment_config(self) -> ShipmentConfig:
+        """Initialize shipment configuration using elliott shipment init"""
+        self._logger.info("Initializing shipment configuration for microshift-bootc...")
+
+        create_cmd = self._elliott_base_command + [
+            f'--shipment-path={self.shipment_data_repo_pull_url}',
+            "shipment",
+            "init",
+            "microshift-bootc",  # Using microshift-bootc as the shipment kind
+        ]
+
+        stdout = await self._execute_command_with_logging(create_cmd)
+        # Convert CommentedMap to regular Python objects before creating Pydantic model
+        out = Model(yaml.load(stdout)).primitive()
+        shipment = ShipmentConfig(**out)
+
+        self._logger.info("Shipment configuration initialized")
+        return shipment
+
+    async def _create_snapshot(self, nvr: str) -> Optional[Snapshot]:
+        """Create snapshot from build NVR using elliott snapshot new"""
+        if not nvr:
+            return None
+
+        self._logger.info("Creating snapshot from build: %s", nvr)
+
+        # Call elliott snapshot new with NVR directly
+        snapshot_cmd = self._elliott_base_command + [
+            "snapshot",
+            "new",
+            nvr,
+        ]
+
+        konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        if konflux_art_images_auth_file:
+            snapshot_cmd.append(f"--pull-secret={konflux_art_images_auth_file}")
+
+        stdout = await self._execute_command_with_logging(snapshot_cmd)
+
+        # parse the output of the snapshot new command, it should be valid yaml
+        new_snapshot_obj = yaml.load(stdout)
+        # make some assertions that this is a valid snapshot object
+        if new_snapshot_obj.get("apiVersion") != API_VERSION or new_snapshot_obj.get("kind") != KIND_SNAPSHOT:
+            raise ValueError(f"Snapshot object is not valid: {stdout}")
+
+        self._logger.info("Snapshot created successfully")
+        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=[nvr])
+
+    async def _setup_shipment_data_repo(self):
+        """Setup and clone shipment-data repository"""
+        self._logger.info("Setting up shipment data repository...")
+
+        # Clean up existing directory if it exists
+        if self._shipment_data_repo_dir.exists():
+            shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
+
+        # Initialize GitRepository for shipment data
+        self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.runtime.dry_run)
+
+        # Setup shipment-data repo which should reside in GitLab
+        # pushing is done via basic auth
+        await self.shipment_data_repo.setup(
+            remote_url=self._basic_auth_url(self.shipment_data_repo_push_url, self.gitlab_token),
+            upstream_remote_url=self.shipment_data_repo_pull_url,
+        )
+        await self.shipment_data_repo.fetch_switch_branch("main")
+
+        self._logger.info("Shipment data repository setup completed")
+
+    async def _create_shipment_mr(self, shipment_config: ShipmentConfig) -> str:
+        """Create or update shipment MR with the given shipment config"""
+        self._logger.info("Creating or updating shipment MR...")
+
+        # Branch handling is now done in _load_or_init_shipment_config
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
+        target_branch = "main"
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+
+        # Ensure we're on the correct branch (it should already be set up)
+        current_branch = await self.shipment_data_repo.get_current_branch()
+        if current_branch != source_branch:
+            # Check if branch exists and switch to it, or create it
+            branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
+            if branch_exists:
+                await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
+            else:
+                await self.shipment_data_repo.create_branch(source_branch)
+
+        # Update shipment data repo with shipment config
+        release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
+        commit_message = f"Add microshift-bootc shipment configuration for {release_name}"
+        updated = await self._update_shipment_data(shipment_config, timestamp, commit_message, source_branch)
+        if not updated:
+            self._logger.info("No changes in shipment data. MR will not be created or updated.")
+            return "No changes to commit"
+
+        def _get_project(url):
+            parsed_url = urlparse(url)
+            project_path = parsed_url.path.strip('/').removesuffix('.git')
+            return self._get_gitlab().projects.get(project_path)
+
+        source_project = _get_project(self.shipment_data_repo_push_url)
+        target_project = _get_project(self.shipment_data_repo_pull_url)
+
+        mr_title = f"Draft: Microshift-bootc shipment for {release_name}"
+        job_url = os.getenv('BUILD_URL', 'N/A')
+        mr_description = f"Created by job: {job_url}\n\n{commit_message}"
+
+        if self.runtime.dry_run:
+            action = "updated" if branch_exists else "created"
+            self._logger.info("[DRY-RUN] Would have %s MR with title: %s", action, mr_title)
+            mr_url = f"{self.gitlab_url}/placeholder/placeholder/-/merge_requests/placeholder"
+        else:
+            # Check if MR already exists for this branch
+            existing_mrs = source_project.mergerequests.list(
+                source_branch=source_branch, target_branch=target_branch, state='opened'
+            )
+
+            if existing_mrs:
+                # Update existing MR
+                mr = existing_mrs[0]
+                mr.description = f"{mr.description}\n\nUpdated by job: {job_url}"
+                mr.save()
+                mr_url = mr.web_url
+                self._logger.info("Updated existing Draft Merge Request: %s", mr_url)
+            else:
+                # Create new MR
+                mr = source_project.mergerequests.create(
+                    {
+                        'source_branch': source_branch,
+                        'target_project_id': target_project.id,
+                        'target_branch': target_branch,
+                        'title': mr_title,
+                        'description': mr_description,
+                        'remove_source_branch': True,
+                    }
+                )
+                mr_url = mr.web_url
+                self._logger.info("Created Draft Merge Request: %s", mr_url)
+
+        return mr_url
+
+    async def _update_shipment_data(
+        self, shipment_config: ShipmentConfig, timestamp: str, commit_message: str, branch: str
+    ) -> bool:
+        """Update shipment data repo with the given shipment config file"""
+        filename = f"{self.assembly}.microshift-bootc.{timestamp}.yaml"
+        product = shipment_config.shipment.metadata.product
+        group = shipment_config.shipment.metadata.group
+        application = shipment_config.shipment.metadata.application
+        env = "prod"  # Default to prod for microshift-bootc shipments
+
+        relative_target_dir = Path("shipment") / product / group / application / env
+        target_dir = self.shipment_data_repo._directory / relative_target_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filepath = relative_target_dir / filename
+
+        self._logger.info("Updating shipment file: %s", filename)
+        shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
+        out = StringIO()
+        yaml.dump(shipment_dump, out)
+        await self.shipment_data_repo.write_file(filepath, out.getvalue())
+
+        await self.shipment_data_repo.add_all()
+        await self.shipment_data_repo.log_diff()
+
+        job_url = os.getenv('BUILD_URL')
+        if job_url and job_url not in commit_message:
+            commit_message += f"\n{job_url}"
+
+        return await self.shipment_data_repo.commit_push(commit_message, safe=True)
+
+    def _get_gitlab(self):
+        """Get GitLab client instance"""
+        if not hasattr(self, '_gitlab_client'):
+            self._gitlab_client = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
+            self._gitlab_client.auth()
+        return self._gitlab_client
+
+    @staticmethod
+    def _basic_auth_url(url: str, token: str) -> str:
+        """Convert URL to basic auth format with token"""
+        parsed_url = urlparse(url)
+        scheme = parsed_url.scheme
+        rest_of_the_url = url[len(scheme + "://") :]
+        # the assumption here is that username can be anything
+        # so we use oauth2 as a placeholder username
+        # and the token as the password
+        return f'https://oauth2:{token}@{rest_of_the_url}'
+
+    async def _execute_command_with_logging(self, cmd: list[str]) -> str:
+        """Execute a command asynchronously and log its output"""
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        if stdout:
+            self._logger.info("Command stdout:\n %s", stdout)
+        return stdout
+
 
 @cli.command("build-microshift-bootc")
 @click.option(
@@ -586,10 +924,21 @@ class BuildMicroShiftBootcPipeline:
 )
 @click.option("--force", is_flag=True, help="Rebuild even if a build already exists")
 @click.option("--force-plashet-sync", is_flag=True, help="Force plashet sync even if it is not needed")
+@click.option(
+    "--prepare-shipment",
+    is_flag=True,
+    help="(For named assemblies) Prepare shipment with found microshift-bootc build",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
-    runtime: Runtime, data_path: str, group: str, assembly: str, force: bool, force_plashet_sync: bool
+    runtime: Runtime,
+    data_path: str,
+    group: str,
+    assembly: str,
+    force: bool,
+    force_plashet_sync: bool,
+    prepare_shipment: bool,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -601,6 +950,7 @@ async def build_microshift_bootc(
             assembly=assembly,
             force=force,
             force_plashet_sync=force_plashet_sync,
+            prepare_shipment=prepare_shipment,
             data_path=data_path,
             slack_client=slack_client,
         )
