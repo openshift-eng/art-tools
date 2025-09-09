@@ -910,23 +910,10 @@ class ConfigScanSources:
                         f'which changed at event {extra_latest_tagging_event}',
                     )
 
-    @skip_check_if_changing
-    async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
+    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[str]:
         """
-        Check if task bundles used in the build are outdated compared to current versions
-        and if old task bundles are more than 10 days old, trigger a rebuild.
+        Fetch SLSA attestation for the given build record.
         """
-        # Skip if image is not being released
-        # Conforma is concerned only about images that are being released
-        for_release = image_meta.config.for_release
-        if for_release is False:
-            # for_release is set to False in image config for images that we don't want to ship
-            self.logger.info(f"Skipping scanning task bundle for {image_meta.distgit_key} since its unreleased")
-            return
-
-        self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
-        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-
         try:
             # Get SLSA attestation for the build
             self.logger.info(f'Fetching SLSA attestation for {build_record.image_pullspec}')
@@ -934,10 +921,16 @@ class ConfigScanSources:
                 pullspec=build_record.image_pullspec,
                 registry_auth_file=self.registry_auth_file,
             )
+            return attestation
         except ChildProcessError as e:
             self.logger.warning('Failed to download SLSA attestation for task bundle check: %s', e)
-            return
+            return None
 
+    def _extract_task_bundles_from_attestation(self, attestation: str) -> Dict[str, str]:
+        """
+        Extract task bundles from SLSA attestation materials.
+        Returns a dict mapping task names to their SHA256 digests.
+        """
         try:
             # Parse attestation to get materials (task bundles)
             # For example
@@ -953,7 +946,7 @@ class ConfigScanSources:
             materials = payload_json["predicate"]["materials"]
         except Exception as e:
             self.logger.warning("Failed to parse SLSA attestation for task bundle check: %s", e)
-            return
+            return {}
 
         # Extract tekton-catalog task bundles
         self.logger.info(f'Extracting task bundles from {len(materials)} materials in SLSA attestation')
@@ -966,6 +959,84 @@ class ConfigScanSources:
                 if task_sha:
                     task_bundles[task_name] = task_sha
 
+        return task_bundles
+
+    async def _check_task_bundle_age_and_rebuild(self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str) -> bool:
+        """
+        Check if a task bundle should trigger a rebuild based on its age and staggered rebuild logic.
+        Returns True if a rebuild was triggered, False otherwise.
+        """
+        self.logger.info(
+            f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
+        )
+
+        # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
+        task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
+        if not task_age_days:
+            return False
+
+        if task_age_days < 10:
+            self.logger.info(
+                f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
+            )
+            return False
+
+        # Staggered rebuild logic: probability increases as age increases
+        #   - At 10 days: 1 in 21 chance (~5%)
+        #   - At 15 days: 1 in 16 chance (~6%)
+        #   - At 20 days: 1 in 11 chance (~9%)
+        #   - At 25 days: 1 in 6 chance (~17%)
+        #   - At 29 days: 1 in 2 chance (50%)
+        #   - At 30+ days: Always rebuild (100%)
+        self.logger.info(
+            f'Task bundle {task_name} is {task_age_days} days old (>= 10 days), applying staggered rebuild logic'
+        )
+        rebuild_probability_denominator = max(30 - task_age_days, 1)
+        should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
+
+        if not should_rebuild:
+            self.logger.info(
+                f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
+                f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
+            )
+            return False
+
+        self.logger.info(
+            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
+        )
+        self.add_image_meta_change(
+            image_meta,
+            RebuildHint(
+                RebuildHintCode.TASK_BUNDLE_OUTDATED,
+                f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
+                f'and newer version is available (staggered rebuild)',
+            ),
+        )
+        return True
+
+    @skip_check_if_changing
+    async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
+        """
+        Check if task bundles used in the build are outdated compared to current versions
+        and if old task bundles are more than 10 days old, trigger a rebuild.
+        """
+        # Skip if image is not being released
+        for_release = image_meta.config.for_release
+        if for_release is False:
+            self.logger.info(f"Skipping scanning task bundle for {image_meta.distgit_key} since its unreleased")
+            return
+
+        self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+
+        # Fetch SLSA attestation
+        attestation = await self._fetch_slsa_attestation(build_record)
+        if not attestation:
+            self.logger.warning(f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check')
+            return
+
+        # Extract task bundles from attestation
+        task_bundles = self._extract_task_bundles_from_attestation(attestation)
         if not task_bundles:
             self.logger.info(f'No tekton-catalog task bundles found in {build_record.image_pullspec}')
             return
@@ -993,53 +1064,9 @@ class ConfigScanSources:
                 self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
                 continue
 
-            self.logger.info(
-                f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
-            )
-
-            # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
-            task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
-            if not task_age_days:
-                continue
-
-            if task_age_days < 10:
-                self.logger.info(
-                    f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
-                )
-                continue
-
-            # Staggered rebuild logic: probability increases as age increases
-            #   - At 10 days: 1 in 21 chance (~5%)
-            #   - At 15 days: 1 in 16 chance (~6%)
-            #   - At 20 days: 1 in 11 chance (~9%)
-            #   - At 25 days: 1 in 6 chance (~17%)
-            #   - At 29 days: 1 in 2 chance (50%)
-            #   - At 30+ days: Always rebuild (100%)
-            self.logger.info(
-                f'Task bundle {task_name} is {task_age_days} days old (>= 10 days), applying staggered rebuild logic'
-            )
-            rebuild_probability_denominator = max(30 - task_age_days, 1)
-            should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
-
-            if not should_rebuild:
-                self.logger.info(
-                    f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
-                    f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
-                )
-                continue
-
-            self.logger.info(
-                f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
-            )
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(
-                    RebuildHintCode.TASK_BUNDLE_OUTDATED,
-                    f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
-                    f'and newer version is available (staggered rebuild)',
-                ),
-            )
-            return
+            # Check if this task bundle should trigger a rebuild
+            if await self._check_task_bundle_age_and_rebuild(image_meta, task_name, used_sha, current_sha):
+                return
 
     async def get_current_task_bundle_shas(self) -> Dict[str, str]:
         """
