@@ -2,6 +2,7 @@ import logging
 import os
 import traceback
 from typing import Optional
+from datetime import datetime, timezone
 
 import click
 from artcommonlib import exectools
@@ -145,6 +146,7 @@ class BuildOadpPipeline:
         # await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
         self._logger.info(f"Successfully rebased and built bundle {self.image_name}")
 
+        release = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         # Build FBC
         fbc_build = [
             "doozer",
