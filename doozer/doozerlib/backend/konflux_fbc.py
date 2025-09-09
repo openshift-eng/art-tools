@@ -227,23 +227,23 @@ class KonfluxFbcImporter:
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
-        
+
         # Use OLM bundle structure for OADP groups, traditional structure for others
         use_olm_bundle_structure = self.group.startswith("oadp-")
-        
+
         if use_olm_bundle_structure and not csv_config.get('manifests-dir'):
             # OADP OLM bundle structure: Get package name from metadata/annotations.yaml
             if not csv_config.get('bundle-dir'):
                 raise ValueError(f"[{metadata.distgit_key}] No bundle-dir defined in the operator's update-csv for OADP structure")
-            
+
             bundle_dir = source_dir.joinpath(csv_config['bundle-dir'])
             annotations_path = bundle_dir / "metadata" / "annotations.yaml"
             if not annotations_path.exists():
                 raise FileNotFoundError(f"[{metadata.distgit_key}] No metadata/annotations.yaml found in OLM bundle structure at {annotations_path}")
-            
+
             with annotations_path.open() as f:
                 annotations = yaml.load(f)
-            
+
             package_name = annotations['annotations']['operators.operatorframework.io.bundle.package.v1']
             if not package_name:
                 raise IOError(f"Package name not found in {annotations_path}")
@@ -252,7 +252,7 @@ class KonfluxFbcImporter:
             # Traditional structure: manifests/bundle/ with package.yaml
             if not csv_config.get('manifests-dir'):
                 raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-            
+
             source_path = source_dir.joinpath(csv_config['manifests-dir'])
             package_yaml_file = next(source_path.glob('**/*package.yaml'))
             with package_yaml_file.open() as f:
@@ -904,12 +904,15 @@ class KonfluxFbcRebaser:
         ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
-        dest_repos = {
-            p_split[1]: p_split[0]
-            for bundle_blob in olm_bundle_blobs
-            for related_image in bundle_blob.get("relatedImages", [])
-            if (p_split := related_image["image"].split('@', 1))
-        }
+        # TODO: Understand what this is doing
+        dest_repos = {}
+        for bundle_blob in olm_bundle_blobs:
+            for related_image in bundle_blob.get("relatedImages", []):
+                if '@' in related_image["image"]:
+                    repo, digest = related_image["image"].split('@', 1)
+                    dest_repos[digest] = repo
+                else:
+                    continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None
@@ -928,7 +931,7 @@ class KonfluxFbcRebaser:
                             source_repo,
                         ],
                     }
-                    for sha, source_repo in source_repos.items()
+                    for sha, source_repo in source_repos.items() if sha in dest_repos
                 ],
             },
         }
