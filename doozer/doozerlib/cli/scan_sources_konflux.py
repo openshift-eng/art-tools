@@ -961,10 +961,10 @@ class ConfigScanSources:
 
         return task_bundles
 
-    async def _check_task_bundle_age_and_rebuild(self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str) -> bool:
+    async def _check_single_task_bundle(self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str) -> Optional[RebuildHint]:
         """
-        Check if a task bundle should trigger a rebuild based on its age and staggered rebuild logic.
-        Returns True if a rebuild was triggered, False otherwise.
+        Check if a single task bundle should trigger a rebuild based on its age and staggered rebuild logic.
+        Returns a RebuildHint if a rebuild should be triggered, None otherwise.
         """
         self.logger.info(
             f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
@@ -973,13 +973,13 @@ class ConfigScanSources:
         # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
         task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
         if not task_age_days:
-            return False
+            return None
 
         if task_age_days < 10:
             self.logger.info(
                 f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild'
             )
-            return False
+            return None
 
         # Staggered rebuild logic: probability increases as age increases
         #   - At 10 days: 1 in 21 chance (~5%)
@@ -999,20 +999,16 @@ class ConfigScanSources:
                 f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
                 f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
             )
-            return False
+            return None
 
         self.logger.info(
             f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
         )
-        self.add_image_meta_change(
-            image_meta,
-            RebuildHint(
-                RebuildHintCode.TASK_BUNDLE_OUTDATED,
-                f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
-                f'and newer version is available (staggered rebuild)',
-            ),
+        return RebuildHint(
+            RebuildHintCode.TASK_BUNDLE_OUTDATED,
+            f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
+            f'and newer version is available (staggered rebuild)',
         )
-        return True
 
     @skip_check_if_changing
     async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
@@ -1052,8 +1048,11 @@ class ConfigScanSources:
 
         self.logger.info(f'Retrieved {len(current_task_bundles)} current task bundles from GitHub')
 
-        # Check each task bundle for outdated versions
+        # Check each task bundle for outdated versions concurrently
         self.logger.info(f'Comparing task bundle versions for {image_meta.distgit_key}')
+        
+        # Filter out task bundles that are up-to-date or not found in current template
+        outdated_task_bundles = []
         for task_name, used_sha in task_bundles.items():
             current_sha = current_task_bundles.get(task_name)
             if not current_sha:
@@ -1063,9 +1062,22 @@ class ConfigScanSources:
             if used_sha == current_sha:
                 self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
                 continue
+                
+            outdated_task_bundles.append((task_name, used_sha, current_sha))
 
-            # Check if this task bundle should trigger a rebuild
-            if await self._check_task_bundle_age_and_rebuild(image_meta, task_name, used_sha, current_sha):
+        if not outdated_task_bundles:
+            return
+
+        # Process all outdated task bundles concurrently
+        rebuild_hints = await asyncio.gather(*[
+            self._check_single_task_bundle(image_meta, task_name, used_sha, current_sha)
+            for task_name, used_sha, current_sha in outdated_task_bundles
+        ])
+
+        # Check if any task bundle requires a rebuild
+        for rebuild_hint in rebuild_hints:
+            if rebuild_hint:
+                self.add_image_meta_change(image_meta, rebuild_hint)
                 return
 
     async def get_current_task_bundle_shas(self) -> Dict[str, str]:
