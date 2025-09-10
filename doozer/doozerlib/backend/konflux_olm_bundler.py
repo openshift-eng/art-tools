@@ -134,6 +134,8 @@ class KonfluxOlmBundleRebaser:
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"[{metadata.distgit_key}] No update-csv config found in the operator's metadata")
+        if not csv_config.get('manifests-dir'):
+            raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
         if not csv_config.get('bundle-dir'):
             raise ValueError(f"[{metadata.distgit_key}] No bundle-dir defined in the operator's update-csv")
         if not csv_config.get('valid-subscription-label'):
@@ -143,9 +145,6 @@ class KonfluxOlmBundleRebaser:
 
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        # Traditional structure: manifests/bundle/
-        if not csv_config.get('manifests-dir'):
-            raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
         operator_manifests_dir = operator_dir.joinpath(csv_config['manifests-dir'])
         operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
         bundle_manifests_dir = bundle_dir.joinpath("manifests")
@@ -155,16 +154,9 @@ class KonfluxOlmBundleRebaser:
                 f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}"
             )
 
-        # Get operator package name and channel info from traditional structure with package.yaml
-        package_yaml_candidates = glob.glob(f'{operator_manifests_dir}/*package.yaml')
-        if not package_yaml_candidates and operator_manifests_dir != operator_bundle_dir:
-            # If not found in manifests dir and they're different, try the bundle dir
-            package_yaml_candidates = glob.glob(f'{operator_bundle_dir}/*package.yaml')
-
-        if not package_yaml_candidates:
-            raise FileNotFoundError(f"[{metadata.distgit_key}] No package.yaml file found in {operator_manifests_dir} or {operator_bundle_dir}")
-
-        file_path = package_yaml_candidates[0]
+        # Get operator package name and channel from its package YAML
+        # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
+        file_path = glob.glob(f'{operator_manifests_dir}/*package.yaml')[0]
         async with aiofiles.open(file_path, 'r') as f:
             package_yaml = yaml.safe_load(await f.read())
         package_name = package_yaml['packageName']
@@ -182,12 +174,9 @@ class KonfluxOlmBundleRebaser:
             str, Tuple[str, str, str]
         ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
 
-        # Traditional structure: process files directly from bundle dir
-        source_manifests_dir = operator_bundle_dir
-
-        for src in source_manifests_dir.iterdir():
-            if src.name == "image-references" or not src.is_file() or not src.name.endswith('.yaml'):
-                continue  # skip image-references file, directories, and non-YAML files
+        for src in operator_bundle_dir.iterdir():
+            if src.name == "image-references":
+                continue  # skip image-references file
             logger.info(f"Processing {src}...")
             # Read the file content and replace image references
             async with aiofiles.open(src, 'r') as f:
@@ -215,6 +204,7 @@ class KonfluxOlmBundleRebaser:
 
         # Read image references from the operator's image-references file
         image_references = {}
+        refs_path = operator_bundle_dir / "image-references"
         # Check for image-references in the appropriate location based on structure
         refs_path = source_manifests_dir / "image-references"
         if not refs_path.exists():
