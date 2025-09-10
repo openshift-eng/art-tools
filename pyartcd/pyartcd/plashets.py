@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 from artcommonlib import exectools
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, util
 from pyartcd.constants import PLASHET_REMOTES
@@ -231,7 +232,7 @@ async def build_plashets(
             arches=arches,
             include_embargoed=config['include_embargoed'],
             signing_mode=signing_mode,
-            signing_advisory=signing_advisory,
+            signing_advisory=int(signing_advisory),
             embargoed_tags=config['embargoed_tags'],
             tag_pvs=((config["tag"], config['product_version']),),
             include_previous_packages=config['include_previous_packages'],
@@ -264,6 +265,7 @@ async def build_plashets(
     return plashets_built
 
 
+@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
 async def build_plashet_from_tags(
     group_param: str,
     assembly: str,
