@@ -316,10 +316,6 @@ class KonfluxOcp4Pipeline:
             LOGGER.info('All image builds failed, nothing to sync')
             return
 
-        _, minor = extract_version_fields(self.version)
-        if minor < 17:
-            return  # TODO to be removed
-
         if self.assembly == 'test':
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
             return
