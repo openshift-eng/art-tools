@@ -316,9 +316,10 @@ class KonfluxRebaser:
         """
         docker_ignore_path = f"{path}/.dockerignore"
         if os.path.exists(docker_ignore_path):
-            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
+            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes")
             async with aiofiles.open(docker_ignore_path, "a") as file:
                 await file.write("\n!/.oit/**\n")
+                await file.write("\n!labels.json\n")
 
     @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
