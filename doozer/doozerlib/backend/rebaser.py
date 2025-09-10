@@ -1983,8 +1983,7 @@ class KonfluxRebaser:
         manifests_dir = csv_config.get('manifests-dir', 'manifests')
         gvars = self._runtime.group_config.vars
         bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
-        
-        # Traditional structure: manifests/bundle/
+
         bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
 
         ref_candidates = [
@@ -1994,9 +1993,7 @@ class KonfluxRebaser:
         refs = next((cand for cand in ref_candidates if cand.is_file()), None)
         if not refs:
             raise FileNotFoundError(
-                '{}: image-references file not found in any location: {}'.format(
-                    metadata.distgit_key, ref_candidates
-                )
+                '{}: image-references file not found in any location: {}'.format(metadata.distgit_key, ref_candidates)
             )
 
         with io.open(refs, 'r') as f_ref:

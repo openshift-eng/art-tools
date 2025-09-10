@@ -229,10 +229,6 @@ class KonfluxFbcImporter:
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
 
-        # Traditional structure: manifests/bundle/ with package.yaml
-        if not csv_config.get('manifests-dir'):
-            raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-
         source_path = source_dir.joinpath(csv_config['manifests-dir'])
         package_yaml_file = next(source_path.glob('**/*package.yaml'))
         with package_yaml_file.open() as f:
