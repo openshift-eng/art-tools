@@ -74,8 +74,7 @@ class BuildOadpPipeline:
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
 
-        # Skip
-        # await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
         self._logger.info(f"Successfully rebased {self.image_name}")
 
         # Build OADP image
@@ -116,8 +115,7 @@ class BuildOadpPipeline:
         if konflux_registry_auth_file:
             build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
 
-        # Skip
-        # await exectools.cmd_assert_async(build_cmd, env=build_env)
+        await exectools.cmd_assert_async(build_cmd, env=build_env)
         self._logger.info(f"Successfully built {self.image_name}")
 
         # Build OADP bundle image
@@ -143,7 +141,7 @@ class BuildOadpPipeline:
             ]
         )
 
-        # await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
         self._logger.info(f"Successfully rebased and built bundle {self.image_name}")
 
         release = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
