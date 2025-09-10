@@ -2,6 +2,7 @@ import base64
 import copy
 import functools
 import json
+import logging
 import os
 import pathlib
 import re
@@ -35,6 +36,7 @@ except ImportError:
 from functools import lru_cache
 
 DICT_EMPTY = object()
+logger = logging.getLogger(__name__)
 
 
 def dict_get(dct, path, default=DICT_EMPTY):
@@ -760,3 +762,35 @@ def infer_assembly_type(custom, assembly_name):
         return AssemblyTypes.PREVIEW
     else:
         return AssemblyTypes.STANDARD
+
+
+def get_konflux_build_priority(metadata):
+    """
+    Get the Konflux build priority based on the precedence rules.
+
+    :param metadata: ImageMetadata object containing config and runtime info
+    :return: Priority value as string (1-10)
+    """
+    logger.info(f"Resolving build priority for {metadata.distgit_key}")
+
+    # 1. Image config priority
+    image_config_priority = metadata.config.konflux.get("build_priority")
+    if image_config_priority:
+        logger.info(f"Using image config priority for {metadata.distgit_key}: {image_config_priority}")
+        return str(image_config_priority)
+
+    # 2. Group config priority
+    group_config_priority = metadata.runtime.group_config.konflux.get("build_priority")
+    if group_config_priority:
+        logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
+        return str(group_config_priority)
+
+    # 3. Priority 7 for pre-release or signing phases
+    phase = metadata.runtime.group_config.software_lifecycle.phase
+    if phase in ("pre-release", "signing"):
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: 7 (phase: {phase})")
+        return "7"
+
+    # Default
+    logger.info(f"Using default priority for {metadata.distgit_key}: 5")
+    return "5"
