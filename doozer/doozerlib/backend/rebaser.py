@@ -2008,7 +2008,16 @@ class KonfluxRebaser:
         manifests_dir = csv_config.get('manifests-dir', 'manifests')
         gvars = self._runtime.group_config.vars
         bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
-        bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
+        
+        # Use OLM bundle structure for OADP groups, traditional structure for others
+        use_olm_bundle_structure = self._runtime.group.startswith("oadp-")
+        
+        if use_olm_bundle_structure and not csv_config.get('manifests-dir'):
+            # OADP OLM bundle structure: bundle/manifests/
+            bundle_manifests_dir = os.path.join(bundle_dir, 'manifests')
+        else:
+            # Traditional structure: manifests/bundle/
+            bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
 
         ref_candidates = [
             repo_dir.joinpath(dirpath, 'image-references')
@@ -2016,15 +2025,19 @@ class KonfluxRebaser:
         ]
         refs = next((cand for cand in ref_candidates if cand.is_file()), None)
         if not refs:
-            raise FileNotFoundError(
-                '{}: image-references file not found in any location: {}'.format(metadata.distgit_key, ref_candidates)
+            # image-references file is optional, return empty image_refs
+            self._logger.info(
+                '{}: image-references file not found in any location: {}. Proceeding without image references.'.format(
+                    metadata.distgit_key, ref_candidates
+                )
             )
-
-        with io.open(refs, 'r') as f_ref:
-            ref_data = yaml.full_load(f_ref)
-        image_refs = ref_data.get('spec', {}).get('tags', {})
-        if not image_refs:
-            raise ValueError('Data in {} not valid'.format(refs))
+            image_refs = {}
+        else:
+            with io.open(refs, 'r') as f_ref:
+                ref_data = yaml.full_load(f_ref)
+            image_refs = ref_data.get('spec', {}).get('tags', {})
+            if not image_refs:
+                raise ValueError('Data in {} not valid'.format(refs))
 
         csvs = list(repo_dir.joinpath(bundle_manifests_dir).glob('*.clusterserviceversion.yaml'))
         if len(csvs) < 1:
