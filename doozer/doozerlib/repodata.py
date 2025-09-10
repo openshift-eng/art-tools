@@ -185,11 +185,18 @@ class Repodata:
         not_found: list[str] = []
 
         for item in items:
-            # Find RPMs matching name/nvr AND (arch or noarch)
+            rpm_name = item
+
+            try:
+                parsed = parse_nvr(item)
+                extracted_name = parsed.get('name')
+                if extracted_name:
+                    rpm_name = extracted_name
+            except Exception:
+                pass
+
             matching_rpms = [
-                rpm
-                for rpm in self.primary_rpms
-                if (rpm.name == item or rpm.nvr == item) and (rpm.arch == arch or rpm.arch == 'noarch')
+                rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == 'noarch')
             ]
 
             if not matching_rpms:
