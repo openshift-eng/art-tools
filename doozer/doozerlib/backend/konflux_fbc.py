@@ -229,39 +229,18 @@ class KonfluxFbcImporter:
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
 
-        # Use OLM bundle structure for OADP groups, traditional structure for others
-        use_olm_bundle_structure = self.group.startswith("oadp-")
+        # Traditional structure: manifests/bundle/ with package.yaml
+        if not csv_config.get('manifests-dir'):
+            raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
 
-        if use_olm_bundle_structure and not csv_config.get('manifests-dir'):
-            # OADP OLM bundle structure: Get package name from metadata/annotations.yaml
-            if not csv_config.get('bundle-dir'):
-                raise ValueError(f"[{metadata.distgit_key}] No bundle-dir defined in the operator's update-csv for OADP structure")
-
-            bundle_dir = source_dir.joinpath(csv_config['bundle-dir'])
-            annotations_path = bundle_dir / "metadata" / "annotations.yaml"
-            if not annotations_path.exists():
-                raise FileNotFoundError(f"[{metadata.distgit_key}] No metadata/annotations.yaml found in OLM bundle structure at {annotations_path}")
-
-            with annotations_path.open() as f:
-                annotations = yaml.load(f)
-
-            package_name = annotations['annotations']['operators.operatorframework.io.bundle.package.v1']
+        source_path = source_dir.joinpath(csv_config['manifests-dir'])
+        package_yaml_file = next(source_path.glob('**/*package.yaml'))
+        with package_yaml_file.open() as f:
+            package_yaml = yaml.load(f)
+            package_name = package_yaml.get('packageName')
             if not package_name:
-                raise IOError(f"Package name not found in {annotations_path}")
+                raise IOError(f"Package name not found in {package_yaml_file}")
             return str(package_name)
-        else:
-            # Traditional structure: manifests/bundle/ with package.yaml
-            if not csv_config.get('manifests-dir'):
-                raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-
-            source_path = source_dir.joinpath(csv_config['manifests-dir'])
-            package_yaml_file = next(source_path.glob('**/*package.yaml'))
-            with package_yaml_file.open() as f:
-                package_yaml = yaml.load(f)
-                package_name = package_yaml.get('packageName')
-                if not package_name:
-                    raise IOError(f"Package name not found in {package_yaml_file}")
-                return str(package_name)
 
 
 class KonfluxFbcFragmentMerger:
