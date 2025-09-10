@@ -162,10 +162,10 @@ class BuildOadpPipeline:
             "--reset-to-prod",
             f"--release={release}",
             f"--konflux-kubeconfig={kubeconfig}",
-            f"--message=Rebase FBC segment with release{release}",
+            f"--message=Rebase FBC segment with release {release}",
             f"--prod-registry-auth={os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')}",
             # TODO: For testing
-            "oadp-operator-container-v1.0.0-202509060234.p2.g1d0b40b.assembly.test.el9"
+            # "oadp-operator-container-v1.0.0-202509060234.p2.g1d0b40b.assembly.test.el9"
         ]
 
         await exectools.cmd_assert_async(fbc_build, env=self._doozer_env_vars)
