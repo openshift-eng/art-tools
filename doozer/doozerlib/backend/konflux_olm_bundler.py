@@ -143,19 +143,11 @@ class KonfluxOlmBundleRebaser:
 
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        # Use OLM bundle structure for OADP groups, traditional structure for others
-        use_olm_bundle_structure = self.group.startswith("oadp-")
-
-        if use_olm_bundle_structure and not csv_config.get('manifests-dir'):
-            # OADP OLM bundle structure: bundle/
-            operator_manifests_dir = operator_dir
-            operator_bundle_dir = operator_dir.joinpath(csv_config['bundle-dir'])
-        else:
-            # Traditional structure: manifests/bundle/
-            if not csv_config.get('manifests-dir'):
-                raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-            operator_manifests_dir = operator_dir.joinpath(csv_config['manifests-dir'])
-            operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
+        # Traditional structure: manifests/bundle/
+        if not csv_config.get('manifests-dir'):
+            raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
+        operator_manifests_dir = operator_dir.joinpath(csv_config['manifests-dir'])
+        operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
         bundle_manifests_dir = bundle_dir.joinpath("manifests")
 
         if not next(operator_bundle_dir.iterdir(), None):
@@ -163,44 +155,22 @@ class KonfluxOlmBundleRebaser:
                 f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}"
             )
 
-        # Get operator package name and channel info
-        if use_olm_bundle_structure:
-            # OADP OLM bundle structure - get info from metadata/annotations.yaml and CSV
-            annotations_path = operator_bundle_dir / "metadata" / "annotations.yaml"
-            if not annotations_path.exists():
-                raise FileNotFoundError(f"[{metadata.distgit_key}] No metadata/annotations.yaml found in OLM bundle structure")
+        # Get operator package name and channel info from traditional structure with package.yaml
+        package_yaml_candidates = glob.glob(f'{operator_manifests_dir}/*package.yaml')
+        if not package_yaml_candidates and operator_manifests_dir != operator_bundle_dir:
+            # If not found in manifests dir and they're different, try the bundle dir
+            package_yaml_candidates = glob.glob(f'{operator_bundle_dir}/*package.yaml')
 
-            async with aiofiles.open(annotations_path, 'r') as f:
-                annotations = yaml.safe_load(await f.read())
+        if not package_yaml_candidates:
+            raise FileNotFoundError(f"[{metadata.distgit_key}] No package.yaml file found in {operator_manifests_dir} or {operator_bundle_dir}")
 
-            package_name = annotations['annotations']['operators.operatorframework.io.bundle.package.v1']
-            channel_name = annotations['annotations']['operators.operatorframework.io.bundle.channel.default.v1']
-
-            # Find CSV file to get the CSV name
-            csv_files = glob.glob(f'{operator_bundle_dir}/manifests/*.clusterserviceversion.yaml')
-            if not csv_files:
-                raise FileNotFoundError(f"[{metadata.distgit_key}] No ClusterServiceVersion file found in {operator_bundle_dir}/manifests/")
-
-            async with aiofiles.open(csv_files[0], 'r') as f:
-                csv_content = yaml.safe_load(await f.read())
-            csv_name = csv_content['metadata']['name']
-        else:
-            # Traditional structure with package.yaml
-            package_yaml_candidates = glob.glob(f'{operator_manifests_dir}/*package.yaml')
-            if not package_yaml_candidates and operator_manifests_dir != operator_bundle_dir:
-                # If not found in manifests dir and they're different, try the bundle dir
-                package_yaml_candidates = glob.glob(f'{operator_bundle_dir}/*package.yaml')
-
-            if not package_yaml_candidates:
-                raise FileNotFoundError(f"[{metadata.distgit_key}] No package.yaml file found in {operator_manifests_dir} or {operator_bundle_dir}")
-
-            file_path = package_yaml_candidates[0]
-            async with aiofiles.open(file_path, 'r') as f:
-                package_yaml = yaml.safe_load(await f.read())
-            package_name = package_yaml['packageName']
-            channel = package_yaml['channels'][0]
-            channel_name = str(channel['name'])
-            csv_name = str(channel['currentCSV'])
+        file_path = package_yaml_candidates[0]
+        async with aiofiles.open(file_path, 'r') as f:
+            package_yaml = yaml.safe_load(await f.read())
+        package_name = package_yaml['packageName']
+        channel = package_yaml['channels'][0]
+        channel_name = str(channel['name'])
+        csv_name = str(channel['currentCSV'])
 
         # Copy the operator's manifests to the bundle directory
         bundle_manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -212,15 +182,8 @@ class KonfluxOlmBundleRebaser:
             str, Tuple[str, str, str]
         ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
 
-        # Determine source directory for manifest files based on structure
-        if use_olm_bundle_structure:
-            # OADP OLM bundle structure: process files from bundle/manifests/
-            source_manifests_dir = operator_bundle_dir / "manifests"
-            if not source_manifests_dir.exists():
-                source_manifests_dir = operator_bundle_dir
-        else:
-            # Traditional structure: process files directly from bundle dir
-            source_manifests_dir = operator_bundle_dir
+        # Traditional structure: process files directly from bundle dir
+        source_manifests_dir = operator_bundle_dir
 
         for src in source_manifests_dir.iterdir():
             if src.name == "image-references" or not src.is_file() or not src.name.endswith('.yaml'):
