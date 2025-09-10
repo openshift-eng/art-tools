@@ -21,6 +21,7 @@ class BuildOadpPipeline:
         self,
         runtime: Runtime,
         group: str,
+        version: str,
         assembly: str,
         image_name: str,
         data_path: str,
@@ -29,6 +30,7 @@ class BuildOadpPipeline:
     ):
         self.runtime = runtime
         self.group = group
+        self.version = version
         self.assembly = assembly
         self.image_name = image_name
         self.kubeconfig = kubeconfig
@@ -53,7 +55,6 @@ class BuildOadpPipeline:
 
     async def _rebase_and_build(self):
         """Rebase and build OADP image"""
-        version = "v1.0.0"  # Default version, can be made configurable if needed
         release = default_release_suffix()
 
         # Rebase OADP image
@@ -67,9 +68,9 @@ class BuildOadpPipeline:
             "--latest-parent-version",
             f"--images={self.image_name}",
             "beta:images:konflux:rebase",
-            f"--version={version}",
+            f"--version={self.version}",
             f"--release={release}",
-            f"--message='Updating Dockerfile version and release {version}-{release}'",
+            f"--message='Updating Dockerfile version and release {self.version}-{release}'",
         ]
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
@@ -184,6 +185,12 @@ class BuildOadpPipeline:
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
+    "--version",
+    metavar='NAME',
+    required=True,
+    help="OADP version",
+)
+@click.option(
     "--assembly",
     metavar="ASSEMBLY_NAME",
     required=True,
@@ -204,13 +211,14 @@ class BuildOadpPipeline:
 @pass_runtime
 @click_coroutine
 async def build_oadp(
-    runtime: Runtime, data_path: str, group: str, assembly: str, image_name: str, kubeconfig: Optional[str]
+    runtime: Runtime, data_path: str, group: str, version: str, assembly: str, image_name: str, kubeconfig: Optional[str]
 ):
     """Rebase and build OADP image for an assembly"""
     try:
         pipeline = BuildOadpPipeline(
             runtime=runtime,
             group=group,
+            version=version,
             assembly=assembly,
             image_name=image_name,
             data_path=data_path,
