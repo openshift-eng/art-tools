@@ -2008,7 +2008,6 @@ class KonfluxRebaser:
         manifests_dir = csv_config.get('manifests-dir', 'manifests')
         gvars = self._runtime.group_config.vars
         bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
-
         bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
 
         ref_candidates = [

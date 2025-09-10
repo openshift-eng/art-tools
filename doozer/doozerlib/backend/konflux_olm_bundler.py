@@ -144,7 +144,6 @@ class KonfluxOlmBundleRebaser:
             )
 
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
-
         operator_manifests_dir = operator_dir.joinpath(csv_config['manifests-dir'])
         operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
         bundle_manifests_dir = bundle_dir.joinpath("manifests")
@@ -173,7 +172,6 @@ class KonfluxOlmBundleRebaser:
         all_found_operands: Dict[
             str, Tuple[str, str, str]
         ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
-
         for src in operator_bundle_dir.iterdir():
             if src.name == "image-references":
                 continue  # skip image-references file
