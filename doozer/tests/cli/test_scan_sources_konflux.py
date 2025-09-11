@@ -3,7 +3,7 @@ import json
 import random
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import yaml
@@ -335,7 +335,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test successful fetching and parsing of task bundle SHAs."""
         # Mock successful HTTP response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()
         mock_response.text = AsyncMock(return_value=yaml.dump(self.sample_yaml))
 
         self.session.get.return_value.__aenter__.return_value = mock_response
@@ -354,8 +354,8 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test handling of HTTP errors when fetching from GitHub."""
         # Mock HTTP error
         mock_response = AsyncMock()
-        mock_response.raise_for_status.side_effect = aiohttp.ClientResponseError(
-            request_info=MagicMock(), history=[], status=404
+        mock_response.raise_for_status = Mock(
+            side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=[], status=404)
         )
 
         self.session.get.return_value.__aenter__.return_value = mock_response
@@ -368,7 +368,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test handling of YAML parsing errors."""
         # Mock successful HTTP response with invalid YAML
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()
         mock_response.text = AsyncMock(return_value="invalid: yaml: content: [unclosed")
 
         self.session.get.return_value.__aenter__.return_value = mock_response
@@ -382,7 +382,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         yaml_without_tasks = {"spec": {"resources": []}}
 
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()
         mock_response.text = AsyncMock(return_value=yaml.dump(yaml_without_tasks))
 
         self.session.get.return_value.__aenter__.return_value = mock_response
@@ -430,7 +430,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         }
 
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()
         mock_response.text = AsyncMock(return_value=yaml.dump(nested_yaml))
 
         self.session.get.return_value.__aenter__.return_value = mock_response

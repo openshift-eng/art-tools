@@ -152,6 +152,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     )
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
     async def test_run_with_stream_assembly(self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _):
+        mock_slack_client = AsyncMock()
+        mock_slack_client.bind_channel = Mock()  # bind_channel is synchronous
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -164,10 +166,11 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False,
         )
+        runtime.new_slack_client.return_value = mock_slack_client
         pipeline = await PromotePipeline.create(
             runtime, group="openshift-4.10", assembly="stream", signing_env="prod", skip_sigstore=True
         )
-        with self.assertRaisesRegex(ValueError, "not supported"):
+        with self.assertRaisesRegex(ValueError, "missing the required.*upgrades.*field"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
