@@ -464,6 +464,7 @@ async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Option
     return out.strip()
 
 
+@limit_concurrency(limit=32)
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
 async def sync_to_quay(source_pullspec, destination_repo):
     LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
@@ -480,8 +481,14 @@ async def sync_to_quay(source_pullspec, destination_repo):
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 
-    await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
-    LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
+    try:
+        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
+        LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
+    except TimeoutError:
+        LOGGER.warning(
+            f"Timeout occurred while syncing image from {source_pullspec} to {destination_repo} after 30 minutes"
+        )
+        raise
 
     # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
     shasum = source_pullspec.split("@sha256:")[1]
@@ -496,5 +503,11 @@ async def sync_to_quay(source_pullspec, destination_repo):
     ]
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
-    await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
-    LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
+    try:
+        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
+        LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
+    except TimeoutError:
+        LOGGER.warning(
+            f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} after 30 minutes"
+        )
+        raise
