@@ -387,8 +387,6 @@ data:
         self.assertEqual(found_arches, {"noarch"})
         self.assertEqual(not_found, [])
 
-
-
     def test_get_rpms_with_arch_no_match(self):
         # Test when no RPM matches the requested architecture and no noarch exists
         found, not_found = self.repodata.get_rpms("foo", arch="s390x")
@@ -493,7 +491,7 @@ data:
             )
         ]
         repodata_single = Repodata(name="testrepo", primary_rpms=rpms_single_version, modules=[])
-        
+
         # Request the specific NVR - should only return that one RPM (not duplicated)
         found, not_found = repodata_single.get_rpms("single-ver-1.0.0-1.el9", arch="x86_64")
         self.assertEqual(len(found), 1)
@@ -539,7 +537,7 @@ data:
             ),
         ]
         repodata_multi = Repodata(name="testrepo", primary_rpms=rpms_multi_versions, modules=[])
-        
+
         # Request older version 1.0.0 - should return both 1.0.0 (specific) and 2.0.0 (latest)
         found, not_found = repodata_multi.get_rpms("multi-ver-1.0.0-1.el9", arch="x86_64")
         self.assertEqual(len(found), 2)
@@ -574,7 +572,7 @@ data:
             ),
         ]
         repodata_noarch = Repodata(name="testrepo", primary_rpms=rpms_with_noarch, modules=[])
-        
+
         # Request x86_64 version 1.0.0 - should return 1.0.0 (specific) and 2.0.0 (latest, noarch)
         found, not_found = repodata_noarch.get_rpms("with-noarch-1.0.0-1.el9", arch="x86_64")
         self.assertEqual(len(found), 2)
@@ -607,14 +605,14 @@ data:
         )
         rpms_with_extra = self.rpms + [extra_foo]
         repodata_mixed = Repodata(name="testrepo", primary_rpms=rpms_with_extra, modules=[])
-        
+
         items = [
             "foo-1.2.3-1.el9",  # NVR: should return 1.2.3 (specific) + 1.5.0 (latest)
-            "bar",               # Name: should return all versions (just 2.0.0)
-            "nonexistent"        # Should be not found
+            "bar",  # Name: should return all versions (just 2.0.0)
+            "nonexistent",  # Should be not found
         ]
         found, not_found = repodata_mixed.get_rpms(items, arch="x86_64")
-        
+
         # Should find: foo 1.2.3, foo 1.5.0, bar 2.0.0
         self.assertEqual(len(found), 3)
         found_nvrs = {rpm.nvr for rpm in found}
@@ -659,7 +657,7 @@ data:
             ),
         ]
         repodata_multiple = Repodata(name="testrepo", primary_rpms=rpms_multiple_foo, modules=[])
-        
+
         # Request by name - should return ALL versions
         found, not_found = repodata_multiple.get_rpms("foo", arch="x86_64")
         self.assertEqual(len(found), 3)
