@@ -385,7 +385,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             slack_client=self.mock_slack_client,
             runtime=self.runtime,
             group=self.group,
-            assembly=self.assembly,
+            assembly="4.18.0",  # Use the assembly that matches releases_config
         )
         pipeline.release_date = "2024-07-01"
         pipeline.assembly_type = AssemblyTypes.STANDARD
