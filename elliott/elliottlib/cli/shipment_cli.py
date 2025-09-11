@@ -2,6 +2,7 @@ import sys
 
 import click
 from artcommonlib import logutil
+from artcommonlib.gitdata import SafeFormatter
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from ruamel.yaml import YAML
@@ -59,14 +60,16 @@ class InitShipmentCli:
         data = None
         if self.kind != "fbc":
             et_data = self.runtime.get_errata_config()
-            _, minor, patch = self.runtime.get_major_minor_patch()
+            major, minor, patch = self.runtime.get_major_minor_patch()
             advisory_boilerplate = get_advisory_boilerplate(
                 runtime=self.runtime, et_data=et_data, art_advisory_key=self.kind, errata_type="RHBA"
             )
-            synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
-            advisory_topic = advisory_boilerplate['topic'].format(MINOR=minor, PATCH=patch)
-            advisory_description = advisory_boilerplate['description'].format(MINOR=minor, PATCH=patch)
-            advisory_solution = advisory_boilerplate['solution'].format(MINOR=minor, PATCH=patch)
+            replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
+            formatter = SafeFormatter()
+            synopsis = formatter.format(advisory_boilerplate['synopsis'], **replace_vars)
+            advisory_topic = formatter.format(advisory_boilerplate['topic'], **replace_vars)
+            advisory_description = formatter.format(advisory_boilerplate['description'], **replace_vars)
+            advisory_solution = formatter.format(advisory_boilerplate['solution'], **replace_vars)
 
             data = Data(
                 releaseNotes=ReleaseNotes(

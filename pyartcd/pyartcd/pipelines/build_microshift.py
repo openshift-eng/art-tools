@@ -13,6 +13,7 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
+from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.model import Model
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import isolate_nightly_name_components
@@ -163,12 +164,12 @@ class BuildMicroShiftPipeline:
         errata_api = AsyncErrataAPI()
 
         # Format the advisory boilerplate
-        synopsis = boilerplate['synopsis'].format(MINOR=release_version.minor, PATCH=release_version.patch)
-        advisory_topic = boilerplate['topic'].format(MINOR=release_version.minor, PATCH=release_version.patch)
-        advisory_description = boilerplate['description'].format(
-            MINOR=release_version.minor, PATCH=release_version.patch
-        )
-        advisory_solution = boilerplate['solution'].format(MINOR=release_version.minor, PATCH=release_version.patch)
+        formatter = SafeFormatter()
+        replace_vars = {"MAJOR": release_version.major, "MINOR": release_version.minor, "PATCH": release_version.patch}
+        synopsis = formatter.format(boilerplate['synopsis'], **replace_vars)
+        advisory_topic = formatter.format(boilerplate['topic'], **replace_vars)
+        advisory_description = formatter.format(boilerplate['description'], **replace_vars)
+        advisory_solution = formatter.format(boilerplate['solution'], **replace_vars)
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
