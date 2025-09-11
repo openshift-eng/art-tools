@@ -629,19 +629,21 @@ class KonfluxOcp4Pipeline:
         # Get the list of successful builds
         builds_to_mirror = [entry for entry in record_log['image_build_konflux'] if not int(entry['status'])]
 
-        for build in builds_to_mirror:
+        async def sync_build(build):
             release = build["nvrs"].split("-")[-1]
             image_pullspec = build["image_pullspec"]
 
             if self.assembly != "stream":
                 LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
-                continue
+                return
 
             if is_release_embargoed(release=release, build_system="konflux"):
                 LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
-                continue
+                return
 
             await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE)
+
+        await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
 
     async def run(self):
         await self.initialize()
