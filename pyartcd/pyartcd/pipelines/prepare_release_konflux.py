@@ -1154,7 +1154,8 @@ class PrepareReleaseKonfluxPipeline:
         :return: True if the PR was created or updated successfully, False otherwise.
         """
 
-        branch = f"update-assembly-{self.release_name}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+        branch = f"update-assembly-{self.release_name}-{timestamp}"
         updated = await self.update_build_data(branch)
         if not updated:
             self.logger.info("No changes in assembly config. PR will not be created or updated.")
