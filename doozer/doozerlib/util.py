@@ -538,10 +538,6 @@ def get_release_name(
         if release_offset is not None:
             raise ValueError("release_offset can't be set for a STANDARD release.")
         release_name = f"{assembly_name}"
-    elif assembly_type == AssemblyTypes.STREAM:
-        if release_offset is not None:
-            raise ValueError("release_offset can't be set for a STREAM release.")
-        release_name = f"{major}.{minor}.0-{assembly_name}"
     else:
         raise ValueError(f"Assembly type {assembly_type} is not supported.")
     return release_name
