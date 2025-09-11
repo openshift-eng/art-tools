@@ -12,7 +12,6 @@ import click
 import yaml
 from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
-from artcommonlib.config import BuildDataLoader
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Missing, Model
 from artcommonlib.runtime import GroupRuntime
@@ -132,18 +131,21 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
-    def get_replace_vars(self, group_config: Model | None):
-        replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
+    def get_group_config(self):
+        # group.yml can contain a `vars` section which should be a
+        # single level dict containing keys to str.format(**dict) replace
+        # into the YAML content. If `vars` found, the format will be
+        # preformed and the YAML model will reloaded from that result
+        tmp_config = Model(self.gitdata.load_data(key='group').data)
+        replace_vars = tmp_config.vars or Model()
         if self.assembly:
             replace_vars['runtime_assembly'] = self.assembly
-        return replace_vars
-
-    def get_group_config(self):
-        additional_vars = self.get_replace_vars(None)
-        group_config = self._build_data_loader.load_group_config(
-            assembly=self.assembly, releases_config=self.get_releases_config(), additional_vars=additional_vars
-        )
-        return Model(group_config)
+        try:
+            group_yml = yaml.safe_dump(tmp_config.primitive(), default_flow_style=False)
+            tmp_config = Model(yaml.safe_load(group_yml.format(**replace_vars)))
+        except KeyError as e:
+            raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
+        return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
     def initialize(
         self, mode='none', no_group=False, disabled=None, build_system: str = None, with_shipment: bool = False
@@ -407,16 +409,7 @@ class Runtime(GroupRuntime):
                 commitish=self.group_commitish,
                 logger=self._logger,
             )
-            self._build_data_loader = BuildDataLoader(
-                data_path=self.data_path,
-                clone_dir=self.working_dir,
-                commitish=self.group_commitish,
-                build_system=self.build_system,
-                upcycle=False,
-                gitdata=self.gitdata,
-                logger=self._logger,
-            )
-            self.data_dir = self._build_data_loader.data_dir
+            self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
@@ -438,21 +431,19 @@ class Runtime(GroupRuntime):
                 raise ElliottFatalError(ex)
 
     def get_releases_config(self):
-        if self.releases_config is None:
-            self.releases_config = Model(self._build_data_loader.load_releases_config())
+        if self.releases_config is not None:
+            return self.releases_config
+
+        load = self.gitdata.load_data(key='releases')
+        if load:
+            self.releases_config = Model(load.data)
+        else:
+            self.releases_config = Model()
+
         return self.releases_config
 
-    def get_errata_config(self):
-        replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='erratatool', default={}, replace_vars=replace_vars)
-
-    def get_bug_config(self):
-        replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='bug', default={}, replace_vars=replace_vars)
-
-    def get_streams_config(self):
-        replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='streams', default={}, replace_vars=replace_vars)
+    def get_errata_config(self, **kwargs):
+        return self.gitdata.load_data(key='erratatool', **kwargs).data
 
     def is_version_in_lifecycle_phase(self, phase: str, version: str = None) -> bool:
         """
