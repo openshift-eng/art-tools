@@ -43,6 +43,7 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async__caching
 
 DEFAULT_THRESHOLD_HOURS = 6
+TASK_BUNDLE_AGE_THRESHOLD_DAYS = 10
 
 
 class ConfigScanSources:
@@ -923,8 +924,7 @@ class ConfigScanSources:
                 registry_auth_file=self.registry_auth_file,
             )
             return attestation
-        except ChildProcessError as e:
-            self.logger.warning('Failed to download SLSA attestation for task bundle check: %s', e)
+        except ChildProcessError:
             return None
 
     def _extract_task_bundles_from_attestation(self, attestation: str) -> Dict[str, str]:
@@ -973,13 +973,13 @@ class ConfigScanSources:
             f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
         )
 
-        # Task bundle version differs, check if it's more than 10 days old and apply staggered rebuild logic
+        # Task bundle version differs, check if it's more than TASK_BUNDLE_AGE_THRESHOLD_DAYS days old and apply staggered rebuild logic
         task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
         if not task_age_days:
             return None
 
-        if task_age_days < 10:
-            self.logger.info(f'Task bundle {task_name} is only {task_age_days} days old (< 10 days), skipping rebuild')
+        if task_age_days < TASK_BUNDLE_AGE_THRESHOLD_DAYS:
+            self.logger.info(f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild')
             return None
 
         # Staggered rebuild logic: probability increases as age increases
@@ -990,7 +990,7 @@ class ConfigScanSources:
         #   - At 29 days: 1 in 2 chance (50%)
         #   - At 30+ days: Always rebuild (100%)
         self.logger.info(
-            f'Task bundle {task_name} is {task_age_days} days old (>= 10 days), applying staggered rebuild logic'
+            f'Task bundle {task_name} is {task_age_days} days old (>= {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), applying staggered rebuild logic'
         )
         rebuild_probability_denominator = max(30 - task_age_days, 1)
         should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
@@ -1007,7 +1007,7 @@ class ConfigScanSources:
         )
         return RebuildHint(
             RebuildHintCode.TASK_BUNDLE_OUTDATED,
-            f'Task bundle {task_name} is {task_age_days} days old (>={10} days) '
+            f'Task bundle {task_name} is {task_age_days} days old (>={TASK_BUNDLE_AGE_THRESHOLD_DAYS} days) '
             f'and newer version is available (staggered rebuild)',
         )
 
@@ -1015,7 +1015,7 @@ class ConfigScanSources:
     async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
         """
         Check if task bundles used in the build are outdated compared to current versions
-        and if old task bundles are more than 10 days old, trigger a rebuild.
+        and if old task bundles are more than {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days old, trigger a rebuild.
         """
         # Skip if image is not being released
         for_release = image_meta.config.for_release
@@ -1104,41 +1104,44 @@ class ConfigScanSources:
             task_bundles = {}
 
             # Look for task references in the YAML
-            def extract_task_refs(obj):
-                if isinstance(obj, dict):
-                    for key, value in obj.items():
-                        if key == 'taskRef' and isinstance(value, dict):
-                            resolver = value.get('resolver')
-                            if resolver == 'bundles':
-                                params = value.get('params', [])
-                                name_param = next((p for p in params if p.get('name') == 'name'), None)
-                                bundle_param = next((p for p in params if p.get('name') == 'bundle'), None)
-                                if name_param and bundle_param:
-                                    bundle_url = bundle_param.get('value', '')
-                                    if 'quay.io/konflux-ci/tekton-catalog/' in bundle_url and '@sha256:' in bundle_url:
-                                        # Extract task name from bundle URL like "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:..."
-                                        # The task name is between the last '/' and the first ':' or '@'
-                                        url_parts = bundle_url.split('/')
-                                        if len(url_parts) >= 4:
-                                            task_part = url_parts[-1]  # e.g., "task-init:0.2@sha256:..."
-                                            actual_task_name = (
-                                                task_part.split(':')[0] if ':' in task_part else task_part.split('@')[0]
-                                            )
-                                            sha = bundle_url.split('@sha256:')[1]
-                                            task_bundles[actual_task_name] = sha
-                        else:
-                            extract_task_refs(value)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        extract_task_refs(item)
-
-            extract_task_refs(yaml_data)
+            self._extract_task_refs(yaml_data, task_bundles)
             self.logger.info(f'Successfully extracted {len(task_bundles)} task bundle references from GitHub template')
             return task_bundles
 
         except Exception as e:
             self.logger.error(f'Failed to fetch current task bundle SHAs: {e}')
             return {}
+
+    def _extract_task_refs(self, obj, task_bundles: Dict[str, str]):
+        """
+        Recursively extract task bundle references from YAML data.
+        """
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == 'taskRef' and isinstance(value, dict):
+                    resolver = value.get('resolver')
+                    if resolver == 'bundles':
+                        params = value.get('params', [])
+                        name_param = next((p for p in params if p.get('name') == 'name'), None)
+                        bundle_param = next((p for p in params if p.get('name') == 'bundle'), None)
+                        if name_param and bundle_param:
+                            bundle_url = bundle_param.get('value', '')
+                            if 'quay.io/konflux-ci/tekton-catalog/' in bundle_url and '@sha256:' in bundle_url:
+                                # Extract task name from bundle URL like "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:..."
+                                # The task name is between the last '/' and the first ':' or '@'
+                                url_parts = bundle_url.split('/')
+                                if len(url_parts) >= 4:
+                                    task_part = url_parts[-1]  # e.g., "task-init:0.2@sha256:..."
+                                    actual_task_name = (
+                                        task_part.split(':')[0] if ':' in task_part else task_part.split('@')[0]
+                                    )
+                                    sha = bundle_url.split('@sha256:')[1]
+                                    task_bundles[actual_task_name] = sha
+                else:
+                    self._extract_task_refs(value, task_bundles)
+        elif isinstance(obj, list):
+            for item in obj:
+                self._extract_task_refs(item, task_bundles)
 
     async def get_task_bundle_age_days(self, task_name: str, sha: str) -> Optional[int]:
         """
