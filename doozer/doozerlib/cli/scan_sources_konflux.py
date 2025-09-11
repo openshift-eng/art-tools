@@ -979,7 +979,9 @@ class ConfigScanSources:
             return None
 
         if task_age_days < TASK_BUNDLE_AGE_THRESHOLD_DAYS:
-            self.logger.info(f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild')
+            self.logger.info(
+                f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild'
+            )
             return None
 
         # Staggered rebuild logic: probability increases as age increases
