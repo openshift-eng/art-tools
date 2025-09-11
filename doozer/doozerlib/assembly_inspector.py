@@ -566,7 +566,11 @@ class AssemblyInspector:
         """Get external rpm build dicts from rhaos candidate Brew tags.
         :return: a dict. key is Brew tag name, value is another (component_name, rpm_build) dict
         """
-        et_data = self.runtime.get_errata_config()
+        replace_vars = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
+
+        # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
+        replace_vars['PATCH'] = replace_vars['release_name'].split('.')[-1]
+        et_data = self.runtime.get_errata_config(replace_vars=replace_vars)
         tag_pv_map = cast(Optional[Dict[str, str]], et_data.get('brew_tag_product_version_mapping'))
         if not tag_pv_map:
             return {}
