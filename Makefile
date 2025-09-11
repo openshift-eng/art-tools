@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint format format-check reinstall refresh clean-reinstall
+.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall
 
 venv:
 	uv venv --python 3.11
