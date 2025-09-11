@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import random
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -27,11 +28,13 @@ from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge
 from async_lru import alru_cache
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
@@ -41,6 +44,7 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async__caching
 
 DEFAULT_THRESHOLD_HOURS = 6
+TASK_BUNDLE_AGE_THRESHOLD_DAYS = 10
 
 
 class ConfigScanSources:
@@ -445,6 +449,9 @@ class ConfigScanSources:
 
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
+
+        # Check for outdated task bundles
+        await self.scan_task_bundle_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -914,6 +921,268 @@ class ConfigScanSources:
                         f'Image {image_meta.distgit_key} is sensitive to extra_packages {extra_package_name} '
                         f'which changed at event {extra_latest_tagging_event}',
                     )
+
+    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[str]:
+        """
+        Fetch SLSA attestation for the given build record.
+        """
+        try:
+            # Get SLSA attestation for the build
+            self.logger.info(f'Fetching SLSA attestation for {build_record.image_pullspec}')
+            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
+                pullspec=build_record.image_pullspec,
+                registry_auth_file=self.registry_auth_file,
+            )
+            return attestation
+        except ChildProcessError:
+            return None
+
+    def _extract_task_bundles_from_attestation(self, attestation: str) -> Dict[str, str]:
+        """
+        Extract task bundles from SLSA attestation materials.
+        Returns a dict mapping task names to their SHA256 digests.
+        """
+        try:
+            # Parse attestation to get materials (task bundles)
+            # For example
+            # $ cosign download attestation <build pullspec> | jq -r ' .payload | @base64d | fromjson | .predicate.materials'
+            # [{
+            #     "digest": {
+            #       "sha256": "4a601aeec58a1dd89c271e728fd8f0d84777825b46940c3aec27f15bab3edacf"
+            #     },
+            #     "uri": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta"
+            #   },
+            # ...]
+            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+            materials = payload_json["predicate"]["materials"]
+        except Exception as e:
+            self.logger.warning("Failed to parse SLSA attestation for task bundle check: %s", e)
+            return {}
+
+        # Extract tekton-catalog task bundles
+        self.logger.info(f'Extracting task bundles from {len(materials)} materials in SLSA attestation')
+        task_bundles = {}
+        for material in materials:
+            uri = material.get("uri", "")
+            if "quay.io/konflux-ci/tekton-catalog/" in uri:
+                task_name = uri.split("/")[-1]
+                task_sha = material.get("digest", {}).get("sha256", "")
+                if task_sha:
+                    task_bundles[task_name] = task_sha
+
+        return task_bundles
+
+    async def _check_single_task_bundle(
+        self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str
+    ) -> Optional[RebuildHint]:
+        """
+        Check if a single task bundle should trigger a rebuild based on its age and staggered rebuild logic.
+        Returns a RebuildHint if a rebuild should be triggered, None otherwise.
+        """
+        self.logger.info(
+            f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
+        )
+
+        # Task bundle version differs, check if it's more than TASK_BUNDLE_AGE_THRESHOLD_DAYS days old and apply staggered rebuild logic
+        task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
+        if not task_age_days:
+            return None
+
+        if task_age_days < TASK_BUNDLE_AGE_THRESHOLD_DAYS:
+            self.logger.info(
+                f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild'
+            )
+            return None
+
+        # Staggered rebuild logic: probability increases as age increases
+        #   - At 10 days: 1 in 21 chance (~5%)
+        #   - At 15 days: 1 in 16 chance (~6%)
+        #   - At 20 days: 1 in 11 chance (~9%)
+        #   - At 25 days: 1 in 6 chance (~17%)
+        #   - At 29 days: 1 in 2 chance (50%)
+        #   - At 30+ days: Always rebuild (100%)
+        self.logger.info(
+            f'Task bundle {task_name} is {task_age_days} days old (>= {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), applying staggered rebuild logic'
+        )
+        rebuild_probability_denominator = max(30 - task_age_days, 1)
+        should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
+
+        if not should_rebuild:
+            self.logger.info(
+                f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
+                f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
+            )
+            return None
+
+        self.logger.info(
+            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
+        )
+        return RebuildHint(
+            RebuildHintCode.TASK_BUNDLE_OUTDATED,
+            f'Task bundle {task_name} is {task_age_days} days old (>={TASK_BUNDLE_AGE_THRESHOLD_DAYS} days) '
+            f'and newer version is available (staggered rebuild)',
+        )
+
+    @skip_check_if_changing
+    async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
+        """
+        Check if task bundles used in the build are outdated compared to current versions
+        and if old task bundles are more than {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days old, trigger a rebuild.
+        """
+        # Skip if image is not being released
+        for_release = image_meta.config.for_release
+        if for_release is False:
+            self.logger.info(f"Skipping scanning task bundle for {image_meta.distgit_key} since its unreleased")
+            return
+
+        self.logger.info(f'Scanning task bundle changes for {image_meta.distgit_key}')
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+
+        # Fetch SLSA attestation
+        attestation = await self._fetch_slsa_attestation(build_record)
+        if not attestation:
+            self.logger.warning(
+                f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check'
+            )
+            return
+
+        # Extract task bundles from attestation
+        task_bundles = self._extract_task_bundles_from_attestation(attestation)
+        if not task_bundles:
+            self.logger.info(f'No tekton-catalog task bundles found in {build_record.image_pullspec}')
+            return
+
+        self.logger.info(f'Found {len(task_bundles)} task bundles: {list(task_bundles.keys())}')
+
+        # Get current task bundle SHAs from GitHub
+        self.logger.info('Fetching current task bundle SHAs from GitHub template')
+        current_task_bundles = await self.get_current_task_bundle_shas()
+        if not current_task_bundles:
+            self.logger.warning('Could not fetch current task bundle SHAs from GitHub')
+            return
+
+        self.logger.info(f'Retrieved {len(current_task_bundles)} current task bundles from GitHub')
+
+        # Check each task bundle for outdated versions concurrently
+        self.logger.info(f'Comparing task bundle versions for {image_meta.distgit_key}')
+
+        # Filter out task bundles that are up-to-date or not found in current template
+        outdated_task_bundles = []
+        for task_name, used_sha in task_bundles.items():
+            current_sha = current_task_bundles.get(task_name)
+            if not current_sha:
+                self.logger.info(f'Task {task_name} not found in current template')
+                continue
+
+            if used_sha == current_sha:
+                self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
+                continue
+
+            outdated_task_bundles.append((task_name, used_sha, current_sha))
+
+        if not outdated_task_bundles:
+            return
+
+        # Process all outdated task bundles concurrently
+        rebuild_hints = await asyncio.gather(
+            *[
+                self._check_single_task_bundle(image_meta, task_name, used_sha, current_sha)
+                for task_name, used_sha, current_sha in outdated_task_bundles
+            ]
+        )
+
+        # Check if any task bundle requires a rebuild
+        for rebuild_hint in rebuild_hints:
+            if rebuild_hint:
+                self.add_image_meta_change(image_meta, rebuild_hint)
+                return
+
+    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(5))
+    async def get_current_task_bundle_shas(self) -> Dict[str, str]:
+        """
+        Fetch current task bundle SHAs from the art-konflux-template GitHub repository
+        """
+        self.logger.info(f'Fetching task bundle template from {KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL}')
+        try:
+            async with self.session.get(
+                KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL, headers={'Authorization': f'Bearer {self.github_token}'}
+            ) as response:
+                response.raise_for_status()
+                yaml_content = await response.text()
+
+            # Parse YAML to extract task bundle references
+            self.logger.info('Parsing YAML content to extract task bundle references')
+            yaml_data = yaml.safe_load(yaml_content)
+            task_bundles = {}
+
+            # Look for task references in the YAML
+            self._extract_task_refs(yaml_data, task_bundles)
+            self.logger.info(f'Successfully extracted {len(task_bundles)} task bundle references from GitHub template')
+            return task_bundles
+
+        except Exception as e:
+            self.logger.error(f'Failed to fetch current task bundle SHAs: {e}')
+            return {}
+
+    def _extract_task_refs(self, obj, task_bundles: Dict[str, str]):
+        """
+        Recursively extract task bundle references from YAML data.
+        """
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == 'taskRef' and isinstance(value, dict):
+                    resolver = value.get('resolver')
+                    if resolver == 'bundles':
+                        params = value.get('params', [])
+                        name_param = next((p for p in params if p.get('name') == 'name'), None)
+                        bundle_param = next((p for p in params if p.get('name') == 'bundle'), None)
+                        if name_param and bundle_param:
+                            bundle_url = bundle_param.get('value', '')
+                            if 'quay.io/konflux-ci/tekton-catalog/' in bundle_url and '@sha256:' in bundle_url:
+                                # Extract task name from bundle URL like "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:..."
+                                # The task name is between the last '/' and the first ':' or '@'
+                                url_parts = bundle_url.split('/')
+                                if len(url_parts) >= 4:
+                                    task_part = url_parts[-1]  # e.g., "task-init:0.2@sha256:..."
+                                    actual_task_name = (
+                                        task_part.split(':')[0] if ':' in task_part else task_part.split('@')[0]
+                                    )
+                                    sha = bundle_url.split('@sha256:')[1]
+                                    task_bundles[actual_task_name] = sha
+                else:
+                    self._extract_task_refs(value, task_bundles)
+        elif isinstance(obj, list):
+            for item in obj:
+                self._extract_task_refs(item, task_bundles)
+
+    async def get_task_bundle_age_days(self, task_name: str, sha: str) -> Optional[int]:
+        """
+        Get the age of a task bundle in days using oc image info
+        """
+        pullspec = f"quay.io/konflux-ci/tekton-catalog/{task_name}@sha256:{sha}"
+        self.logger.info(f'Getting age for task bundle {task_name} using pullspec {pullspec}')
+        try:
+            cmd = f"oc image info {pullspec} -o json"
+            _, out, _ = await cmd_gather_async(cmd)
+
+            image_info = json.loads(out)
+            created_str = image_info.get('config', {}).get('created', '')
+            if not created_str:
+                return None
+
+            # Parse creation time and calculate age
+            created_time = datetime.fromisoformat(created_str.rstrip('Z')).replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            age_days = (now - created_time).days
+
+            self.logger.info(
+                f'Task bundle {task_name} was created on {created_time.strftime("%Y-%m-%d")}, age: {age_days} days'
+            )
+            return age_days
+
+        except Exception as e:
+            self.logger.warning(f'Failed to get age for task bundle {task_name}@{sha}: {e}')
+            return None
 
     async def check_changing_rpms(self):
         """
