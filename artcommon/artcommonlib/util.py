@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import sys
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -479,7 +480,7 @@ async def sync_to_quay(source_pullspec, destination_repo):
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 
-    await asyncio.wait_for(cmd_assert_async(cmd), timeout=7200)
+    await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
 
     # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
     shasum = source_pullspec.split("@sha256:")[1]
@@ -494,4 +495,4 @@ async def sync_to_quay(source_pullspec, destination_repo):
     ]
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
-    await asyncio.wait_for(cmd_assert_async(cmd), timeout=7200)
+    await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=7200)
