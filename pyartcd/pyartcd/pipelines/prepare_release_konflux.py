@@ -1154,7 +1154,7 @@ class PrepareReleaseKonfluxPipeline:
         :return: True if the PR was created or updated successfully, False otherwise.
         """
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         branch = f"update-assembly-{self.release_name}-{timestamp}"
         updated = await self.update_build_data(branch)
         if not updated:
