@@ -283,7 +283,7 @@ class PromotePipeline:
             if shipment_config and image_advisory != 0:
                 raise ValueError("Shipment config is defined but image advisory is also defined!")
 
-            if shipment_config:
+            if shipment_config and assembly_type != AssemblyTypes.PREVIEW:
                 shipment_url = shipment_config.get("url")
                 if not shipment_url:
                     raise ValueError("Shipment config is defined but url is not defined!")

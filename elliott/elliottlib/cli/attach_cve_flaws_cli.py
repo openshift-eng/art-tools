@@ -303,7 +303,7 @@ class AttachCveFlaws:
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
             tracker_flaws, flaw_bugs = get_flaws(
-                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
+                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly, self.major
             )
 
             try:
