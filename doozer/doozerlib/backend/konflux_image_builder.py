@@ -120,9 +120,10 @@ class KonfluxImageBuilder:
                     raise IOError(
                         f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
                     )
+
                 dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
                     {
-                        "group": metadata.runtime.group,
+                        "group": self._config.group_name,
                         "assembly_name": metadata.runtime.assembly,
                         "distgit_key": metadata.distgit_key,
                     }
@@ -255,7 +256,11 @@ class KonfluxImageBuilder:
                 raise error
         finally:
             if self._record_logger:
-                self._record_logger.add_record("image_build_konflux", **record)
+                if 'okd' in self._config.group_name:
+                    key = 'image_build_okd'
+                else:
+                    key = 'image_build_konflux'
+                self._record_logger.add_record(key, **record)
             metadata.build_event.set()
         return pipelinerun_name, pipelinerun_info.to_dict()
 
@@ -689,7 +694,7 @@ class KonfluxImageBuilder:
             'start_time': datetime.now(tz=timezone.utc),
             'end_time': None,
             'nvr': nvr,
-            'group': metadata.runtime.group,
+            'group': self._config.group_name,
             'assembly': metadata.runtime.assembly,
             'source_repo': source_repo,
             'commitish': commitish,

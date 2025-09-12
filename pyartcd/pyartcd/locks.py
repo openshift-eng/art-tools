@@ -27,6 +27,7 @@ class Lock(enum.Enum):
     FBC_BUILD = 'lock:fbc-build:{group}'
     OADP_BUILD = 'lock:oadp-build:{group}'
     OADP_SCAN = 'lock:oadp-scan:{group}'
+    BUILD_OKD4 = 'lock:build-okd4:{version}'
 
 
 class Keys(enum.Enum):
@@ -122,6 +123,11 @@ LOCK_POLICY = {
     },
     Lock.OADP_SCAN: {
         'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.BUILD_OKD4: {
+        'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
