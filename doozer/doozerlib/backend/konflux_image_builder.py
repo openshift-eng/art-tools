@@ -616,6 +616,7 @@ class KonfluxImageBuilder:
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
+            'build_priority': int(util.get_konflux_build_priority(metadata=metadata)),
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
