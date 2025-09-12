@@ -310,6 +310,6 @@ class BuildRepo:
         if rc == 0:
             pull_url = pull_remote_url.strip()
 
-        repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger, pull_url)
+        repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger=logger, pull_url=pull_url)
         repo._commit_hash = await BuildRepo._get_commit_hash(local_dir)
         return repo
