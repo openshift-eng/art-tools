@@ -511,3 +511,27 @@ async def sync_to_quay(source_pullspec, destination_repo):
             f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} after 30 minutes"
         )
         raise
+
+
+def validate_build_priority(build_priority):
+    """
+    Validate build priority value.
+
+    :param build_priority: Priority value to validate
+    :return: None if valid
+    :raises: ValueError if invalid
+    """
+    if build_priority == "auto":
+        return
+
+    if build_priority is None:
+        raise ValueError("Build priority shouldn't be None")
+
+    try:
+        priority_int = int(build_priority)
+        if not (1 <= priority_int <= 10):
+            raise ValueError(f"Build priority must be 'auto' or a number between 1-10, got: {build_priority}")
+    except ValueError as e:
+        if "invalid literal" in str(e):
+            raise ValueError(f"Build priority must be 'auto' or a number between 1-10, got: {build_priority}")
+        raise
