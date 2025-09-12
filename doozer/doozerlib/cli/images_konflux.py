@@ -13,8 +13,9 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Model
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import validate_build_priority
+from artcommonlib.util import deep_merge, validate_build_priority
 from opentelemetry import trace
 
 from doozerlib import constants
@@ -95,7 +96,6 @@ class KonfluxRebaseCli:
                         self.version,
                         self.release,
                         force_yum_updates=self.force_yum_updates,
-                        image_repo=self.image_repo,
                         commit_message=self.message,
                         push=self.push,
                     )
@@ -198,6 +198,7 @@ class KonfluxBuildCli:
         dry_run: bool,
         plr_template: str,
         build_priority: Optional[str],
+        okd: Optional[bool],
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -209,6 +210,7 @@ class KonfluxBuildCli:
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
+        self.okd = okd
 
         validate_build_priority(self.build_priority)
 
@@ -216,6 +218,14 @@ class KonfluxBuildCli:
     async def run(self):
         runtime = self.runtime
         runtime.initialize(mode='images', clone_distgits=False)
+
+        if self.okd:
+            group_config = self.runtime.group_config.copy()
+            if group_config['okd']:
+                LOGGER.info('Build images using OKD group configuration')
+                group_config = deep_merge(group_config, group_config['okd'])
+                runtime.group_config = Model(group_config)
+
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = runtime.ordered_image_metas()
@@ -224,9 +234,16 @@ class KonfluxBuildCli:
         span = trace.get_current_span()
         span.update_name(f"images:konflux:build.{len(metas)}metas")
         span.set_attribute("doozer.images.count", len(metas))
+
+        if self.okd:
+            major, minor = runtime.get_major_minor_fields()
+            group = f'okd-{major}.{minor}'
+        else:
+            group = runtime.group
+
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
-            group_name=runtime.group,
+            group_name=group,
             kubeconfig=self.konflux_kubeconfig,
             context=self.konflux_context,
             namespace=self.konflux_namespace,
@@ -291,6 +308,7 @@ class KonfluxBuildCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option('--okd', default=False, is_flag=True, help='Build for OKD')
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -304,6 +322,7 @@ async def images_konflux_build(
     plr_template: str,
     build_priority: Optional[str],
     network_mode: Optional[str],
+    okd: Optional[bool],
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -319,6 +338,7 @@ async def images_konflux_build(
         dry_run=dry_run,
         plr_template=plr_template,
         build_priority=build_priority,
+        okd=okd,
     )
     await cli.run()
 

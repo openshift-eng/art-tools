@@ -13,7 +13,6 @@ from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay, validate_build_priority
-from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
@@ -46,12 +45,12 @@ class BuildPlan:
         self.image_build_strategy = image_build_strategy  # build all images or a subset
         self.images_included = []  # include list for images to build
         self.images_excluded = []  # exclude list for images to build
-        self.active_rpm_count = 0  # number of RPMs active in this version
+        self.active_image_count = 0  # number of images active in this version
 
         self.rpm_build_strategy = rpm_build_strategy  # build all RPMs or a subset
         self.rpms_included = []  # include list for RPMs to build
         self.rpms_excluded = []  # exclude list for RPMs to build
-        self.active_image_count = 0  # number of images active in this version
+        self.active_rpm_count = 0  # number of RPMs active in this version
 
     def __str__(self):
         return json.dumps(self.__dict__, indent=4, cls=EnumEncoder)
