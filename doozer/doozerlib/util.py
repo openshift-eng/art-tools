@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Union
 import artcommonlib
 import semver
 import yaml
-from artcommonlib import exectools
+from artcommonlib import constants, exectools
 from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
@@ -792,5 +792,5 @@ def get_konflux_build_priority(metadata):
         return "7"
 
     # Default
-    logger.info(f"Using default priority for {metadata.distgit_key}: 5")
-    return "5"
+    logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
+    return str(constants.KONFLUX_DEFAULT_BUILD_PRIORITY)
