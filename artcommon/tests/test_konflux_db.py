@@ -455,7 +455,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('build_id', 'STRING', 'REQUIRED'),
             SchemaField('nvr', 'STRING', 'REQUIRED'),
             SchemaField('build_component', 'STRING', 'REQUIRED'),
-            SchemaField('build_priority', 'STRING', 'REQUIRED'),
+            SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
         ]
         self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
