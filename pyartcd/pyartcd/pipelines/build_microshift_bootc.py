@@ -32,6 +32,7 @@ from artcommonlib.util import (
     sync_to_quay,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import Github, GithubException
@@ -670,12 +671,12 @@ class BuildMicroShiftBootcPipeline:
         try:
             # Look for shipment files in the expected directory structure
             # Pattern: shipment/{product}/{group}/{application}/prod/{assembly}.microshift-bootc.*.yaml
-            product = 'ocp'
-            group = self.group.replace('openshift-', '')  # e.g., openshift-4.18 -> 4.18
-            application = 'microshift'  # or could be derived from metadata
+            application = KonfluxImageBuilder.get_application_name(self.group)
             env = 'prod'
 
-            shipment_dir = self.shipment_data_repo._directory / "shipment" / product / group / application / env
+            shipment_dir = (
+                self.shipment_data_repo._directory / "shipment" / self.product / self.group / application / env
+            )
 
             if not shipment_dir.exists():
                 self._logger.info("Shipment directory does not exist: %s", shipment_dir)
@@ -731,7 +732,10 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info("Creating snapshot from build: %s", nvr)
 
         # Call elliott snapshot new with NVR directly
+        # explicitly include microshift-bootc as it is mode:disabled
         snapshot_cmd = self._elliott_base_command + [
+            "-i",
+            "microshift-bootc",
             "snapshot",
             "new",
             nvr,
