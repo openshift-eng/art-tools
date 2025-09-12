@@ -2163,26 +2163,26 @@ class PromotePipeline:
 
                 self._logger.info("Prepared format variable: %s -> %s", arch, sha)
 
-            # Update the description with format replacement
-            current_description = image_shipment.shipment.data.releaseNotes.description
+            # Update the solution field with format replacement (where the templates actually are)
+            current_solution = image_shipment.shipment.data.releaseNotes.solution
 
             try:
-                updated_description = current_description.format(**format_dict)
-                templates_replaced = len([k for k in format_dict.keys() if f"{{{k}}}" in current_description])
+                updated_solution = current_solution.format(**format_dict)
+                templates_replaced = len([k for k in format_dict.keys() if f"{{{k}}}" in current_solution])
 
                 if templates_replaced > 0:
-                    image_shipment.shipment.data.releaseNotes.description = updated_description
+                    image_shipment.shipment.data.releaseNotes.solution = updated_solution
                     self._logger.info(
                         "Successfully replaced %d format placeholders with payload SHAs", templates_replaced
                     )
                 else:
                     self._logger.warning(
-                        "No format placeholders found in description. Expected placeholders: %s",
+                        "No format placeholders found in solution. Expected placeholders: %s",
                         list(f"{{{var}}}" for var in format_dict.keys()),
                     )
             except KeyError as ex:
-                self._logger.error("Missing format variable in description: %s", ex)
-                raise ValueError(f"Description contains placeholder {ex} but no corresponding SHA was found")
+                self._logger.error("Missing format variable in solution: %s", ex)
+                raise ValueError(f"Solution contains placeholder {ex} but no corresponding SHA was found")
 
             # Get the file path for the image shipment in the MR
             diff_info = mr.diffs.list(all=True)[0]
@@ -2228,10 +2228,12 @@ class PromotePipeline:
 
                     # Update the file in the new branch
                     source_project.files.update(
-                        file_path=image_file_path,
-                        branch=sha_branch,
-                        content=updated_content,
-                        commit_message=f"Update shipment with payload SHAs for {self.assembly}",
+                        {
+                            'file_path': image_file_path,
+                            'branch': sha_branch,
+                            'content': updated_content,
+                            'commit_message': f"Update shipment with payload SHAs for {self.assembly}",
+                        }
                     )
 
                     # Create MR to merge SHA updates into the shipment MR branch
