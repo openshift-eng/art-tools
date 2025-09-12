@@ -17,6 +17,7 @@ from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -409,6 +410,7 @@ class KonfluxClient:
         return await self._create_or_replace(component)
 
     @alru_cache
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get_pipelinerun_template(self, template_url: str):
         """Get a PipelineRun template.
 
@@ -438,6 +440,7 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Optional[Sequence[str]] = None,
         skip_checks: bool = False,
+        build_priority: str = None,
         hermetic: Optional[bool] = None,
         sast: Optional[bool] = None,
         dockerfile: Optional[str] = None,
@@ -478,6 +481,12 @@ class KonfluxClient:
             obj["metadata"]["annotations"].update(annotations)
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
+
+        # Add Kueue build priority label if specified
+        if build_priority:
+            priority_class = f"build-priority-{build_priority}"
+            obj["metadata"]["labels"]["kueue.x-k8s.io/priority-class"] = priority_class
+            self._logger.info(f"Set Kueue priority class label: {priority_class}")
 
         def _modify_param(params: List, name: str, value: Union[str, bool, list[str]]):
             """Modify a parameter in the params list. If the parameter does not exist, it is added.
@@ -624,6 +633,7 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
+        build_priority: str = None,
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
@@ -657,6 +667,7 @@ class KonfluxClient:
         :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
         :param service_account: The service account to use for the PipelineRun.
         :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
+        :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -691,6 +702,7 @@ class KonfluxClient:
             artifact_type=artifact_type,
             service_account=service_account,
             rebuild=rebuild,
+            build_priority=build_priority,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
@@ -727,14 +739,14 @@ class KonfluxClient:
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
         :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
-        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 1 hour)
+        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 2 hour)
         :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
         """
         if overall_timeout_timedelta is None:
             overall_timeout_timedelta = datetime.timedelta(hours=5)
 
         if pending_timeout_timedelta is None:
-            pending_timeout_timedelta = datetime.timedelta(hours=1)
+            pending_timeout_timedelta = datetime.timedelta(hours=2)
 
         namespace = namespace or self.default_namespace
         if self.dry_run:

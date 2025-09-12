@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-07-04 02:42 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-08-12 02:38 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -52,10 +52,6 @@
       "additionalProperties": false,
       "description": "Information about the advisory that got shipped to the environment",
       "properties": {
-        "url": {
-          "title": "Url",
-          "type": "string"
-        },
         "internal_url": {
           "anyOf": [
             {
@@ -67,11 +63,20 @@
           ],
           "default": null,
           "title": "Internal Url"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
         }
       },
-      "required": [
-        "url"
-      ],
       "title": "EnvAdvisory",
       "type": "object"
     },
@@ -119,15 +124,8 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "integer"
-            }
-          ],
-          "title": "Id"
+          "title": "Id",
+          "type": "string"
         },
         "source": {
           "title": "Source",
@@ -262,7 +260,7 @@
               "type": "null"
             }
           ],
-          "default": [],
+          "default": null,
           "title": "Cves"
         },
         "references": {

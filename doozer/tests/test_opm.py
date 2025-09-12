@@ -33,7 +33,9 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         auth = MagicMock()
         blobs = await render('test-catalog', auth=auth)
         self.assertEqual(list(blobs), [{'key': 'value'}])
-        mock_gather_opm.assert_called_once_with(['render', '-o', 'yaml', '--', 'test-catalog'], auth=auth)
+        mock_gather_opm.assert_called_once_with(
+            ['render', '--migrate-level', 'none', '-o', 'yaml', '--', 'test-catalog'], auth=auth
+        )
 
     @patch("builtins.open")
     @patch('doozerlib.opm.gather_opm', new_callable=AsyncMock)

@@ -75,10 +75,11 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -90,10 +91,11 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -103,7 +105,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/art-* && mv /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
 RUN rm -rf /tmp/art
 USER 2000
 # End Konflux-specific steps
@@ -138,10 +140,11 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -153,10 +156,11 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -166,7 +170,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/art-* && mv /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
 RUN rm -rf /tmp/art
 USER 3000
 # End Konflux-specific steps
@@ -202,6 +206,7 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 # End Konflux-specific steps
 LABEL foo="bar baz"
@@ -212,6 +217,7 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 # End Konflux-specific steps
 USER 2000
@@ -251,6 +257,7 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 # End Konflux-specific steps
 LABEL foo="bar baz"
@@ -261,6 +268,7 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 # End Konflux-specific steps
 USER 2000
@@ -297,10 +305,11 @@ FROM base1
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -311,10 +320,11 @@ FROM base2
 ENV ART_BUILD_ENGINE=konflux
 ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=open
+RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
 USER 0
 RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true
-COPY .oit/unsigned.repo /etc/yum.repos.d/
+COPY .oit/art-unsigned.repo /etc/yum.repos.d/
 RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem
 ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp/art
 # End Konflux-specific steps
@@ -323,7 +333,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/art-* && mv /tmp/art/yum_temp/* /etc/yum.repos.d/ || true
 RUN rm -rf /tmp/art
 USER 3000
 # End Konflux-specific steps

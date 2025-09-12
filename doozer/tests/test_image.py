@@ -1073,3 +1073,38 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
         # Verify get_parent_members was never called (parent processing skipped)
         metadata.get_parent_members.assert_not_called()
+
+    def test_get_required_artifacts_disabled(self):
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        self.assertEqual(result, [])
+
+    def test_get_required_artifacts_enabled(self):
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = True
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = [
+            "https://example.com/cert1.pem",
+            "https://example.com/cert2.pem",
+        ]
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        expected = ["https://example.com/cert1.pem", "https://example.com/cert2.pem"]
+        self.assertEqual(result, expected)
+
+    def test_get_required_artifacts_missing_resources(self):
+        from artcommonlib.model import Missing
+
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = True
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = Missing
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        self.assertEqual(result, [])

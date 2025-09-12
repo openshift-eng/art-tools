@@ -4,9 +4,10 @@ import logging
 import os
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -14,7 +15,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
 from doozerlib.backend.konflux_fbc import (
@@ -35,7 +36,6 @@ from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
-yaml = opm.yaml
 
 
 class FbcImportCli:
@@ -43,7 +43,6 @@ class FbcImportCli:
         self,
         runtime: Runtime,
         index_image: str | None,
-        keep_templates: bool,
         push: bool,
         registry_auth: Optional[str],
         fbc_repo: str,
@@ -52,7 +51,6 @@ class FbcImportCli:
     ):
         self.runtime = runtime
         self.index_image = index_image
-        self.keep_templates = keep_templates
         self.push = push
         self.registry_auth = registry_auth
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
@@ -102,7 +100,6 @@ class FbcImportCli:
             group=runtime.group,
             assembly=str(runtime.assembly),
             ocp_version=(major, minor),
-            keep_templates=self.keep_templates,
             upcycle=runtime.upcycle,
             push=self.push,
             commit_message=self.message,
@@ -131,11 +128,6 @@ class FbcImportCli:
     metavar='INDEX_IMAGE',
     help="The index image to import from. If not set, the production index image will be used.",
 )
-@click.option(
-    "--keep-templates",
-    is_flag=True,
-    help="Keep the generated templates. If not set, the templates will be deleted after rendering the final catalogs.",
-)
 @click.option("--push", is_flag=True, help="Push the generated FBC to the git repository.")
 @click.option(
     "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
@@ -148,7 +140,6 @@ class FbcImportCli:
 async def fbc_import(
     runtime: Runtime,
     from_index: Optional[str],
-    keep_templates: bool,
     push: bool,
     fbc_repo: str,
     registry_auth: Optional[str],
@@ -165,7 +156,6 @@ async def fbc_import(
     cli = FbcImportCli(
         runtime=runtime,
         index_image=from_index,
-        keep_templates=keep_templates,
         push=push,
         fbc_repo=fbc_repo,
         registry_auth=registry_auth,
@@ -176,6 +166,8 @@ async def fbc_import(
 
 
 class FbcMergeCli:
+    DEFAULT_STAGE_FBC_REPO = "quay.io/openshift-art/stage-fbc-fragments"
+
     def __init__(
         self,
         runtime: Runtime,
@@ -210,10 +202,12 @@ class FbcMergeCli:
         self.skip_checks = skip_checks
         self.plr_template = plr_template
         self.target_index = target_index
-        if not self.fragments:
-            raise ValueError("At least one fragment must be provided.")
-        # Default OCP version, can be changed based on the target index
-        self.ocp_version: tuple[int, int] = (4, 18)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def _list_tags(self):
+        cmd = ["skopeo", "list-tags", f"docker://{self.DEFAULT_STAGE_FBC_REPO}"]
+        _, out, _ = await exectools.cmd_gather_async(cmd)
+        return json.loads(out)["Tags"]
 
     async def run(self):
         # Initialize runtime
@@ -227,13 +221,26 @@ class FbcMergeCli:
         ):
             raise ValueError("MAJOR and MINOR must be set in group vars.")
         major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
-        # target_index = self.target_index or f"{constants.KONFLUX_DEFAULT_FBC_REPO}:ocp-{major}.{minor}"
-        target_index = f"quay.io/openshift-art/stage-fbc-fragments:ocp-{major}.{minor}"
+        target_index = self.target_index or f"{self.DEFAULT_STAGE_FBC_REPO}:ocp-{major}.{minor}"
         working_dir = (
             Path(self.dest_dir)
             if self.dest_dir
             else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES, "__merged")
         )
+
+        fbc_git_username = os.environ.get("FBC_GIT_USERNAME")
+        fbc_git_password = os.environ.get("FBC_GIT_PASSWORD")
+
+        fragments = self.fragments
+        if not fragments:
+            # No explicit fragments provided, list all tags in the stage repo and use matching ones
+            tags = await self._list_tags()
+            prefix = f"ocp__{major}.{minor}__"
+            matching_tags = [tag for tag in tags if tag.startswith(prefix)]
+            if not matching_tags:
+                raise IOError("No matching tags found")
+            LOGGER.info("Found %s matching tags: %s", len(matching_tags), matching_tags)
+            fragments = [f"{self.DEFAULT_STAGE_FBC_REPO}:{tag}" for tag in matching_tags]
 
         merger = KonfluxFbcFragmentMerger(
             working_dir=working_dir,
@@ -243,7 +250,9 @@ class FbcMergeCli:
             dry_run=self.dry_run,
             commit_message=self.message,
             fbc_git_repo=self.fbc_repo,
-            fbc_branch=self.fbc_branch or f"art-{runtime.group}-fbc-stage",
+            fbc_git_branch=self.fbc_branch or f"art-{runtime.group}-fbc-stage",
+            fbc_git_username=fbc_git_username,
+            fbc_git_password=fbc_git_password,
             registry_auth=self.registry_auth,
             konflux_context=self.konflux_context,
             konflux_kubeconfig=self.konflux_kubeconfig,
@@ -251,7 +260,7 @@ class FbcMergeCli:
             skip_checks=self.skip_checks,
             plr_template=self.plr_template,
         )
-        await merger.run(self.fragments, target_index)
+        await merger.run(fragments, target_index)
 
 
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
@@ -280,7 +289,10 @@ class FbcMergeCli:
 )
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
-    '--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO
+    '--fbc-repo',
+    metavar='FBC_REPO',
+    help='The git repository to push the FBC to. Use FBC_GIT_USERNAME and FBC_GIT_PASSWORD environment variables to set credentials.',
+    default=constants.ART_FBC_GIT_REPO,
 )
 @click.option(
     '--fbc-branch',
@@ -302,7 +314,7 @@ class FbcMergeCli:
     default=None,
     help='The target index image to merge fragments into. If not specified, a default index will be used.',
 )
-@click.argument("fragments", nargs=-1, required=True)
+@click.argument("fragments", nargs=-1, required=False)
 @click_coroutine
 async def fbc_merge(
     runtime: Runtime,
@@ -322,6 +334,8 @@ async def fbc_merge(
 ):
     """
     Merge FBC fragments from multiple index images into a single FBC repository.
+
+    If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
     cli = FbcMergeCli(
         runtime=runtime,
@@ -518,7 +532,6 @@ class FbcRebaseAndBuildCli:
         :param bundle_build: Bundle build record
         :return: NVR of the FBC build
         """
-
         existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
         if existing_fbc_build:
             self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
@@ -528,7 +541,7 @@ class FbcRebaseAndBuildCli:
 
         if self.reset_to_prod:
             self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-            await importer.import_from_index_image(operator_meta, None)
+            await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
 
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
@@ -573,7 +586,6 @@ class FbcRebaseAndBuildCli:
             group=runtime.group,
             assembly=assembly,
             ocp_version=(runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR),
-            keep_templates=False,  # Not needed for rebase and build
             upcycle=runtime.upcycle,
             push=False,  # We will push after rebase
             commit_message=self.commit_message,

@@ -495,7 +495,12 @@ class AsyncErrataUtils:
         _LOGGER.info("Getting current CVE package exclusions for advisory %s", advisory_id)
         current_exclusions = await cls.get_advisory_cve_exclusions(api, advisory_id)
         _LOGGER.info("Comparing current CVE package exclusions with expected ones for advisory %s", advisory_id)
-        expected_exclusions = cls.compute_cve_exclusions(attached_builds, cve_components_mapping)
+
+        try:
+            expected_exclusions = cls.compute_cve_exclusions(attached_builds, cve_components_mapping)
+        except ValueError as e:
+            raise ValueError(f"Error computing CVE package exclusions for advisory {advisory_id}: {e}")
+
         extra_exclusions, missing_exclusions = cls.diff_cve_exclusions(current_exclusions, expected_exclusions)
         return extra_exclusions, missing_exclusions
 

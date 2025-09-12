@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import datetime
 import json
 import re
@@ -12,7 +13,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.build_visibility import get_build_system
 from artcommonlib.format_util import green_prefix, green_print, red_prefix
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from errata_tool import Erratum
 
@@ -26,6 +30,7 @@ default_release_date = datetime.datetime(1970, 1, 1, 0, 0)
 now = datetime.datetime.now()
 YMD = '%Y-%b-%d'
 LOGGER = get_logger(__name__)
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 def exit_unauthenticated():
@@ -386,9 +391,36 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
 
     :return: a dict mapping go version string to a list of nvrs built from that go version
     """
+    # quickly determine build system from given nvrs using build_visibility suffix
+    build_system = None
+    for nvr in nvrs:
+        # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
+        # we just want the p2 part
+        nvr_build_system = get_build_system(nvr[2].split('.')[1])
+        if build_system is not None:
+            assert build_system == nvr_build_system, (
+                f'Build system mismatch for {nvr}: {build_system} != {nvr_build_system}'
+            )
+        else:
+            build_system = nvr_build_system
+    if build_system == 'brew':
+        return get_golang_container_nvrs_brew(nvrs, logger)
+    elif build_system == 'konflux':
+        return get_golang_container_nvrs_konflux(nvrs, logger)
+
+
+def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+    """
+    :param nvrs: a list of tuples containing (name, version, release) in order
+    :param logger: logger
+
+    :return: a dict mapping go version string to a list of nvrs built from that go version
+    """
     all_build_objs = brew.get_build_objects(['{}-{}-{}'.format(*n) for n in nvrs])
     go_nvr_map = {}
-    for build in all_build_objs:
+    for build, nvr_param in zip(all_build_objs, nvrs):
+        if not build:
+            raise ValueError(f'Brew build object not found for {"-".join(nvr_param)}.')
         go_version = None
         try:
             nvr = (build['name'], build['version'], build['release'])
@@ -424,6 +456,56 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
         if go_version not in go_nvr_map:
             go_nvr_map[go_version] = set()
         go_nvr_map[go_version].add(nvr)
+    return go_nvr_map
+
+
+def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+    """
+    :param nvrs: a list of tuples containing (name, version, release) in order
+    :param logger: logger
+
+    :return: a dict mapping go version string to a list of nvrs built from that go version
+    """
+    konflux_db = KonfluxDb()
+    konflux_db.bind(KonfluxBuildRecord)
+
+    logger.info(f'Getting build records for {len(nvrs)} nvrs from KonfluxDB')
+
+    all_build_objs = _executor.submit(
+        lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
+    ).result()
+
+    go_nvr_map = {}
+    for build in all_build_objs:
+        go_version = None
+        nvr = build.nvr
+        name = parse_nvr(nvr)['name']
+        if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
+            # this assumes golang builder for image is still in brew
+            go_version = golang_builder_version(nvr, logger)
+            if not go_version:
+                raise ValueError(f'Cannot find go version for {name}')
+            if go_version not in go_nvr_map:
+                go_nvr_map[go_version] = set()
+            go_nvr_map[go_version].add(nvr)
+            continue
+
+        parents = build.parent_images
+        for p in parents:
+            # brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.24.4-202507171054.g2f6f49f.el9
+            if 'openshift-golang-builder' in p or 'go-toolset' in p:
+                temp = p.split('/')[-1]
+                go_version = temp.replace(':', '-container-')
+                break
+
+        if not go_version:
+            logger.debug(f'Could not find parent Go builder image for {nvr}')
+            continue
+
+        if go_version not in go_nvr_map:
+            go_nvr_map[go_version] = set()
+        go_nvr_map[go_version].add(nvr)
+    logger.info(f'Found {len(go_nvr_map)} golang builder nvrs: {sorted(go_nvr_map.keys())}')
     return go_nvr_map
 
 
@@ -597,7 +679,11 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     if not boilerplate:
         raise ValueError("`boilerplates` is required in erratatool.yml")
     if art_advisory_key not in boilerplate:
-        raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
+        if art_advisory_key == "rhcos" and "image" in boilerplate:
+            # For backwards compatibility with older versions of erratatool.yml, i.e. rhcos key does not exist
+            art_advisory_key = "image"
+        else:
+            raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
 
     # Get the boilerplate for a type of errata and advisory type
     try:

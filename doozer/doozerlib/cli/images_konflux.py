@@ -14,6 +14,7 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.telemetry import start_as_current_span_async
+from artcommonlib.util import validate_build_priority
 from opentelemetry import trace
 
 from doozerlib import constants
@@ -185,6 +186,7 @@ class KonfluxBuildCli:
         skip_checks: bool,
         dry_run: bool,
         plr_template: str,
+        build_priority: Optional[str],
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -195,6 +197,9 @@ class KonfluxBuildCli:
         self.skip_checks = skip_checks
         self.dry_run = dry_run
         self.plr_template = plr_template
+        self.build_priority = build_priority
+
+        validate_build_priority(self.build_priority)
 
     @start_as_current_span_async(TRACER, "images:konflux:build")
     async def run(self):
@@ -219,6 +224,7 @@ class KonfluxBuildCli:
             skip_checks=self.skip_checks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
+            build_priority=self.build_priority,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         tasks = []
@@ -261,6 +267,14 @@ class KonfluxBuildCli:
     default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
 )
+@click.option(
+    '--build-priority',
+    type=str,
+    metavar='PRIORITY',
+    default='auto',
+    required=True,
+    help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -272,6 +286,7 @@ async def images_konflux_build(
     skip_checks: bool,
     dry_run: bool,
     plr_template: str,
+    build_priority: Optional[str],
 ):
     cli = KonfluxBuildCli(
         runtime=runtime,
@@ -283,6 +298,7 @@ async def images_konflux_build(
         skip_checks=skip_checks,
         dry_run=dry_run,
         plr_template=plr_template,
+        build_priority=build_priority,
     )
     await cli.run()
 

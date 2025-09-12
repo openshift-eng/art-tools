@@ -14,7 +14,11 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, sync_to_quay
+from artcommonlib.util import (
+    get_ocp_version_from_group,
+    new_roundtrip_yaml_handler,
+    sync_to_quay,
+)
 from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, oc
@@ -79,7 +83,7 @@ class BuildMicroShiftBootcPipeline:
 
     async def run(self):
         # Make sure our api.ci token is fresh
-        await oc.registry_login(self.runtime)
+        await oc.registry_login()
         self.releases_config = await load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
@@ -112,6 +116,10 @@ class BuildMicroShiftBootcPipeline:
             f"docker://{bootc_build.image_pullspec}",
             "--raw",
         ]
+
+        if konflux_registry_auth_file:
+            cmd += [f'--authfile={konflux_registry_auth_file}']
+
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
         digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
@@ -157,6 +165,10 @@ class BuildMicroShiftBootcPipeline:
                 "*",
                 "--include",
                 "bootc-pullspec.txt",
+                "--cache-control",
+                "no-cache, no-store, must-revalidate",
+                "--metadata-directive",
+                "REPLACE",
                 str(local_path),
                 f"s3://art-srv-enterprise{s3_path}",
             ]
@@ -182,6 +194,7 @@ class BuildMicroShiftBootcPipeline:
             local_path = Path(local_dir, "bootc-pullspec.txt")
             with open(local_path, "w") as f:
                 f.write(pullspec)
+            self._logger.info(f"write {pullspec} to {local_path}")
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 

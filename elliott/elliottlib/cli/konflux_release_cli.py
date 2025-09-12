@@ -1,6 +1,7 @@
 import os
 import sys
 from dataclasses import dataclass
+from typing import Optional
 
 import click
 from artcommonlib import logutil
@@ -14,7 +15,7 @@ from doozerlib.backend.konflux_client import (
     KonfluxClient,
 )
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_UI_HOST
-from kubernetes.dynamic import exceptions
+from kubernetes.dynamic import ResourceInstance, exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -43,7 +44,9 @@ class CreateReleaseCli:
         konflux_config: dict,
         image_repo_pull_secret: dict,
         dry_run: bool,
+        kind: str,
         job_url: str = None,
+        force: bool = False,
     ):
         self.runtime = runtime
         self.config_path = config_path
@@ -59,8 +62,10 @@ class CreateReleaseCli:
         )
         self.konflux_client.verify_connection()
         self.release_env = release_env
+        self.force = force
+        self.kind = kind
 
-    async def run(self):
+    async def run(self) -> Optional[ResourceInstance]:
         self.runtime.initialize(build_system='konflux', with_shipment=True)
 
         LOGGER.info(f"Loading {self.config_path}...")
@@ -106,15 +111,15 @@ class CreateReleaseCli:
         except exceptions.NotFoundError:
             raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
-        major, minor = self.runtime.get_major_minor()
-        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
+        release_name = self.get_object_name()
 
         env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
-        if env_config.shipped() and self.release_env == "prod":
-            raise ValueError(
+        if env_config.shipped() and not self.force:
+            LOGGER.warning(
                 f"existing release metadata is not empty for {self.release_env}: "
-                f"{env_config.model_dump()}. If you want to proceed remove the release metadata from the shipment config and try again."
+                f"{env_config.model_dump()}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
             )
+            return None
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -143,6 +148,11 @@ class CreateReleaseCli:
             LOGGER.info("Successfully created Release %s", release_url)
         return created_release
 
+    def get_object_name(self) -> str:
+        major, minor = self.runtime.get_major_minor()
+        assembly_str = self.runtime.assembly.replace(".", "-")
+        return f"ose-{major}-{minor}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
+
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
         Create a Konflux Snapshot manifest from the given shipment's snapshot spec.
@@ -150,8 +160,7 @@ class CreateReleaseCli:
         if not (shipment.snapshot and shipment.snapshot.spec.components):
             raise ValueError("A valid snapshot must be provided")
 
-        major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        snapshot_name = self.get_object_name()
 
         # Prepare metadata with labels and optional annotations
         metadata = {
@@ -163,11 +172,7 @@ class CreateReleaseCli:
             },
         }
 
-        # Add annotation if job URL is provided
-        if self.job_url:
-            metadata["annotations"] = {
-                "art.redhat.com/job-url": self.job_url,
-            }
+        metadata["annotations"] = self.get_annotations()
 
         snapshot_obj = {
             "apiVersion": API_VERSION,
@@ -226,11 +231,7 @@ class CreateReleaseCli:
             "labels": {"appstudio.openshift.io/application": release_config.application},
         }
 
-        # Add annotation if job URL is provided
-        if self.job_url:
-            metadata["annotations"] = {
-                "art.redhat.com/job-url": self.job_url,
-            }
+        metadata["annotations"] = self.get_annotations()
 
         release_obj = {
             "apiVersion": API_VERSION,
@@ -245,6 +246,16 @@ class CreateReleaseCli:
             release_obj["spec"]["data"] = release_config.data
 
         return release_obj
+
+    def get_annotations(self) -> dict:
+        annotations = {
+            "art.redhat.com/assembly": self.runtime.assembly,
+            "art.redhat.com/env": self.release_env,
+            "art.redhat.com/kind": self.kind,
+        }
+        if self.job_url:
+            annotations["art.redhat.com/job-url"] = self.job_url
+        return annotations
 
 
 @cli.group("release", short_help="Commands for managing Konflux Releases")
@@ -296,6 +307,15 @@ def konflux_release_cli():
     metavar='URL',
     help='The URL of the job that created this release. This will be added as an annotation to both the snapshot and release objects.',
 )
+@click.option(
+    '--force', is_flag=True, default=False, help='Force the creation of the release even if it already exists'
+)
+@click.option(
+    '--kind',
+    metavar='KIND',
+    required=True,
+    help='The kind of release being created (e.g. "image", "metadata", "fbc" etc)',
+)
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(
@@ -308,6 +328,8 @@ async def new_release_cli(
     env,
     apply,
     job_url,
+    force,
+    kind,
 ):
     """
     Create a new Konflux Release in the given namespace based on the config provided
@@ -336,6 +358,9 @@ async def new_release_cli(
         image_repo_pull_secret=pull_secret,
         dry_run=not apply,
         job_url=job_url,
+        force=force,
+        kind=kind,
     )
     release = await pipeline.run()
-    yaml.dump(release.to_dict(), sys.stdout)
+    if release:
+        yaml.dump(release.to_dict(), sys.stdout)

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from os import PathLike
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import httpx
@@ -47,7 +48,6 @@ class KonfluxFbcImporter:
         group: str,
         assembly: str,
         ocp_version: Tuple[int, int],
-        keep_templates: bool,
         upcycle: bool,
         push: bool,
         commit_message: Optional[str] = None,
@@ -59,7 +59,6 @@ class KonfluxFbcImporter:
         self.group = group
         self.assembly = assembly
         self.ocp_version = ocp_version
-        self.keep_templates = keep_templates
         self.upcycle = upcycle
         self.push = push
         self.commit_message = commit_message
@@ -67,11 +66,14 @@ class KonfluxFbcImporter:
         self.auth = auth
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
-    async def import_from_index_image(self, metadata: ImageMetadata, index_image: str | None = None):
+    async def import_from_index_image(
+        self, metadata: ImageMetadata, index_image: str | None = None, strict: bool = True
+    ):
         """Create a file based catalog (FBC) by importing from an existing index image.
 
         :param metadata: The metadata of the operator image.
         :param index_image: The index image to import from. If not provided, a default index image is used.
+        :param strict: If True, raises an error if the index image is not found.
         """
         # bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -80,6 +82,25 @@ class KonfluxFbcImporter:
             index_image = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=self.ocp_version[0], minor=self.ocp_version[1])
             logger.info(
                 "Using default index image %s for OCP %s.%s", index_image, self.ocp_version[0], self.ocp_version[1]
+            )
+
+        # Get package name of the operator
+        package_name = await self._get_package_name(metadata)
+
+        # Render the catalog from the index image
+        migrate_level = "none"
+        if self.ocp_version >= (4, 17):
+            migrate_level = "bundle-object-to-csv-metadata"
+        catalog_blobs = await self._get_catalog_blobs_from_index_image(
+            index_image, package_name, migrate_level=migrate_level
+        )
+        if not catalog_blobs:
+            if strict:
+                raise IOError(f"Package {package_name} not found in index image {index_image}; Is it published?")
+            logger.info(
+                "No catalog blobs found in index image %s for package %s; will clean up the catalog directory",
+                index_image,
+                package_name,
             )
 
         # Clone the FBC repo
@@ -95,7 +116,7 @@ class KonfluxFbcImporter:
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Update the FBC directory
-        await self._update_dir(metadata, build_repo, index_image, logger)
+        await self._update_dir(build_repo, package_name, catalog_blobs, logger)
 
         # Validate the catalog
         logger.info("Validating the catalog")
@@ -111,46 +132,28 @@ class KonfluxFbcImporter:
             logger.info("Not pushing changes to remote repository")
 
     async def _update_dir(
-        self, metadata: ImageMetadata, build_repo: BuildRepo, index_image: str, logger: logging.Logger
+        self,
+        build_repo: BuildRepo,
+        package_name: str,
+        catalog_blobs: List[Dict] | None,
+        logger: logging.Logger,
     ):
-        """Update the FBC directory with the given operator image metadata and index image."""
+        """Update the FBC directory with the given package name and catalog blobs."""
         repo_dir = build_repo.local_dir
-        # Get package name of the operator
-        package_name = await self._get_package_name(metadata)
-        # Render the catalog from the index image
-        org_catalog_blobs = await self._get_catalog_blobs_from_index_image(index_image, package_name)
 
-        # Write catalog_blobs to catalog-migrate/<package>/catalog.json
-        org_catalog_dir = repo_dir.joinpath("catalog-migrate", package_name)
-        org_catalog_dir.mkdir(parents=True, exist_ok=True)
-        org_catalog_file_path = org_catalog_dir.joinpath("catalog.yaml")
-        logger.info("Writing original catalog blobs to %s", org_catalog_file_path)
-        with org_catalog_file_path.open('w') as f:
-            yaml.dump_all(org_catalog_blobs, f)
-
-        # Generate basic fbc template to catalog-templates/<package>.yaml
-        templates_dir = repo_dir.joinpath("catalog-templates")
-        templates_dir.mkdir(parents=True, exist_ok=True)
-        template_file = templates_dir.joinpath(f"{package_name}.yaml")
-        await opm.generate_basic_template(org_catalog_file_path, template_file)
-
-        logger.info("Cleaning up catalog-migrate")
-        shutil.rmtree(repo_dir.joinpath("catalog-migrate"))
-
-        # Render final FBC catalog at catalog/<package>/catalog.yaml from template
-        catalog_dir = repo_dir.joinpath("catalog", package_name)
-        catalog_dir.mkdir(parents=True, exist_ok=True)
-        catalog_file = catalog_dir.joinpath("catalog.yaml")
-        logger.info("Rendering catalog from template %s to %s", template_file, catalog_file)
-        migrate_level = "none"
-        if self.ocp_version >= (4, 17):
-            migrate_level = "bundle-object-to-csv-metadata"
-        await opm.render_catalog_from_template(template_file, catalog_file, migrate_level=migrate_level, auth=self.auth)
-
-        # Clean up catalog-templates
-        if not self.keep_templates:
-            logger.info("Cleaning up catalog-templates")
-            shutil.rmtree(templates_dir)
+        # Write catalog_blobs to catalog/<package>/catalog.yaml
+        catalog_base_dir = repo_dir.joinpath("catalog")
+        catalog_base_dir.mkdir(parents=True, exist_ok=True)
+        catalog_dir = catalog_base_dir.joinpath(package_name)
+        if catalog_blobs:
+            catalog_dir.mkdir(parents=True, exist_ok=True)
+            catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+            logger.info("Writing catalog blobs to %s", catalog_file_path)
+            with catalog_file_path.open('w') as f:
+                yaml.dump_all(catalog_blobs, f)
+        elif catalog_dir.exists():
+            logger.info("Catalog blobs are empty. Removing existing catalog directory %s", catalog_dir)
+            shutil.rmtree(catalog_dir)
 
         # Generate Dockerfile
         df_path = repo_dir.joinpath("catalog.Dockerfile")
@@ -167,10 +170,11 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str) -> List[Dict]:
+    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
+            migrate_level=migrate_level,
         )
         return blobs
 
@@ -199,11 +203,13 @@ class KonfluxFbcImporter:
             filtered[package_name].append(blob)
         return filtered
 
-    async def _get_catalog_blobs_from_index_image(self, index_image: str, package_name):
-        blobs = await self._render_index_image(index_image)
+    async def _get_catalog_blobs_from_index_image(
+        self, index_image: str, package_name: str, migrate_level: str = "none"
+    ):
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
-            raise IOError(f"Package {package_name} not found in index image")
+            return
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
@@ -244,7 +250,9 @@ class KonfluxFbcFragmentMerger:
         upcycle: bool = False,
         commit_message: str | None = None,
         fbc_git_repo: str = constants.ART_FBC_GIT_REPO,
-        fbc_branch: str | None = None,
+        fbc_git_branch: str | None = None,
+        fbc_git_username: str | None = None,
+        fbc_git_password: str | None = None,
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
         plr_template: Optional[str] = None,
@@ -253,6 +261,8 @@ class KonfluxFbcFragmentMerger:
         """
         Initialize the KonfluxFbcFragmentMerger.
         """
+        if bool(fbc_git_username) != bool(fbc_git_password):
+            raise ValueError("Both fbc_git_username and fbc_git_password must be provided or neither.")
         self.dry_run = dry_run
         self.working_dir = Path(working_dir)
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -263,7 +273,9 @@ class KonfluxFbcFragmentMerger:
         self.upcycle = upcycle
         self.commit_message = commit_message
         self.fbc_git_repo = fbc_git_repo
-        self.fbc_branch = fbc_branch or f"art-{self.group}-fbc-stage"
+        self.fbc_git_branch = fbc_git_branch or f"art-{self.group}-fbc-stage"
+        self.fbc_git_username = fbc_git_username
+        self.fbc_git_password = fbc_git_password
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
@@ -287,8 +299,15 @@ class KonfluxFbcFragmentMerger:
         konflux_client = self._konflux_client
 
         repo_dir = self.working_dir
-        build_repo = BuildRepo(url=self.fbc_git_repo, branch=self.fbc_branch, local_dir=repo_dir, logger=logger)
-        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_branch, repo_dir)
+        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, self.fbc_git_branch, repo_dir)
+        build_repo = BuildRepo(
+            url=self.fbc_git_repo,
+            branch=self.fbc_git_branch,
+            local_dir=repo_dir,
+            username=self.fbc_git_username,
+            password=self.fbc_git_password,
+            logger=logger,
+        )
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Merge ImageDigestMirrorSets
@@ -302,11 +321,21 @@ class KonfluxFbcFragmentMerger:
 
         # Render the FBC fragments
         logger.info("Rendering FBC fragments...")
-        all_blobs = await asyncio.gather(*(opm.render(fragment, output_format="yaml") for fragment in fragments))
+        semaphore = asyncio.BoundedSemaphore(10)  # Limit concurrency to avoid overwhelming the registry
+
+        async def _render_fragment(fragment: str):
+            async with semaphore:
+                return await opm.render(
+                    fragment,
+                    output_format="yaml",
+                    auth=opm.OpmRegistryAuth(self.registry_auth) if self.registry_auth else None,
+                )
+
+        all_blobs = await asyncio.gather(*(map(_render_fragment, fragments)))
         catalog_blobs = list(itertools.chain.from_iterable(all_blobs))
 
         # Write the rendered blobs to a file
-        # Write catalog_blobs to catalog/<package>/catalog.yaml
+        # Write catalog_blobs to catalog/catalog.yaml
         catalog_dir = repo_dir.joinpath("catalog")
         catalog_dir.mkdir(parents=True, exist_ok=True)
         catalog_file_path = catalog_dir.joinpath("catalog.yaml")
@@ -337,7 +366,7 @@ class KonfluxFbcFragmentMerger:
             await build_repo.commit(message, allow_empty=True)
             logger.info("Pushing changes to the remote repository...")
             await build_repo.push()
-            logger.info(f"Changes pushed to remote repository {self.fbc_git_repo} branch {self.fbc_branch}")
+            logger.info(f"Changes pushed to remote repository {self.fbc_git_repo} branch {self.fbc_git_branch}")
         else:
             logger.info("Dry run enabled, not pushing changes.")
 
@@ -482,7 +511,7 @@ class KonfluxFbcFragmentMerger:
         )
         logger.info(f"Created component {comp_name} in application {app_name}")
 
-        arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
         created_plr = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
@@ -490,7 +519,7 @@ class KonfluxFbcFragmentMerger:
             component_name=comp_name,
             git_url=build_repo.https_url,
             commit_sha=commit_sha,
-            target_branch=self.fbc_branch or commit_sha,
+            target_branch=self.fbc_git_branch or commit_sha,
             output_image=f"{output_image_repo}:{output_image_tag}",
             additional_tags=[],
             vm_override={},
@@ -619,6 +648,13 @@ class KonfluxFbcRebaser:
     ) -> str:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
+        group_config = metadata.runtime.group_config
+        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        # OCP 4.17+ requires bundle object to CSV metadata migration.
+        migrate_level = "none"
+        if ocp_version >= (4, 17):
+            migrate_level = "bundle-object-to-csv-metadata"
+
         # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
         delivery_repo_name = metadata.get_olm_bundle_delivery_repo_name()
 
@@ -634,17 +670,20 @@ class KonfluxFbcRebaser:
             raise IOError("Channel name not found in bundle image")
         channel_names = channel_names.split(",")
         default_channel_name = labels.get("operators.operatorframework.io.bundle.channel.default.v1")
-        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(bundle_build)
+
+        olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(
+            bundle_build, migrate_level=migrate_level
+        )
         if olm_package != labels.get("operators.operatorframework.io.bundle.package.v1"):
             raise IOError(
                 f"Package name mismatch: {olm_package} != {labels.get('operators.operatorframework.io.bundle.package.v1')}"
             )
-        olm_csv_metadata = next(
-            (entry for entry in olm_bundle_blob["properties"] if entry["type"] == "olm.csv.metadata"), None
-        )
-        if not olm_csv_metadata:
-            raise IOError(f"CSV metadata not found in bundle {olm_bundle_name}")
-        olm_skip_range = olm_csv_metadata["value"]["annotations"].get("olm.skipRange", None)
+
+        manifests_dir = labels.get("operators.operatorframework.io.bundle.manifests.v1")
+        if not manifests_dir:
+            raise IOError("Manifests directory not found in bundle image labels")
+        csv = await self._load_csv_from_bundle(bundle_build, manifests_dir)
+        olm_skip_range = csv.get("metadata", {}).get("annotations", {}).get("olm.skipRange", None)
 
         # Load referenced images
         konflux_db: KonfluxDb = metadata.runtime.konflux_db
@@ -665,7 +704,8 @@ class KonfluxFbcRebaser:
                 catalog_blobs = list(yaml.load_all(f))
         else:
             logger.info("Catalog file %s does not exist, bootstrap a new one", catalog_file_path)
-            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name or "stable")
+            icon = next(iter(csv.get("spec", {}).get("icon", [])), None)
+            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name, icon)
 
         categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
@@ -767,17 +807,14 @@ class KonfluxFbcRebaser:
 
         # Update Dockerfile
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
-        if not dockerfile_path.is_file():
-            logger.info("Dockerfile %s does not exist, creating a new one", dockerfile_path)
-            group_config = metadata.runtime.group_config
-            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
-            base_image_format = (
-                BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
-            )
-            base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
-            await opm.generate_dockerfile(
-                build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image
-            )
+        if dockerfile_path.is_file():
+            logger.info("Dockerfile %s already exists, removing it", dockerfile_path)
+            await asyncio.to_thread(dockerfile_path.unlink)
+        base_image_format = (
+            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        )
+        base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
+        await opm.generate_dockerfile(build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image)
 
         logger.info("Updating Dockerfile %s", dockerfile_path)
         dfp = DockerfileParser(str(dockerfile_path))
@@ -803,18 +840,29 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
 
-    def _bootstrap_catalog(self, package_name: str, default_channel: str = 'stable') -> List[Dict[str, Any]]:
+    def _bootstrap_catalog(
+        self, package_name: str, default_channel: str, icon: Dict[str, str] | None
+    ) -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.
         :param package_name: The name of the package to bootstrap.
+        :param default_channel: The default channel for the package.
+        :param icon: Optional icon data to include in the package. e.g. {"base64data": "...", "mediatype": "..."}
         :return: A dictionary representing the catalog.
         """
         # Following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/v4.13/catalog-template.json
-        package_blob = {
-            "defaultChannel": default_channel,
-            "icon": {
+        if not icon:
+            # Default icon if not provided
+            icon = {
                 "base64data": "PHN2ZyBpZD0iZjc0ZTM5ZDEtODA2Yy00M2E0LTgyZGQtZjM3ZjM1NWQ4YWYzIiBkYXRhLW5hbWU9Ikljb24iIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDM2IDM2Ij4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLmE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCB7CiAgICAgICAgZmlsbDogI2UwMDsKICAgICAgfQogICAgPC9zdHlsZT4KICA8L2RlZnM+CiAgPGc+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNMjUsMTcuMzhIMjMuMjNhNS4yNyw1LjI3LDAsMCwwLTEuMDktMi42NGwxLjI1LTEuMjVhLjYyLjYyLDAsMSwwLS44OC0uODhsLTEuMjUsMS4yNWE1LjI3LDUuMjcsMCwwLDAtMi42NC0xLjA5VjExYS42Mi42MiwwLDEsMC0xLjI0LDB2MS43N2E1LjI3LDUuMjcsMCwwLDAtMi42NCwxLjA5bC0xLjI1LTEuMjVhLjYyLjYyLDAsMCwwLS44OC44OGwxLjI1LDEuMjVhNS4yNyw1LjI3LDAsMCwwLTEuMDksMi42NEgxMWEuNjIuNjIsMCwwLDAsMCwxLjI0aDEuNzdhNS4yNyw1LjI3LDAsMCwwLDEuMDksMi42NGwtMS4yNSwxLjI1YS42MS42MSwwLDAsMCwwLC44OC42My42MywwLDAsMCwuODgsMGwxLjI1LTEuMjVhNS4yNyw1LjI3LDAsMCwwLDIuNjQsMS4wOVYyNWEuNjIuNjIsMCwwLDAsMS4yNCwwVjIzLjIzYTUuMjcsNS4yNywwLDAsMCwyLjY0LTEuMDlsMS4yNSwxLjI1YS42My42MywwLDAsMCwuODgsMCwuNjEuNjEsMCwwLDAsMC0uODhsLTEuMjUtMS4yNWE1LjI3LDUuMjcsMCwwLDAsMS4wOS0yLjY0SDI1YS42Mi42MiwwLDAsMCwwLTEuMjRabS03LDQuNjhBNC4wNiw0LjA2LDAsMSwxLDIyLjA2LDE4LDQuMDYsNC4wNiwwLDAsMSwxOCwyMi4wNloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0yNy45LDI4LjUyYS42Mi42MiwwLDAsMS0uNDQtLjE4LjYxLjYxLDAsMCwxLDAtLjg4LDEzLjQyLDEzLjQyLDAsMCwwLDIuNjMtMTUuMTkuNjEuNjEsMCwwLDEsLjMtLjgzLjYyLjYyLDAsMCwxLC44My4yOSwxNC42NywxNC42NywwLDAsMS0yLjg4LDE2LjYxQS42Mi42MiwwLDAsMSwyNy45LDI4LjUyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI3LjksOC43M2EuNjMuNjMsMCwwLDEtLjQ0LS4xOUExMy40LDEzLjQsMCwwLDAsMTIuMjcsNS45MWEuNjEuNjEsMCwwLDEtLjgzLS4zLjYyLjYyLDAsMCwxLC4yOS0uODNBMTQuNjcsMTQuNjcsMCwwLDEsMjguMzQsNy42NmEuNjMuNjMsMCwwLDEtLjQ0LDEuMDdaIi8+CiAgICA8cGF0aCBjbGFzcz0iYTQxYzUyMzQtYTE0YS00ZjNkLTkxNjAtNDQ3MmI3NmQwMDQwIiBkPSJNNS4zNSwyNC42MmEuNjMuNjMsMCwwLDEtLjU3LS4zNUExNC42NywxNC42NywwLDAsMSw3LjY2LDcuNjZhLjYyLjYyLDAsMCwxLC44OC44OEExMy40MiwxMy40MiwwLDAsMCw1LjkxLDIzLjczYS42MS42MSwwLDAsMS0uMy44M0EuNDguNDgsMCwwLDEsNS4zNSwyNC42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0xOCwzMi42MkExNC42NCwxNC42NCwwLDAsMSw3LjY2LDI4LjM0YS42My42MywwLDAsMSwwLS44OC42MS42MSwwLDAsMSwuODgsMCwxMy40MiwxMy40MiwwLDAsMCwxNS4xOSwyLjYzLjYxLjYxLDAsMCwxLC44My4zLjYyLjYyLDAsMCwxLS4yOS44M0ExNC42NywxNC42NywwLDAsMSwxOCwzMi42MloiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik0zMCwyOS42MkgyN2EuNjIuNjIsMCwwLDEtLjYyLS42MlYyNmEuNjIuNjIsMCwwLDEsMS4yNCwwdjIuMzhIMzBhLjYyLjYyLDAsMCwxLDAsMS4yNFoiLz4KICAgIDxwYXRoIGNsYXNzPSJhNDFjNTIzNC1hMTRhLTRmM2QtOTE2MC00NDcyYjc2ZDAwNDAiIGQ9Ik03LDMwLjYyQS42Mi42MiwwLDAsMSw2LjM4LDMwVjI3QS42Mi42MiwwLDAsMSw3LDI2LjM4aDNhLjYyLjYyLDAsMCwxLDAsMS4yNEg3LjYyVjMwQS42Mi42MiwwLDAsMSw3LDMwLjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTI5LDkuNjJIMjZhLjYyLjYyLDAsMCwxLDAtMS4yNGgyLjM4VjZhLjYyLjYyLDAsMCwxLDEuMjQsMFY5QS42Mi42MiwwLDAsMSwyOSw5LjYyWiIvPgogICAgPHBhdGggY2xhc3M9ImE0MWM1MjM0LWExNGEtNGYzZC05MTYwLTQ0NzJiNzZkMDA0MCIgZD0iTTksMTAuNjJBLjYyLjYyLDAsMCwxLDguMzgsMTBWNy42Mkg2QS42Mi42MiwwLDAsMSw2LDYuMzhIOUEuNjIuNjIsMCwwLDEsOS42Miw3djNBLjYyLjYyLDAsMCwxLDksMTAuNjJaIi8+CiAgPC9nPgo8L3N2Zz4K",
                 "mediatype": "image/svg+xml",
-            },
+            }
+        elif "base64data" not in icon or "mediatype" not in icon:
+            raise ValueError("Icon must contain 'base64data' and 'mediatype' fields")
+
+        default_channel = default_channel or "stable"
+        package_blob = {
+            "defaultChannel": default_channel,
+            "icon": icon,
             "name": package_name,
             "schema": "olm.package",
         }
@@ -866,16 +914,37 @@ class KonfluxFbcRebaser:
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
 
-    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord):
+    async def _load_csv_from_bundle(self, bundle_build: KonfluxBundleBuildRecord, manifests_dir: str):
+        """Load the CSV from the bundle image manifests directory.
+
+        :param bundle_build: The bundle build record.
+        :param manifests_dir: The directory where the manifests are stored in the bundle image.
+        :return: The loaded CSV as a dictionary.
+        """
+        with TemporaryDirectory(prefix="doozer-") as tmpdir:
+            path_specs = [f"{manifests_dir}:{tmpdir}"]
+            await util.oc_image_extract_async(
+                bundle_build.image_pullspec,
+                path_specs=path_specs,
+                registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            )
+            # Find the CSV file in the extracted manifests directory
+            csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
+            if not csv_file:
+                raise IOError(f"CSV file not found in bundle image manifests directory {manifests_dir}")
+            return yaml.load(csv_file.open())
+
+    async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord, migrate_level: str):
         """Fetch the olm.bundle blob for the given bundle build.
 
         :param bundle_build: The bundle build record.
+        :param migrate_level: The migration level to use.
         :return: A tuple of (bundle name, package name, bundle blob).
         """
         registry_auth = opm.OpmRegistryAuth(
             path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
-        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate=True, auth=registry_auth)
+        rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate_level=migrate_level, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
             raise IOError(f"Expected exactly one rendered blob, but got {len(rendered_blobs)}")
         olm_bundle_blob = rendered_blobs[0]
@@ -969,8 +1038,8 @@ class KonfluxFbcBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        # 'fbc-openshift-4-18-ose-installer-terraform' -> 'fbc-ose-4-18-ose-installer-terraform'
-        name = name.replace('openshift-', 'ose-')
+        # 'fbc-openshift-4-17-openshift-kubernetes-nmstate-operator' -> 'fbc-ose-4-17-openshift-kubernetes-nmstate-operator'
+        name = f"fbc-ose-{name[14:]}" if name.startswith("fbc-openshift-") else name
         return name
 
     async def build(self, metadata: ImageMetadata):
@@ -1039,8 +1108,7 @@ class KonfluxFbcBuilder:
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
-            # FBC needs to be built for all supported arches.
-            arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+            arches = metadata.get_arches()
             for attempt in range(1, retries + 1):
                 logger.info("Build attempt %d/%d", attempt, retries)
                 pipelinerun, url = await self._start_build(

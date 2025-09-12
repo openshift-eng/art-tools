@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import sys
@@ -7,21 +8,43 @@ from typing import Dict, Iterable, List, Optional, Set
 import click
 from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from errata_tool import Erratum
 
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
-from elliottlib.shipment_model import CveAssociation, ReleaseNotes, ShipmentConfig
-from elliottlib.shipment_utils import add_bug_ids_to_release_notes, get_shipment_configs_from_mr
+from elliottlib.shipment_model import CveAssociation, ReleaseNotes
+from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
 from elliottlib.util import get_advisory_boilerplate
 
 YAML = new_roundtrip_yaml_handler()
+
+
+def get_konflux_component_by_component(runtime: Runtime, component_name: str) -> Optional[str]:
+    """Get the konflux build component name from the component name
+    For example, "sriov-network-device-plugin-container" -> "ose-4-18-sriov-network-device-plugin"
+    """
+    if not runtime.image_metas():
+        raise ValueError("No image metas found. Forgot to initialize runtime with mode='images'?")
+
+    image_meta = None
+    for image in runtime.image_metas():
+        if component_name == image.get_component_name():
+            image_meta = image
+            break
+    if not image_meta:
+        return None
+
+    application = KonfluxImageBuilder.get_application_name(runtime.group)
+    return KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
 
 
 class AttachCveFlaws:
@@ -33,6 +56,7 @@ class AttachCveFlaws:
         default_advisory_type: str,
         output: str,
         noop: bool,
+        reconcile: bool = False,
     ):
         self.runtime = runtime
         self.into_default_advisories = into_default_advisories
@@ -40,6 +64,7 @@ class AttachCveFlaws:
         self.default_advisory_type = default_advisory_type
         self.output = output
         self.noop = noop
+        self.reconcile = reconcile
         self.logger = logging.getLogger(__name__)
 
         self.errata_config = self.runtime.get_errata_config()
@@ -75,6 +100,8 @@ class AttachCveFlaws:
                 YAML.dump(release_notes.model_dump(mode='python', exclude_unset=True, exclude_none=True), sys.stdout)
 
         elif self.runtime.build_system == 'brew':
+            if self.reconcile:
+                raise click.UsageError("Reconciliation is not supported for Brew")
             await self.handle_brew_cve_flaws()
 
     async def handle_konflux_cve_flaws(self) -> Optional[ReleaseNotes]:
@@ -110,40 +137,38 @@ class AttachCveFlaws:
 
         # Fetch the bug IDs from the release notes
         bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
-        if not bug_ids:
-            self.logger.info("No bugs found in shipment")
-            return None
         self.logger.info(f"Found {len(bug_ids)} bugs in shipment")
 
-        # Get the bug trackers
-        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira'))
-        if not tracker_bugs:
-            self.logger.info("No tracker bugs found in shipment")
-            return None
+        # Get tracker bugs
+        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira')) if bug_ids else []
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
-        # Get the flaw bugs
-        tracker_flaws, flaw_bugs = get_flaws(self.runtime.get_bug_tracker('bugzilla'), tracker_bugs)
-        if not flaw_bugs:
-            self.logger.info("No eligible flaw bugs found in shipment")
-            return None
+        # Get flaw bugs
+        tracker_flaws, flaw_bugs = (
+            get_flaws(
+                self.runtime.get_bug_tracker('bugzilla'),
+                tracker_bugs,
+                self.runtime.assembly_type,
+                self.runtime.assembly,
+            )
+            if tracker_bugs
+            else ({}, [])
+        )
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
-        # Turn the advisory type into an RHSA
-        self.update_advisory_konflux(release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
-        return release_notes
+        # Update the release notes
+        updated_release_notes = copy.deepcopy(release_notes)
+        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+        if updated_release_notes == release_notes:
+            self.logger.info("No changes made to the release notes")
+            return None
+
+        return updated_release_notes
 
     def get_release_notes_from_mr(self, mr_url: str) -> ReleaseNotes:
         """Fetch release notes from a merge request URL."""
 
-        kinds = (
-            (self.default_advisory_type,)
-            if self.default_advisory_type
-            else ("rpm", "image", "extras", "microshift", "metadata")
-        )
-        shipment_configs: Dict[str, ShipmentConfig] = get_shipment_configs_from_mr(mr_url, kinds)
-        shipment_config = shipment_configs.get(self.default_advisory_type)
-
+        shipment_config = get_shipment_config_from_mr(mr_url, self.default_advisory_type)
         if not shipment_config:
             raise ValueError(f"No shipment config found for kind: {self.default_advisory_type}")
 
@@ -172,7 +197,7 @@ class AttachCveFlaws:
         )
         return attached_tracker_bugs
 
-    def update_advisory_konflux(
+    def update_release_notes(
         self,
         release_notes: ReleaseNotes,
         flaw_bugs: Iterable[Bug],
@@ -183,38 +208,74 @@ class AttachCveFlaws:
         Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
         """
 
-        if release_notes.type != 'RHSA':
-            # Set the release notes type to RHSA
-            self.logger.info("Converting release notes to RHSA type.")
-            release_notes.type = 'RHSA'
+        if flaw_bugs:
+            if release_notes.type != 'RHSA':
+                # Set the release notes type to RHSA
+                self.logger.info("Converting release notes to RHSA type.")
+                release_notes.type = 'RHSA'
 
-        # Add the CVE component mapping to the cve field
-        cve_component_mapping = self.get_cve_component_mapping(flaw_bugs, tracker_bugs, tracker_flaws)
-        release_notes.cves = [
-            CveAssociation(key=cve_id, component=component)
-            for cve_id, components in cve_component_mapping.items()
-            for component in components
-        ]
-        release_notes.cves.sort(key=lambda x: x.key)  # Sort by CVE ID
+            # Add the CVE component mapping to the cve field
+            cve_component_mapping = self.get_cve_component_mapping(
+                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, konflux=True
+            )
+            release_notes.cves = [
+                CveAssociation(key=cve_id, component=component)
+                for cve_id, components in cve_component_mapping.items()
+                for component in components
+            ]
+            release_notes.cves.sort(key=lambda x: x.key)  # Sort by CVE ID
 
-        add_bug_ids_to_release_notes(release_notes, [b.id for b in flaw_bugs])
+            set_bugzilla_bug_ids(release_notes, [b.id for b in flaw_bugs])
 
-        # Update synopsis, topic and solution
-        cve_boilerplate = get_advisory_boilerplate(
-            runtime=self.runtime, et_data=self.errata_config, art_advisory_key=self.advisory_kind, errata_type='RHSA'
-        )
-        release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
-        highest_impact = get_highest_security_impact(flaw_bugs)
-        release_notes.topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
-        release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
+            # Update synopsis, topic and solution
+            cve_boilerplate = get_advisory_boilerplate(
+                runtime=self.runtime,
+                et_data=self.errata_config,
+                art_advisory_key=self.advisory_kind,
+                errata_type='RHSA',
+            )
+            formatter = SafeFormatter()
+            highest_impact = get_highest_security_impact(flaw_bugs)
+            replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch, "IMPACT": highest_impact}
+            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **replace_vars)
+            release_notes.topic = formatter.format(cve_boilerplate['topic'], **replace_vars)
+            release_notes.solution = formatter.format(cve_boilerplate['solution'], **replace_vars)
 
-        # Update description
-        formatted_cve_list = '\n'.join(
-            [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
-        )
-        release_notes.description = cve_boilerplate['description'].format(
-            CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-        )
+            # Update description
+            formatted_cve_list = '\n'.join(
+                [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+            )
+            release_notes.description = cve_boilerplate['description'].format(
+                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
+            )
+        elif self.reconcile:
+            # Convert RHSA back to RHBA
+            if release_notes.type == 'RHBA':
+                self.logger.info("Advisory is already RHBA, skipping reconciliation")
+                return
+
+            self.logger.info("Converting RHSA back to RHBA")
+            release_notes.type = 'RHBA'
+
+            # Remove CVE associations
+            self.logger.info("Removing CVE associations")
+            release_notes.cves = None
+
+            # Remove flaw bugs if any are attached
+            set_bugzilla_bug_ids(release_notes, [])
+
+            # Reset release notes
+            self.logger.info("Resetting release notes text fields")
+            boilerplate = get_advisory_boilerplate(
+                runtime=self.runtime,
+                et_data=self.errata_config,
+                art_advisory_key=self.advisory_kind,
+                errata_type='RHBA',
+            )
+            release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
 
     async def handle_brew_cve_flaws(self):
         """
@@ -231,7 +292,6 @@ class AttachCveFlaws:
         exit_code = 0
         flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
         self.errata_api = AsyncErrataAPI(self.errata_config.get("server", constants.errata_url))
-        brew_api = self.runtime.build_retrying_koji_client()
 
         for advisory_id in advisories:
             self.logger.info("Getting advisory %s", advisory_id)
@@ -242,7 +302,9 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api)
+            tracker_flaws, flaw_bugs = get_flaws(
+                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
+            )
 
             try:
                 if flaw_bugs:
@@ -280,10 +342,12 @@ class AttachCveFlaws:
 
     @staticmethod
     def get_cve_component_mapping(
+        runtime: Runtime,
         flaw_bugs: Iterable[Bug],
         attached_tracker_bugs: List[Bug],
         tracker_flaws: Dict[int, Iterable],
         attached_components: Set = None,
+        konflux: bool = False,
     ) -> Dict[str, Set[str]]:
         """
         Get a mapping of CVE IDs to component names based on the attached tracker bugs and flaw bugs.
@@ -293,9 +357,24 @@ class AttachCveFlaws:
         cve_components_mapping: Dict[str, Set[str]] = {}
 
         for tracker in attached_tracker_bugs:
-            whiteboard_component = tracker.whiteboard_component
-            if not whiteboard_component:
+            if not tracker.whiteboard_component:
                 raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
+
+            whiteboard_component = tracker.whiteboard_component
+            if "openshift4/" in whiteboard_component:
+                # this means the component here is the delivery repo name
+                # we need to translate it to build component name
+                new_component = get_component_by_delivery_repo(runtime, whiteboard_component)
+                if not new_component:
+                    raise ValueError(f"Component {whiteboard_component} could not be translated")
+                whiteboard_component = new_component
+
+            if konflux:
+                new_component = get_konflux_component_by_component(runtime, whiteboard_component)
+                if not new_component:
+                    raise ValueError(f"Component {whiteboard_component} could not be translated")
+                whiteboard_component = new_component
+
             if whiteboard_component == "rhcos":
                 # rhcos trackers are special, since they have per-architecture component names
                 # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
@@ -328,7 +407,7 @@ class AttachCveFlaws:
         attached_builds = await self.errata_api.get_builds_flattened(advisory.errata_id)
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
         cve_components_mapping = self.get_cve_component_mapping(
-            flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
         )
 
         await AsyncErrataUtils.associate_builds_with_cves(
@@ -409,6 +488,9 @@ class AttachCveFlaws:
 @click.option(
     "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
 )
+@click.option(
+    "--reconcile", is_flag=True, help='Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable'
+)
 @click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
 @click.pass_obj
 @click_coroutine
@@ -418,6 +500,7 @@ async def attach_cve_flaws_cli(
     noop: bool,
     default_advisory_type: str,
     into_default_advisories: bool,
+    reconcile: bool,
     output: str,
 ):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
@@ -440,7 +523,7 @@ async def attach_cve_flaws_cli(
 
     if sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories])) != 1:
         raise click.BadParameter("Use one of --use-default-advisory or --advisory or --into-default-advisories")
-    runtime.initialize()
+    runtime.initialize(mode="images")
 
     pipeline = AttachCveFlaws(
         runtime=runtime,
@@ -449,5 +532,6 @@ async def attach_cve_flaws_cli(
         default_advisory_type=default_advisory_type,
         output=output,
         noop=noop,
+        reconcile=reconcile,
     )
     await pipeline.run()

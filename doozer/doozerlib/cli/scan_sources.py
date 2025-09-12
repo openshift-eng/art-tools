@@ -8,6 +8,7 @@ import click
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
@@ -15,6 +16,7 @@ from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, rhcos, util
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime
@@ -54,7 +56,14 @@ class ConfigScanSources:
 
             # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
             if self.rebase_priv:
-                self.rebase_into_priv()
+                major, minor = self.runtime.get_major_minor_fields()
+                version = f'{major}.{minor}'
+                if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                    self.runtime.logger.warning(
+                        'ocp4-scan for Brew is not allowed to rebase into openshfit-priv version %s', version
+                    )
+                else:
+                    self.rebase_into_priv()
 
             # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
             self.scan_for_upstream_changes(koji_api)
@@ -190,6 +199,10 @@ class ConfigScanSources:
         raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
     def rebase_into_priv(self):
+        if self.dry_run:
+            self.runtime.logger.info('Would have rebased into openshift-priv')
+            return
+
         self.runtime.logger.info('Rebasing public upstream contents into openshift-priv')
         upstream_mappings = exectools.parallel_exec(
             lambda meta, _: (
@@ -623,7 +636,7 @@ class ConfigScanSources:
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
                 if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                     tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
-                    latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_node_shasum(arch)
                 else:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
@@ -716,7 +729,7 @@ class ConfigScanSources:
 
         return shasum
 
-    def _latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
+    def _latest_rhcos_node_shasum(self, arch) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         rhcos_index = next(

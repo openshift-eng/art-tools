@@ -26,7 +26,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
-from doozerlib.lockfile import RPMLockfileGenerator
+from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -89,6 +89,7 @@ class KonfluxRebaser:
         self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
         self.rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
+        self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -318,9 +319,10 @@ class KonfluxRebaser:
         """
         docker_ignore_path = f"{path}/.dockerignore"
         if os.path.exists(docker_ignore_path):
-            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
+            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes")
             async with aiofiles.open(docker_ignore_path, "a") as file:
                 await file.write("\n!/.oit/**\n")
+                await file.write("\n!labels.json\n")
 
     @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
@@ -701,6 +703,8 @@ class KonfluxRebaser:
 
             await self._write_rpms_lock_file(metadata, dest_dir)
 
+            await self._write_artifacts_lock_file(metadata, dest_dir)
+
             df_path = dest_dir.joinpath('Dockerfile')
             await self._update_dockerfile(
                 metadata,
@@ -726,6 +730,15 @@ class KonfluxRebaser:
         self._logger.info(f'Generating RPM lockfile for {metadata.distgit_key}')
 
         await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
+
+    async def _write_artifacts_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
+        if not metadata.is_artifact_lockfile_enabled():
+            self._logger.debug(f'Artifact lockfile generation is disabled for {metadata.distgit_key}')
+            return
+
+        self._logger.info(f'Generating artifact lockfile for {metadata.distgit_key}')
+
+        await self.artifact_lockfile_generator.generate_artifact_lockfile(metadata, dest_dir)
 
     def _make_actual_release_string(
         self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]
@@ -892,11 +905,9 @@ class KonfluxRebaser:
             if in_mod_block:
                 continue
 
-            # remove any old instances of empty.repo mods that aren't in mod block
-            if 'empty.repo' not in line:
-                if line.endswith('\n'):
-                    line = line[0:-1]  # remove trailing newline, if exists
-                filtered_content.append(line)
+            if line.endswith('\n'):
+                line = line[0:-1]  # remove trailing newline, if exists
+            filtered_content.append(line)
 
         df_lines = filtered_content
 
@@ -959,6 +970,37 @@ class KonfluxRebaser:
 
         await self._reflow_labels(df_path)
 
+    def _find_matching_artifact(self, metadata: ImageMetadata, url_pattern: str) -> Optional[str]:
+        """Find artifact resource matching URL pattern."""
+        if not metadata.is_artifact_lockfile_enabled():
+            return None
+
+        required_artifacts = metadata.get_required_artifacts()
+        for artifact_url in required_artifacts:
+            if url_pattern.lower() in artifact_url.lower():
+                return artifact_url
+        return None
+
+    def _validate_required_artifacts(
+        self, metadata: ImageMetadata, network_mode: str, artifact_type: str, url_pattern: str
+    ) -> Optional[str]:
+        """Generic validation for required artifacts before Dockerfile modification."""
+        if network_mode != "hermetic":
+            return None
+
+        matching_artifact = self._find_matching_artifact(metadata, url_pattern)
+        if not matching_artifact:
+            from doozerlib.exceptions import DoozerFatalError
+
+            raise DoozerFatalError(
+                f"Hermetic build requires {artifact_type} artifact definition in image metadata. "
+                f"Add {artifact_type} resource URL to konflux.cachi2.artifact_lockfile.resources in {metadata.distgit_key}. "
+                f"Expected URL pattern: {url_pattern}"
+            )
+
+        self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
+        return matching_artifact
+
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         network_mode = metadata.get_konflux_network_mode()
@@ -975,6 +1017,12 @@ class KonfluxRebaser:
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
             f"ENV ART_BUILD_NETWORK={network_mode}",
+            # A current cachi2 issue allows cached go artifacts to persist through image build stages.
+            # This was detected when one builder stage was rhel8 and another rhel9, leaving rhel8
+            # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
+            # As a temporary guard against this cache pollution, clean the cache after every stage.
+            # Use || true to prevent an error if this not a builder stage.
+            "RUN go clean -cache || true",
         ]
 
         # Three modes for handling upstreams depending on old
@@ -1102,11 +1150,21 @@ class KonfluxRebaser:
                 # Cachito makes application source code and dependencies available inside the app/ directory. We only make the
                 # repo source code available there.
                 "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
-                # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
-                "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
-                # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
-                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
             ]
+
+            if network_mode != "hermetic":
+                konflux_lines += [
+                    # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
+                    "RUN curl https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem",
+                    # Cachito also writes a pem file which some builds reference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
+                    "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
+                ]
+            elif metadata.is_artifact_lockfile_enabled():
+                konflux_lines += [
+                    "USER 0",
+                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem /tmp/art/Current-IT-Root-CAs.pem",
+                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
+                ]
 
         konflux_lines += [
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
@@ -1116,7 +1174,7 @@ class KonfluxRebaser:
             konflux_lines += [
                 "USER 0",
                 "RUN mkdir -p /tmp/art/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/art/yum_temp/ || true",
-                f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
+                f"COPY .oit/art-{self.repo_type}.repo /etc/yum.repos.d/",
                 # Needed by s390x builds: https://redhat-internal.slack.com/archives/C04PZ7H0VA8/p1751464077655919
                 f"RUN curl {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME}",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
@@ -1170,7 +1228,7 @@ class KonfluxRebaser:
             lines = [
                 "\n# Start Konflux-specific steps",
                 "USER 0",
-                "RUN rm -f /etc/yum.repos.d/* && cp /tmp/art/yum_temp/* /etc/yum.repos.d/ || true",
+                "RUN rm -f /etc/yum.repos.d/art-* && mv /tmp/art/yum_temp/* /etc/yum.repos.d/ || true",
                 "RUN rm -rf /tmp/art",
                 f"{user_to_set if user_to_set else ''}",
                 "# End Konflux-specific steps\n\n",
@@ -1187,21 +1245,33 @@ class KonfluxRebaser:
         Konflux does not support cachito, comment it out to support green non-hermetic builds
         For yarn, download it if its missing.
         """
+        network_mode = metadata.get_konflux_network_mode()
         lines = dfp.lines
         updated_lines = []
         line_commented = False
         yarn_line_updated = False
         for line in lines:
             if 'echo "need yarn at ${CACHED_YARN}"' in line:
-                # For nmstate-console-plugin and networking-console-plugin the build will error out if it doesn't see a yarn installation at that exact place
-                # So follow the pattern as other images do, and download yarn for now
-                line = line.replace(
-                    'echo "need yarn at ${CACHED_YARN}"',
-                    "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz",
-                )
+                yarn_artifact = self._validate_required_artifacts(metadata, network_mode, "yarn", "yarn-v")
+
+                if network_mode == "hermetic" and yarn_artifact:
+                    import urllib.parse
+
+                    filename = urllib.parse.urlparse(yarn_artifact).path.split('/')[-1]
+                    line = line.replace(
+                        'echo "need yarn at ${CACHED_YARN}"',
+                        f"npm install -g /cachi2/output/deps/generic/{filename}",
+                    )
+                    self._logger.info(f"yarn line overridden. Using pre-fetched yarn from hermetic path: {filename}")
+                else:
+                    line = line.replace(
+                        'echo "need yarn at ${CACHED_YARN}"',
+                        "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz",
+                    )
+                    self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
+
                 updated_lines.append(line)
                 yarn_line_updated = True
-                self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
                 continue
 
             if yarn_line_updated:
@@ -1256,7 +1326,7 @@ class KonfluxRebaser:
         non_shipping_repos = metadata.config.get('non_shipping_repos', [])
 
         for t in repos.repotypes:
-            rc_path = dest_dir.joinpath('.oit', f'{t}.repo')
+            rc_path = dest_dir.joinpath('.oit', f'art-{t}.repo')
             async with aiofiles.open(rc_path, 'w', encoding='utf-8') as rc:
                 content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=True)
                 await rc.write(content)

@@ -13,6 +13,7 @@ from errata_tool import ErrataException
 
 from elliottlib import bzutil, constants
 from elliottlib.bzutil import Bug, get_flaws
+from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type, get_builds_by_advisory_kind
 from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue
@@ -86,7 +87,7 @@ async def verify_attached_bugs_cli(
     If any verification fails, a text explanation is given and the return code is 1.
     Otherwise, prints the number of bugs in the advisories and exits with success.
     """
-    runtime.initialize()
+    runtime.initialize(mode="images")
     if advisories:
         logger.warning(
             "Cannot verify advisory bug sorting. To verify that bugs are attached to the "
@@ -134,7 +135,9 @@ async def verify_attached_bugs(
             if runtime.assembly:
                 issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
                 included_bug_ids = {issue["id"] for issue in issues_config.include}
-            validator.verify_bugs_advisory_type(non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids)
+            validator.verify_bugs_advisory_type(
+                runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids
+            )
 
         if not skip_multiple_advisories_check:
             await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
@@ -265,7 +268,7 @@ class BugValidator:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
 
-    def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
+    def verify_bugs_advisory_type(self, runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
         advance_release = False
         if "advance" in advisory_id_map and is_advisory_editable(advisory_id_map["advance"]):
             advance_release = True
@@ -273,6 +276,7 @@ class BugValidator:
         major_version, minor_version = self.runtime.get_major_minor()
         builds_by_advisory_kind = get_builds_by_advisory_kind(self.runtime)
         bugs_by_type, issues = categorize_bugs_by_type(
+            runtime,
             non_flaw_bugs,
             builds_by_advisory_kind,
             permitted_bug_ids=permitted_bug_ids,
@@ -341,8 +345,9 @@ class BugValidator:
         self, advisory_id: int, attached_trackers: Iterable[Bug], attached_flaws: Iterable[Bug]
     ):
         flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
-        brew_api = self.runtime.build_retrying_koji_client()
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api)
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(
+            flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
+        )
 
         # Check if attached flaws match expected flaws
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}
@@ -385,29 +390,9 @@ class BugValidator:
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
 
         # Validate CVE mappings (of CVEs and builds)
-        flaw_id_bugs = {f.id: f for f in first_fix_flaw_bugs}
-        cve_components_mapping: Dict[str, Set[str]] = {}
-        for tracker in attached_trackers:
-            whiteboard_component = tracker.whiteboard_component
-            if not whiteboard_component:
-                raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
-            if whiteboard_component == "rhcos":
-                # rhcos trackers are special, since they have per-architecture component names
-                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                # but the tracker bug has a generic "rhcos" component name
-                # so we need to associate this CVE with all per-architecture component names
-                component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
-            else:
-                component_names = {whiteboard_component}
-            flaw_ids = tracker_flaws[tracker.id]
-            for flaw_id in flaw_ids:
-                if flaw_id not in flaw_id_bugs:  # This means associated flaw wasn't considered a first fix
-                    continue
-                alias = [k for k in flaw_id_bugs[flaw_id].alias if k.startswith('CVE-')]
-                if len(alias) != 1:
-                    raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
-                cve = alias[0]
-                cve_components_mapping.setdefault(cve, set()).update(component_names)
+        cve_components_mapping = AttachCveFlaws.get_cve_component_mapping(
+            self.runtime, first_fix_flaw_bugs, attached_trackers, tracker_flaws, attached_components
+        )
 
         try:
             extra_exclusions, missing_exclusions = await AsyncErrataUtils.validate_cves_and_get_exclusions_diff(

@@ -19,11 +19,11 @@ from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, Konf
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
-from doozerlib import constants
+from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
-from doozerlib.lockfile import DEFAULT_LOCKFILE_NAME
+from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from kubernetes.dynamic import resource
@@ -54,6 +54,7 @@ class KonfluxImageBuilderConfig:
     registry_auth_file: Optional[str] = None
     skip_checks: bool = False
     dry_run: bool = False
+    build_priority: Optional[str] = None
 
 
 class KonfluxImageBuilder:
@@ -175,6 +176,7 @@ class KonfluxImageBuilder:
                     building_arches=building_arches,
                     output_image=output_image,
                     additional_tags=additional_tags,
+                    nvr=nvr,
                     dest_dir=dest_dir,
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
@@ -336,9 +338,25 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
             prefetch.append(data)
-            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_LOCKFILE_NAME} at path: {lockfile_path}")
+            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
         else:
             logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
+
+        artifact_lockfile_enabled = metadata.is_artifact_lockfile_enabled()
+        if network_mode == "hermetic" and artifact_lockfile_enabled:
+            artifact_lockfile_path = metadata.config.konflux.cachi2.artifact_lockfile.get("path", ".")
+            artifact_data = {
+                "type": "generic",
+                "path": artifact_lockfile_path,
+            }
+            prefetch.append(artifact_data)
+            logger.info(
+                f"Adding generic prefetch for artifact lockfile {DEFAULT_ARTIFACT_LOCKFILE_NAME} at path: {artifact_lockfile_path}"
+            )
+        else:
+            logger.debug(
+                f"Skipping generic prefetch - network_mode: {network_mode}, artifact_lockfile_enabled: {artifact_lockfile_enabled}"
+            )
 
         for package_manager in ["gomod", "npm", "pip", "yarn"]:
             if package_manager in required_package_managers:
@@ -378,6 +396,7 @@ class KonfluxImageBuilder:
         building_arches: list[str],
         output_image: str,
         additional_tags: list[str],
+        nvr: str,
         dest_dir: Optional[Path] = None,
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -420,6 +439,15 @@ class KonfluxImageBuilder:
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
+        # Resolve build priority based on precedence rules
+        if self._config.build_priority == "auto":
+            build_priority = util.get_konflux_build_priority(metadata=metadata)
+            logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
+        else:
+            # If it's a specific number (1-10), use it directly
+            build_priority = self._config.build_priority
+            logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -437,7 +465,8 @@ class KonfluxImageBuilder:
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
             sast=sast,
-            annotations={"art-network-mode": metadata.get_konflux_network_mode()},
+            annotations={"art-network-mode": metadata.get_konflux_network_mode(), "art-nvr": nvr},
+            build_priority=build_priority,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
@@ -752,6 +781,7 @@ class KonfluxImageBuilder:
                         'pod_name': pod_name,
                         'pipeline_run_uid': pipeline_run_uid,
                         'success': all_containers_finished and exit_code_sum == 0,
+                        'record_id': build_record.record_id,
                     }
                     rows.append(taskrun_record)
 

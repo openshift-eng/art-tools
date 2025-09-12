@@ -55,6 +55,7 @@ class GenAssemblyPipeline:
         ignore_non_x86_nightlies: Optional[bool] = False,
         logger: Optional[logging.Logger] = None,
         gen_microshift: bool = False,
+        date: Optional[str] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -69,6 +70,7 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
+        self.date = date
         self.skip_get_nightlies = skip_get_nightlies
         self.gen_microshift = gen_microshift
         if in_flight:
@@ -149,6 +151,10 @@ class GenAssemblyPipeline:
 
             # Create a PR
             pr = await self._create_or_update_pull_request(assembly_definition)
+            if not pr:
+                # No PR update was made
+                self._logger.warning("No PR update was made")
+                return
 
             # Sends a slack message
             message = (
@@ -241,6 +247,8 @@ class GenAssemblyPipeline:
             cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
         if self.gen_microshift:
             cmd.append("--gen-microshift")
+        if self.date:
+            cmd.append(f"--date={self.date}")
         if self.custom:
             cmd.append("--custom")
         else:
@@ -324,6 +332,7 @@ class GenAssemblyPipeline:
             start_build_sync(
                 build_version=build_version,
                 assembly=self.assembly,
+                build_system=self.build_system,
                 doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
                 # to build-sync because we always create branch on the base repo
                 doozer_data_gitref=branch,
@@ -424,6 +433,7 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
+@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @pass_runtime
 @click_coroutine
 async def gen_assembly(
@@ -446,6 +456,7 @@ async def gen_assembly(
     skip_get_nightlies: bool,
     ignore_non_x86_nightlies: bool,
     gen_microshift: bool,
+    date: Optional[str],
 ):
     pipeline = GenAssemblyPipeline(
         runtime=runtime,
@@ -467,5 +478,6 @@ async def gen_assembly(
         skip_get_nightlies=skip_get_nightlies,
         ignore_non_x86_nightlies=ignore_non_x86_nightlies,
         gen_microshift=gen_microshift,
+        date=date,
     )
     await pipeline.run()

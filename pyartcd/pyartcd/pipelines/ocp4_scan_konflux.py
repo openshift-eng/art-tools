@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import os
 
 import click
 import yaml
@@ -8,6 +10,7 @@ from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd.util import has_layered_rhcos
 
 
 class Ocp4ScanPipeline:
@@ -23,7 +26,24 @@ class Ocp4ScanPipeline:
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.changes = {}
 
+        self.rhcos_updated = False
+        self.rhcos_outdated = False
+        self.rhcos_inconsistent = False
+        self.inconsistent_rhcos_rpms = None
+
         self.skipped = True  # True by default; if not locked, run() will set it to False
+
+        group_param = f'openshift-{self.version}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
+        self.doozer_base_command = [
+            'doozer',
+            f'--working-dir={self._doozer_working}',
+            f'--data-path={self.data_path}',
+            f'--group={group_param}',
+            f'--assembly={self.assembly}',
+            '--build-system=konflux',
+        ]
 
     async def run(self):
         # If we get here, lock could be acquired
@@ -35,32 +55,16 @@ class Ocp4ScanPipeline:
         self.logger.info(scan_info)
 
         self.check_params()
+
+        # Scan for changes and RHCOS inconsistencies
         await self.get_changes()
+        await self.get_rhcos_inconsistencies()
 
         # Handle image source changes
-        if self.changes.get('images', None):
-            self.logger.info('Detected at least one updated image')
-            image_list = self.changes.get('images', [])
+        self.handle_source_changes()
 
-            # Do NOT trigger konflux builds in dry-run mode
-            if self.runtime.dry_run:
-                self.logger.info('Would have triggered a %s ocp4 build', self.version)
-                return
-
-            # Update build description
-            jenkins.update_description(f'Changed {len(image_list)} images<br/>')
-
-            # Trigger ocp4-konflux
-            self.logger.info('Triggering a %s ocp4-konflux build', self.version)
-            jenkins.start_ocp4_konflux(
-                build_version=self.version,
-                assembly='stream',
-                image_list=image_list,
-            )
-
-        else:
-            self.logger.info('*** No changes detected')
-            jenkins.update_title(' [NO CHANGES]')
+        # Handle RHCOS changes or inconsistencies
+        await self.handle_rhcos_changes()
 
     def check_params(self):
         """
@@ -80,27 +84,15 @@ class Ocp4ScanPipeline:
         self.rhcos_changed is also updated accordingly
         """
 
-        group_param = f'openshift-{self.version}'
-        if self.data_gitref:
-            group_param += f'@{self.data_gitref}'
-
-        # Run doozer konflux:scan-sources. --rebase-priv is always disabled for now, as it might conflict
-        # with rebase operations triggered by regular ocp4-scan. In the future, we'll have to add the --rebase-priv
-        # options to the Doozer invocation
-        cmd = [
-            'doozer',
-            f'--working-dir={self._doozer_working}',
-            f'--data-path={self.data_path}',
-            f'--group={group_param}',
-            f'--assembly={self.assembly}',
-            '--build-system=konflux',
-        ]
+        cmd = self.doozer_base_command.copy()
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
         cmd.extend(
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
+                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
+                '--rebase-priv',
             ]
         )
         if self.runtime.dry_run:
@@ -115,6 +107,100 @@ class Ocp4ScanPipeline:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
             self.logger.info('No changes detected in RPMs, images or RHCOS')
+
+        # Check for RHCOS changes
+        if self.changes.get('rhcos', None):
+            for rhcos_change in self.changes['rhcos']:
+                if rhcos_change['reason'].get('updated', None):
+                    self.rhcos_updated = True
+                if rhcos_change['reason'].get('outdated', None):
+                    self.rhcos_outdated = True
+
+    async def get_rhcos_inconsistencies(self):
+        """
+        Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
+        """
+
+        cmd = self.doozer_base_command + [
+            'inspect:stream',
+            'INCONSISTENT_RHCOS_RPMS',
+            '--strict',
+        ]
+
+        try:
+            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+            self.logger.info(out)
+            self.rhcos_inconsistent = False
+
+        except ChildProcessError as e:
+            self.rhcos_inconsistent = True
+            self.inconsistent_rhcos_rpms = e
+
+    def handle_source_changes(self):
+        if not self.changes:
+            return
+
+        jenkins.update_title(' [SOURCE CHANGES]')
+        self.logger.info('Detected at least one updated image')
+
+        image_list = self.changes.get('images', [])
+        rpm_list = self.changes.get('rpms', [])
+
+        # Do NOT trigger konflux builds in dry-run mode
+        if self.runtime.dry_run:
+            self.logger.info('Would have triggered a %s ocp4 build', self.version)
+            return
+
+        # Update build description
+        jenkins.update_description(f'Changed {len(image_list)} images<br/>')
+
+        # Trigger ocp4-konflux
+        self.logger.info('Triggering a %s ocp4-konflux build', self.version)
+        jenkins.start_ocp4_konflux(
+            build_version=self.version,
+            assembly='stream',
+            image_list=image_list,
+            rpm_list=rpm_list,
+        )
+
+    async def handle_rhcos_changes(self):
+        rhcos_changes = False
+
+        if self.rhcos_inconsistent or self.rhcos_outdated:
+            rhcos_changes = True
+            if self.rhcos_inconsistent:
+                self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+            if self.rhcos_outdated:
+                self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
+
+            if self.runtime.dry_run:
+                self.logger.info('Would have triggered a %s RHCOS build', self.version)
+                return
+
+            # Inconsistency probably means partial failure and we would like to retry.
+            # but don't kick off more if already in progress.
+            self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
+            layered_rhcos = await has_layered_rhcos(self.doozer_base_command)
+            job_name = 'build-node-image' if layered_rhcos else 'build'
+            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
+
+        elif self.rhcos_updated:
+            rhcos_changes = True
+            self.logger.info('Detected at least one updated RHCOS')
+
+            if self.runtime.dry_run:
+                self.logger.info('Would have triggered a %s build-sync build', self.version)
+                return
+
+            self.logger.info('Triggering a %s build-sync to pick up latest RHCOS', self.version)
+            jenkins.start_build_sync(
+                build_version=self.version,
+                assembly="stream",
+                build_system="konflux",
+            )
+
+        if rhcos_changes:
+            jenkins.update_title(' [RHCOS CHANGES]')
 
 
 @cli.command('beta:konflux:ocp4-scan')
@@ -131,6 +217,10 @@ class Ocp4ScanPipeline:
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
+    # KUBECONFIG env var must be defined in order to scan sources
+    if not os.getenv('KUBECONFIG'):
+        raise RuntimeError('Environment variable KUBECONFIG must be defined')
+
     jenkins.init_jenkins()
 
     pipeline = Ocp4ScanPipeline(

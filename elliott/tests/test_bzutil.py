@@ -78,7 +78,7 @@ class TestBugTracker(unittest.TestCase):
         )
         brew_api = flexmock()
         brew_api.should_receive("getPackageID").and_return(True)
-        actual = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), brew_api, strict=False)
+        actual = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, BugzillaBugTracker({}), strict=False)
         self.assertEqual(expected, actual)
 
     def test_get_corresponding_flaw_bugs_strict(self):
@@ -104,7 +104,6 @@ class TestBugTracker(unittest.TestCase):
             BugTracker.get_corresponding_flaw_bugs,
             tracker_bugs,
             BugzillaBugTracker({}),
-            brew_api,
             strict=True,
         )
 
@@ -505,11 +504,6 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('CVE-2022-123', sort_list[4])
 
     def test_is_first_fix_any_validate(self):
-        tr = '4.8.z'
-        expected = True
-        actual = bzutil.is_first_fix_any(None, [], tr)
-        self.assertEqual(expected, actual)
-
         # should raise error when no tracker bugs are found
         tr = '4.8.0'
         self.assertRaisesRegex(

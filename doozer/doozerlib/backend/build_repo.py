@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import shutil
+import urllib.parse
 from pathlib import Path
 from typing import List, Optional, Sequence, Union, cast
 
+import aiofiles
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
 from artcommonlib.telemetry import start_as_current_span_async
@@ -24,6 +26,8 @@ class BuildRepo:
         url: str,
         branch: Optional[str],
         local_dir: Union[str, Path],
+        username: Optional[str] = None,
+        password: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
         pull_url: Optional[str] = None,
     ) -> None:
@@ -31,6 +35,8 @@ class BuildRepo:
         :param url: The URL of the build source repository (for pushing).
         :param branch: The branch of the build source repository to clone. None to not switch to any branch.
         :param local_dir: The local directory to clone the build source repository into.
+        :param username: The username to use for accessing the build source repository (optional).
+        :param password: The password to use for accessing the build source repository (optional).
         :param logger: A logger object to use for logging messages
         :param pull_url: The URL of the repository to pull from. If None, uses url for both pull and push.
         """
@@ -38,6 +44,8 @@ class BuildRepo:
         self.pull_url = pull_url or url
         self.branch = branch
         self.local_dir = Path(local_dir)
+        self._username = username
+        self._password = password
         self._commit_hash: Optional[str] = None
         self._logger = logger or LOGGER
 
@@ -57,6 +65,48 @@ class BuildRepo:
         Returns None if the branch has no commits yet.
         """
         return self._commit_hash
+
+    async def _set_credentials(self, username: str, password: str):
+        """Set the credentials for accessing the build source repository.
+        This will store the credentials in the ~/.git-credentials file.
+
+        :param username: The username to use for accessing the build source repository.
+        :param password: The password to use for accessing the build source repository.
+        :raises ValueError: If the username or password is not provided.
+        """
+        self._logger.info("Setting credentials for build source repository")
+        # Generate the credentials string
+        if not username or not password:
+            raise ValueError("Username and password must be provided to set credentials")
+        parsed_url = urllib.parse.urlparse(self.url)
+        domain = parsed_url.netloc.split("@")[-1]
+        new_netloc = f"{urllib.parse.quote(username)}:{urllib.parse.quote(password)}@{domain}"
+        credentials_string = urllib.parse.urlunparse(
+            (parsed_url.scheme, new_netloc, parsed_url.path, parsed_url.params, parsed_url.query, parsed_url.fragment)
+        )
+
+        # Run git config credential.helper store
+        git_config_cmd = ["config", "credential.helper", "store"]
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
+        # Run git config credential.useHttpPath true
+        git_config_cmd = ["config", "credential.useHttpPath", "true"]
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
+
+        # Check if the credentials are already set in ~/.git-credentials
+        credentials_file = Path.home() / ".git-credentials"
+        if credentials_file.exists():
+            self._logger.info("Checking if credentials already exist in %s", credentials_file)
+            async with aiofiles.open(credentials_file, "r") as f:
+                lines = await f.readlines()
+            for line in lines:
+                if line.strip() == credentials_string:
+                    self._logger.info("Credentials already set for %s", self.url)
+                    return
+
+        # write credentials to ~/.git-credentials
+        LOGGER.info("Writing credentials to %s", credentials_file)
+        async with aiofiles.open(credentials_file, "a+") as f:
+            await f.write(f"{credentials_string}\n")
 
     def exists(self) -> bool:
         """Check if the local directory already exists."""
@@ -100,6 +150,8 @@ class BuildRepo:
         if self.pull_url != self.url:
             await self.set_pull_remote(self.pull_url)  # Set pull remote for fetch
         self._commit_hash = None
+        if self._username and self._password:
+            await self._set_credentials(self._username, self._password)
         if self.branch is not None:
             if await self.fetch(self.branch, strict=strict):
                 await self.switch(self.branch)

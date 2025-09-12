@@ -63,7 +63,7 @@ class CveAssociation(StrictBaseModel):
 
 
 class Issue(StrictBaseModel):
-    id: Union[str, int]
+    id: str
     source: str
 
 
@@ -81,11 +81,7 @@ class ReleaseNotes(StrictBaseModel):
     description: str
     solution: str
     issues: Optional[Issues] = None
-
-    # Konflux pipeline expects certain keys like issues, cves to always be set, even if empty
-    # therefore allow these to have default empty values
-    cves: Optional[List[CveAssociation]] = []
-
+    cves: Optional[List[CveAssociation]] = None
     references: Optional[List[str]] = None
 
     # serialize special text fields, if they contain a new-line char
@@ -106,8 +102,8 @@ class Data(StrictBaseModel):
 class EnvAdvisory(StrictBaseModel):
     """Information about the advisory that got shipped to the environment"""
 
-    url: str
     internal_url: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ShipmentEnv(StrictBaseModel):

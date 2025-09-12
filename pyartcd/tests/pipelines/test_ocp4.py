@@ -3,9 +3,10 @@ import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd import constants
 from pyartcd.jenkins import Jobs
 from pyartcd.pipelines import ocp4
+
+from pyartcd import constants
 
 
 class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
@@ -235,7 +236,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         pipeline = ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
-            version='4.13',
+            version='4.11',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
             build_rpms='all',
@@ -253,7 +254,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("shutil.rmtree")
     @patch("pyartcd.jenkins.update_title")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_rpms(self, cmd_assert_mock: AsyncMock, *_):
         self.ocp4.release = '2100123111.p?'
@@ -275,12 +276,12 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 '--latest-parent-version',
                 '--rpms',
                 'rpm1',
                 'rpms:rebase-and-build',
-                '--version=4.13',
+                '--version=4.11',
                 '--release=2100123111.p?',
             ],
         )
@@ -297,13 +298,13 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 '--latest-parent-version',
                 "--rpms=",
                 '--exclude',
                 'rpm1',
                 'rpms:rebase-and-build',
-                '--version=4.13',
+                '--version=4.11',
                 '--release=2100123111.p?',
             ],
         )
@@ -314,13 +315,14 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.jenkins.update_title")
     @patch("pyartcd.jenkins.update_description")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
     @patch("pyartcd.util.load_group_config", return_value={'software_lifecycle': {'phase': 'release'}})
+    @patch("pyartcd.oc.qci_registry_login")
     @patch("pyartcd.oc.registry_login")
     @patch("pyartcd.record.parse_record_log")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_and_rebase_images(
-        self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, *_
+        self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, qci_login_mock, *_
     ):
         parse_record_log_mock.return_value = {}
 
@@ -341,7 +343,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 '--latest-parent-version',
                 '--images',
                 'image1,image2',
@@ -351,6 +353,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             ],
         )
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # Exclude images
         cmd_assert_mock.reset_mock()
@@ -364,7 +367,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 '--latest-parent-version',
                 "--images=",
                 '--exclude',
@@ -375,6 +378,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             ],
         )
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # Dry run
         cmd_assert_mock.reset_mock()
@@ -385,6 +389,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         await self.ocp4._build_images()
         cmd_assert_mock.assert_not_awaited()
         registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
 
         # ApiServer rebuilt
         cmd_assert_mock.reset_mock()
@@ -397,13 +402,14 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         self.ocp4.build_plan.images_excluded = []
         await self.ocp4._build_images()
         registry_login_mock.assert_awaited_once()
+        qci_login_mock.assert_awaited_once()
         cmd_assert_mock.assert_awaited_with(
             [
                 'doozer',
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 'images:streams',
                 'mirror',
             ],
@@ -415,7 +421,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.jenkins.update_title")
     @patch("pyartcd.jenkins.update_description")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
     @patch("pyartcd.util.load_group_config", return_value={'software_lifecycle': {'phase': 'release'}})
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mass_rebuild(self, cmd_assert_async_mock: AsyncMock, *_):
@@ -470,7 +476,7 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         return ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
-            version='4.13',
+            version='4.11',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
             build_rpms='all',
@@ -527,7 +533,7 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
         pipeline = ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
-            version='4.13',
+            version='4.11',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
             build_rpms='all',
@@ -561,12 +567,12 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
                 '--assembly=stream',
                 '--working-dir=doozer_working',
                 '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.13',
+                '--group=openshift-4.11',
                 '--images=',
                 'images:rebase',
-                '--version=v4.13',
+                '--version=v4.11',
                 '--release=2099010109.p?',
-                "--message='Updating Dockerfile version and release v4.13-2099010109.p?'",
+                "--message='Updating Dockerfile version and release v4.11-2099010109.p?'",
                 '--push',
                 "--message='build-url'",
             ],
@@ -606,7 +612,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
         pipeline = ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
-            version='4.13',
+            version='4.11',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
             build_rpms='all',
@@ -635,7 +641,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
                 call(
                     job=Jobs.BUILD_SYNC,
                     params={
-                        'BUILD_VERSION': '4.13',
+                        'BUILD_VERSION': '4.11',
                         'ASSEMBLY': 'stream',
                         'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
                     },
@@ -643,7 +649,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
                 call(
                     job=Jobs.OLM_BUNDLE,
                     params={
-                        'BUILD_VERSION': '4.13',
+                        'BUILD_VERSION': '4.11',
                         'ASSEMBLY': 'stream',
                         'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
                         'DOOZER_DATA_GITREF': '',
@@ -673,7 +679,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
         pipeline = ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
-            version='4.13',
+            version='4.11',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
             build_rpms='all',
@@ -707,13 +713,13 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
         olm_bundle_mock.reset_mock()
         await pipeline._sync_images()
         build_sync_mock.assert_called_with(
-            build_version='4.13',
+            build_version='4.11',
             assembly='stream',
             doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
             doozer_data_gitref='',
         )
         olm_bundle_mock.assert_called_with(
-            build_version='4.13',
+            build_version='4.11',
             assembly='stream',
             operator_nvrs=['nvr1', 'nvr5'],
             doozer_data_path='https://github.com/openshift-eng/ocp-build-data',

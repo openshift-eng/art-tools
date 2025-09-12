@@ -16,7 +16,8 @@ from typing import Dict, Iterable, List, Optional
 
 import bugzilla
 import requests
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
+from artcommonlib.assembly import AssemblyTypes
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
@@ -627,7 +628,7 @@ class BugTracker:
 
     @staticmethod
     def get_corresponding_flaw_bugs(
-        tracker_bugs: List[Bug], flaw_bug_tracker, brew_api=None, strict: bool = True, verbose: bool = False
+        tracker_bugs: List[Bug], flaw_bug_tracker, strict: bool = True, verbose: bool = False
     ) -> (Dict, Dict):
         """Get corresponding flaw bug objects for given list of tracker bug objects.
         flaw_bug_tracker object to fetch flaw bugs from
@@ -649,12 +650,6 @@ class BugTracker:
         for t in tracker_bugs:
             component = t.whiteboard_component
             if not component:
-                trackers_with_invalid_components.add(t.id)
-                continue
-
-            # is this component a valid package name in brew?
-            if brew_api and not brew_api.getPackageID(component):
-                logger.info(f'package `{component}` not found in brew')
                 trackers_with_invalid_components.add(t.id)
                 continue
 
@@ -1436,11 +1431,7 @@ def sort_cve_bugs(bugs):
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
-def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current_target_release: str):
-    # all z stream bugs are considered first fix
-    if current_target_release[-1] != '0':
-        return True
-
+def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembly: str):
     if not tracker_bugs:
         # This shouldn't happen
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
@@ -1458,7 +1449,7 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
     response.raise_for_status()
     data = response.json()
 
-    major, minor = util.minor_version_tuple(current_target_release)
+    major, _ = util.minor_version_tuple(assembly)
     ocp_product_name = f"Red Hat OpenShift Container Platform {major}"
     components_not_yet_fixed = []
     pyxis_base_url = (
@@ -1515,35 +1506,42 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
     return False
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], brew_api=None) -> (Dict, List):
+def get_flaws(
+    flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], assembly_type: AssemblyTypes, assembly: str
+) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
-    current_target_release = Bug.get_target_release(tracker_bugs)
+
     tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
         tracker_bugs,
         flaw_bug_tracker,
-        brew_api,
     )
     logger.info(
         f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
         f' {sorted(flaw_tracker_map.keys())}'
     )
 
-    # current_target_release can be digit.digit.([z|0])?
+    # Note: preview and candidate preGA assemblies.
+    # Although we do not process trackers and flaws at preGA time,
+    # if explicitly requested, proceed with first-fix filtering
+    is_prega = assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]
+    is_ga_assembly = assembly_type == AssemblyTypes.STANDARD and assembly.endswith(".0")
+    is_for_ga = is_prega or is_ga_assembly
+
     # if current_target_release is GA then run first-fix bug filtering
     # for GA not every flaw bug is considered first-fix
     # for z-stream every flaw bug is considered first-fix
     # https://docs.engineering.redhat.com/display/PRODSEC/Security+errata+-+First+fix
-    if current_target_release[-1] == 'z':
-        logger.info("Detected z-stream target release, every flaw bug is considered first-fix")
+    if not is_for_ga:
+        logger.info(f"Detected z-stream target release ({assembly}), every flaw bug is considered first-fix")
         first_fix_flaw_bugs = [f['bug'] for f in flaw_tracker_map.values()]
     else:
-        logger.info("Detected GA release, applying first-fix filtering..")
+        logger.info(f"Detected GA target release ({assembly}), applying first-fix filtering..")
         first_fix_flaw_bugs = [
             flaw_bug_info['bug']
             for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], current_target_release)
+            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], assembly)
         ]
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')

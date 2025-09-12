@@ -275,3 +275,42 @@ class TestImageSchema(unittest.TestCase):
         self.assertIn(
             "Dependent image 'image3' not found", image_schema.validate('filename', invalid_data, images_dir=images_dir)
         )
+
+    def test_validate_with_valid_konflux_cachi2_artifact_lockfile(self):
+        """Test valid konflux.cachi2.artifact_lockfile configuration"""
+        valid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {
+                'cachi2': {
+                    'artifact_lockfile': {
+                        'enabled': True,
+                        'resources': ['https://example.com/cert1.pem', 'https://example.com/cert2.pem'],
+                        'path': '.',
+                    }
+                }
+            },
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_artifact_lockfile_enabled(self):
+        """Test invalid artifact_lockfile.enabled type"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'artifact_lockfile': {'enabled': 'not-a-boolean'}}},
+        }
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_with_invalid_konflux_cachi2_artifact_lockfile_resources(self):
+        """Test invalid artifact_lockfile.resources type"""
+        invalid_data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'konflux': {'cachi2': {'artifact_lockfile': {'resources': 'not-an-array'}}},
+        }
+        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))

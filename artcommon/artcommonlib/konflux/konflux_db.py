@@ -345,7 +345,7 @@ class KonfluxDb:
         # If we got here, no builds have been found in the whole 36 months period
         if strict:
             raise IOError(f"Build record for {name} not found.")
-        self.logger.warning(
+        self.logger.debug(
             'No builds found for %s in %s with status %s in assembly %s and target %s',
             name,
             group,
@@ -397,7 +397,7 @@ class KonfluxDb:
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         strict: bool = True,
-    ) -> typing.List[KonfluxRecord]:
+    ) -> list[KonfluxRecord | None]:
         """Get build records by NVRS.
         Note that this function only searches for the build records in the last 3 years.
         :param nvrs: The NVRS of the builds.
@@ -421,14 +421,12 @@ class KonfluxDb:
             where.update({"nvr": nvr, "outcome": str(outcome)})
             return await anext(self.search_builds_by_fields(where=where, limit=1, strict=strict), None)
 
-        tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
-        records = await asyncio.gather(*tasks, return_exceptions=True)
+        records = await asyncio.gather(*(_task(nvr) for nvr in nvrs), return_exceptions=True)
 
-        error_or_not_found = [
-            (nvr, record) for nvr, record in zip(nvrs, records) if record is None or isinstance(record, BaseException)
-        ]
-        if error_or_not_found:
-            error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in error_or_not_found)}"
-            if strict:
-                raise IOError(error_message)
-        return typing.cast(typing.List[KonfluxRecord], records)
+        errors = [(nvr, record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)]
+        if errors:
+            error_strings = [f"NVR {nvr}: {str(exc)}" for nvr, exc in errors]
+            error_message = f"Failed to fetch NVRs from Konflux DB: {'; '.join(error_strings)}"
+            raise IOError(error_message, errors)
+
+        return typing.cast(list[KonfluxRecord | None], records)

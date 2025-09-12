@@ -48,12 +48,12 @@ def _get_konflux_db(record_cls: type[KonfluxRecord]):
     return db
 
 
-async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str], strict: bool = True) -> dict[str, KonfluxRecord]:
+async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[str, KonfluxRecord]:
     where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
 
     async def _get(db: KonfluxDb, nvrs: list[str]) -> list[KonfluxRecord]:
         try:
-            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=strict)
+            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
         except IOError as e:
             LOGGER.warning(
                 "A snapshot is expected to exclusively contain ART built image builds "
@@ -285,7 +285,7 @@ class CreateSnapshotCli:
             components.add(nvr['name'])
 
         LOGGER.info("Fetching NVRs from DB...")
-        records = await get_build_records_by_nvrs(self.runtime, self.builds, strict=True)
+        records = await get_build_records_by_nvrs(self.runtime, self.builds)
         return list(records.values())
 
 
@@ -435,7 +435,7 @@ class GetSnapshotCli:
             LOGGER.info("[DRY-RUN] Skipped DB validation")
             return nvrs
 
-        await get_build_records_by_nvrs(self.runtime, nvrs, strict=True)
+        await get_build_records_by_nvrs(self.runtime, nvrs)
         return nvrs
 
     async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:

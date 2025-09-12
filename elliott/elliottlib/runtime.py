@@ -6,7 +6,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from multiprocessing import Lock, RLock
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import click
 import yaml
@@ -95,6 +95,14 @@ class Runtime(GroupRuntime):
 
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
+
+    def get_major_minor_fields(self) -> Tuple[int, int]:
+        """
+        Returns: (int(MAJOR), int(MINOR)) if the vars are defined in the group config.
+        """
+        major = int(self.group_config.vars['MAJOR'])
+        minor = int(self.group_config.vars['MINOR'])
+        return major, minor
 
     def get_major_minor_patch(self):
         pattern = r"\d+.\d+.\d+"
@@ -185,7 +193,8 @@ class Runtime(GroupRuntime):
         self.group_config = self.get_group_config()
         if self.group_config.name != self.group:
             raise IOError(
-                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)"
+                f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
+                "may have copied this group without updating group.yml (make sure to check branch)"
             )
 
         self.product = self.group_config.product or "ocp"

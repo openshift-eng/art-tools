@@ -1098,6 +1098,80 @@ def images_show_tree(runtime, imagename, yml):
                 print_branch(image)
 
 
+@cli.command("images:show-ancestors", short_help="Display the image ancestors")
+@click.option(
+    "--image-names",
+    required=True,
+    help="A comma-separated list of component names of the images (file name in ocp-build-data).",
+)
+@pass_runtime
+def images_show_ancestors(runtime, image_names):
+    """
+    Displays the ancestors of a given image or images.
+    """
+    runtime.initialize(clone_distgits=False)
+
+    all_ancestors = set()
+    image_name_list = [name.strip() for name in image_names.split(',')]
+
+    # Build a map of stream name -> image metadata
+    stream_provided_by = {}
+    for image_meta in runtime.image_metas():
+        if image_meta.config.provides.stream is not Missing:
+            stream_provided_by[image_meta.config.provides.stream] = image_meta
+
+    # Build a map of image name (from config.name) -> image metadata
+    image_name_map = {meta.image_name: meta for meta in runtime.image_metas()}
+
+    images_to_process = []
+    for image_name in image_name_list:
+        image = runtime.image_map.get(image_name)
+        if not image:
+            raise DoozerFatalError(f"Image '{image_name}' not found in group.")
+        images_to_process.append(image)
+
+    visited = set()
+    while images_to_process:
+        current_image = images_to_process.pop(0)
+
+        if current_image.distgit_key in visited:
+            continue
+        visited.add(current_image.distgit_key)
+
+        # 1. Get parent from `from.member` or `from.stream` (this is what `image.parent` is set to during init)
+        parent = current_image.parent
+        if parent:
+            all_ancestors.add(parent.distgit_key)
+            images_to_process.append(parent)
+
+        # 2. Get parent from `from.image`
+        if current_image.config['from'].image is not Missing:
+            parent_image_name = current_image.config['from'].image
+            parent_meta = image_name_map.get(parent_image_name)
+            if parent_meta:
+                all_ancestors.add(parent_meta.distgit_key)
+                images_to_process.append(parent_meta)
+
+        # 3. Get parents from `from.builder`
+        if current_image.config['from'].builder is not Missing:
+            for builder in current_image.config['from'].builder:
+                builder_meta = None
+                if builder.member:
+                    builder_meta = runtime.image_map.get(builder.member)
+                elif builder.stream:
+                    builder_meta = stream_provided_by.get(builder.stream)
+                elif builder.image:
+                    builder_image_name = builder.image
+                    builder_meta = image_name_map.get(builder_image_name)
+
+                if builder_meta:
+                    all_ancestors.add(builder_meta.distgit_key)
+                    images_to_process.append(builder_meta)
+
+    if all_ancestors:
+        click.echo(",".join(sorted(list(all_ancestors))))
+
+
 @cli.command("images:print", short_help="Print data for each image metadata")
 @click.option("--short", default=False, is_flag=True, help="Suppress all output other than the data itself")
 @click.option(

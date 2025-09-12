@@ -334,7 +334,11 @@ class MetadataBase(object):
                         )
                     is_nvr = isd[f'el{el_ver}']
                     if not is_nvr:
-                        return default_return()
+                        msg = f"No pinned builds found in assembly {assembly} under 'is' for {self.distgit_key}: el_ver: '{el_ver}'"
+                        if default != -1:
+                            self.logger.info(msg)
+                            return default
+                        raise IOError(msg)
                 else:
                     # The image metadata (or, more likely, the current assembly) has the image
                     # pinned. Return only the pinned NVR. When a child image is being rebased,

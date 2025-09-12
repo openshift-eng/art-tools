@@ -6,7 +6,6 @@ import urllib.parse
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
-from sqlalchemy.testing.plugin.plugin_base import engines
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
@@ -49,19 +48,12 @@ class ImagesHealthPipeline:
         return f"{base_url}?{query_string}"
 
     async def run(self):
-        # Gather concerns for all images in both Brew and Konflux build systems
+        # Gather concerns for all images we build with Konflux
         tasks = [
-            self.get_concerns(image_meta, 'brew')
+            self.get_concerns(image_meta, 'konflux')
             for image_meta in self.runtime.image_metas()
-            if not image_meta.mode == 'disabled'
+            if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
         ]
-        tasks.extend(
-            [
-                self.get_concerns(image_meta, 'konflux')
-                for image_meta in self.runtime.image_metas()
-                if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
-            ]
-        )
         await asyncio.gather(*tasks)
 
         # We should now have a dict of qualified_key => [concern, ...]
@@ -80,9 +72,9 @@ class ImagesHealthPipeline:
         key = image_meta.distgit_key
         builds = await self.query(image_meta, engine)
         if not builds:
-            self.logger.info(
-                'Image build for %s has never been attempted during last %s days', image_meta.distgit_key, DELTA_DAYS
-            )
+            message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
+            self.logger.info(message)
+            self.add_concern(key, engine, message)
             return
 
         latest_success_idx = -1
