@@ -1984,7 +1984,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         # Setup shipment config
         mock_shipment_config = MagicMock()
-        mock_shipment_config.shipment.data.releaseNotes.description = (
+        mock_shipment_config.shipment.data.releaseNotes.solution = (
             "For x86_64 architecture: {x864_DIGEST}\nFor s390x architecture: {s390x_DIGEST}"
         )
         mock_shipment_config.model_dump.return_value = {"shipment": "config"}
@@ -2017,14 +2017,19 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         mock_gitlab.auth.assert_called_once()
 
         # Verify shipment config was updated
-        expected_description = "For x86_64 architecture: sha256:abc123\nFor s390x architecture: sha256:def456"
-        self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.description, expected_description)
+        expected_solution = "For x86_64 architecture: sha256:abc123\nFor s390x architecture: sha256:def456"
+        self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.solution, expected_solution)
 
         # Verify branch was created
         mock_source_project.branches.create.assert_called_once()
 
-        # Verify file was updated
+        # Verify file was updated with correct dictionary format
         mock_source_project.files.update.assert_called_once()
+        update_call_args = mock_source_project.files.update.call_args[0][0]
+        self.assertEqual(update_call_args['file_path'], 'shipments/4.19.0/image.yaml')
+        self.assertIn('update-shas-4.19.0', update_call_args['branch'])
+        self.assertIn('Update shipment with payload SHAs for 4.19.0', update_call_args['commit_message'])
+        self.assertIn('content', update_call_args)
 
         # Verify SHA update MR was created
         mock_source_project.mergerequests.create.assert_called_once()
@@ -2101,7 +2106,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         # Setup shipment config with template that requires ppc64le but we don't provide it
         mock_shipment_config = MagicMock()
-        mock_shipment_config.shipment.data.releaseNotes.description = "For ppc64le: {ppc64le_DIGEST}"
+        mock_shipment_config.shipment.data.releaseNotes.solution = "For ppc64le: {ppc64le_DIGEST}"
         mock_shipment_config.model_dump.return_value = {"shipment": "test_config"}
 
         mock_get_shipment_configs.return_value = {"image": mock_shipment_config}
@@ -2118,7 +2123,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         shipment_url = "https://gitlab.example.com/project/-/merge_requests/123"
 
         with self.assertRaisesRegex(
-            ValueError, "Description contains placeholder.*ppc64le_DIGEST.*but no corresponding SHA was found"
+            ValueError, "Solution contains placeholder.*ppc64le_DIGEST.*but no corresponding SHA was found"
         ):
             await pipeline.update_shipment_with_payload_shas(shipment_url, payload_shas)
 
@@ -2165,7 +2170,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         # Setup shipment config
         mock_shipment_config = MagicMock()
-        mock_shipment_config.shipment.data.releaseNotes.description = "Template: {x864_DIGEST}"
+        mock_shipment_config.shipment.data.releaseNotes.solution = "Template: {x864_DIGEST}"
         mock_shipment_config.model_dump.return_value = {"shipment": "test_config"}
 
         mock_get_shipment_configs.return_value = {"image": mock_shipment_config}
@@ -2230,7 +2235,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ):
             # Setup mock shipment config
             mock_shipment_config = MagicMock()
-            mock_shipment_config.shipment.data.releaseNotes.description = template_description
+            mock_shipment_config.shipment.data.releaseNotes.solution = template_description
             mock_get_configs.return_value = {"image": mock_shipment_config}
 
             # Setup minimal GitLab mocks to reach the format logic
@@ -2278,7 +2283,16 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "ppc64le: sha256:ppc64le_digest\n"
                 "aarch64: sha256:aarch64_digest"
             )
-            self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.description, expected_description)
+            self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.solution, expected_description)
+
+            # Verify files.update was called with dictionary format
+            mock_source_project.files.update.assert_called_once()
+            update_call_args = mock_source_project.files.update.call_args[0][0]
+            self.assertIsInstance(update_call_args, dict)
+            self.assertIn('file_path', update_call_args)
+            self.assertIn('branch', update_call_args)
+            self.assertIn('content', update_call_args)
+            self.assertIn('commit_message', update_call_args)
 
             # Verify logging for unsupported architectures
             runtime.logger.warning.assert_any_call(
