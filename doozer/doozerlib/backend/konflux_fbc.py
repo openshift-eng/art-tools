@@ -39,6 +39,7 @@ yaml = opm.yaml
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry:v{major}.{minor}"
+FBC_BUILD_PRIORITY = "3"
 
 
 class KonfluxFbcImporter:
@@ -528,6 +529,7 @@ class KonfluxFbcFragmentMerger:
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
+            build_priority=FBC_BUILD_PRIORITY,
         )
         return created_plr
 
@@ -1217,6 +1219,7 @@ class KonfluxFbcBuilder:
             hermetic=True,
             dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
+            build_priority=FBC_BUILD_PRIORITY,
         )
         url = konflux_client.resource_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
