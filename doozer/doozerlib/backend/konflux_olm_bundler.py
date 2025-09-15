@@ -180,7 +180,7 @@ class KonfluxOlmBundleRebaser:
             async with aiofiles.open(src, 'r') as f:
                 content = await f.read()
             content, found_images = await self._replace_image_references(
-                str(csv_config['registry']), content, operator_build.engine
+                str(csv_config['registry']), content, operator_build.engine, metadata
             )
             for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
                 logger.info(f"Replaced image reference {old_pullspec} ({operand_nvr}) by {new_pullspec}")
@@ -276,7 +276,7 @@ class KonfluxOlmBundleRebaser:
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
         return re.compile(pattern)
 
-    async def _replace_image_references(self, old_registry: str, content: str, engine: Engine):
+    async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
         Replace image references in the content by their corresponding SHA.
         Returns the content with the replacements and a map of found images in format of {image_name: (old_pullspec, new_pullspec, nvr)}
@@ -332,7 +332,10 @@ class KonfluxOlmBundleRebaser:
                 if self._group_config.operator_image_ref_mode == 'manifest-list'
                 else image_info['contentDigest']
             )
-            new_namespace = 'openshift4' if namespace == csv_namespace else namespace
+            if metadata.runtime.group.startswith("oadp-"):
+                new_namespace = namespace
+            else:
+                new_namespace = 'openshift4' if namespace == csv_namespace else namespace
             new_pullspec = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
                 f'{new_namespace}/{image_short_name}',
