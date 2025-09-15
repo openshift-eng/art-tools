@@ -310,7 +310,18 @@ class KonfluxRebaser:
         metadata.private_fix = private_fix
 
         await self._update_dockerignore(build_repo.local_dir)
+        await self._remove_oadp_docs(build_repo.local_dir)
         return version, release, private_fix
+
+    @start_as_current_span_async(TRACER, "rebase.remove_oadp_docs")
+    async def _remove_oadp_docs(self, path):
+        """
+        Remove OADP docs from the build directory.  They contain example secrets.
+        """
+        oadp_docs_path = f"{path}/restic/doc/"
+        if self._runtime.group_config.get('name', None).startswith("oadp-") and os.path.exists(oadp_docs_path):
+            self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
+            shutil.rmtree(oadp_docs_path)
 
     @start_as_current_span_async(TRACER, "rebase.update_dockerignore")
     async def _update_dockerignore(self, path):
