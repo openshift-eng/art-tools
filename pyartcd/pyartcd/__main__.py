@@ -34,6 +34,7 @@ from pyartcd.pipelines import (
     scan_fips,
     scan_for_kernel_bugs,
     sigstore_sign,
+    sync_rhcos_bfb,
     tag_rpms,
     tarball_sources,
     update_golang,
