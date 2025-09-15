@@ -120,55 +120,55 @@ class BuildOadpPipeline:
         await exectools.cmd_assert_async(build_cmd, env=build_env)
         self._logger.info(f"Successfully built {self.image_name}")
 
-        # Build OADP bundle image
-        # TODO: Need to add support to build specific bundle NVRs
-        # TODO: Possibly move the bundle build to a separate job
-        bundle_build_cmd = [
-            "doozer",
-            f"--assembly={self.assembly}",
-            f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-            "--build-system=konflux",
-            f"--group={self.group}",
-            "--latest-parent-version",
-            f"--images={self.image_name}",
-            "beta:images:konflux:bundle",
-        ]
-
-        bundle_build_cmd.extend(
-            [
-                "--konflux-kubeconfig",
-                kubeconfig,
-                "--konflux-namespace",
-                "ocp-art-tenant",
-            ]
-        )
-
-        await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
-        self._logger.info(f"Successfully rebased and built bundle {self.image_name}")
-
-        release = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-        # Build FBC
-        fbc_build = [
-            "doozer",
-            f"--assembly={self.assembly}",
-            f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-            "--build-system=konflux",
-            f"--group={self.group}",
-            "--latest-parent-version",
-            f"--images={self.image_name}",
-            "beta:fbc:rebase-and-build",
-            # TODO: Shouldn't need to pass along version
-            f"--version=4.20",
-            "--reset-to-prod",
-            f"--release={release}",
-            f"--konflux-kubeconfig={kubeconfig}",
-            f"--message=Rebase FBC segment with release {release}",
-            f"--prod-registry-auth={os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')}",
-            # TODO: For testing
-            # "oadp-operator-container-v1.0.0-202509060234.p2.g1d0b40b.assembly.test.el9"
-        ]
-
-        await exectools.cmd_assert_async(fbc_build, env=self._doozer_env_vars)
+        # # Build OADP bundle image
+        # # TODO: Need to add support to build specific bundle NVRs
+        # # TODO: Possibly move the bundle build to a separate job
+        # bundle_build_cmd = [
+        #     "doozer",
+        #     f"--assembly={self.assembly}",
+        #     f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
+        #     "--build-system=konflux",
+        #     f"--group={self.group}",
+        #     "--latest-parent-version",
+        #     f"--images={self.image_name}",
+        #     "beta:images:konflux:bundle",
+        # ]
+        #
+        # bundle_build_cmd.extend(
+        #     [
+        #         "--konflux-kubeconfig",
+        #         kubeconfig,
+        #         "--konflux-namespace",
+        #         "ocp-art-tenant",
+        #     ]
+        # )
+        #
+        # await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
+        # self._logger.info(f"Successfully rebased and built bundle {self.image_name}")
+        #
+        # release = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        # # Build FBC
+        # fbc_build = [
+        #     "doozer",
+        #     f"--assembly={self.assembly}",
+        #     f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
+        #     "--build-system=konflux",
+        #     f"--group={self.group}",
+        #     "--latest-parent-version",
+        #     f"--images={self.image_name}",
+        #     "beta:fbc:rebase-and-build",
+        #     # TODO: Shouldn't need to pass along version
+        #     f"--version=4.20",
+        #     "--reset-to-prod",
+        #     f"--release={release}",
+        #     f"--konflux-kubeconfig={kubeconfig}",
+        #     f"--message=Rebase FBC segment with release {release}",
+        #     f"--prod-registry-auth={os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')}",
+        #     # TODO: For testing
+        #     # "oadp-operator-container-v1.0.0-202509060234.p2.g1d0b40b.assembly.test.el9"
+        # ]
+        #
+        # await exectools.cmd_assert_async(fbc_build, env=self._doozer_env_vars)
 
 
 @cli.command("build-oadp")
