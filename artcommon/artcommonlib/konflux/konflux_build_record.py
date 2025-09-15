@@ -352,6 +352,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         build_id: str = None,
         nvr: str = None,
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
             name,
@@ -375,6 +376,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
             schema_level,
             ingestion_time,
             build_component,
+            build_priority,
         )
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
@@ -414,6 +416,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         build_id: str = '',
         nvr: str = '',
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
             name,
@@ -437,6 +440,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
             schema_level,
             ingestion_time,
             build_component,
+            build_priority,
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches
