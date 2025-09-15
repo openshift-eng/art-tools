@@ -1,6 +1,5 @@
 import base64
 import json
-import random
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Missing
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import RebuildHint, RebuildHintCode
+from doozerlib.metadata import RebuildHintCode
 from doozerlib.runtime import Runtime
 
 
@@ -45,6 +44,7 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         # Mock build record
         self.build_record = MagicMock(spec=KonfluxBuildRecord)
         self.build_record.image_pullspec = "quay.io/test/image@sha256:abc123"
+        self.build_record.name = "test-image"
 
         self.scanner.latest_image_build_records_map = {"test-image": self.build_record}
 

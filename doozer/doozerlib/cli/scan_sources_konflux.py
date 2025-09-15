@@ -7,6 +7,7 @@ import random
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from json import JSONDecodeError
 from typing import Dict, List, Optional, cast
 
 import aiohttp
@@ -493,25 +494,14 @@ class ConfigScanSources:
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
-        # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
-        try:
-            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-                pullspec=build_record.image_pullspec,
-                registry_auth_file=self.registry_auth_file,
-            )
-
-        except ChildProcessError as e:
-            self.logger.warning('Failed to download SLSA attestation: %s', e)
+        # Fetch the SLSA attestation for the latest build
+        attestation = await self._fetch_slsa_attestation(build_record)
+        if not attestation:
+            self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
             return
 
-        try:
-            # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
-        except Exception as e:
-            raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
-
         # Inspect the SLSA attestation to see if the build is hermetic
-        is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+        is_hermetic = attestation["predicate"]["invocation"]["parameters"]["hermetic"]
         is_hermetic = True if is_hermetic.lower() == "true" else False
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
@@ -520,8 +510,8 @@ class ConfigScanSources:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
-                    code=RebuildHintCode.CONFIG_CHANGE,
-                    reason=f"Latest build {build_record.image_pullspec} network mode was {is_hermetic} but we need {network_mode}",
+                    code=RebuildHintCode.NETWORK_MODE_CHANGE,
+                    reason=f"Latest build {build_record.image_pullspec} network mode was {'hermetic' if is_hermetic else 'open'} but {network_mode} is required",
                 ),
             )
 
@@ -922,7 +912,7 @@ class ConfigScanSources:
                         f'which changed at event {extra_latest_tagging_event}',
                     )
 
-    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[str]:
+    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[Dict]:
         """
         Fetch SLSA attestation for the given build record.
         """
@@ -933,11 +923,17 @@ class ConfigScanSources:
                 pullspec=build_record.image_pullspec,
                 registry_auth_file=self.registry_auth_file,
             )
-            return attestation
+            return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+
         except ChildProcessError:
+            self.logger.warning(f'Failed to fetch SLSA attestation for {build_record.name}')
             return None
 
-    def _extract_task_bundles_from_attestation(self, attestation: str) -> Dict[str, str]:
+        except (JSONDecodeError, Exception) as e:
+            self.logger.warning('Failed to parse SLSA attestation for %s: %s', build_record.name, e)
+            return None
+
+    def _extract_task_bundles_from_attestation(self, attestation: Dict) -> Dict[str, str]:
         """
         Extract task bundles from SLSA attestation materials.
         Returns a dict mapping task names to their SHA256 digests.
@@ -953,8 +949,8 @@ class ConfigScanSources:
             #     "uri": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta"
             #   },
             # ...]
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
-            materials = payload_json["predicate"]["materials"]
+            materials = attestation["predicate"]["materials"]
+
         except Exception as e:
             self.logger.warning("Failed to parse SLSA attestation for task bundle check: %s", e)
             return {}
@@ -1041,9 +1037,7 @@ class ConfigScanSources:
         # Fetch SLSA attestation
         attestation = await self._fetch_slsa_attestation(build_record)
         if not attestation:
-            self.logger.warning(
-                f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check'
-            )
+            self.logger.warning('Skipping task bundle check for %s', image_meta.distgit_key)
             return
 
         # Extract task bundles from attestation
