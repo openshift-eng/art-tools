@@ -318,10 +318,15 @@ class KonfluxRebaser:
         """
         Remove OADP docs from the build directory.  They contain example secrets.
         """
-        oadp_docs_path = f"{path}/restic/doc/"
-        if self._runtime.group.startswith("oadp-") and os.path.exists(oadp_docs_path):
-            self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
-            shutil.rmtree(oadp_docs_path)
+        if self._runtime.group.startswith("oadp-"):
+            oadp_docs_paths = [
+                f"{path}/restic/doc/",  # oadp-velero-container
+                f"{path}/velero/restic/doc/",  # oadp-mustgather-container
+            ]
+            for oadp_docs_path in oadp_docs_paths:
+                if os.path.exists(oadp_docs_path):
+                    self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
+                    shutil.rmtree(oadp_docs_path)
 
     @start_as_current_span_async(TRACER, "rebase.update_dockerignore")
     async def _update_dockerignore(self, path):
