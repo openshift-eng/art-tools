@@ -23,7 +23,7 @@ class BuildOadpPipeline:
         group: str,
         version: str,
         assembly: str,
-        image_name: str,
+        image_list: str,
         data_path: str,
         kubeconfig: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
@@ -32,7 +32,7 @@ class BuildOadpPipeline:
         self.group = group
         self.version = version
         self.assembly = assembly
-        self.image_name = image_name
+        self.image_list = image_list
         self.kubeconfig = kubeconfig
         self._logger = logger or runtime.logger
 
@@ -58,7 +58,7 @@ class BuildOadpPipeline:
         release = default_release_suffix()
 
         # Rebase OADP image
-        self._logger.info(f"Rebasing {self.image_name} image for assembly {self.assembly}")
+        self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
         rebase_cmd = [
             "doozer",
             f"--assembly={self.assembly}",
@@ -66,7 +66,7 @@ class BuildOadpPipeline:
             "--build-system=konflux",
             f"--group={self.group}",
             "--latest-parent-version",
-            f"--images={self.image_name}",
+            f"--images={self.image_list}",
             "beta:images:konflux:rebase",
             f"--version={self.version}",
             f"--release={release}",
@@ -76,10 +76,10 @@ class BuildOadpPipeline:
             rebase_cmd.append("--push")
 
         await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
-        self._logger.info(f"Successfully rebased {self.image_name}")
+        self._logger.info(f"Successfully rebased {self.image_list}")
 
         # Build OADP image
-        self._logger.info(f"Building {self.image_name} image for assembly {self.assembly}")
+        self._logger.info(f"Building {self.image_list} image for assembly {self.assembly}")
         build_cmd = [
             "doozer",
             f"--assembly={self.assembly}",
@@ -87,7 +87,7 @@ class BuildOadpPipeline:
             "--build-system=konflux",
             f"--group={self.group}",
             "--latest-parent-version",
-            f"--images={self.image_name}",
+            f"--images={self.image_list}",
             "beta:images:konflux:build",
             f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
             "--build-priority=1"
@@ -118,7 +118,7 @@ class BuildOadpPipeline:
             build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
 
         await exectools.cmd_assert_async(build_cmd, env=build_env)
-        self._logger.info(f"Successfully built {self.image_name}")
+        self._logger.info(f"Successfully built {self.image_list}")
 
         # # Build OADP bundle image
         # # TODO: Need to add support to build specific bundle NVRs
@@ -130,7 +130,7 @@ class BuildOadpPipeline:
         #     "--build-system=konflux",
         #     f"--group={self.group}",
         #     "--latest-parent-version",
-        #     f"--images={self.image_name}",
+        #     f"--images={self.image_list}",
         #     "beta:images:konflux:bundle",
         # ]
         #
@@ -144,7 +144,7 @@ class BuildOadpPipeline:
         # )
         #
         # await exectools.cmd_assert_async(bundle_build_cmd, env=self._doozer_env_vars)
-        # self._logger.info(f"Successfully rebased and built bundle {self.image_name}")
+        # self._logger.info(f"Successfully rebased and built bundle {self.image_list}")
         #
         # release = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         # # Build FBC
@@ -155,7 +155,7 @@ class BuildOadpPipeline:
         #     "--build-system=konflux",
         #     f"--group={self.group}",
         #     "--latest-parent-version",
-        #     f"--images={self.image_name}",
+        #     f"--images={self.image_list}",
         #     "beta:fbc:rebase-and-build",
         #     # TODO: Shouldn't need to pass along version
         #     f"--version=4.20",
@@ -198,10 +198,9 @@ class BuildOadpPipeline:
     help="The name of an assembly to rebase & build for. e.g. 4.9.1",
 )
 @click.option(
-    "--image-name",
+    "--image-list",
     metavar="IMAGE_NAME",
-    default="oadp-operator",
-    help="The name of the OADP image to build (default: oadp-operator)",
+    help="List of images to build",
 )
 @click.option(
     "--kubeconfig",
@@ -212,7 +211,7 @@ class BuildOadpPipeline:
 @pass_runtime
 @click_coroutine
 async def build_oadp(
-    runtime: Runtime, data_path: str, group: str, version: str, assembly: str, image_name: str, kubeconfig: Optional[str]
+    runtime: Runtime, data_path: str, group: str, version: str, assembly: str, image_list: str, kubeconfig: Optional[str]
 ):
     """Rebase and build OADP image for an assembly"""
     try:
@@ -221,7 +220,7 @@ async def build_oadp(
             group=group,
             version=version,
             assembly=assembly,
-            image_name=image_name,
+            image_list=image_list,
             data_path=data_path,
             kubeconfig=kubeconfig,
         )
