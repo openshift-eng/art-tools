@@ -21,6 +21,13 @@ from pyartcd.runtime import Runtime
     default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
 @click.option(
     '--nvrs',
@@ -66,6 +73,7 @@ async def olm_bundle_konflux(
     force: bool,
     kubeconfig: str,
     plr_template: str,
+    group: str,
 ):
     # Create Doozer invocation
     cmd = [
@@ -73,7 +81,7 @@ async def olm_bundle_konflux(
         '--build-system=konflux',
         f'--assembly={assembly}',
         f'--working-dir={runtime.doozer_working}',
-        f'--group=openshift-{version}@{data_gitref}' if data_gitref else f'--group=openshift-{version}',
+        f'--group={group}@{data_gitref}' if data_gitref else f'--group={group}',
         f'--data-path={data_path}',
     ]
     if only:
