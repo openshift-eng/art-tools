@@ -319,7 +319,7 @@ class KonfluxRebaser:
         Remove OADP docs from the build directory.  They contain example secrets.
         """
         oadp_docs_path = f"{path}/restic/doc/"
-        if self._runtime.group_config.get('name', None).startswith("oadp-") and os.path.exists(oadp_docs_path):
+        if self._runtime.group.startswith("oadp-") and os.path.exists(oadp_docs_path):
             self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
             shutil.rmtree(oadp_docs_path)
 
