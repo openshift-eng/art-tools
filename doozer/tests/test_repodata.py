@@ -668,6 +668,73 @@ data:
         self.assertEqual(found, [])
         self.assertEqual(not_found, ["foo-invalid-nvr-format"])
 
+    def test_detect_nvr_vs_name_package_names(self):
+        # Test package names that should NOT be identified as NVRs
+        test_cases = [
+            "elfutils-debuginfod-client",  # The original issue case
+            "python3-devel",
+            "systemd-networkd",
+            "container-selinux",
+            "libxml2-python3",
+            "ovn25.03",  # Package name with dots and numbers (Brew package ID 86705)
+            "python3",  # Package name ending with digit (Brew package ID 34040)
+            # Additional variations to test diverse patterns
+            "lib2.5-devel",  # Another package name with dots and numbers
+            "python3-libs",  # Package name with digit and suffix
+        ]
+
+        for package_name in test_cases:
+            with self.subTest(package_name=package_name):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(package_name)
+                self.assertFalse(is_nvr, f"{package_name} should be detected as package name, not NVR")
+                self.assertEqual(extracted_name, package_name, "Package name should be returned unchanged")
+
+    def test_detect_nvr_vs_name_actual_nvrs(self):
+        # Test actual NVR strings that should be identified as NVRs
+        test_cases = [
+            ("elfutils-debuginfod-client-0.188-3.el9", "elfutils-debuginfod-client"),
+            ("python3-devel-3.9.16-1.el9_2.1", "python3-devel"),
+            ("systemd-networkd-252-14.el9_2.3", "systemd-networkd"),
+            ("container-selinux-2.205.0-2.el9", "container-selinux"),
+            ("foo-1.2.3-4.el9", "foo"),
+            ("bar-2.0-1.fc38", "bar"),
+            ("ovn25.03-25.03.1-63.el10fdp", "ovn25.03"),  # Real Brew package with dots in name
+            ("ovn25.03-25.03.0-73.el9fdp", "ovn25.03"),  # Different version and el9 distro
+            ("python3-3.6.8-51.el8_8.11", "python3"),  # Real Brew package ending with digit
+            ("python3-3.6.8-21.el7_9.2", "python3"),  # Different release and el7 distro
+        ]
+
+        for nvr, expected_name in test_cases:
+            with self.subTest(nvr=nvr):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(nvr)
+                self.assertTrue(is_nvr, f"{nvr} should be detected as NVR")
+                self.assertEqual(extracted_name, expected_name, "Package name should be extracted correctly")
+
+    def test_detect_nvr_vs_name_edge_cases(self):
+        # Test edge cases and ambiguous strings
+        test_cases = [
+            # These look like NVRs but have non-version/release components
+            ("foo-bar-baz", False, "foo-bar-baz"),  # No digits in version/release
+            ("test-alpha-beta", False, "test-alpha-beta"),  # Alphabetic components
+            ("package-name-only", False, "package-name-only"),  # Just a package name
+            # Package names with dots and numbers that should NOT be NVRs
+            ("package2.5-name", False, "package2.5-name"),  # Similar to ovn25.03 pattern
+            ("lib1.2-dev", False, "lib1.2-dev"),  # Another versioned package name
+            # These should be detected as NVRs
+            ("test-1.0-alpha1", True, "test"),  # Version has digit, release has digit
+            ("package-2.5.1-1.20230101", True, "package"),  # Valid version/release
+            ("versioned2.1-1.0.0-1.el9", True, "versioned2.1"),  # Package with dots, valid NVR
+            # Additional real-world patterns from Brew packages
+            ("python3-3.6.8-15.1.el8_1.2", True, "python3"),  # Complex release with dots
+            ("ovn25.03-25.03.0-51.el10fdp", True, "ovn25.03"),  # Different variant of ovn NVR
+        ]
+
+        for input_str, expected_is_nvr, expected_name in test_cases:
+            with self.subTest(input=input_str):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(input_str)
+                self.assertEqual(is_nvr, expected_is_nvr, f"NVR detection failed for {input_str}")
+                self.assertEqual(extracted_name, expected_name, f"Name extraction failed for {input_str}")
+
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
