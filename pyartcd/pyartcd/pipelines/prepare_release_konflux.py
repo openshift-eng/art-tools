@@ -488,11 +488,9 @@ class PrepareReleaseKonfluxPipeline:
                 kind = shipment_advisory_config.get("kind")
                 shipment: ShipmentConfig = await self.init_shipment(kind)
 
-                # generate live ID
+                # reserve live ID
                 if kind != "fbc":
-                    shipment.shipment.data.releaseNotes.live_id = await self.reserve_live_id(
-                        shipment_advisory_config, env
-                    )
+                    shipment.shipment.data.releaseNotes.live_id = await self.reserve_live_id(shipment_advisory_config)
 
                 shipments_by_kind[kind] = shipment
 
@@ -752,18 +750,16 @@ class PrepareReleaseKonfluxPipeline:
 
         self.logger.info("Shipment MR is valid: %s", shipment_url)
 
-    async def reserve_live_id(self, shipment_advisory_config: dict, env: str) -> Optional[str]:
+    async def reserve_live_id(self, shipment_advisory_config: dict) -> Optional[str]:
         """Reserve a live ID for the shipment advisory.
         :param shipment_advisory_config: The shipment advisory configuration to reserve a live ID for
-        :param env: The environment for which the live ID is being reserved (prod or stage)
         :return: The reserved live ID or None if it could not be reserved
         """
 
-        # a liveID is required for prod, but not for stage
         # so if it is missing, we need to reserve one
         kind = shipment_advisory_config.get("kind")
         live_id = shipment_advisory_config.get("live_id")
-        if env == "prod" and not live_id:
+        if not live_id:
             self.logger.info("Requesting liveID for %s advisory", kind)
             if self.dry_run:
                 self.logger.info("[DRY-RUN] Would've reserved liveID for %s advisory", kind)
