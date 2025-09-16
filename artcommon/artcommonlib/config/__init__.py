@@ -196,7 +196,7 @@ class BuildDataLoader:
             group_config = assembly_field(releases_config, assembly, "group", group_config)
         return group_config
 
-    def load_releases_config(self, config_file: str | None) -> dict:
+    def load_releases_config(self, config_file: str | None = None) -> dict:
         """Loads releases config from build data.
 
         :param config_file: If specified, this file will be used.
