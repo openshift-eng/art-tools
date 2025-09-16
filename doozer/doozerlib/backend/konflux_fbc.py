@@ -660,6 +660,13 @@ class KonfluxFbcRebaser:
         # This will raise an ValueError if the bundle delivery repo name is not set in the metadata config.
         delivery_repo_name = metadata.get_olm_bundle_delivery_repo_name()
 
+        base_image_format = (
+            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        )
+        base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
+        # This will raise an exception if the base image cannot be found
+        await self.validate_base_image(base_image)
+
         # Fetch bundle image info and blob
         logger.info("Fetching OLM bundle image %s from %s", bundle_build.nvr, bundle_build.image_pullspec)
         olm_bundle_image_info = await self._fetch_olm_bundle_image_info(bundle_build)
@@ -812,10 +819,6 @@ class KonfluxFbcRebaser:
         if dockerfile_path.is_file():
             logger.info("Dockerfile %s already exists, removing it", dockerfile_path)
             await asyncio.to_thread(dockerfile_path.unlink)
-        base_image_format = (
-            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
-        )
-        base_image = base_image_format.format(major=ocp_version[0], minor=ocp_version[1])
         await opm.generate_dockerfile(build_repo.local_dir, "catalog", base_image=base_image, builder_image=base_image)
 
         logger.info("Updating Dockerfile %s", dockerfile_path)
@@ -841,6 +844,13 @@ class KonfluxFbcRebaser:
         nvr = f'{name}-{version}-{release}'
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
+
+    async def validate_base_image(self, base_image: str):
+        """Validate that the base image is live."""
+        await util.oc_image_info_for_arch_async__caching(
+            base_image, registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
+        )
+        return True
 
     def _bootstrap_catalog(
         self, package_name: str, default_channel: str, icon: Dict[str, str] | None
