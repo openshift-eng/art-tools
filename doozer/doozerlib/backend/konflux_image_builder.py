@@ -19,7 +19,7 @@ from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, Konf
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
-from doozerlib import constants
+from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
@@ -54,6 +54,7 @@ class KonfluxImageBuilderConfig:
     registry_auth_file: Optional[str] = None
     skip_checks: bool = False
     dry_run: bool = False
+    build_priority: Optional[str] = None
 
 
 class KonfluxImageBuilder:
@@ -438,6 +439,15 @@ class KonfluxImageBuilder:
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
+        # Resolve build priority based on precedence rules
+        if self._config.build_priority == "auto":
+            build_priority = util.get_konflux_build_priority(metadata=metadata)
+            logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
+        else:
+            # If it's a specific number (1-10), use it directly
+            build_priority = self._config.build_priority
+            logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -456,6 +466,7 @@ class KonfluxImageBuilder:
             prefetch=prefetch,
             sast=sast,
             annotations={"art-network-mode": metadata.get_konflux_network_mode(), "art-nvr": nvr},
+            build_priority=build_priority,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
@@ -605,6 +616,7 @@ class KonfluxImageBuilder:
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
+            'build_priority': int(util.get_konflux_build_priority(metadata=metadata)),
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:

@@ -12,7 +12,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay
+from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay, validate_build_priority
 from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, jenkins, locks, util
@@ -83,6 +83,8 @@ class KonfluxOcp4Pipeline:
         plr_template: str = None,
         lock_identifier: str = None,
         skip_plashets: bool = False,
+        build_priority: str = None,
+        use_mass_rebuild_locks: bool = False,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -97,6 +99,8 @@ class KonfluxOcp4Pipeline:
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.skip_plashets = skip_plashets
+        self.build_priority = build_priority
+        self.use_mass_rebuild_locks = use_mass_rebuild_locks
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -121,6 +125,8 @@ class KonfluxOcp4Pipeline:
         self.group_images = []
 
         self.slack_client = runtime.new_slack_client()
+
+        validate_build_priority(build_priority)
 
     def include_exclude_param(self, kind: str):
         """
@@ -284,6 +290,11 @@ class KonfluxOcp4Pipeline:
             cmd.extend(['--plr-template', plr_template_url])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
+
+        # Add build priority. Can be a str between "1" (highest priority) - "10" or "auto"
+        LOGGER.info(f"Using build priority: {self.build_priority}")
+        cmd.extend(['--build-priority', self.build_priority])
+
         await exectools.cmd_assert_async(cmd)
 
         LOGGER.info("All builds completed successfully")
@@ -315,10 +326,6 @@ class KonfluxOcp4Pipeline:
             # Nothing to do, skipping build-sync
             LOGGER.info('All image builds failed, nothing to sync')
             return
-
-        _, minor = extract_version_fields(self.version)
-        if minor < 17:
-            return  # TODO to be removed
 
         if self.assembly == 'test':
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
@@ -599,8 +606,16 @@ class KonfluxOcp4Pipeline:
         )
 
     async def rebase_and_build_images(self):
+        if self.mass_rebuild:
+            await self.slack_client.say(
+                f':construction: Starting image builds for {self.version} mass rebuild :construction:'
+            )
+
         await self.rebase_images(f"v{self.version}.0", self.release)
         await self.build_images()
+
+        if self.mass_rebuild:
+            await self.slack_client.say(f':done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
 
     async def mirror_images(self):
         """
@@ -625,19 +640,21 @@ class KonfluxOcp4Pipeline:
         # Get the list of successful builds
         builds_to_mirror = [entry for entry in record_log['image_build_konflux'] if not int(entry['status'])]
 
-        for build in builds_to_mirror:
+        async def sync_build(build):
             release = build["nvrs"].split("-")[-1]
             image_pullspec = build["image_pullspec"]
 
             if self.assembly != "stream":
                 LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
-                continue
+                return
 
             if is_release_embargoed(release=release, build_system="konflux"):
                 LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
-                continue
+                return
 
             await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE)
+
+        await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
 
     async def run(self):
         await self.initialize()
@@ -658,7 +675,7 @@ class KonfluxOcp4Pipeline:
             )
 
         try:
-            if self.mass_rebuild:
+            if self.use_mass_rebuild_locks and self.mass_rebuild:
                 await self.request_mass_rebuild()
             else:
                 await self.rebase_and_build_images()
@@ -781,6 +798,20 @@ class KonfluxOcp4Pipeline:
     default=False,
     help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
 )
+@click.option(
+    '--build-priority',
+    type=str,
+    metavar='PRIORITY',
+    default='auto',
+    required=True,
+    help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
+)
+@click.option(
+    '--use-mass-rebuild-locks',
+    is_flag=True,
+    default=False,
+    help='Use legacy mass rebuild locks instead of Kueue priorities (for fallback/revert scenarios).',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -800,6 +831,8 @@ async def ocp4(
     arches: Tuple[str, ...],
     plr_template: str,
     skip_plashets,
+    build_priority: Optional[str],
+    use_mass_rebuild_locks: bool,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -825,6 +858,8 @@ async def ocp4(
         plr_template=plr_template,
         lock_identifier=lock_identifier,
         skip_plashets=skip_plashets,
+        build_priority=build_priority,
+        use_mass_rebuild_locks=use_mass_rebuild_locks,
     )
 
     if ignore_locks:

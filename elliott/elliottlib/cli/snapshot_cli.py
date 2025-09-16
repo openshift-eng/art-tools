@@ -48,12 +48,12 @@ def _get_konflux_db(record_cls: type[KonfluxRecord]):
     return db
 
 
-async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str], strict: bool = True) -> dict[str, KonfluxRecord]:
+async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[str, KonfluxRecord]:
     where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
 
     async def _get(db: KonfluxDb, nvrs: list[str]) -> list[KonfluxRecord]:
         try:
-            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=strict)
+            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
         except IOError as e:
             LOGGER.warning(
                 "A snapshot is expected to exclusively contain ART built image builds "
@@ -66,7 +66,9 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str], strict: b
     type_nvrs = defaultdict(list)
     for nvr in nvrs:
         nvr_dict = parse_nvr(nvr)
-        if nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
+        if nvr_dict['name'].replace('-container', '') in runtime.image_map:
+            type_nvrs[KonfluxBuildRecord].append(nvr)
+        elif nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
             type_nvrs[KonfluxBundleBuildRecord].append(nvr)
         elif nvr_dict['name'].endswith('-fbc'):
             type_nvrs[KonfluxFbcBuildRecord].append(nvr)
@@ -285,7 +287,7 @@ class CreateSnapshotCli:
             components.add(nvr['name'])
 
         LOGGER.info("Fetching NVRs from DB...")
-        records = await get_build_records_by_nvrs(self.runtime, self.builds, strict=True)
+        records = await get_build_records_by_nvrs(self.runtime, self.builds)
         return list(records.values())
 
 
@@ -361,7 +363,9 @@ async def new_snapshot_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        LOGGER.info(
+            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+        )
 
     if builds_file:
         if builds_file == "-":
@@ -435,7 +439,7 @@ class GetSnapshotCli:
             LOGGER.info("[DRY-RUN] Skipped DB validation")
             return nvrs
 
-        await get_build_records_by_nvrs(self.runtime, nvrs, strict=True)
+        await get_build_records_by_nvrs(self.runtime, nvrs)
         return nvrs
 
     async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:
@@ -516,7 +520,9 @@ async def get_snapshot_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        LOGGER.info(
+            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+        )
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,

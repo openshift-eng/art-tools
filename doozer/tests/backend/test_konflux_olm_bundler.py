@@ -583,6 +583,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             hermetic=True,
             pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
             artifact_type="operatorbundle",
+            build_priority="3",
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
 

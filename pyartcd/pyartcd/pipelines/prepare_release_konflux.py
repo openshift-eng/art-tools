@@ -359,6 +359,7 @@ class PrepareReleaseKonfluxPipeline:
                 f"ET {impetus} advisory {advisory_num} created with release date {self.release_date}"
             )
             self.updated_assembly_group_config.advisories[impetus] = advisory_num
+            await self.create_update_build_data_pr()
 
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
 
@@ -1184,7 +1185,8 @@ class PrepareReleaseKonfluxPipeline:
         :return: True if the PR was created or updated successfully, False otherwise.
         """
 
-        branch = f"update-assembly-{self.release_name}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        branch = f"update-assembly-{self.release_name}-{timestamp}"
         updated = await self.update_build_data(branch)
         if not updated:
             self.logger.info("No changes in assembly config. PR will not be created or updated.")

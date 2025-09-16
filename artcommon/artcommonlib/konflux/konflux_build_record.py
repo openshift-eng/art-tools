@@ -87,6 +87,7 @@ class KonfluxRecord:
         schema_level: int = 0,
         ingestion_time: datetime = None,
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         """
         All fields default to None to facilitate testing
@@ -112,6 +113,7 @@ class KonfluxRecord:
         self.pipeline_commit = pipeline_commit
         self.schema_level = schema_level
         self.build_component = build_component
+        self.build_priority = build_priority
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
         # Two records for the same build will share the same build_id, but will have different record_ids
@@ -279,6 +281,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         build_id: str = None,
         nvr: str = None,
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
             name,
@@ -302,6 +305,7 @@ class KonfluxBuildRecord(KonfluxRecord):
             schema_level,
             ingestion_time,
             build_component,
+            build_priority,
         )
 
         self.el_target = el_target
@@ -348,6 +352,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         build_id: str = None,
         nvr: str = None,
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
             name,
@@ -371,6 +376,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
             schema_level,
             ingestion_time,
             build_component,
+            build_priority,
         )
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
@@ -410,6 +416,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         build_id: str = '',
         nvr: str = '',
         build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
             name,
@@ -433,6 +440,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
             schema_level,
             ingestion_time,
             build_component,
+            build_priority,
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches

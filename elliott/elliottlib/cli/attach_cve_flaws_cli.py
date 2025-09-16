@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Optional, Set
 import click
 from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
@@ -233,12 +234,12 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHSA',
             )
-            release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
+            formatter = SafeFormatter()
             highest_impact = get_highest_security_impact(flaw_bugs)
-            release_notes.topic = cve_boilerplate['topic'].format(
-                IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch
-            )
-            release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
+            replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch, "IMPACT": highest_impact}
+            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **replace_vars)
+            release_notes.topic = formatter.format(cve_boilerplate['topic'], **replace_vars)
+            release_notes.solution = formatter.format(cve_boilerplate['solution'], **replace_vars)
 
             # Update description
             formatted_cve_list = '\n'.join(

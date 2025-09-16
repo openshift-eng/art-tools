@@ -166,7 +166,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             # image exists yet. If the image does not yet exist, this code should fail
             # quietly.
             if config.upstream_image_mirror is not Missing:
-                check_cmd = f'oc image info {config.upstream_image}'
+                check_cmd = f'oc image info --filter-by-os=amd64 {config.upstream_image}'
                 rc, _, _ = exectools.cmd_gather(check_cmd)
                 if rc != 0:
                     print(
@@ -196,7 +196,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                 src_image_pullspec = runtime.resolve_brew_image_url(src_image)
 
             if only_if_missing:
-                check_cmd = f'oc image info {upstream_dest}'
+                check_cmd = f'oc image info --filter-by-os=amd64 {upstream_dest}'
                 rc, check_out, check_err = exectools.cmd_gather(check_cmd)
                 if mirror_arm:
                     check_cmd_arm = f'oc image info {upstream_dest}-arm64'

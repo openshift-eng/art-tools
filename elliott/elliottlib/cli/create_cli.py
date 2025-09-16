@@ -4,6 +4,7 @@ import click
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_prefix
+from artcommonlib.gitdata import SafeFormatter
 
 from elliottlib import errata
 from elliottlib.cli.common import cli, click_coroutine
@@ -144,13 +145,15 @@ async def create_cli(
     )
 
     errata_api = AsyncErrataAPI()
-    _, minor, patch = runtime.get_major_minor_patch()
+    major, minor, patch = runtime.get_major_minor_patch()
+    replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
+    formatter = SafeFormatter()
 
     # Format the advisory boilerplate
-    synopsis = advisory_boilerplate['synopsis'].format(MINOR=minor, PATCH=patch)
-    advisory_topic = advisory_boilerplate['topic'].format(MINOR=minor, PATCH=patch)
-    advisory_description = advisory_boilerplate['description'].format(MINOR=minor, PATCH=patch)
-    advisory_solution = advisory_boilerplate['solution'].format(MINOR=minor, PATCH=patch)
+    synopsis = formatter.format(advisory_boilerplate['synopsis'], **replace_vars)
+    advisory_topic = formatter.format(advisory_boilerplate['topic'], **replace_vars)
+    advisory_description = formatter.format(advisory_boilerplate['description'], **replace_vars)
+    advisory_solution = formatter.format(advisory_boilerplate['solution'], **replace_vars)
 
     try:
         if yes:

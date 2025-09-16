@@ -144,7 +144,9 @@ class KonfluxRebaser:
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
             # Clone the build repository
-            build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
+            build_repo = BuildRepo(
+                url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger, pull_url=source.pull_url
+            )
             await build_repo.ensure_source(upcycle=self.upcycle)
 
             # Rebase the image in the build repository
@@ -178,7 +180,8 @@ class KonfluxRebaser:
             # Push changes
             if push:
                 self._logger.info("Pushing changes to %s...", build_repo.url)
-                await build_repo.push()
+                force = True if self._runtime.assembly != "stream" else False
+                await build_repo.push(force=force)
 
             metadata.rebase_status = True
         finally:
@@ -235,7 +238,7 @@ class KonfluxRebaser:
 
         # Determine if this image contains private fixes
         if private_fix is None:
-            if source and source_dir:
+            if source and source_dir and source.url == source.pull_url:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
                 is_commit_in_public_upstream = await util.is_commit_in_public_upstream_async(
@@ -316,9 +319,10 @@ class KonfluxRebaser:
         """
         docker_ignore_path = f"{path}/.dockerignore"
         if os.path.exists(docker_ignore_path):
-            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
+            self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes")
             async with aiofiles.open(docker_ignore_path, "a") as file:
                 await file.write("\n!/.oit/**\n")
+                await file.write("\n!labels.json\n")
 
     @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):

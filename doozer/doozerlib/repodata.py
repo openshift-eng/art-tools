@@ -176,29 +176,166 @@ class Repodata:
     modules: List[RpmModule] = field(default_factory=list)
 
     def get_rpms(self, items: Union[str, Iterable[str]], arch: str) -> Tuple[list[Rpm], list[str]]:
+        """
+        Retrieve RPM packages based on names or NVRs with intelligent version filtering.
+
+        For package names: returns the latest available version.
+        For NVRs: returns the specific requested version plus the latest available version.
+
+        Args:
+            items: Package names (e.g., "wget") or NVRs (e.g., "nettle-3.9.1-1.el9") to resolve
+            arch: Target architecture (results include both arch-specific and noarch packages)
+
+        Returns:
+            Tuple of (found_rpms, not_found_items) where found_rpms contains resolved packages
+            and not_found_items lists items that couldn't be resolved
+        """
         if isinstance(items, str):
             items = {items}
         else:
-            items = set(items)  # ensures consistent behavior and removes duplicates
+            items = set(items)
 
         found_rpms: list[Rpm] = []
         not_found: list[str] = []
 
         for item in items:
-            # Find RPMs matching name/nvr AND (arch or noarch)
+            is_nvr, rpm_name = self._detect_nvr_vs_name(item)
+
             matching_rpms = [
-                rpm
-                for rpm in self.primary_rpms
-                if (rpm.name == item or rpm.nvr == item) and (rpm.arch == arch or rpm.arch == 'noarch')
+                rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == 'noarch')
             ]
 
             if not matching_rpms:
                 not_found.append(item)
                 continue
 
-            found_rpms.extend(matching_rpms)
+            if is_nvr:
+                filtered_rpms = self._filter_nvr_versions(item, matching_rpms, rpm_name)
+                found_rpms.extend(filtered_rpms)
+                # If specific version wasn't found, mark original NVR as not found
+                specific_rpm = self._find_specific_rpm(item, matching_rpms)
+                if not specific_rpm:
+                    not_found.append(item)
+            else:
+                # For package names, return only the latest version
+                latest_rpm = self._find_latest_rpm(matching_rpms)
+                if latest_rpm:
+                    found_rpms.append(latest_rpm)
 
         return found_rpms, sorted(not_found)
+
+    def _detect_nvr_vs_name(self, item: str) -> Tuple[bool, str]:
+        """
+        Detect if input item is an NVR or a package name.
+
+        Args:
+            item: Input string that could be NVR like "foo-1.2.3-4.el9" or name like "foo"
+
+        Returns:
+            Tuple of (is_nvr: bool, package_name: str)
+        """
+        try:
+            parsed = parse_nvr(item)
+            extracted_name = parsed.get('name')
+            version = parsed.get('version')
+            release = parsed.get('release')
+
+            # Consider it an NVR if we successfully parsed name, version, and release
+            if extracted_name and version and release:
+                return True, extracted_name
+        except Exception:
+            # If parsing fails, treat as package name
+            pass
+
+        # Default to treating as package name
+        return False, item
+
+    def _filter_nvr_versions(self, original_nvr: str, matching_rpms: list[Rpm], rpm_name: str) -> list[Rpm]:
+        """
+        Filter RPMs to return specific version from NVR + latest version.
+
+        Args:
+            original_nvr: The original NVR string provided by user
+            matching_rpms: All RPMs matching the package name and architecture
+            rpm_name: Extracted package name
+
+        Returns:
+            List containing specific RPM + latest RPM (deduplicated)
+        """
+        if not matching_rpms:
+            return []
+
+        result_rpms = []
+
+        # Find the specific RPM matching the original NVR
+        specific_rpm = self._find_specific_rpm(original_nvr, matching_rpms)
+        if specific_rpm:
+            result_rpms.append(specific_rpm)
+
+        # Find the latest RPM version
+        latest_rpm = self._find_latest_rpm(matching_rpms)
+        if latest_rpm:
+            # Only add latest if it's different from specific
+            if not specific_rpm or latest_rpm.nvr != specific_rpm.nvr:
+                result_rpms.append(latest_rpm)
+
+        return result_rpms
+
+    def _find_specific_rpm(self, original_nvr: str, matching_rpms: list[Rpm]) -> Optional[Rpm]:
+        """
+        Find the RPM that matches the specific NVR provided.
+
+        Args:
+            original_nvr: Original NVR string like "foo-1.2.3-4.el9"
+            matching_rpms: List of RPMs to search in
+
+        Returns:
+            RPM object matching the NVR, or None if not found
+        """
+        try:
+            parsed_original = parse_nvr(original_nvr)
+            target_version = parsed_original.get('version')
+            target_release = parsed_original.get('release')
+
+            if not target_version or not target_release:
+                return None
+
+            # Find RPM with matching version and release
+            for rpm in matching_rpms:
+                if rpm.version == target_version and rpm.release == target_release:
+                    return rpm
+
+        except Exception:
+            # If parsing fails, we can't match
+            pass
+
+        return None
+
+    def _find_latest_rpm(self, rpms: list[Rpm]) -> Optional[Rpm]:
+        """
+        Find the RPM with the latest version using RPM version comparison.
+
+        Args:
+            rpms: List of RPM objects to compare
+
+        Returns:
+            RPM with the highest version, or None if list is empty
+        """
+        if not rpms:
+            return None
+
+        if len(rpms) == 1:
+            return rpms[0]
+
+        # Start with first RPM as candidate
+        latest = rpms[0]
+
+        # Compare against all others using RPM's built-in comparison
+        for rpm in rpms[1:]:
+            if rpm.compare(latest) > 0:  # rpm is newer than current latest
+                latest = rpm
+
+        return latest
 
     @staticmethod
     def from_metadatas(name: str, primary: xml.etree.ElementTree.Element, modules_yaml: List[Dict]):

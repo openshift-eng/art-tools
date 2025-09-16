@@ -24,12 +24,12 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
-
-from pyartcd import constants
 from pyartcd.git import GitRepository
 from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
+
+from pyartcd import constants
 
 
 class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
@@ -385,11 +385,14 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             slack_client=self.mock_slack_client,
             runtime=self.runtime,
             group=self.group,
-            assembly=self.assembly,
+            assembly="4.18.0",  # Use the assembly that matches releases_config
         )
         pipeline.release_date = "2024-07-01"
-        pipeline.assembly_type = "STANDARD"
+        pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.assembly = "4.18.0"
+        pipeline.releases_config = Model(
+            {"releases": {"4.18.0": {"assembly": {"type": AssemblyTypes.STANDARD.value, "group": {"product": "ocp"}}}}}
+        )
         pipeline.logger = Mock()
         pipeline._slack_client = AsyncMock()
         pipeline.create_advisory = AsyncMock(return_value=12345)
@@ -404,8 +407,23 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.updated_assembly_group_config = Model({"advisories": {"rpm": -1}})
 
+        # Mock git repository operations
+        pipeline.build_data_repo = AsyncMock()
+        pipeline.build_data_repo.does_branch_exist_on_remote = AsyncMock(return_value=False)
+        pipeline.build_data_repo.create_branch = AsyncMock()
+        pipeline.build_data_repo.commit_all = AsyncMock()
+        pipeline.build_data_repo.push = AsyncMock()
+
         # Run the function
-        with patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage:
+        with (
+            patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
+            patch("pyartcd.pipelines.prepare_release_konflux.GhApi") as mock_gh_api,
+        ):
+            # Mock GitHub API
+            mock_api = Mock()
+            mock_api.pulls.list.return_value = Mock(items=[])
+            mock_gh_api.return_value = mock_api
+
             await pipeline.prepare_et_advisory("rpm")
 
         # Assertions

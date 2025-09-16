@@ -29,6 +29,9 @@ from doozerlib.source_resolver import SourceResolution, SourceResolver
 _LOGGER = logging.getLogger(__name__)
 
 
+BUNDLE_BUILD_PRIORITY = "3"
+
+
 class KonfluxOlmBundleRebaser:
     def __init__(
         self,
@@ -712,6 +715,7 @@ class KonfluxOlmBundleBuilder:
             hermetic=True,
             pipelinerun_template_url=self.pipelinerun_template_url,
             artifact_type="operatorbundle",
+            build_priority=BUNDLE_BUILD_PRIORITY,
         )
         url = konflux_client.resource_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
