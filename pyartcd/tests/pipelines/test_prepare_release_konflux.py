@@ -814,7 +814,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_bugs.assert_any_call()
         self.assertEqual(mock_find_bugs.call_count, 3)
 
-        self.assertEqual(mock_update_shipment_mr.call_count, 2)
+        self.assertEqual(mock_update_shipment_mr.call_count, 3)
         updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
 
         mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
