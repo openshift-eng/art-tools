@@ -31,7 +31,7 @@ ruamel.yaml
 setuptools>=78.1.1 # not directly required, pinned by Snyk to avoid a vulnerability
 aiohttp
 jira>=3.4.1
-ghapi
+ghapi == 1.0.6
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 packageurl-python
 protobuf>=4.25.8 # not directly required, pinned by Snyk to avoid a vulnerability
