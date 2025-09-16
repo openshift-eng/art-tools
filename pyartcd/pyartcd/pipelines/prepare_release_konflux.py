@@ -892,11 +892,17 @@ class PrepareReleaseKonfluxPipeline:
         return kind_to_builds
 
     @a.functools.lru_cache
-    async def find_bugs(self, build_system='konflux', permissive: bool | None = None) -> Dict[str, List[str]]:
+    async def find_bugs(
+        self,
+        build_system='konflux',
+        permissive: bool | None = None,
+        exclude_trackers: bool | None = None,
+    ) -> Dict[str, List[str]]:
         """Find bugs for the current assembly.
 
         :param build_system: The build system to use (default: 'konflux').
         :param permissive: Whether to use permissive mode. None means use default behavior.
+        :param exclude_trackers: Whether to exclude tracker bugs. None means use default behavior.
         :return: A dictionary mapping advisory kinds to lists of bug IDs
         """
         match build_system:
@@ -908,10 +914,14 @@ class PrepareReleaseKonfluxPipeline:
                 raise ValueError(f"Unsupported build system: {build_system}")
         if permissive is None:
             permissive = self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE)
+        if exclude_trackers is None:
+            exclude_trackers = self.assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE)
         find_bugs_cmd = base_command + [
             "find-bugs",
             "--output=json",
         ]
+        if exclude_trackers:
+            find_bugs_cmd.append("--exclude-trackers")
         if permissive:
             find_bugs_cmd.append("--permissive")
         stdout = await self.execute_command_with_logging(find_bugs_cmd)
