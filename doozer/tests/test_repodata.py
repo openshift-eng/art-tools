@@ -668,6 +668,57 @@ data:
         self.assertEqual(found, [])
         self.assertEqual(not_found, ["foo-invalid-nvr-format"])
 
+    def test_detect_nvr_vs_name_package_names(self):
+        # Test package names that should NOT be identified as NVRs
+        test_cases = [
+            "elfutils-debuginfod-client",  # The original issue case
+            "python3-devel",
+            "systemd-networkd",
+            "container-selinux",
+            "libxml2-python3",
+        ]
+
+        for package_name in test_cases:
+            with self.subTest(package_name=package_name):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(package_name)
+                self.assertFalse(is_nvr, f"{package_name} should be detected as package name, not NVR")
+                self.assertEqual(extracted_name, package_name, "Package name should be returned unchanged")
+
+    def test_detect_nvr_vs_name_actual_nvrs(self):
+        # Test actual NVR strings that should be identified as NVRs
+        test_cases = [
+            ("elfutils-debuginfod-client-0.188-3.el9", "elfutils-debuginfod-client"),
+            ("python3-devel-3.9.16-1.el9_2.1", "python3-devel"),
+            ("systemd-networkd-252-14.el9_2.3", "systemd-networkd"),
+            ("container-selinux-2.205.0-2.el9", "container-selinux"),
+            ("foo-1.2.3-4.el9", "foo"),
+            ("bar-2.0-1.fc38", "bar"),
+        ]
+
+        for nvr, expected_name in test_cases:
+            with self.subTest(nvr=nvr):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(nvr)
+                self.assertTrue(is_nvr, f"{nvr} should be detected as NVR")
+                self.assertEqual(extracted_name, expected_name, "Package name should be extracted correctly")
+
+    def test_detect_nvr_vs_name_edge_cases(self):
+        # Test edge cases and ambiguous strings
+        test_cases = [
+            # These look like NVRs but have non-version/release components
+            ("foo-bar-baz", False, "foo-bar-baz"),  # No digits in version/release
+            ("test-alpha-beta", False, "test-alpha-beta"),  # Alphabetic components
+            ("package-name-only", False, "package-name-only"),  # Just a package name
+            # These should be detected as NVRs
+            ("test-1.0-alpha1", True, "test"),  # Version has digit, release has digit
+            ("package-2.5.1-1.20230101", True, "package"),  # Valid version/release
+        ]
+
+        for input_str, expected_is_nvr, expected_name in test_cases:
+            with self.subTest(input=input_str):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(input_str)
+                self.assertEqual(is_nvr, expected_is_nvr, f"NVR detection failed for {input_str}")
+                self.assertEqual(extracted_name, expected_name, f"Name extraction failed for {input_str}")
+
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
     @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)

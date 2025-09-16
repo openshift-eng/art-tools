@@ -3,6 +3,7 @@ import gzip
 import io
 import logging
 import lzma
+import re
 import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from logging import Logger
@@ -240,9 +241,13 @@ class Repodata:
             version = parsed.get('version')
             release = parsed.get('release')
 
-            # Consider it an NVR if we successfully parsed name, version, and release
+            # Basic parsing succeeded, now validate components
             if extracted_name and version and release:
-                return True, extracted_name
+                # Validate version: should contain digits or dots (typical version patterns)
+                if re.search(r'[\d.]', version):
+                    # Validate release: should contain at least one digit (typical RPM release)
+                    if re.search(r'\d', release):
+                        return True, extracted_name
         except Exception:
             # If parsing fails, treat as package name
             pass
