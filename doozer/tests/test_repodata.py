@@ -676,6 +676,8 @@ data:
             "systemd-networkd",
             "container-selinux",
             "libxml2-python3",
+            "ovn25.03",  # Package name with dots and numbers (Brew package ID 86705)
+            "python3",   # Package name ending with digit (Brew package ID 34040)
         ]
 
         for package_name in test_cases:
@@ -693,6 +695,8 @@ data:
             ("container-selinux-2.205.0-2.el9", "container-selinux"),
             ("foo-1.2.3-4.el9", "foo"),
             ("bar-2.0-1.fc38", "bar"),
+            ("ovn25.03-25.03.1-63.el10fdp", "ovn25.03"),  # Real Brew package with dots in name
+            ("python3-3.6.8-51.el8_8.11", "python3"),    # Real Brew package ending with digit
         ]
 
         for nvr, expected_name in test_cases:
@@ -708,9 +712,13 @@ data:
             ("foo-bar-baz", False, "foo-bar-baz"),  # No digits in version/release
             ("test-alpha-beta", False, "test-alpha-beta"),  # Alphabetic components
             ("package-name-only", False, "package-name-only"),  # Just a package name
+            # Package names with dots and numbers that should NOT be NVRs
+            ("package2.5-name", False, "package2.5-name"),  # Similar to ovn25.03 pattern
+            ("lib1.2-dev", False, "lib1.2-dev"),  # Another versioned package name
             # These should be detected as NVRs
             ("test-1.0-alpha1", True, "test"),  # Version has digit, release has digit
             ("package-2.5.1-1.20230101", True, "package"),  # Valid version/release
+            ("versioned2.1-1.0.0-1.el9", True, "versioned2.1"),  # Package with dots, valid NVR
         ]
 
         for input_str, expected_is_nvr, expected_name in test_cases:
