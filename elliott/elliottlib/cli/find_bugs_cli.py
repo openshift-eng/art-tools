@@ -23,6 +23,12 @@ type_bug_set = Set[Bug]
 
 @common.cli.command("find-bugs", short_help="Find eligible bugs for the given assembly")
 @click.option(
+    "--exclude-trackers",
+    is_flag=True,
+    default=False,
+    help="Exclude tracker bugs",
+)
+@click.option(
     "--permissive",
     is_flag=True,
     default=False,
@@ -39,6 +45,7 @@ type_bug_set = Set[Bug]
 @click_coroutine
 async def find_bugs_cli(
     runtime: Runtime,
+    exclude_trackers,
     permissive,
     output,
     cve_only,
@@ -47,6 +54,8 @@ async def find_bugs_cli(
 
     The --group and --assembly sets the criteria for the bugs to be found.
     default jira search statuses: ['MODIFIED', 'ON_QA', 'VERIFIED']
+
+    If --exclude-trackers is set, tracker bugs will be excluded from the search.
 
     Security Tracker Bugs are validated and categorized based on attached builds
     to advisories that are in the assembly. The assumption is that:
@@ -60,11 +69,15 @@ async def find_bugs_cli(
         $ elliott -g openshift-4.18 --assembly 4.18.5 find-bugs -o json
 
     """
+    if exclude_trackers and cve_only:
+        raise click.BadParameter("Cannot use --exclude-trackers with --cve-only")
+
     cli = FindBugsCli(
         runtime=runtime,
         permissive=permissive,
         output=output,
         cve_only=cve_only,
+        exclude_trackers=exclude_trackers,
     )
     await cli.run()
 
@@ -76,11 +89,13 @@ class FindBugsCli:
         permissive: bool,
         output: str,
         cve_only: bool,
+        exclude_trackers: bool,
     ):
         self.runtime = runtime
         self.permissive = permissive
         self.output = output
         self.cve_only = cve_only
+        self.exclude_trackers = exclude_trackers
         self.bug_tracker = None
 
     async def run(self):
@@ -120,6 +135,7 @@ class FindBugsCli:
             minor_version=minor_version,
             operator_bundle_advisory="metadata",
             permissive=self.permissive,
+            exclude_trackers=self.exclude_trackers,
         )
         for kind, kind_bugs in bugs_by_type.items():
             LOGGER.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')

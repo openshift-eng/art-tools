@@ -375,6 +375,7 @@ def categorize_bugs_by_type(
     permitted_bug_ids: Optional[set] = None,
     operator_bundle_advisory: Optional[str] = "metadata",
     permissive: bool = False,
+    exclude_trackers: bool = False,
 ) -> tuple[Dict[str, type_bug_set], List[str]]:
     """Categorize bugs into different types of advisories
     :param bugs: List of Bug objects to categorize
@@ -384,7 +385,7 @@ def categorize_bugs_by_type(
     :param permitted_bug_ids: Set of bug IDs that are explicitly permitted for inclusion
     :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
     :param permissive: If True, ignore invalid bugs instead of raising an error
-
+    :param exclude_trackers: If True, exclude tracker bugs from the categorization
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_kind: bug_ids} and issues is a list of problems found
     """
 
@@ -454,6 +455,10 @@ def categorize_bugs_by_type(
             issues.append(message)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
+
+    if exclude_trackers:
+        logger.info("Excluding tracker bugs because --exclude-trackers is set")
+        tracker_bugs = set()
 
     # Return early if there are no tracker bugs to process
     if not tracker_bugs:
