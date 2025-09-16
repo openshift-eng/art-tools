@@ -332,7 +332,7 @@ class KonfluxOlmBundleRebaser:
                 if self._group_config.operator_image_ref_mode == 'manifest-list'
                 else image_info['contentDigest']
             )
-            if metadata.runtime.group.startswith("oadp-"):
+            if metadata.runtime.group.startswith("oadp-") or metadata.runtime.group.startswith("logging-"):
                 new_namespace = namespace
             else:
                 new_namespace = 'openshift4' if namespace == csv_namespace else namespace
