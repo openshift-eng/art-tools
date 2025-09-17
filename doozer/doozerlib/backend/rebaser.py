@@ -845,6 +845,12 @@ class KonfluxRebaser:
         # The vendor should always be Red Hat, Inc.
         dfp.labels["vendor"] = "Red Hat, Inc."
 
+        # "v4.20.0" -> "4.20
+        cleaned_version = version.lstrip('v').rsplit('.', 1)[0]
+        # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
+        rhel_version = release.split(".")[-1]
+        dfp.labels["cpe"] = f"cpe:/a:redhat:openshift:{cleaned_version}::{rhel_version}"
+
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()
 
