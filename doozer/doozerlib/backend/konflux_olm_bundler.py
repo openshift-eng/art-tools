@@ -211,7 +211,7 @@ class KonfluxOlmBundleRebaser:
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
             logger.warning(
-                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in the operator's image-references file"
+                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} at {refs_path}"
             )
 
         # Generate bundle's operator-framework tags
