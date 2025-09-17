@@ -213,6 +213,7 @@ class KonfluxOlmBundleRebaser:
             logger.warning(
                 f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} at {refs_path}"
             )
+            logger.warning(f"Found operands: {all_found_operands}")
 
         # Generate bundle's operator-framework tags
         operator_framework_tags = self._get_operator_framework_tags(channel_name, package_name)
