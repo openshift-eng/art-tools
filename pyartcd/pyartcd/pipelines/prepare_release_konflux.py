@@ -498,6 +498,11 @@ class PrepareReleaseKonfluxPipeline:
             if "_errata_api" in self.__dict__:
                 await self._errata_api.close()
 
+            shipment_url = await self.create_shipment_mr(shipments_by_kind, env)
+            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
+            self.updated_assembly_group_config.shipment.url = shipment_url
+            await self.create_update_build_data_pr()
+
         # find builds for the image, extras and metadata shipments
         kind_to_builds = await self.find_builds_all()
 
@@ -520,17 +525,8 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
 
-        # now that we have basic shipment configs setup, we can commit them to shipment MR
-        if not shipment_url:
-            shipment_url = await self.create_shipment_mr(shipments_by_kind, env)
-            await self._slack_client.say_in_thread(f"Shipment MR created: {shipment_url}")
-            self.updated_assembly_group_config.shipment.url = shipment_url
-            await self.create_update_build_data_pr()
-        else:
-            self.logger.info("Shipment MR already exists: %s. Checking if it needs an update..", shipment_url)
-            updated = await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
-            if updated:
-                await self._slack_client.say_in_thread(f"Shipment MR updated: {shipment_url}")
+        # Update shipment MR with found builds
+        await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
         # IMPORTANT: Bug Finding is special, it dynamically categorizes tracker bugs based on where the builds are found.
         # The Bug-Finder needs standardized access to shipment configs and respective builds via shipment MR.
