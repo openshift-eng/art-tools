@@ -429,7 +429,7 @@ class AttachCveFlaws:
             updated = True
             security_impact = 'Low'
             formatter = SafeFormatter()
-            replace_vars = {"MINOR": self.minor, "PATCH": self.patch, "IMPACT": highest_impact}
+            replace_vars = {"MINOR": self.minor, "PATCH": self.patch, "IMPACT": security_impact}
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
