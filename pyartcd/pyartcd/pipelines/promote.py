@@ -10,7 +10,7 @@ import sys
 import tarfile
 import traceback
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
@@ -65,6 +65,12 @@ from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
+
+# YAML handler for shipment config dumping
+shipment_yaml = YAML()
+shipment_yaml.default_flow_style = False
+shipment_yaml.preserve_quotes = True
+shipment_yaml.indent(mapping=2, sequence=4, offset=2)
 
 
 class PromotePipeline:
@@ -2206,8 +2212,6 @@ class PromotePipeline:
                         return
 
                     # Create a new branch for the SHA update
-                    from datetime import datetime, timezone
-
                     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                     sha_branch = f"update-shas-{self.assembly}-{timestamp}"
 
@@ -2220,10 +2224,9 @@ class PromotePipeline:
 
                     # Convert shipment config back to YAML
                     shipment_dump = image_shipment.model_dump(exclude_unset=True, exclude_none=True)
-                    yaml_handler = new_roundtrip_yaml_handler()
 
                     out = StringIO()
-                    yaml_handler.dump(shipment_dump, out)
+                    shipment_yaml.dump(shipment_dump, out)
                     updated_content = out.getvalue()
 
                     # Update the file in the new branch
