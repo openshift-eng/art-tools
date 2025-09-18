@@ -476,6 +476,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
 
+    @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'verify_attached_operators', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
@@ -674,7 +675,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_find_builds_all.side_effect = find_builds_all
 
-        def find_or_build_bundle_builds(nvrs):
+        def find_or_build_bundle_builds(nvrs, stream):
             return ["extras-bundle-nvr"]
 
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds

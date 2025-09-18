@@ -380,6 +380,9 @@ class KonfluxOlmBundleRebaser:
             override_channel = ','.join((channel_name, stable_channel))
         if self._group_config.operator_channel_stable == 'default':
             override_default = stable_channel
+        if self._operator_index_mode == 'pre-release':
+            override_default = 'dev-preview'
+            override_channel = 'dev-preview'
         tags = {
             'operators.operatorframework.io.bundle.channel.default.v1': override_default,
             'operators.operatorframework.io.bundle.channels.v1': override_channel,

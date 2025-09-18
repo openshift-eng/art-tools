@@ -509,21 +509,28 @@ class PrepareReleaseKonfluxPipeline:
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
         if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
-            bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"], "stream")
             kind_to_builds["metadata"] += bundle_nvrs
 
         await self.verify_attached_operators(kind_to_builds)
 
+        # for fbc-pre, rebuild bundle builds for all metadata builds, replace kind_to_builds["metadata"]
+        if "prerelease" in shipments_by_kind:
+            kind_to_builds["metadata"] = await self.find_or_build_bundle_builds(
+                kind_to_builds["metadata"], self.assembly
+            )
+
         # make sure that fbc shipment needs to be prepared
         # find and build any missing fbc builds
+        olm_operator_nvrs = []
         if "fbc" in shipments_by_kind:
-            kind_to_builds["fbc"] = await self.find_or_build_fbc_builds(
-                kind_to_builds["extras"] + kind_to_builds["image"]
-            )
+            olm_operator_nvrs = await self.filter_olm_operators(kind_to_builds["extras"] + kind_to_builds["image"])
+            kind_to_builds["fbc"] = await self.find_or_build_fbc_builds(olm_operator_nvrs)
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
+            builds = kind_to_builds[kind] if kind != "prerelease" else kind_to_builds["metadata"] + olm_operator_nvrs
+            shipment.shipment.snapshot = await self.get_snapshot(builds)
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -535,7 +542,7 @@ class PrepareReleaseKonfluxPipeline:
         # - shipment MR is committed to build-data
         # Then the output of Bug-Finder is committed to shipment MR
         for kind, shipment in shipments_by_kind.items():
-            if kind == "fbc":
+            if kind in ["fbc", "prerelease"]:
                 continue
             bug_ids = (await self.find_bugs()).get(kind, [])
             set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
@@ -626,7 +633,6 @@ class PrepareReleaseKonfluxPipeline:
         Returns:
             list[str]: List of FBC NVRs that were found or built.
         """
-        olm_operator_nvrs = await self.filter_olm_operators(nvrs)
 
         major, minor = self.release_name.split('.')[:2]
         version = f"{major}.{minor}"
@@ -634,20 +640,22 @@ class PrepareReleaseKonfluxPipeline:
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            f'--assembly={self.assembly}',
+            '--assembly=stream',
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
             f"--message={message}",
             "--output=json",
         ]
+        if self.assembly_group_config.get("operator_index_mode") == "pre-release":
+            cmd += ["--force"]
         if self.dry_run:
             cmd += ["--dry-run"]
-        cmd += ["--", *olm_operator_nvrs]
+        cmd += ["--"] + nvrs
         stdout = await self.execute_command_with_logging(cmd)
         return json.loads(stdout).get("nvrs", []) if stdout else []
 
-    async def find_or_build_bundle_builds(self, nvrs: list[str]) -> list[str]:
+    async def find_or_build_bundle_builds(self, nvrs: list[str], assembly: str) -> list[str]:
         """
         For the given list of NVRs, determine which are OLM operators and fetch bundle builds for them.
         Trigger bundle builds for them if needed.
@@ -665,7 +673,7 @@ class PrepareReleaseKonfluxPipeline:
         if not kubeconfig:
             raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build bundle image")
         cmd = self._doozer_base_command + [
-            '--assembly=stream',
+            f'--assembly={assembly}',
             "beta:images:konflux:bundle",
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
@@ -674,8 +682,31 @@ class PrepareReleaseKonfluxPipeline:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
         stdout = await self.execute_command_with_logging(cmd)
-        bundle_nvrs = json.loads(stdout).get("nvrs", []) if stdout else []
+        output = self.extract_json_alternative(stdout)
+        bundle_nvrs = output.get("nvrs", []) if output else []
         return bundle_nvrs
+
+    def extract_json_alternative(self, output_text):
+        """
+        Alternative approach using a more specific pattern for JSON extraction.
+        """
+        # Pattern that looks for JSON object starting with { and ending with }
+        # This handles nested structures and arrays
+        json_pattern = r'(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\})'
+
+        matches = re.findall(json_pattern, output_text, re.DOTALL)
+
+        for match in matches:
+            try:
+                # Try to parse as JSON
+                parsed = json.loads(match)
+                # Check if it has the expected structure (e.g., contains 'nvrs' key)
+                if isinstance(parsed, dict) and 'nvrs' in parsed:
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -1292,6 +1323,9 @@ class PrepareReleaseKonfluxPipeline:
         """
         Verify that the swept builds match the imagestreams that were updated during build-sync.
         """
+        if "image" not in [config.kind for config in self.updated_assembly_group_config.shipment.advisories]:
+            self.logger.info("Skipping payload verification because image kind is not in shipment config")
+            return
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
         async def _verify(imagestream):
