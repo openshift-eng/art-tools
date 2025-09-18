@@ -743,6 +743,21 @@ class KonfluxFbcRebaser:
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
 
+            # For an operator bundle that uses replaces -- such as OADP
+            # Update "replaces" in the channel
+            replaces = None
+            if 'oadp-' in olm_bundle_name:
+                # Find the current head - the entry that is not replaced by any other entry
+                bundle_with_replaces = [it for it in channel['entries'] if 'oadp-' in it['name']]
+                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                current_head = next(
+                    (it for it in bundle_with_replaces if it['name'] not in replaced_names),
+                    None
+                )
+                if current_head:
+                    # The new bundle should replace the current head
+                    replaces = current_head['name']
+
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
@@ -757,6 +772,8 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
+            if replaces:
+                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
