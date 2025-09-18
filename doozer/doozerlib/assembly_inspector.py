@@ -280,6 +280,15 @@ class AssemblyInspector:
                 if assembly_nvr != installed_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
+                    if package_name == 'ose-aws-ecr-image-credential-provider':
+                        # FIXME: This package is special. It is built in the OCP build system, but it is
+                        # consumed in RHCOS RHEL layer. However, the version of the package that
+                        # RHCOS consumes is not necessarily the latest build in the OCP build system.
+                        # So we permit this discrepancy.
+                        self.runtime.logger.warning(
+                            f'RHCOS {rhcos_build.build_id} ({rhcos_build.brew_arch}) has {installed_nvr} installed but assembly expects {assembly_nvr}; permitting this discrepancy because {package_name} is special'
+                        )
+                        continue
                     issues.append(
                         AssemblyIssue(
                             f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed',
