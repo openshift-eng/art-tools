@@ -435,7 +435,7 @@ class AttachCveFlaws:
                 security_reviewer=cve_boilerplate['security_reviewer'],
                 synopsis=formatter.format(cve_boilerplate['synopsis'], **replace_vars),
                 topic=formatter.format(cve_boilerplate['topic'], **replace_vars),
-                solution=formatter.format(cve_boilerplate['solution'],**replace_vars),
+                solution=formatter.format(cve_boilerplate['solution'], **replace_vars),
                 security_impact=security_impact,
             )
 
