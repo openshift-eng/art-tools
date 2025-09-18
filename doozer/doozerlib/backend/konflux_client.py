@@ -597,6 +597,19 @@ class KonfluxClient:
                     ],
                 }
             ]
+            task_run_specs += [
+                {
+                    "pipelineTaskName": "prefetch-dependencies",
+                    "computeResources": {
+                        "requests": {
+                            "memory": "10Gi",
+                        },
+                        "limits": {
+                            "memory": "10Gi",
+                        },
+                    },
+                }
+            ]
         if has_sast_task:
             task_run_specs += [
                 {
