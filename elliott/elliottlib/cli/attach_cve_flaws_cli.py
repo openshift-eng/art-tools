@@ -428,12 +428,14 @@ class AttachCveFlaws:
             self.logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
             updated = True
             security_impact = 'Low'
+            formatter = SafeFormatter()
+            replace_vars = {"MINOR": self.minor, "PATCH": self.patch, "IMPACT": security_impact}
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
-                synopsis=cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch),
-                topic=cve_boilerplate['topic'].format(IMPACT=security_impact, MINOR=self.minor, PATCH=self.patch),
-                solution=cve_boilerplate['solution'].format(MINOR=self.minor),
+                synopsis=formatter.format(cve_boilerplate['synopsis'], **replace_vars),
+                topic=formatter.format(cve_boilerplate['topic'], **replace_vars),
+                solution=formatter.format(cve_boilerplate['solution'], **replace_vars),
                 security_impact=security_impact,
             )
 
