@@ -2,7 +2,7 @@ import asyncio
 import datetime
 import json
 import logging
-import urllib.parse
+from enum import Enum
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
@@ -10,47 +10,59 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
 from doozerlib.cli import cli, click_coroutine, pass_runtime
-from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 DELTA_DAYS = 90  # look at latest 90 days
+LIMIT_BUILD_RESULTS = 100  # how many build records to fetch from DB
+
+
+class ConcernCode(Enum):
+    NEVER_BUILT = 'NEVER_BUILT'
+    LATEST_ATTEMPT_FAILED = 'LATEST_ATTEMPT_FAILED'
+    FAILING_AT_LEAST_FOR = 'FAILING_AT_LEAST_FOR'
+
+
+class Concern:
+    def __init__(
+        self,
+        image_name: str,
+        code: str,
+        latest_success_idx: int = None,
+        latest_failed_job_url: str = None,
+        latest_attempt_task_url: str = None,
+        latest_successful_task_url: str = None,
+        latest_failed_nvr: str = None,
+        latest_failed_build_record_id: str = None,
+        latest_failed_build_time: datetime.datetime = None,
+        group: str = None,
+    ):
+        self.image_name = image_name
+        self.code = code
+        self.latest_success_idx = latest_success_idx
+        self.latest_failed_job_url = latest_failed_job_url
+        self.latest_attempt_task_url = latest_attempt_task_url
+        self.latest_successful_task_url = latest_successful_task_url
+        self.latest_failed_nvr = latest_failed_nvr
+        self.latest_failed_build_record_id = latest_failed_build_record_id
+        self.latest_failed_build_time = latest_failed_build_time
+        self.group = group
+
+    def to_dict(self):
+        return self.__dict__.copy()
 
 
 class ImagesHealthPipeline:
-    def __init__(self, runtime: Runtime, limit: int, url_markup: str):
+    def __init__(self, runtime: Runtime, limit: int):
         self.runtime = runtime
         self.limit = limit
-        self.url_markup = url_markup
         self.start_search = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=DELTA_DAYS)
-        self.concerns = {}
+        self.concerns = []
         self.logger = logging.getLogger(__name__)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
-
-    def generate_art_dash_history_link(self, dg_name, engine):
-        base_url = f"{ART_BUILD_HISTORY_URL}/"
-
-        # Validating essential parameters
-        if not dg_name or not self.runtime or not self.runtime.group_config or not self.runtime.group_config.name:
-            raise ValueError("Missing essential parameters for generating Art-Dash link")
-
-        formatted_dg_name = dg_name.split("/")[-1]
-        engine = engine
-        params = {
-            "group": self.runtime.group_config.name,
-            "name": f'^{formatted_dg_name}$',
-            "engine": engine,
-            "assembly": "stream",
-            "outcome": "completed",
-            "art-job-url": "",
-            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}',
-        }
-
-        query_string = urllib.parse.urlencode(params)
-        return f"{base_url}?{query_string}"
 
     async def run(self):
         # Gather concerns for all images we build with Konflux
         tasks = [
-            self.get_concerns(image_meta, 'konflux')
+            self.get_concerns(image_meta)
             for image_meta in self.runtime.image_metas()
             if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
         ]
@@ -59,76 +71,73 @@ class ImagesHealthPipeline:
         # We should now have a dict of qualified_key => [concern, ...]
         if not self.concerns:
             self.logger.info('No concerns to report!')
-        click.echo(json.dumps(self.concerns, indent=4))
+        click.echo(
+            json.dumps(self.concerns, indent=4, default=lambda o: o.to_dict() if isinstance(o, Concern) else str(o))
+        )
 
-    def url_text(self, url, text):
-        if self.url_markup == 'slack':
-            return f'<{url}|{text}>'
-        if self.url_markup == 'github':
-            return f'[{text}]({url})'
-        raise IOError(f'Unknown markup mode: {self.url_markup}')
-
-    async def get_concerns(self, image_meta, engine):
-        key = image_meta.distgit_key
-        builds = await self.query(image_meta, engine)
+    async def get_concerns(self, image_meta):
+        builds = await self.query(image_meta)
         if not builds:
             message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
             self.logger.info(message)
-            self.add_concern(key, engine, message)
+            self.add_concern(Concern(image_name=image_meta.distgit_key, code=ConcernCode.NEVER_BUILT.value))
             return
 
         latest_success_idx = -1
         latest_success_bi_task_url = ''
-        latest_success_bi_dt = ''
 
         for idx, build in enumerate(builds):
             if build.outcome == KonfluxBuildOutcome.SUCCESS:
                 latest_success_idx = idx
                 latest_success_bi_task_url = build.build_pipeline_url
-                latest_success_bi_dt = build.start_time
                 break
 
-        latest_attempt_build_url = builds[0].art_job_url
         latest_attempt_task_url = builds[0].build_pipeline_url
-        oldest_attempt_bi_dt = builds[-1].start_time
 
-        if latest_success_idx != 0:
-            msg = (
-                f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} '
-                f'({self.url_text(latest_attempt_build_url, "jenkins job")}); '
+        if latest_success_idx == 0:
+            # The latest attempt was a success: nothing to do
+            return
+
+        if latest_success_idx == 1:
+            # Skipping notifications when only latest attempt failed
+            self.logger.info(
+                f'Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification.'
+            )
+            return
+
+        elif latest_success_idx == -1:
+            # No success record was found: add a concern
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.FAILING_AT_LEAST_FOR.value,
+                    latest_failed_job_url=builds[0].art_job_url,
+                    latest_attempt_task_url=latest_attempt_task_url,
+                ),
             )
 
-            # The latest attempt was a failure
-            if latest_success_idx == -1:
-                # No success record was found
-                msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
-            elif latest_success_idx > 1:
-                msg += (
-                    f'Last {self.url_text(latest_success_bi_task_url, "success")} was {latest_success_idx} attempts ago'
-                )
-            elif latest_success_idx == 1:
-                # Do nothing
-                return  # skipping notifications when only latest attempt failed
-
-            # Add concern
-            msg += f'. {self.url_text(self.generate_art_dash_history_link(key, engine), "Details")}'
-            self.add_concern(key, engine, msg)
-
         else:
-            if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
-                msg = (
-                    f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
-                    f'(jenkins job {latest_attempt_build_url} was over two weeks ago.'
-                )
-                self.logger.warning(msg)
+            # The latest attempt was a failure: add a concern
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.LATEST_ATTEMPT_FAILED.value,
+                    latest_success_idx=latest_success_idx,
+                    latest_successful_task_url=latest_success_bi_task_url,
+                    latest_failed_job_url=builds[0].art_job_url,
+                    latest_attempt_task_url=latest_attempt_task_url,
+                    latest_failed_nvr=builds[0].nvr,
+                    latest_failed_build_record_id=builds[0].record_id,
+                    latest_failed_build_time=builds[0].start_time,
+                ),
+            )
 
-    def add_concern(self, image_dgk, engine, msg):
-        if not self.concerns.get(engine):
-            self.concerns[engine] = {}
-        self.concerns[engine][image_dgk] = msg
+    def add_concern(self, concern: Concern):
+        concern.group = self.runtime.group
+        self.concerns.append(concern)
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    async def query(self, image_meta, engine):
+    async def query(self, image_meta):
         """
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
@@ -139,7 +148,7 @@ class ImagesHealthPipeline:
                 where={
                     'name': image_meta.distgit_key,
                     'group': self.runtime.group_config.name,
-                    'engine': engine,
+                    'engine': 'konflux',
                     'assembly': 'stream',
                 },
                 order_by='start_time',
@@ -150,10 +159,9 @@ class ImagesHealthPipeline:
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
-@click.option('--limit', default=100, help='How far back in the database to search for builds')
-@click.option('--url-markup', default='slack', help='How to markup hyperlinks (slack, github)')
+@click.option('--limit', default=LIMIT_BUILD_RESULTS, help='How far back in the database to search for builds')
 @click_coroutine
 @pass_runtime
-async def images_health(runtime, limit, url_markup):
+async def images_health(runtime, limit):
     runtime.initialize(clone_distgits=False, clone_source=False)
-    await ImagesHealthPipeline(runtime, limit, url_markup).run()
+    await ImagesHealthPipeline(runtime, limit).run()
