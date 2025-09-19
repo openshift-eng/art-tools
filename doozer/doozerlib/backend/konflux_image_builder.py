@@ -289,6 +289,8 @@ class KonfluxImageBuilder:
             build_name=distgit_key,
             registry_auth_file=self._config.registry_auth_file,
         )
+        if not attestation:
+            raise ValueError("SLSA attestation cannot be empty")
 
         # Extract tasks from predicate.buildConfig
         tasks = attestation["predicate"]["buildConfig"]["tasks"]
