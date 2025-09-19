@@ -27,7 +27,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import deep_merge
+from artcommonlib.util import deep_merge, fetch_slsa_attestation
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -495,7 +495,9 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # Fetch the SLSA attestation for the latest build
-        attestation = await self._fetch_slsa_attestation(build_record)
+        attestation = await fetch_slsa_attestation(
+            build_record.image_pullspec, build_record.name, self.registry_auth_file
+        )
         if not attestation:
             self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
             return
@@ -912,27 +914,6 @@ class ConfigScanSources:
                         f'which changed at event {extra_latest_tagging_event}',
                     )
 
-    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[Dict]:
-        """
-        Fetch SLSA attestation for the given build record.
-        """
-        try:
-            # Get SLSA attestation for the build
-            self.logger.info(f'Fetching SLSA attestation for {build_record.image_pullspec}')
-            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-                pullspec=build_record.image_pullspec,
-                registry_auth_file=self.registry_auth_file,
-            )
-            return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
-
-        except ChildProcessError:
-            self.logger.warning(f'Failed to fetch SLSA attestation for {build_record.name}')
-            return None
-
-        except (JSONDecodeError, Exception) as e:
-            self.logger.warning('Failed to parse SLSA attestation for %s: %s', build_record.name, e)
-            return None
-
     def _extract_task_bundles_from_attestation(self, attestation: Dict) -> Dict[str, str]:
         """
         Extract task bundles from SLSA attestation materials.
@@ -1035,7 +1016,9 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # Fetch SLSA attestation
-        attestation = await self._fetch_slsa_attestation(build_record)
+        attestation = await fetch_slsa_attestation(
+            build_record.image_pullspec, build_record.name, self.registry_auth_file
+        )
         if not attestation:
             self.logger.warning('Skipping task bundle check for %s', image_meta.distgit_key)
             return

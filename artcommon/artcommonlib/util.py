@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import json
 import logging
 import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
@@ -450,11 +453,20 @@ def detect_package_managers(metadata, dest_dir: Path):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Optional[str] = None) -> str:
+async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_auth_file: Optional[str] = None) -> str:
     """
-    Retrieve the SLSA attestation: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
+    Retrieve Konflux data (attestation or signature) for a given pullspec.
+
+    :param pullspec: Container image pullspec
+    :param mode: Type of data to download ('attestation' or 'signature')
+    :param registry_auth_file: Optional registry auth file path
+    :return: Downloaded data as string
+    :raises ValueError: If mode is not 'attestation' or 'signature'
     """
-    cmd = f"cosign download attestation {pullspec}"
+    if mode not in ('attestation', 'signature'):
+        raise ValueError(f"mode must be 'attestation' or 'signature', got: {mode}")
+
+    cmd = f"cosign download {mode} {pullspec}"
     env = os.environ.copy()
     if registry_auth_file:
         LOGGER.debug("Using registry auth file: %s", registry_auth_file)
@@ -462,6 +474,36 @@ async def get_konflux_slsa_attestation(pullspec: str, registry_auth_file: Option
     _, out, _ = await cmd_gather_async(cmd, env=env)
 
     return out.strip()
+
+
+async def fetch_slsa_attestation(
+    image_pullspec: str, build_name: str, registry_auth_file: Optional[str] = None
+) -> Optional[Dict]:
+    """
+    Fetch SLSA attestation for the given image pullspec.
+
+    :param image_pullspec: Container image pullspec
+    :param build_name: Build name for logging purposes
+    :param registry_auth_file: Optional registry auth file path
+    :return: Parsed SLSA attestation as dict, or None if failed
+    """
+    try:
+        # Get SLSA attestation for the build
+        LOGGER.info(f'Fetching SLSA attestation for {image_pullspec}')
+        attestation = await get_konflux_data(
+            pullspec=image_pullspec,
+            mode="attestation",
+            registry_auth_file=registry_auth_file,
+        )
+        return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+
+    except ChildProcessError:
+        LOGGER.warning(f'Failed to fetch SLSA attestation for {build_name}')
+        return None
+
+    except (JSONDecodeError, Exception) as e:
+        LOGGER.warning('Failed to parse SLSA attestation for %s: %s', build_name, e)
+        return None
 
 
 @limit_concurrency(limit=32)

@@ -18,6 +18,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -210,15 +211,12 @@ class KonfluxImageBuilder:
 
                     record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
-                    # Get SLA attestation from konflux. The command will error out if it cannot find it.
+                    # Validate SLSA attestation and source image signature
                     try:
-                        await artlib_util.get_konflux_slsa_attestation(
-                            pullspec=image_pullspec,
-                            registry_auth_file=self._config.registry_auth_file,
-                        )
+                        await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
                     except Exception as e:
                         logger.error(
-                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                            f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
                         )
                         outcome = KonfluxBuildOutcome.FAILURE
 
@@ -276,6 +274,48 @@ class KonfluxImageBuilder:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
 
         return uuid_tag, component_name, version, release
+
+    async def _validate_build_attestation_and_signature(self, image_pullspec: str, distgit_key: str):
+        """
+        Validate SLSA attestation and source image signature for a built image.
+
+        :param image_pullspec: The pullspec of the built image
+        :param distgit_key: The distgit key for logging purposes
+        :raises: Exception if validation fails
+        """
+        # Get SLA attestation from konflux. The command will error out if it cannot find it.
+        attestation = await fetch_slsa_attestation(
+            image_pullspec=image_pullspec,
+            build_name=distgit_key,
+            registry_auth_file=self._config.registry_auth_file,
+        )
+        if not attestation:
+            raise ValueError("SLSA attestation cannot be empty")
+
+        # Extract tasks from predicate.buildConfig
+        tasks = attestation["predicate"]["buildConfig"]["tasks"]
+
+        # Find the build-source-image task and extract IMAGE_REF
+        source_image_pullspec = None
+        for task in tasks:
+            if task["name"] == "build-source-image":
+                for result in task["results"]:
+                    if result["name"] == "IMAGE_REF":
+                        source_image_pullspec = result["value"]
+                        break
+
+        if not source_image_pullspec:
+            raise ValueError(f"Could not find source image pullspec for {distgit_key} in image {image_pullspec}")
+
+        # If the source image is not signed, consider the build as failed, since Conforma will fail
+        # at release time otherwise
+        try:
+            await get_konflux_data(
+                pullspec=source_image_pullspec, mode="signature", registry_auth_file=self._config.registry_auth_file
+            )
+        except ChildProcessError:
+            LOGGER.error(f'Failed to fetch signature for {source_image_pullspec}')
+            raise
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
