@@ -401,12 +401,12 @@ class PrepareReleaseKonfluxPipeline:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
 
-            # attach cve flaws
-            self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
-            operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
-            if self.dry_run:
-                operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(base_command, operate_cmd)
+        # unconditionally attach cve flaws
+        self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
+        operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
+        if self.dry_run:
+            operate_cmd += ["--dry-run"]
+        await self.run_cmd_with_retry(base_command, operate_cmd)
 
         # change status to qe
         try:
