@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
 
@@ -113,7 +113,7 @@ class ImagesHealthPipeline:
         await self.slack_client.say(report, thread_ts=response['ts'])
 
     async def notify_forum_ocp_art(self):
-        self.slack_client.bind_channel('forum-ocp-art')
+        self.slack_client.bind_channel('#forum-ocp-art')
 
         if not self.report:
             await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
@@ -121,19 +121,23 @@ class ImagesHealthPipeline:
 
         image_concerns = {}
         for concern in self.report:
+            if concern['code'] == ConcernCode.NEVER_BUILT.value:
+                # We don't report NEVER_BUILT concerns to forum-ocp-art
+                continue
             image_name = concern['image_name']
             image_concerns.setdefault(image_name, []).append(concern)
 
         response = await self.slack_client.say(
-            f':alert: There are some issues to look into for Openshift builds:  {self.get_component_tag(image_concerns)}'
+            f':alert: There are some issues to look into for Openshift builds:  {self.get_component_tag(image_concerns)}',
+            link_build_url=False,
         )
 
         for image_name, concerns in image_concerns.items():
             image_message = f'`{image_name}:`'
             for concern in concerns:
-                image_message += f'\n- {self.get_message_for_forum(concern)}'
+                image_message += f'\n• {self.get_message_for_forum(concern)}'
 
-            await self.slack_client.say(image_message, thread_ts=response['ts'])
+            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
 
     def get_message_for_release(self, concern: dict):
         code = concern['code']
@@ -157,20 +161,18 @@ class ImagesHealthPipeline:
         code = concern['code']
         group = concern['group']
 
-        if code == ConcernCode.NEVER_BUILT.value:
-            return f'\nImage build has never been attempted in `{group}` during last {DELTA_DAYS} days'
+        after = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
+        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name={concern["image_name"]}&group={group}&assembly=stream&outcome=completed&engine=konflux&after={after}'
+        logs_link = self.url_text(self.get_logs_url(concern), "logs")
 
-        message = f'{self.get_last_attempt_tag(concern)} in `{group}`'
-
-        logs_url = self.get_logs_url(concern)
+        message = f'{self.url_text(art_dash_link, f"{group}")}: '
 
         if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
-            message += f' failed, and has been failing for at least {LIMIT_BUILD_RESULTS} attempts.'
-            message += f'\nSee {self.url_text(logs_url, "build logs")}'
-            return message
+            message += f'more than {LIMIT_BUILD_RESULTS} failures ({logs_link}).'
 
-        # ConcernCode.LATEST_ATTEMPT_FAILED
-        message += f' failed (see {self.url_text(logs_url, "build logs")}). {self.get_latest_success_tag(concern)} was {concern["latest_success_idx"]} attempts ago.'
+        else:  # ConcernCode.LATEST_ATTEMPT_FAILED
+            message += f'{concern["latest_success_idx"]} failures ({logs_link}).'
+
         return message
 
     @staticmethod
