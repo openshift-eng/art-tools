@@ -970,11 +970,18 @@ class KonfluxClient:
 
                         # Create a placeholder indicating the resource was garbage collected
                         placeholder_pipelinerun = {
-                            "metadata": {"name": pipelinerun_name, "namespace": namespace},
+                            "metadata": {
+                                "name": pipelinerun_name, 
+                                "namespace": namespace,
+                                "labels": {
+                                    "appstudio.openshift.io/application": "garbage-collected",
+                                    "appstudio.openshift.io/component": "garbage-collected"
+                                }
+                            },
                             "apiVersion": "tekton.dev/v1",
                             "kind": "PipelineRun",
                             "status": {
-                                "conditions": [{"status": "Unknown", "type": "Succeeded", "reason": "GarbageCollected"}]
+                                "conditions": [{"status": "False", "type": "Succeeded", "reason": "GarbageCollected"}]
                             },
                         }
                         return resource.ResourceInstance(self.dyn_client, placeholder_pipelinerun), list(
