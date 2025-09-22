@@ -954,11 +954,35 @@ class KonfluxClient:
 
                     # Check if the PipelineRun still exists before continuing to watch
                     try:
-                        _ = api.get(
+                        current_obj = api.get(
                             name=pipelinerun_name,
                             namespace=namespace,
                             _request_timeout=self.request_timeout,
                         )
+
+                        # Check if pipeline completed while we weren't watching
+                        try:
+                            succeeded_condition = art_util.KubeCondition.find_condition(current_obj, 'Succeeded')
+                            if succeeded_condition and succeeded_condition.status not in ["Unknown", "Not Found"]:
+                                self._logger.info(
+                                    "PipelineRun %s completed during watch gap [status=%s][reason=%s]",
+                                    pipelinerun_name,
+                                    succeeded_condition.status,
+                                    succeeded_condition.reason,
+                                )
+                                # Get final pod states
+                                time.sleep(5)  # Allow pods to update
+                                pods_instances = pod_resource.get(
+                                    namespace=namespace,
+                                    label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
+                                    _request_timeout=self.request_timeout,
+                                )
+                                for pod_instance in pods_instances.items:
+                                    pod_history[pod_instance.metadata.name] = pod_instance.to_dict()
+                                return resource.ResourceInstance(api, current_obj), list(pod_history.values())
+                        except AttributeError:
+                            pass
+
                         self._logger.info(
                             "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
                         )
