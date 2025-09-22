@@ -10,7 +10,6 @@ from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from prettytable import PrettyTable
-from pyartcd.util import get_release_name_for_assembly, load_releases_config
 from semver.version import Version
 
 from elliottlib import Runtime, constants, errata
@@ -21,6 +20,7 @@ from elliottlib.cli.get_golang_report_cli import golang_report_for_version
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import get_golang_container_nvrs, get_golang_rpm_nvrs, get_nvrs_from_release
 from pyartcd import constants as pyartcd_constants
+from pyartcd.util import get_release_name_for_assembly, load_releases_config
 
 LOGGER = logging.getLogger(__name__)
 
