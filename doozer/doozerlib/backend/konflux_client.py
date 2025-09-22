@@ -971,12 +971,12 @@ class KonfluxClient:
                         # Create a placeholder indicating the resource was garbage collected
                         placeholder_pipelinerun = {
                             "metadata": {
-                                "name": pipelinerun_name, 
+                                "name": pipelinerun_name,
                                 "namespace": namespace,
                                 "labels": {
                                     "appstudio.openshift.io/application": "garbage-collected",
-                                    "appstudio.openshift.io/component": "garbage-collected"
-                                }
+                                    "appstudio.openshift.io/component": "garbage-collected",
+                                },
                             },
                             "apiVersion": "tekton.dev/v1",
                             "kind": "PipelineRun",
