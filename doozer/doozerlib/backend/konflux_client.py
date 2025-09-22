@@ -802,15 +802,24 @@ class KonfluxClient:
                         cancel_pipelinerun = (
                             False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
                         )
+                        event_type = event["type"]
                         obj = resource.ResourceInstance(api, event["object"])
+
+                        # VERBOSE DEBUG
+                        self._logger.info(
+                            "PipelineRun %s event %s. State: %s",
+                            pipelinerun_name,
+                            event_type,
+                            str(obj.to_dict()),
+                        )
+
                         # status takes some time to appear
-                        try:
-                            succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
-                            if succeeded_condition:
-                                succeeded_status = succeeded_condition.status
-                                succeeded_reason = succeeded_condition.reason
-                        except AttributeError:
-                            pass
+                        succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
+                        if succeeded_condition:
+                            succeeded_status = succeeded_condition.status
+                            succeeded_reason = succeeded_condition.reason
+                        else:
+                            self._logger.warning("PipelineRun %s unable to check status", pipelinerun_name)
 
                         pod_desc = []
                         pods = pod_resource.get(
