@@ -952,9 +952,41 @@ class KonfluxClient:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
                                 traceback.print_exc()
 
-                    self._logger.info(
-                        "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
-                    )
+                    # Check if the PipelineRun still exists before continuing to watch
+                    try:
+                        _ = api.get(
+                            name=pipelinerun_name,
+                            namespace=namespace,
+                            _request_timeout=self.request_timeout,
+                        )
+                        self._logger.info(
+                            "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
+                        )
+                    except exceptions.NotFoundError:
+                        self._logger.info(
+                            "PipelineRun %s no longer exists (likely garbage collected); stopping watch",
+                            pipelinerun_name,
+                        )
+
+                        # Create a placeholder indicating the resource was garbage collected
+                        placeholder_pipelinerun = {
+                            "metadata": {
+                                "name": pipelinerun_name,
+                                "namespace": namespace,
+                                "labels": {
+                                    "appstudio.openshift.io/application": "garbage-collected",
+                                    "appstudio.openshift.io/component": "garbage-collected",
+                                },
+                            },
+                            "apiVersion": "tekton.dev/v1",
+                            "kind": "PipelineRun",
+                            "status": {
+                                "conditions": [{"status": "False", "type": "Succeeded", "reason": "GarbageCollected"}]
+                            },
+                        }
+                        return resource.ResourceInstance(self.dyn_client, placeholder_pipelinerun), list(
+                            pod_history.values()
+                        )
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
