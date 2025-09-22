@@ -169,6 +169,15 @@ class KonfluxImageBuilder:
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
+            # Resolve build priority based on precedence rules
+            if self._config.build_priority == "auto":
+                build_priority = util.get_konflux_build_priority(metadata=metadata)
+                logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
+            else:
+                # If it's a specific number (1-10), use it directly
+                build_priority = self._config.build_priority
+                logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
+
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
                 pipelinerun = await self._start_build(
@@ -178,13 +187,14 @@ class KonfluxImageBuilder:
                     output_image=output_image,
                     additional_tags=additional_tags,
                     nvr=nvr,
+                    build_priority=build_priority,
                     dest_dir=dest_dir,
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.resource_url(pipelinerun)
                 await self.update_konflux_db(
-                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
+                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches, build_priority
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -223,7 +233,9 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
+                    await self.update_konflux_db(
+                        metadata, build_repo, pipelinerun, outcome, building_arches, build_priority, pod_list
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -437,6 +449,7 @@ class KonfluxImageBuilder:
         output_image: str,
         additional_tags: list[str],
         nvr: str,
+        build_priority: str,
         dest_dir: Optional[Path] = None,
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -478,15 +491,6 @@ class KonfluxImageBuilder:
         group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
-
-        # Resolve build priority based on precedence rules
-        if self._config.build_priority == "auto":
-            build_priority = util.get_konflux_build_priority(metadata=metadata)
-            logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
-        else:
-            # If it's a specific number (1-10), use it directly
-            build_priority = self._config.build_priority
-            logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
@@ -604,7 +608,14 @@ class KonfluxImageBuilder:
         return all_package_nvrs, all_source_rpms
 
     async def update_konflux_db(
-        self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
+        self,
+        metadata,
+        build_repo,
+        pipelinerun,
+        outcome,
+        building_arches,
+        build_priority,
+        pod_list: Optional[List[Dict]] = None,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -656,7 +667,7 @@ class KonfluxImageBuilder:
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
-            'build_priority': int(util.get_konflux_build_priority(metadata=metadata)),
+            'build_priority': int(build_priority),
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
