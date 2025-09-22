@@ -203,6 +203,8 @@ class KonfluxOlmBundleRebaser:
         # Read image references from the operator's image-references file
         image_references = {}
         refs_path = operator_bundle_dir / "image-references"
+        if metadata.runtime.group.startswith("oadp-"):
+            refs_path = operator_manifests_dir / "../image-references"
         if refs_path.exists():
             async with aiofiles.open(refs_path, 'r') as f:
                 image_refs = yaml.safe_load(await f.read())
