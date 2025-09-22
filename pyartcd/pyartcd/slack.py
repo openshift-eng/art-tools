@@ -58,10 +58,15 @@ class SlackClient:
             return await self.say(message, thread_ts=self._thread_ts, reaction=reaction, broadcast=broadcast)
 
     async def say(
-        self, message: str, thread_ts: Optional[str] = None, reaction: Optional[str] = None, broadcast: bool = False
+        self,
+        message: str,
+        thread_ts: Optional[str] = None,
+        reaction: Optional[str] = None,
+        broadcast: bool = False,
+        link_build_url: bool = True,
     ):
         attachments = []
-        if self.build_url:
+        if self.build_url and link_build_url:
             attachments.append(
                 {
                     "title": f"Job: {self.job_name} <{self.build_url}/consoleFull|{self.build_id}>",
