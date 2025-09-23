@@ -160,3 +160,163 @@ class TestKonfluxCachi2(TestCase):
         result = builder._prefetch(metadata=metadata)
         expected = [{'type': 'gomod', 'path': '.'}]
         self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_rpm_lockfile_prerelease_dnf_options(self, mock_konflux_client_init):
+        """Test that prerelease phase adds DNF options with gpgcheck=0 for all repository IDs"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        # Setup metadata for prerelease RPM lockfile scenario
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        # Setup prerelease phase
+        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+        metadata.get_enabled_repos.return_value = {'repo1', 'repo2'}
+        metadata.get_arches.return_value = ['x86_64', 'aarch64']
+
+        # Mock repository objects
+        mock_repo1 = MagicMock()
+        mock_repo1.content_set.side_effect = lambda arch: f'repo1-content-set-{arch}'
+        mock_repo2 = MagicMock()
+        mock_repo2.content_set.side_effect = lambda arch: f'repo2-content-set-{arch}'
+
+        metadata.runtime.repos = {'repo1': mock_repo1, 'repo2': mock_repo2}
+
+        result = builder._prefetch(metadata=metadata)
+
+        expected_rpm_data = {
+            'type': 'rpm',
+            'path': '.',
+            'options': {
+                'dnf': {
+                    'repo1-content-set-x86_64': {'gpgcheck': '0'},
+                    'repo1-content-set-aarch64': {'gpgcheck': '0'},
+                    'repo2-content-set-x86_64': {'gpgcheck': '0'},
+                    'repo2-content-set-aarch64': {'gpgcheck': '0'},
+                }
+            },
+        }
+        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_rpm_lockfile_non_prerelease_no_dnf_options(self, mock_konflux_client_init):
+        """Test that non-prerelease phase does NOT add DNF options"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        # Setup metadata for non-prerelease RPM lockfile scenario
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        # Setup non-prerelease phase
+        metadata.runtime.group_config.software_lifecycle.phase = 'production'
+        metadata.get_enabled_repos.return_value = {'repo1', 'repo2'}
+        metadata.get_arches.return_value = ['x86_64']
+
+        result = builder._prefetch(metadata=metadata)
+
+        # Should NOT have DNF options
+        expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_prerelease_no_rpm_lockfile_no_dnf_options(self, mock_konflux_client_init):
+        """Test that prerelease phase with no RPM lockfile does NOT add DNF options"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        # Setup metadata for prerelease without RPM lockfile
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = False  # No RPM lockfile
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+
+        # Setup prerelease phase
+        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+
+        result = builder._prefetch(metadata=metadata)
+
+        # Should NOT have RPM data at all
+        expected = [{'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_prerelease_empty_repos_no_dnf_options(self, mock_konflux_client_init):
+        """Test that prerelease phase with empty repositories does NOT add DNF options"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        # Setup metadata for prerelease RPM lockfile scenario with empty repos
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        # Setup prerelease phase with empty repos
+        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+        metadata.get_enabled_repos.return_value = set()  # Empty repositories
+        metadata.get_arches.return_value = ['x86_64']
+
+        result = builder._prefetch(metadata=metadata)
+
+        # Should NOT have DNF options due to empty repos
+        expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_prerelease_content_set_fallback(self, mock_konflux_client_init):
+        """Test fallback logic when content_set returns None"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        # Setup metadata for prerelease RPM lockfile scenario
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        # Setup prerelease phase
+        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+        metadata.get_enabled_repos.return_value = {'repo1'}
+        metadata.get_arches.return_value = ['x86_64']
+
+        # Mock repository object that returns None for content_set
+        mock_repo1 = MagicMock()
+        mock_repo1.content_set.return_value = None  # Trigger fallback
+
+        metadata.runtime.repos = {'repo1': mock_repo1}
+
+        result = builder._prefetch(metadata=metadata)
+
+        expected_rpm_data = {
+            'type': 'rpm',
+            'path': '.',
+            'options': {
+                'dnf': {
+                    'repo1-x86_64': {'gpgcheck': '0'}  # Fallback format
+                }
+            },
+        }
+        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
