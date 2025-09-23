@@ -444,7 +444,7 @@ class KonfluxRebaser:
         for i in ignore:
             exclude += ' --exclude="{}" '.format(i)
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
-        await exectools.cmd_gather_async(cmd, stdout=None, stderr=None)
+        await exectools.cmd_assert_async(cmd, suppress_output=True)
 
     @start_as_current_span_async(TRACER, "rebase.merge_source")
     async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
