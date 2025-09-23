@@ -389,6 +389,31 @@ class KonfluxImageBuilder:
                 "type": "rpm",
                 "path": lockfile_path,
             }
+
+            # Add prerelease-specific DNF configuration
+            phase = metadata.runtime.group_config.software_lifecycle.phase
+            if phase == 'pre-release':
+                enabled_repos = metadata.get_enabled_repos()  # Returns set[str] of repo names
+                if enabled_repos:
+                    dnf_options = {}
+                    repos = metadata.runtime.repos  # Repos instance
+                    building_arches = metadata.get_arches()
+
+                    for repo_name in enabled_repos:
+                        repo = repos[repo_name]  # Use public interface
+                        for arch in building_arches:
+                            content_set_id = repo.content_set(arch)
+                            if content_set_id is None:
+                                # Fallback to repo name + arch (same as lockfile)
+                                content_set_id = f'{repo_name}-{arch}'
+
+                            dnf_options[content_set_id] = {"gpgcheck": "0"}
+
+                    data["options"] = {"dnf": dnf_options}
+                    logger.info(
+                        f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
+                    )
+
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
         else:
