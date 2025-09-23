@@ -802,7 +802,21 @@ class KonfluxClient:
                         cancel_pipelinerun = (
                             False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
                         )
-                        obj = resource.ResourceInstance(api, event["object"])
+
+                        # The watch will provide event["object"] on each iteration, but it may have a long backlog
+                        # of resourceVersion updates to deliver us. Meaning that event["object"] may be very stale
+                        # relative to the current state of the object on the server. Thus, we do a live query
+                        # to read the current object and use the watcher notification only to tap us on the shoulder
+                        # periodically. Konflux will prune pipelinerun objects ~10 minutes after they complete,
+                        # so we should have plenty of time to get the last status.
+                        live_obj = api.get(
+                            name=pipelinerun_name,
+                            namespace=namespace,
+                            serialize=False,
+                            _request_timeout=self.request_timeout,
+                        )
+                        obj = resource.ResourceInstance(api, live_obj)
+
                         # status takes some time to appear
                         try:
                             succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
