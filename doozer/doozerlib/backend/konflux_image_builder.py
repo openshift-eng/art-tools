@@ -402,6 +402,11 @@ class KonfluxImageBuilder:
                     for repo_name in enabled_repos:
                         repo = repos[repo_name]  # Use public interface
                         for arch in building_arches:
+                            # Only apply to repositories with baseurl containing '/plashets/'
+                            baseurl = repo.baseurl("unsigned", arch)
+                            if "/plashets/" not in baseurl:
+                                continue
+
                             content_set_id = repo.content_set(arch)
                             if content_set_id is None:
                                 # Fallback to repo name + arch (same as lockfile)
