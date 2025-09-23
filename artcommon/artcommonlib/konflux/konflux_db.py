@@ -13,6 +13,7 @@ from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, Konf
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 from sqlalchemy.sql import text
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 SCHEMA_LEVEL = 1
 DEFAULT_SEARCH_WINDOW = 90
@@ -391,6 +392,7 @@ class KonfluxDb:
         self.logger.warning('No builds found for NVR %s', nvr)
         return None
 
+    @retry(reraise=True, wait=wait_fixed(5), stop=stop_after_attempt(3))
     async def get_build_records_by_nvrs(
         self,
         nvrs: typing.Sequence[str],
