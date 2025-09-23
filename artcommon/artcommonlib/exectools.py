@@ -634,10 +634,13 @@ def _get_meaningful_span_name(cmd: Union[List[str], str]) -> str:
 
 
 @start_as_current_span_async(TRACER, "cmd_assert_async")
-async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> int:
+async def cmd_assert_async(
+    cmd: Union[List[str], str], check: bool = True, suppress_output: bool = False, **kwargs
+) -> int:
     """Runs a command and optionally raises an exception if the return code of the command indicates failure.
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param suppress_output: If True, stdout and stderr are discarded (/dev/null).
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
     :return: return code of the command
     """
@@ -659,6 +662,10 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
     span.set_attribute("param.cmd", cmd_list)
     span.set_attribute("param.has_custom_env", "env" in kwargs)
     span.set_attribute("command.type", cmd_list[0])
+
+    if suppress_output:
+        kwargs.setdefault("stdout", asyncio.subprocess.DEVNULL)
+        kwargs.setdefault("stderr", asyncio.subprocess.DEVNULL)
 
     # Propagate trace context to subprocess
     carrier = {}
