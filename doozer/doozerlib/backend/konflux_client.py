@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 import random
@@ -815,6 +816,10 @@ class KonfluxClient:
                             serialize=False,
                             _request_timeout=self.request_timeout,
                         )
+                        # Handle case where live_obj might be an HTTPResponse instead of a dict
+                        if hasattr(live_obj, 'data') and hasattr(live_obj, 'status'):
+                            # This appears to be an HTTPResponse object, get the actual data
+                            live_obj = json.loads(live_obj.data.decode('utf-8'))
                         obj = resource.ResourceInstance(api, live_obj)
 
                         # status takes some time to appear
