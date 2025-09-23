@@ -812,7 +812,7 @@ class KonfluxClient:
                         live_obj = api.get(
                             name=pipelinerun_name,
                             namespace=namespace,
-                            serialize=False,
+                            serialize=True,
                             _request_timeout=self.request_timeout,
                         )
                         obj = resource.ResourceInstance(api, live_obj)
