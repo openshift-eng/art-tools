@@ -17,7 +17,7 @@ from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
-from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -390,8 +390,8 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            phase = metadata.runtime.group_config.software_lifecycle.phase
-            if phase == 'pre-release':
+            phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
+            if phase <= SoftwareLifecyclePhase.SIGNING:
                 enabled_repos = metadata.get_enabled_repos()
                 if enabled_repos:
                     dnf_options = {}

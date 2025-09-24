@@ -221,7 +221,7 @@ class TestKonfluxCachi2(TestCase):
         metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'production'
+        metadata.runtime.group_config.software_lifecycle.phase = 'release'
         metadata.get_enabled_repos.return_value = {'repo1', 'repo2'}
         metadata.get_arches.return_value = ['x86_64']
 
