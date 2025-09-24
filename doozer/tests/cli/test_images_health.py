@@ -12,5 +12,4 @@ class TestImagesHealth(TestCase):
         self.pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             limit=100,
-            url_markup='slack',
         )
