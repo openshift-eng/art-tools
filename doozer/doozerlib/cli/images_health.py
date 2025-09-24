@@ -6,6 +6,7 @@ from enum import Enum
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.model import Missing
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
@@ -34,6 +35,7 @@ class Concern:
         latest_failed_build_record_id: str = None,
         latest_failed_build_time: datetime.datetime = None,
         group: str = None,
+        for_release: bool = True,
     ):
         self.image_name = image_name
         self.code = code
@@ -45,6 +47,7 @@ class Concern:
         self.latest_failed_build_record_id = latest_failed_build_record_id
         self.latest_failed_build_time = latest_failed_build_time
         self.group = group
+        self.for_release = for_release
 
     def to_dict(self):
         return self.__dict__.copy()
@@ -76,11 +79,21 @@ class ImagesHealthPipeline:
         )
 
     async def get_concerns(self, image_meta):
+        for_release = image_meta.config.for_release
+        if for_release is Missing:
+            for_release = True
+
         builds = await self.query(image_meta)
         if not builds:
             message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
             self.logger.info(message)
-            self.add_concern(Concern(image_name=image_meta.distgit_key, code=ConcernCode.NEVER_BUILT.value))
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.NEVER_BUILT.value,
+                    for_release=for_release,
+                )
+            )
             return
 
         latest_success_idx = -1
@@ -98,13 +111,6 @@ class ImagesHealthPipeline:
             # The latest attempt was a success: nothing to do
             return
 
-        if latest_success_idx == 1:
-            # Skipping notifications when only latest attempt failed
-            self.logger.info(
-                f'Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification.'
-            )
-            return
-
         elif latest_success_idx == -1:
             # No success record was found: add a concern
             self.add_concern(
@@ -113,11 +119,19 @@ class ImagesHealthPipeline:
                     code=ConcernCode.FAILING_AT_LEAST_FOR.value,
                     latest_failed_job_url=builds[0].art_job_url,
                     latest_attempt_task_url=latest_attempt_task_url,
+                    for_release=for_release,
                 ),
             )
 
+        if latest_success_idx <= 3:
+            # The latest attempt was a failure, but there was a success within the last 3 attempts: skip notification
+            self.logger.info(
+                f'Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification.'
+            )
+            return
+
         else:
-            # The latest attempt was a failure: add a concern
+            # The latest attempt was a failure, and the last success was more than 3 attempts ago: add a concern
             self.add_concern(
                 Concern(
                     image_name=image_meta.distgit_key,
@@ -129,6 +143,7 @@ class ImagesHealthPipeline:
                     latest_failed_nvr=builds[0].nvr,
                     latest_failed_build_record_id=builds[0].record_id,
                     latest_failed_build_time=builds[0].start_time,
+                    for_release=for_release,
                 ),
             )
 
