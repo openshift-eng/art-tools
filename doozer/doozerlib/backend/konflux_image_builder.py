@@ -390,26 +390,19 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            # Add prerelease-specific DNF configuration
             phase = metadata.runtime.group_config.software_lifecycle.phase
             if phase == 'pre-release':
-                enabled_repos = metadata.get_enabled_repos()  # Returns set[str] of repo names
+                enabled_repos = metadata.get_enabled_repos()
                 if enabled_repos:
                     dnf_options = {}
-                    repos = metadata.runtime.repos  # Repos instance
+                    repos = metadata.runtime.repos
                     building_arches = metadata.get_arches()
 
                     for repo_name in enabled_repos:
-                        repo = repos[repo_name]  # Use public interface
+                        repo = repos[repo_name]
                         for arch in building_arches:
-                            # Only apply to repositories with baseurl containing '/plashets/'
-                            baseurl = repo.baseurl("unsigned", arch)
-                            if "/plashets/" not in baseurl:
-                                continue
-
                             content_set_id = repo.content_set(arch)
                             if content_set_id is None:
-                                # Fallback to repo name + arch (same as lockfile)
                                 content_set_id = f'{repo_name}-{arch}'
 
                             dnf_options[content_set_id] = {"gpgcheck": "0"}
