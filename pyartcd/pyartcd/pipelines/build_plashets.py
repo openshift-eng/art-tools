@@ -133,7 +133,7 @@ class BuildPlashetsPipeline:
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
-async def ocp4(
+async def build_plashets_cli(
     runtime: Runtime,
     version: str,
     release: str,

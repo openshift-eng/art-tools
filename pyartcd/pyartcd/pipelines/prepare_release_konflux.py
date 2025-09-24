@@ -401,12 +401,12 @@ class PrepareReleaseKonfluxPipeline:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
 
-            # attach cve flaws
-            self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
-            operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
-            if self.dry_run:
-                operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(base_command, operate_cmd)
+        # unconditionally attach cve flaws
+        self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
+        operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
+        if self.dry_run:
+            operate_cmd += ["--dry-run"]
+        await self.run_cmd_with_retry(base_command, operate_cmd)
 
         # change status to qe
         try:
@@ -506,11 +506,21 @@ class PrepareReleaseKonfluxPipeline:
         # find builds for the image, extras and metadata shipments
         kind_to_builds = await self.find_builds_all()
 
+        # since we now have all builds for image, extras let's commit them to the shipment MR
+        for kind, builds in kind_to_builds.items():
+            if kind in shipments_by_kind and kind in ["image", "extras"]:
+                shipments_by_kind[kind].shipment.snapshot = await self.get_snapshot(builds)
+        await self.update_shipment_mr(
+            shipments_by_kind, env, shipment_url, commit_message="Set image and extras builds"
+        )
+
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
         if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
             bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
             kind_to_builds["metadata"] += bundle_nvrs
+            shipments_by_kind["metadata"].shipment.snapshot = await self.get_snapshot(kind_to_builds["metadata"])
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url, commit_message="Set metadata builds")
 
         await self.verify_attached_operators(kind_to_builds)
 
@@ -520,13 +530,8 @@ class PrepareReleaseKonfluxPipeline:
             kind_to_builds["fbc"] = await self.find_or_build_fbc_builds(
                 kind_to_builds["extras"] + kind_to_builds["image"]
             )
-
-        # prepare snapshot from the found builds
-        for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
-
-        # Update shipment MR with found builds
-        await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+            shipments_by_kind["fbc"].shipment.snapshot = await self.get_snapshot(kind_to_builds["fbc"])
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url, commit_message="Set fbc builds")
 
         # IMPORTANT: Bug Finding is special, it dynamically categorizes tracker bugs based on where the builds are found.
         # The Bug-Finder needs standardized access to shipment configs and respective builds via shipment MR.
@@ -541,7 +546,7 @@ class PrepareReleaseKonfluxPipeline:
             set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
         # Update shipment MR with found bugs
-        await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+        await self.update_shipment_mr(shipments_by_kind, env, shipment_url, commit_message="Set bugs")
 
         # Attach CVE flaws
         if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
@@ -551,7 +556,7 @@ class PrepareReleaseKonfluxPipeline:
                 await self.attach_cve_flaws(kind, shipment)
 
             # Update shipment MR with found CVE flaws
-            await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url, commit_message="Set CVE flaws")
 
     async def verify_attached_operators(self, kind_to_builds: Dict[str, List[str]]):
         """
@@ -994,12 +999,17 @@ class PrepareReleaseKonfluxPipeline:
         return mr_url
 
     async def update_shipment_mr(
-        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, shipment_url: str
+        self,
+        shipments_by_kind: Dict[str, ShipmentConfig],
+        env: str,
+        shipment_url: str,
+        commit_message: str | None = None,
     ) -> bool:
         """Update existing shipment MR with the given shipment config files.
         :param shipments_by_kind: The shipment configurations to update in the shipment MR by advisory kind
         :param env: The environment for which the shipment is being prepared (prod or stage)
         :param shipment_url: The URL of the existing shipment MR to update
+        :param commit_message: The commit message to use for the changes
         :return: True if the MR was updated successfully, False otherwise.
         """
 
@@ -1029,7 +1039,8 @@ class PrepareReleaseKonfluxPipeline:
         await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
 
         # Update shipment data
-        commit_message = f"Update shipment configurations for {self.release_name}"
+        if commit_message is None:
+            commit_message = f"Update shipment configurations for {self.release_name}"
         updated = await self.update_shipment_data(shipments_by_kind, env, commit_message, source_branch)
         if not updated:
             self.logger.info("No changes in shipment data. MR will not be updated.")

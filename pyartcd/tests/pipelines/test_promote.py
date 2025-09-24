@@ -1974,21 +1974,30 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         # Setup branch creation
         mock_source_project.branches.create.return_value = None
-        mock_source_project.files.get.return_value = None
-        mock_source_project.files.update.return_value = None
+
+        # Setup file content with placeholders - the new code uses direct string replacement
+        mock_file_content = MagicMock()
+        mock_file_content.decode.return_value.decode.return_value = (
+            "For x86_64 architecture: {x864_DIGEST}\nFor s390x architecture: {s390x_DIGEST}"
+        )
+        mock_source_project.files.get.return_value = mock_file_content
+
+        # Setup file update - the new code calls file.save() method
+        mock_file_to_update = MagicMock()
+        mock_source_project.files.get.side_effect = (
+            lambda path, branch: mock_file_to_update if 'update-shas-' in branch else mock_file_content
+        )
 
         # Setup MR creation
         mock_sha_mr = MagicMock()
         mock_sha_mr.web_url = "https://gitlab.example.com/shipment-data/project/-/merge_requests/456"
         mock_source_project.mergerequests.create.return_value = mock_sha_mr
 
-        # Setup shipment config
+        # Setup shipment config with solution field
         mock_shipment_config = MagicMock()
         mock_shipment_config.shipment.data.releaseNotes.solution = (
             "For x86_64 architecture: {x864_DIGEST}\nFor s390x architecture: {s390x_DIGEST}"
         )
-        mock_shipment_config.model_dump.return_value = {"shipment": "config"}
-
         mock_get_shipment_configs.return_value = {"image": mock_shipment_config}
 
         # Setup runtime and pipeline
@@ -2016,20 +2025,18 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         mock_gitlab_class.assert_called_once_with("https://gitlab.example.com", private_token="fake-token")
         mock_gitlab.auth.assert_called_once()
 
-        # Verify shipment config was updated
-        expected_solution = "For x86_64 architecture: sha256:abc123\nFor s390x architecture: sha256:def456"
-        self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.solution, expected_solution)
-
         # Verify branch was created
         mock_source_project.branches.create.assert_called_once()
 
-        # Verify file was updated with correct dictionary format
-        mock_source_project.files.update.assert_called_once()
-        update_call_args = mock_source_project.files.update.call_args[0][0]
-        self.assertEqual(update_call_args['file_path'], 'shipments/4.19.0/image.yaml')
-        self.assertIn('update-shas-4.19.0', update_call_args['branch'])
-        self.assertIn('Update shipment with payload SHAs for 4.19.0', update_call_args['commit_message'])
-        self.assertIn('content', update_call_args)
+        # Verify file was updated using the new file.save() method
+        mock_file_to_update.save.assert_called_once()
+        save_call = mock_file_to_update.save.call_args
+        self.assertIn('update-shas-4.19.0', save_call.kwargs['branch'])
+        self.assertIn('Update shipment with payload SHAs for 4.19.0', save_call.kwargs['commit_message'])
+
+        # Verify file content was updated with SHA replacement
+        expected_content = "For x86_64 architecture: sha256:abc123\nFor s390x architecture: sha256:def456"
+        self.assertEqual(mock_file_to_update.content, expected_content)
 
         # Verify SHA update MR was created
         mock_source_project.mergerequests.create.assert_called_once()
@@ -2104,11 +2111,40 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         """Test error when template replacement fails due to missing placeholder"""
         mock_getenv.side_effect = lambda key: {"GITLAB_TOKEN": "fake-token"}.get(key)
 
-        # Setup shipment config with template that requires ppc64le but we don't provide it
+        # Setup GitLab mocks to reach the template replacement logic
+        mock_gitlab = MagicMock()
+        mock_gitlab_class.return_value = mock_gitlab
+
+        mock_project = MagicMock()
+        mock_gitlab.projects.get.return_value = mock_project
+
+        mock_mr = MagicMock()
+        mock_mr.source_branch = "shipment-branch"
+        mock_mr.source_project_id = "123"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_source_project = MagicMock()
+        mock_gitlab.projects.get.side_effect = (
+            lambda project_id: mock_source_project if str(project_id) == "123" else mock_project
+        )
+
+        # Setup MR diff to find image file
+        mock_diff_info = MagicMock()
+        mock_diff_info.id = "diff-123"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+
+        mock_diff = MagicMock()
+        mock_diff.diffs = [{'new_path': 'shipments/4.19.0/image.yaml', 'old_path': None}]
+        mock_mr.diffs.get.return_value = mock_diff
+
+        # Setup file content with template that requires ppc64le
+        mock_file_content = MagicMock()
+        mock_file_content.decode.return_value.decode.return_value = "For ppc64le: {ppc64le_DIGEST}"
+        mock_source_project.files.get.return_value = mock_file_content
+
+        # Setup shipment config with solution field containing placeholder
         mock_shipment_config = MagicMock()
         mock_shipment_config.shipment.data.releaseNotes.solution = "For ppc64le: {ppc64le_DIGEST}"
-        mock_shipment_config.model_dump.return_value = {"shipment": "test_config"}
-
         mock_get_shipment_configs.return_value = {"image": mock_shipment_config}
 
         runtime = MagicMock()
@@ -2117,6 +2153,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.logger = MagicMock()
 
         pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0", signing_env="prod")
+        pipeline._slack_client = AsyncMock()
 
         # Only provide x86_64, but template requires ppc64le
         payload_shas = {"x86_64": "sha256:abc123"}
@@ -2233,7 +2270,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             patch("pyartcd.pipelines.promote.get_shipment_configs_from_mr") as mock_get_configs,
             patch("pyartcd.pipelines.promote.gitlab.Gitlab") as mock_gitlab_class,
         ):
-            # Setup mock shipment config
+            # Setup mock shipment config with solution field
             mock_shipment_config = MagicMock()
             mock_shipment_config.shipment.data.releaseNotes.solution = template_description
             mock_get_configs.return_value = {"image": mock_shipment_config}
@@ -2261,9 +2298,16 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
             # Mock branch and file operations
             mock_source_project.branches.create.return_value = None
-            mock_source_project.files.get.return_value = None
-            mock_source_project.files.update.return_value = None
-            mock_shipment_config.model_dump.return_value = {}
+
+            # Setup file content with placeholders for architecture mapping test
+            mock_file_content = MagicMock()
+            mock_file_content.decode.return_value.decode.return_value = template_description
+
+            # Setup file update - the new code calls file.save() method
+            mock_file_to_update = MagicMock()
+            mock_source_project.files.get.side_effect = (
+                lambda path, branch: mock_file_to_update if 'update-shas-' in branch else mock_file_content
+            )
 
             # Mock MR creation
             mock_sha_mr = MagicMock()
@@ -2276,23 +2320,17 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "https://gitlab.example.com/project/-/merge_requests/123", payload_shas
             )
 
-            # Verify the template was correctly replaced
-            expected_description = (
+            # Verify the file content was correctly replaced with SHAs
+            expected_content = (
                 "x86_64: sha256:x86_digest\n"
                 "s390x: sha256:s390x_digest\n"
                 "ppc64le: sha256:ppc64le_digest\n"
                 "aarch64: sha256:aarch64_digest"
             )
-            self.assertEqual(mock_shipment_config.shipment.data.releaseNotes.solution, expected_description)
+            self.assertEqual(mock_file_to_update.content, expected_content)
 
-            # Verify files.update was called with dictionary format
-            mock_source_project.files.update.assert_called_once()
-            update_call_args = mock_source_project.files.update.call_args[0][0]
-            self.assertIsInstance(update_call_args, dict)
-            self.assertIn('file_path', update_call_args)
-            self.assertIn('branch', update_call_args)
-            self.assertIn('content', update_call_args)
-            self.assertIn('commit_message', update_call_args)
+            # Verify file.save() was called instead of files.update()
+            mock_file_to_update.save.assert_called_once()
 
             # Verify logging for unsupported architectures
             runtime.logger.warning.assert_any_call(

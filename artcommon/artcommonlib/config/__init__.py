@@ -220,5 +220,6 @@ class BuildDataLoader:
         else:
             self._ensure_gitdata()
             assert self._gitdata is not None
-            data = self._gitdata.load_data(key=key, replace_vars=replace_vars).data
+            data_obj = self._gitdata.load_data(key=key, replace_vars=replace_vars)
+            data = data_obj.data if data_obj else None
         return data or default

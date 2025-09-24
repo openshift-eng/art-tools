@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 import traceback
+from importlib import util
 from pathlib import Path
 from typing import Optional, cast
 
@@ -12,6 +13,7 @@ import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import (
@@ -23,7 +25,7 @@ from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, K
 
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.plashets import plashet_config_for_major_minor
+from pyartcd.plashets import convert_plashet_config_to_new_style, plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     default_release_suffix,
@@ -31,6 +33,7 @@ from pyartcd.util import (
     get_microshift_builds,
     get_release_name_for_assembly,
     isolate_el_version_in_release,
+    load_group_config,
     load_releases_config,
 )
 
@@ -62,6 +65,7 @@ class BuildMicroShiftBootcPipeline:
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
         self.assembly_type = AssemblyTypes.STREAM
+        self.group_config = None
         self.konflux_db = None
 
         # determines OCP version
@@ -84,11 +88,16 @@ class BuildMicroShiftBootcPipeline:
     async def run(self):
         # Make sure our api.ci token is fresh
         await oc.registry_login()
+        data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         self.releases_config = await load_releases_config(
             group=self.group,
-            data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
+            data_path=data_path,
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
+        # Load group config
+        self.group_config = await load_group_config(
+            group=self.group, assembly=self.assembly, doozer_data_path=data_path
+        )
         bootc_build = await self._rebase_and_build_bootc()
         if bootc_build:
             self._logger.info("Bootc image build: %s", bootc_build.nvr)
@@ -220,13 +229,39 @@ class BuildMicroShiftBootcPipeline:
     async def _build_plashet_for_bootc(self):
         microshift_plashet_name = "rhel-9-server-microshift-rpms"
         major, minor = self._ocp_version
-        microshift_plashet_config = plashet_config_for_major_minor(major, minor)[microshift_plashet_name]
+        # Get plashet repo configs
+        assert self.group_config is not None, "Group config is not loaded; pyartcd bug?"
+        if "all_repos" in self.group_config:
+            # This is new-style repo config.
+            # i.e. Plashet configs are defined in separate files in ocp-build-data
+            # and each repo has its own config file.
+            # Those repo definitions are stored in the "all_repos" key of the group config.
+            self._logger.info("Using new-style plashet configs from build data")
+            all_repos = self.group_config['all_repos']
+            plashet_config = next(
+                (
+                    repo
+                    for repo in RepoList.model_validate(all_repos).root
+                    if not repo.disabled and repo.type == 'plashet' and repo.name == microshift_plashet_name
+                ),
+                None,
+            )
+            if not plashet_config:
+                raise ValueError(f"Could not find plashet config for {microshift_plashet_name} in build data")
+        else:
+            old_style_config = plashet_config_for_major_minor(major, minor)[microshift_plashet_name]
+            if not old_style_config:
+                raise ValueError(f"Could not find plashet config for {microshift_plashet_name} for OCP {major}.{minor}")
+            self._logger.warning("Using old-style plashet config. This is deprecated and will be removed in future.")
+            plashet_config = convert_plashet_config_to_new_style({microshift_plashet_name: old_style_config})[0]
 
         async def _rebuild_needed():
             ocp_artifacts_url = next(r["url"] for r in constants.PLASHET_REMOTES if r["host"] == "ocp-artifacts")
             # check if we need to build plashet, skip if not
             # Example https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/4.18/microshift/microshift-el9/latest/plashet.yml
-            plashet_path = f"{major}.{minor}/{self.assembly}/{microshift_plashet_config['slug']}"
+            assert plashet_config.type == "plashet" and plashet_config.plashet is not None
+            slug = plashet_config.plashet.slug or microshift_plashet_name
+            plashet_path = f"{major}.{minor}/{self.assembly}/{slug}"
             url = f"{ocp_artifacts_url}/{plashet_path}/latest/plashet.yml"
             self._logger.info(f"Inspecting plashet if it has the right microshift rpm: {url}")
             plashet_yaml = None

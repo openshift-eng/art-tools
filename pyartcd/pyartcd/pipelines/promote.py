@@ -10,7 +10,7 @@ import sys
 import tarfile
 import traceback
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
@@ -65,6 +65,12 @@ from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
+
+# YAML handler for shipment config dumping
+shipment_yaml = YAML()
+shipment_yaml.default_flow_style = False
+shipment_yaml.preserve_quotes = True
+shipment_yaml.indent(mapping=2, sequence=4, offset=2)
 
 
 class PromotePipeline:
@@ -2140,8 +2146,6 @@ class PromotePipeline:
 
         # Update the image shipment with SHA information (only image shipments need SHAs)
         if "image" in shipments_by_kind:
-            image_shipment = shipments_by_kind["image"]
-
             # Build format dictionary for SHA replacement
             format_dict = {}
             for arch, sha in payload_shas.items():
@@ -2163,37 +2167,58 @@ class PromotePipeline:
 
                 self._logger.info("Prepared format variable: %s -> %s", arch, sha)
 
-            # Update the solution field with format replacement (where the templates actually are)
-            current_solution = image_shipment.shipment.data.releaseNotes.solution
+            # Validate template placeholders in solution field
+            image_shipment = shipments_by_kind["image"]
+            if (
+                hasattr(image_shipment.shipment.data.releaseNotes, 'solution')
+                and image_shipment.shipment.data.releaseNotes.solution
+            ):
+                solution_text = image_shipment.shipment.data.releaseNotes.solution
+                # Check for placeholders that have no corresponding SHA
+                placeholder_pattern = r'\{([^}]+)\}'
+                placeholders = re.findall(placeholder_pattern, solution_text)
+                for placeholder in placeholders:
+                    if placeholder not in format_dict:
+                        raise ValueError(
+                            f"Solution contains placeholder {{{placeholder}}} but no corresponding SHA was found"
+                        )
 
-            try:
-                updated_solution = current_solution.format(**format_dict)
-                templates_replaced = len([k for k in format_dict.keys() if f"{{{k}}}" in current_solution])
-
-                if templates_replaced > 0:
-                    image_shipment.shipment.data.releaseNotes.solution = updated_solution
-                    self._logger.info(
-                        "Successfully replaced %d format placeholders with payload SHAs", templates_replaced
-                    )
-                else:
-                    self._logger.warning(
-                        "No format placeholders found in solution. Expected placeholders: %s",
-                        list(f"{{{var}}}" for var in format_dict.keys()),
-                    )
-            except KeyError as ex:
-                self._logger.error("Missing format variable in solution: %s", ex)
-                raise ValueError(f"Solution contains placeholder {ex} but no corresponding SHA was found")
-
-            # Get the file path for the image shipment in the MR
+            # Get the original file content to preserve formatting
             diff_info = mr.diffs.list(all=True)[0]
             diff = mr.diffs.get(diff_info.id)
             image_file_path = None
-
             for file_diff in diff.diffs:
                 file_path = file_diff.get('new_path') or file_diff.get('old_path')
                 if file_path and file_path.endswith(('.yaml', '.yml')) and 'image' in file_path:
                     image_file_path = file_path
                     break
+
+            if not image_file_path:
+                self._logger.error("Could not find image shipment file in MR")
+                raise ValueError("Could not find image shipment file in MR")
+
+            # Get original file content to preserve formatting
+            original_file = source_project.files.get(image_file_path, mr.source_branch)
+            original_content = original_file.decode().decode('utf-8')
+
+            # Replace SHA placeholders directly in the original content to preserve formatting
+            updated_content = original_content
+            templates_replaced = 0
+
+            for var_name, sha_value in format_dict.items():
+                placeholder = f"{{{var_name}}}"
+                if placeholder in updated_content:
+                    updated_content = updated_content.replace(placeholder, sha_value)
+                    templates_replaced += 1
+                    self._logger.info("Replaced %s with %s", placeholder, sha_value)
+
+            if templates_replaced > 0:
+                self._logger.info("Successfully replaced %d format placeholders with payload SHAs", templates_replaced)
+            else:
+                self._logger.warning(
+                    "No format placeholders found in shipment file. Expected placeholders: %s",
+                    list(f"{{{var}}}" for var in format_dict.keys()),
+                )
 
             if image_file_path:
                 # Create a new MR to update the shipment with SHAs
@@ -2206,8 +2231,6 @@ class PromotePipeline:
                         return
 
                     # Create a new branch for the SHA update
-                    from datetime import datetime, timezone
-
                     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                     sha_branch = f"update-shas-{self.assembly}-{timestamp}"
 
@@ -2215,25 +2238,14 @@ class PromotePipeline:
                     source_project.branches.create({'branch': sha_branch, 'ref': mr.source_branch})
                     self._logger.info("Created SHA update branch: %s", sha_branch)
 
-                    # Get the current file content (for file operations)
-                    source_project.files.get(image_file_path, mr.source_branch)
-
-                    # Convert shipment config back to YAML
-                    shipment_dump = image_shipment.model_dump(exclude_unset=True, exclude_none=True)
-                    yaml_handler = new_roundtrip_yaml_handler()
-
-                    out = StringIO()
-                    yaml_handler.dump(shipment_dump, out)
-                    updated_content = out.getvalue()
+                    # updated_content is already prepared above with direct string replacement
 
                     # Update the file in the new branch
-                    source_project.files.update(
-                        {
-                            'file_path': image_file_path,
-                            'branch': sha_branch,
-                            'content': updated_content,
-                            'commit_message': f"Update shipment with payload SHAs for {self.assembly}",
-                        }
+                    file_to_update = source_project.files.get(image_file_path, sha_branch)
+                    file_to_update.content = updated_content
+                    file_to_update.save(
+                        branch=sha_branch,
+                        commit_message=f"Update shipment with payload SHAs for {self.assembly}",
                     )
 
                     # Create MR to merge SHA updates into the shipment MR branch

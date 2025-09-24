@@ -815,7 +815,21 @@ class KonfluxClient:
                         cancel_pipelinerun = (
                             False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
                         )
-                        obj = resource.ResourceInstance(api, event["object"])
+
+                        # The watch will provide event["object"] on each iteration, but it may have a long backlog
+                        # of resourceVersion updates to deliver us. Meaning that event["object"] may be very stale
+                        # relative to the current state of the object on the server. Thus, we do a live query
+                        # to read the current object and use the watcher notification only to tap us on the shoulder
+                        # periodically. Konflux will prune pipelinerun objects ~10 minutes after they complete,
+                        # so we should have plenty of time to get the last status.
+                        live_obj = api.get(
+                            name=pipelinerun_name,
+                            namespace=namespace,
+                            serialize=True,
+                            _request_timeout=self.request_timeout,
+                        )
+                        obj = resource.ResourceInstance(api, live_obj)
+
                         # status takes some time to appear
                         try:
                             succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
@@ -965,9 +979,41 @@ class KonfluxClient:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
                                 traceback.print_exc()
 
-                    self._logger.info(
-                        "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
-                    )
+                    # Check if the PipelineRun still exists before continuing to watch
+                    try:
+                        _ = api.get(
+                            name=pipelinerun_name,
+                            namespace=namespace,
+                            _request_timeout=self.request_timeout,
+                        )
+                        self._logger.info(
+                            "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
+                        )
+                    except exceptions.NotFoundError:
+                        self._logger.info(
+                            "PipelineRun %s no longer exists (likely garbage collected); stopping watch",
+                            pipelinerun_name,
+                        )
+
+                        # Create a placeholder indicating the resource was garbage collected
+                        placeholder_pipelinerun = {
+                            "metadata": {
+                                "name": pipelinerun_name,
+                                "namespace": namespace,
+                                "labels": {
+                                    "appstudio.openshift.io/application": "garbage-collected",
+                                    "appstudio.openshift.io/component": "garbage-collected",
+                                },
+                            },
+                            "apiVersion": "tekton.dev/v1",
+                            "kind": "PipelineRun",
+                            "status": {
+                                "conditions": [{"status": "False", "type": "Succeeded", "reason": "GarbageCollected"}]
+                            },
+                        }
+                        return resource.ResourceInstance(self.dyn_client, placeholder_pipelinerun), list(
+                            pod_history.values()
+                        )
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue

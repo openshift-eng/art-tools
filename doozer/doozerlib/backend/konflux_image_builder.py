@@ -18,6 +18,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -168,6 +169,15 @@ class KonfluxImageBuilder:
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
+            # Resolve build priority based on precedence rules
+            if self._config.build_priority == "auto":
+                build_priority = util.get_konflux_build_priority(metadata=metadata)
+                logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
+            else:
+                # If it's a specific number (1-10), use it directly
+                build_priority = self._config.build_priority
+                logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
+
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
                 pipelinerun = await self._start_build(
@@ -177,13 +187,14 @@ class KonfluxImageBuilder:
                     output_image=output_image,
                     additional_tags=additional_tags,
                     nvr=nvr,
+                    build_priority=build_priority,
                     dest_dir=dest_dir,
                 )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.resource_url(pipelinerun)
                 await self.update_konflux_db(
-                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
+                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches, build_priority
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -210,22 +221,21 @@ class KonfluxImageBuilder:
 
                     record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
-                    # Get SLA attestation from konflux. The command will error out if it cannot find it.
+                    # Validate SLSA attestation and source image signature
                     try:
-                        await artlib_util.get_konflux_slsa_attestation(
-                            pullspec=image_pullspec,
-                            registry_auth_file=self._config.registry_auth_file,
-                        )
+                        await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
                     except Exception as e:
                         logger.error(
-                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                            f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
                         )
                         outcome = KonfluxBuildOutcome.FAILURE
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
+                    await self.update_konflux_db(
+                        metadata, build_repo, pipelinerun, outcome, building_arches, build_priority, pod_list
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -276,6 +286,48 @@ class KonfluxImageBuilder:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
 
         return uuid_tag, component_name, version, release
+
+    async def _validate_build_attestation_and_signature(self, image_pullspec: str, distgit_key: str):
+        """
+        Validate SLSA attestation and source image signature for a built image.
+
+        :param image_pullspec: The pullspec of the built image
+        :param distgit_key: The distgit key for logging purposes
+        :raises: Exception if validation fails
+        """
+        # Get SLA attestation from konflux. The command will error out if it cannot find it.
+        attestation = await fetch_slsa_attestation(
+            image_pullspec=image_pullspec,
+            build_name=distgit_key,
+            registry_auth_file=self._config.registry_auth_file,
+        )
+        if not attestation:
+            raise ValueError("SLSA attestation cannot be empty")
+
+        # Extract tasks from predicate.buildConfig
+        tasks = attestation["predicate"]["buildConfig"]["tasks"]
+
+        # Find the build-source-image task and extract IMAGE_REF
+        source_image_pullspec = None
+        for task in tasks:
+            if task["name"] == "build-source-image":
+                for result in task["results"]:
+                    if result["name"] == "IMAGE_REF":
+                        source_image_pullspec = result["value"]
+                        break
+
+        if not source_image_pullspec:
+            raise ValueError(f"Could not find source image pullspec for {distgit_key} in image {image_pullspec}")
+
+        # If the source image is not signed, consider the build as failed, since Conforma will fail
+        # at release time otherwise
+        try:
+            await get_konflux_data(
+                pullspec=source_image_pullspec, mode="signature", registry_auth_file=self._config.registry_auth_file
+            )
+        except ChildProcessError:
+            LOGGER.error(f'Failed to fetch signature for {source_image_pullspec}')
+            raise
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
@@ -397,6 +449,7 @@ class KonfluxImageBuilder:
         output_image: str,
         additional_tags: list[str],
         nvr: str,
+        build_priority: str,
         dest_dir: Optional[Path] = None,
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -438,15 +491,6 @@ class KonfluxImageBuilder:
         group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
-
-        # Resolve build priority based on precedence rules
-        if self._config.build_priority == "auto":
-            build_priority = util.get_konflux_build_priority(metadata=metadata)
-            logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
-        else:
-            # If it's a specific number (1-10), use it directly
-            build_priority = self._config.build_priority
-            logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
@@ -564,7 +608,14 @@ class KonfluxImageBuilder:
         return all_package_nvrs, all_source_rpms
 
     async def update_konflux_db(
-        self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
+        self,
+        metadata,
+        build_repo,
+        pipelinerun,
+        outcome,
+        building_arches,
+        build_priority,
+        pod_list: Optional[List[Dict]] = None,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -616,7 +667,7 @@ class KonfluxImageBuilder:
             'build_pipeline_url': build_pipeline_url,
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
-            'build_priority': int(util.get_konflux_build_priority(metadata=metadata)),
+            'build_priority': int(build_priority),
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
