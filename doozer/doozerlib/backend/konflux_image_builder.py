@@ -17,7 +17,7 @@ from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
-from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -389,6 +389,29 @@ class KonfluxImageBuilder:
                 "type": "rpm",
                 "path": lockfile_path,
             }
+
+            phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
+            if phase <= SoftwareLifecyclePhase.SIGNING:
+                enabled_repos = metadata.get_enabled_repos()
+                if enabled_repos:
+                    dnf_options = {}
+                    repos = metadata.runtime.repos
+                    building_arches = metadata.get_arches()
+
+                    for repo_name in enabled_repos:
+                        repo = repos[repo_name]
+                        for arch in building_arches:
+                            content_set_id = repo.content_set(arch)
+                            if content_set_id is None:
+                                content_set_id = f'{repo_name}-{arch}'
+
+                            dnf_options[content_set_id] = {"gpgcheck": "0"}
+
+                    data["options"] = {"dnf": dnf_options}
+                    logger.info(
+                        f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
+                    )
+
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
         else:
