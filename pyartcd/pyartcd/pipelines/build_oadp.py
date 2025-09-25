@@ -116,7 +116,6 @@ class BuildOadpPipeline:
             f"--version={self.version}",
             f"--release={release}",
             f"--message='Updating Dockerfile version and release {self.version}-{release}'",
-            "--build-priority=1"
         ]
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
