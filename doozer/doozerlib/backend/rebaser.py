@@ -310,7 +310,26 @@ class KonfluxRebaser:
         metadata.private_fix = private_fix
 
         await self._update_dockerignore(build_repo.local_dir)
+
+        if self._runtime.group.startswith("oadp-"):
+            await self._remove_oadp_docs(build_repo.local_dir)
+
         return version, release, private_fix
+
+    @start_as_current_span_async(TRACER, "rebase.remove_oadp_docs")
+    async def _remove_oadp_docs(self, path):
+        """
+        Remove OADP docs from the build directory. They contain example secrets.
+        GitHub complains when we are trying to push those secrets, even if they are example ones
+        """
+        oadp_docs_paths = [
+            f"{path}/restic/doc/",  # oadp-velero-container
+            f"{path}/velero/restic/doc/",  # oadp-mustgather-container
+        ]
+        for oadp_docs_path in oadp_docs_paths:
+            if os.path.exists(oadp_docs_path):
+                self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
+                shutil.rmtree(oadp_docs_path)
 
     @start_as_current_span_async(TRACER, "rebase.update_dockerignore")
     async def _update_dockerignore(self, path):
