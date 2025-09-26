@@ -228,7 +228,6 @@ class KonfluxFbcImporter:
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
-
         source_path = source_dir.joinpath(csv_config['manifests-dir'])
         package_yaml_file = next(source_path.glob('**/*package.yaml'))
         with package_yaml_file.open() as f:
@@ -750,10 +749,7 @@ class KonfluxFbcRebaser:
                 # Find the current head - the entry that is not replaced by any other entry
                 bundle_with_replaces = [it for it in channel['entries'] if 'oadp-' in it['name']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
-                current_head = next(
-                    (it for it in bundle_with_replaces if it['name'] not in replaced_names),
-                    None
-                )
+                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
                 if current_head:
                     # The new bundle should replace the current head
                     replaces = current_head['name']
@@ -936,7 +932,8 @@ class KonfluxFbcRebaser:
                         ],
                     }
                     # If source is ame as destination, we don't need to add an IDMS mapping
-                    for sha, source_repo in source_repos.items() if sha in dest_repos and source_repo != dest_repos[sha]
+                    for sha, source_repo in source_repos.items()
+                    if sha in dest_repos and source_repo != dest_repos[sha]
                 ],
             },
         }
