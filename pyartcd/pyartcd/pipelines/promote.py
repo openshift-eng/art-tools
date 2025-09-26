@@ -424,6 +424,27 @@ class PromotePipeline:
             if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories)
 
+                # Update shipment MR with payload SHAs immediately after promotion
+                payload_shas = {}
+                for arch, release_info in release_infos.items():
+                    payload_shas[arch] = release_info["digest"]
+
+                shipment_config = group_config.get("shipment")
+                if shipment_config and shipment_config.get("url"):
+                    shipment_url = shipment_config["url"]
+                    self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+                    self._logger.info(
+                        "Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas)
+                    )
+                    try:
+                        await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                        self._logger.info("Successfully updated shipment MR with payload SHAs")
+                    except Exception as ex:
+                        self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                        await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+                else:
+                    self._logger.info("No shipment configuration found, skipping shipment MR update")
+
             if not tag_stable:
                 self._logger.warning(
                     "Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr
@@ -631,32 +652,11 @@ class PromotePipeline:
 
         # Print payload SHAs for each architecture
         self._logger.info("=== PAYLOAD SHAS ===")
-        payload_shas = {}
         for arch, content in data["content"].items():
             digest = content["digest"]
             pullspec = content["pullspec"]
-            payload_shas[arch] = digest
             self._logger.info("Arch %s: %s (%s)", arch, digest, pullspec)
         self._logger.info("===================")
-
-        # Update shipment MR with payload SHAs if shipment config exists
-        self._logger.info("Checking for shipment configuration in assembly %s...", self.assembly)
-        assembly_config = releases_config.get("releases", {}).get(self.assembly, {})
-        shipment_config = assembly_config.get("assembly", {}).get("group", {}).get("shipment")
-        if shipment_config and shipment_config.get("url"):
-            shipment_url = shipment_config["url"]
-            self._logger.info("Found shipment configuration with URL: %s", shipment_url)
-            self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
-            try:
-                await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
-                self._logger.info("Successfully updated shipment MR with payload SHAs")
-            except Exception as ex:
-                self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
-                await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
-        else:
-            self._logger.info(
-                "No shipment configuration found in assembly %s, skipping shipment MR update", self.assembly
-            )
 
         json.dump(data, sys.stdout)
 
@@ -2230,6 +2230,39 @@ class PromotePipeline:
                         )
                         return
 
+                    # Check if an MR with payload SHAs already exists (reentrant check)
+                    sha_mr_title_pattern = f"Update {self.assembly} shipment with payload SHAs"
+                    existing_mrs = source_project.mergerequests.list(
+                        target_branch=mr.source_branch, state='opened', search=sha_mr_title_pattern
+                    )
+
+                    for existing_mr in existing_mrs:
+                        if existing_mr.title == sha_mr_title_pattern:
+                            self._logger.info(
+                                "Payload SHA update MR already exists: %s. Skipping creation.", existing_mr.web_url
+                            )
+                            await self._slack_client.say_in_thread(
+                                f"Payload SHA update MR already exists: {existing_mr.web_url}"
+                            )
+
+                            # Check if comment about this MR already exists on main shipment MR
+                            main_mr_comment = f"Docs team, please review the existing MR to update payload SHAs: {existing_mr.web_url}"
+                            existing_notes = mr.notes.list(all=True)
+                            comment_exists = any(note.body == main_mr_comment for note in existing_notes)
+
+                            if not comment_exists:
+                                try:
+                                    mr.notes.create({'body': main_mr_comment})
+                                    self._logger.info("Added comment to main shipment MR: %s", shipment_url)
+                                except Exception as comment_ex:
+                                    self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
+                            else:
+                                self._logger.info(
+                                    "Comment about payload SHA update MR already exists on main shipment MR"
+                                )
+
+                            return
+
                     # Create a new branch for the SHA update
                     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                     sha_branch = f"update-shas-{self.assembly}-{timestamp}"
@@ -2275,6 +2308,22 @@ class PromotePipeline:
                     await self._slack_client.say_in_thread(
                         f"Created MR to update shipment with payload SHAs: {sha_mr_url}"
                     )
+
+                    # Comment on the main shipment MR to notify about the SHA update MR
+                    main_mr_comment = f"Docs team, please review the MR to update payload SHAs: {sha_mr_url}"
+
+                    # Check if comment already exists to avoid duplicates
+                    existing_notes = mr.notes.list(all=True)
+                    comment_exists = any(note.body == main_mr_comment for note in existing_notes)
+
+                    if not comment_exists:
+                        try:
+                            mr.notes.create({'body': main_mr_comment})
+                            self._logger.info("Added comment to main shipment MR: %s", shipment_url)
+                        except Exception as comment_ex:
+                            self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
+                    else:
+                        self._logger.info("Comment about payload SHA update MR already exists on main shipment MR")
 
                 except Exception as ex:
                     self._logger.error("Failed to create SHA update MR: %s", ex)
