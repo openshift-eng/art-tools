@@ -53,6 +53,8 @@ class BuildOadpPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
 
+        jenkins.init_jenkins()
+
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
             self._logger.warning("Skipping bundle build step because --skip-bundle-build flag is set")
