@@ -30,10 +30,12 @@ class BuildFbcPipeline:
         reset_to_prod: bool,
         prod_registry_auth: Optional[str],
         force: bool,
+        group: str,
     ):
         self.runtime = runtime
         self.version = version
         self.assembly = assembly
+        self.group = group
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.only = only
@@ -75,12 +77,15 @@ class BuildFbcPipeline:
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
+        # If unspecified, assume it's for openshift
+        group = f"openshift-{self.version}" if not self.group else self.group
+
         cmd = [
             'doozer',
             '--build-system=konflux',
             f'--working-dir={self.runtime.doozer_working}',
             f'--assembly={self.assembly}',
-            f'--group=openshift-{self.version}{"@" + self.data_gitref if self.data_gitref else ""}',
+            f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
         ]
         if self.data_path:
             cmd.append(f'--data-path={self.data_path}')
@@ -174,6 +179,13 @@ class BuildFbcPipeline:
     default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=False,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
 @click.option(
     '--only',
@@ -231,6 +243,7 @@ async def build_fbc(
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
     force: bool,
+    group: str,
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,
@@ -248,5 +261,6 @@ async def build_fbc(
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
         force=force,
+        group=group,
     )
     await pipeline.run()
