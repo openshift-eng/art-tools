@@ -165,7 +165,6 @@ class KonfluxImageBuilder:
 
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 3
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
@@ -178,76 +177,74 @@ class KonfluxImageBuilder:
                 build_priority = self._config.build_priority
                 logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
 
-            for attempt in range(retries):
-                logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(
-                    metadata=metadata,
-                    build_repo=build_repo,
-                    building_arches=building_arches,
-                    output_image=output_image,
-                    additional_tags=additional_tags,
-                    nvr=nvr,
-                    build_priority=build_priority,
-                    dest_dir=dest_dir,
+            pipelinerun = await self._start_build(
+                metadata=metadata,
+                build_repo=build_repo,
+                building_arches=building_arches,
+                output_image=output_image,
+                additional_tags=additional_tags,
+                nvr=nvr,
+                build_priority=build_priority,
+                dest_dir=dest_dir,
+            )
+            pipelinerun_name = pipelinerun['metadata']['name']
+            record["task_id"] = pipelinerun_name
+            record["task_url"] = self._konflux_client.resource_url(pipelinerun)
+            await self.update_konflux_db(
+                metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches, build_priority
+            )
+
+            logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+            timeout_timedelta = None
+            if metadata.config.konflux.build_timeout:
+                timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
+
+            pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(
+                pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
+            )
+            logger.info("PipelineRun %s completed", pipelinerun_name)
+
+            succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+            outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+
+            # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
+            if outcome is KonfluxBuildOutcome.SUCCESS:
+                image_pullspec = next(
+                    (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
                 )
-                pipelinerun_name = pipelinerun['metadata']['name']
-                record["task_id"] = pipelinerun_name
-                record["task_url"] = self._konflux_client.resource_url(pipelinerun)
+                image_digest = next(
+                    (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
+                )
+
+                record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
+
+                # Validate SLSA attestation and source image signature
+                try:
+                    await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                    )
+                    outcome = KonfluxBuildOutcome.FAILURE
+
+            if self._config.dry_run:
+                logger.info("Dry run: Would have inserted build record in Konflux DB")
+            else:
                 await self.update_konflux_db(
-                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches, build_priority
+                    metadata, build_repo, pipelinerun, outcome, building_arches, build_priority, pod_list
                 )
 
-                logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                timeout_timedelta = None
-                if metadata.config.konflux.build_timeout:
-                    timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
-
-                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(
-                    pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
+            if outcome is not KonfluxBuildOutcome.SUCCESS:
+                error = KonfluxImageBuildError(
+                    f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                    pipelinerun_name,
+                    pipelinerun,
                 )
-                logger.info("PipelineRun %s completed", pipelinerun_name)
+            else:
+                metadata.build_status = True
+                record["message"] = "Success"
+                record["status"] = 0
 
-                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
-                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
-
-                # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
-                if outcome is KonfluxBuildOutcome.SUCCESS:
-                    image_pullspec = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
-                    )
-                    image_digest = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
-                    )
-
-                    record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
-
-                    # Validate SLSA attestation and source image signature
-                    try:
-                        await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
-                        )
-                        outcome = KonfluxBuildOutcome.FAILURE
-
-                if self._config.dry_run:
-                    logger.info("Dry run: Would have inserted build record in Konflux DB")
-                else:
-                    await self.update_konflux_db(
-                        metadata, build_repo, pipelinerun, outcome, building_arches, build_priority, pod_list
-                    )
-
-                if outcome is not KonfluxBuildOutcome.SUCCESS:
-                    error = KonfluxImageBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
-                        pipelinerun_name,
-                        pipelinerun,
-                    )
-                else:
-                    metadata.build_status = True
-                    record["message"] = "Success"
-                    record["status"] = 0
-                    break
             if not metadata.build_status and error:
                 record["message"] = str(error)
                 raise error
@@ -287,6 +284,7 @@ class KonfluxImageBuilder:
 
         return uuid_tag, component_name, version, release
 
+    @retry(reraise=True, wait=wait_fixed(5), stop=stop_after_attempt(3))
     async def _validate_build_attestation_and_signature(self, image_pullspec: str, distgit_key: str):
         """
         Validate SLSA attestation and source image signature for a built image.
@@ -630,6 +628,7 @@ class KonfluxImageBuilder:
 
         return all_package_nvrs, all_source_rpms
 
+    @retry(reraise=True, wait=wait_fixed(5), stop=stop_after_attempt(3))
     async def update_konflux_db(
         self,
         metadata,
