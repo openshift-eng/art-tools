@@ -126,6 +126,7 @@ class BuildOadpPipeline:
         build_cmd = [
             "doozer",
             f"--assembly={self.assembly}",
+            f"--working-dir={self.runtime.doozer_working}",
             f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
             "--build-system=konflux",
             f"--group={self.group}",
