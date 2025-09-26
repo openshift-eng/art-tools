@@ -2,13 +2,15 @@ import logging
 import os
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import click
 from artcommonlib import exectools
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants
+from pyartcd import constants, jenkins
+from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix
@@ -25,6 +27,7 @@ class BuildOadpPipeline:
         assembly: str,
         image_list: str,
         data_path: str,
+        skip_bundle_build: bool,
         kubeconfig: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -33,6 +36,7 @@ class BuildOadpPipeline:
         self.version = version
         self.assembly = assembly
         self.image_list = image_list
+        self.skip_bundle_build = skip_bundle_build
         self.kubeconfig = kubeconfig
         self._logger = logger or runtime.logger
 
@@ -49,9 +53,47 @@ class BuildOadpPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
 
+    def trigger_bundle_build(self):
+        if self.skip_bundle_build:
+            self._logger.warning("Skipping bundle build step because --skip-bundle-build flag is set")
+            return
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            self._logger.warning('record.log not found, skipping bundle build')
+            return
+
+        try:
+            records = record_log.get('image_build_konflux', [])
+            operator_nvrs = []
+            for record in records:
+                if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
+                    operator_nvrs.append(record['nvrs'].split(',')[0])
+            if operator_nvrs:
+                jenkins.start_olm_bundle_konflux(
+                    build_version=self.version,
+                    assembly=self.assembly,
+                    group=self.group,
+                    operator_nvrs=operator_nvrs,
+                    doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                    doozer_data_gitref='',
+                )
+        except Exception as e:
+            self._logger.exception(f"Failed to trigger bundle build: {e}")
+
+    def parse_record_log(self) -> Optional[dict]:
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        if not record_log_path.exists():
+            return None
+
+        with record_log_path.open('r') as file:
+            record_log: dict = record_util.parse_record_log(file)
+            return record_log
+
     async def run(self):
         """Run the OADP rebase and build pipeline"""
         await self._rebase_and_build()
+        self.trigger_bundle_build()
 
     async def _rebase_and_build(self):
         """Rebase and build OADP image"""
@@ -152,6 +194,7 @@ class BuildOadpPipeline:
     metavar="IMAGE_NAME",
     help="List of images to build",
 )
+@click.option("--skip-bundle-build", is_flag=True, default=False, help="(For testing) Skip the bundle build step")
 @click.option(
     "--kubeconfig",
     metavar="KUBECONFIG_PATH",
@@ -167,6 +210,7 @@ async def build_oadp(
     version: str,
     assembly: str,
     image_list: str,
+    skip_bundle_build: bool,
     kubeconfig: Optional[str],
 ):
     """Rebase and build OADP image for an assembly"""
@@ -178,6 +222,7 @@ async def build_oadp(
             assembly=assembly,
             image_list=image_list,
             data_path=data_path,
+            skip_bundle_build=skip_bundle_build,
             kubeconfig=kubeconfig,
         )
         await pipeline.run()

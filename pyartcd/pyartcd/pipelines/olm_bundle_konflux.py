@@ -148,6 +148,7 @@ async def olm_bundle_konflux(
         if operator_nvrs:
             jenkins.start_build_fbc(
                 version=version,
+                group=group if group else None,
                 assembly=assembly,
                 operator_nvrs=operator_nvrs,
                 dry_run=runtime.dry_run,
