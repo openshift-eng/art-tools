@@ -9,6 +9,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, PropertyMock, patch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.model import Model
+
 from pyartcd.pipelines.promote import PromotePipeline
 
 

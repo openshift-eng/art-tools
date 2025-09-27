@@ -2,9 +2,8 @@ import os
 import unittest
 from unittest import mock
 
-from pyartcd.jenkins import Jobs
-
 from pyartcd import jenkins
+from pyartcd.jenkins import Jobs
 
 
 class TestJenkinsStartBuild(unittest.TestCase):

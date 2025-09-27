@@ -24,12 +24,12 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+
+from pyartcd import constants
 from pyartcd.git import GitRepository
 from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
-
-from pyartcd import constants
 
 
 class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
