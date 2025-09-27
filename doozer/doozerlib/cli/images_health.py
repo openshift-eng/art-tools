@@ -119,6 +119,9 @@ class ImagesHealthPipeline:
                     code=ConcernCode.FAILING_AT_LEAST_FOR.value,
                     latest_failed_job_url=builds[0].art_job_url,
                     latest_attempt_task_url=latest_attempt_task_url,
+                    latest_failed_nvr=builds[0].nvr,
+                    latest_failed_build_record_id=builds[0].record_id,
+                    latest_failed_build_time=builds[0].start_time,
                     for_release=for_release,
                 ),
             )

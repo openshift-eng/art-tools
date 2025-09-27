@@ -526,21 +526,27 @@ def start_olm_bundle_konflux(
     operator_nvrs: list,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
+    group: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
         return
 
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+    }
+
+    if group:
+        params['GROUP'] = group
+
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
-        params={
-            'BUILD_VERSION': build_version,
-            'ASSEMBLY': assembly,
-            'DOOZER_DATA_PATH': doozer_data_path,
-            'DOOZER_DATA_GITREF': doozer_data_gitref,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-        },
+        params=params,
         **kwargs,
     )
 
@@ -614,16 +620,21 @@ def start_build_fbc(
     assembly: str,
     operator_nvrs: list,
     dry_run: bool,
+    group: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+        'DRY_RUN': dry_run,
+    }
+    if group:
+        params['GROUP'] = group
+
     return start_build(
         job=Jobs.BUILD_FBC,
-        params={
-            'BUILD_VERSION': version,
-            'ASSEMBLY': assembly,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
