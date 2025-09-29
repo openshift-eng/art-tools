@@ -201,8 +201,11 @@ class PromotePipeline:
             raise ValueError(f"Release name `{release_name}` is not a valid semver.")
         logger.info("Release name: %s", release_name)
 
-        self._slack_client.bind_channel(release_name)
-        await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
+        # Skip Slack notifications for CUSTOM assemblies since they don't follow standard naming patterns
+        if assembly_type != AssemblyTypes.CUSTOM:
+            await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
+        else:
+            logger.info("Skipping Slack notifications for CUSTOM assembly type")
 
         justifications = []
         try:
@@ -557,7 +560,6 @@ class PromotePipeline:
         except Exception as err:
             self._logger.exception(err)
             message = f"Promoting release {release_name} failed"
-            await self._slack_client.say_in_thread(message)
             raise
 
         # Print release infos to console
@@ -659,8 +661,6 @@ class PromotePipeline:
             )
 
         json.dump(data, sys.stdout)
-
-        await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
 
     @staticmethod
     def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
