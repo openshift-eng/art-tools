@@ -156,6 +156,10 @@ class KonfluxOcp4Pipeline:
             return [f'--{kind}=', f'--exclude{",".join(excludes)}']
 
     async def update_rebase_fail_counters(self, failed_images):
+        if self.assembly == 'test':
+            # Ignore for test assembly
+            return
+
         # Reset fail counters for images that were rebased successfully
         match self.build_plan.image_build_strategy:
             case BuildStrategy.ALL:

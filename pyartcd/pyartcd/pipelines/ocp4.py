@@ -475,6 +475,10 @@ class Ocp4Pipeline:
         Update rebase fail counters for images that failed to rebase.
         """
 
+        if self.assembly == 'test':
+            # Ignore for test assembly
+            return
+
         # Reset fail counters for images that were rebased successfully
         successful_images = []
         if self.build_images.lower() == 'all':
