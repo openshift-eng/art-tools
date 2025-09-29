@@ -260,7 +260,11 @@ class Runtime(GroupRuntime):
                 )
                 # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
                 if 'PATCH' not in replace_vars:
-                    replace_vars['PATCH'] = Version.parse(release_name).patch
+                    try:
+                        replace_vars['PATCH'] = Version.parse(release_name).patch
+                    except ValueError:
+                        # If release_name is not a valid semantic version (e.g., custom assembly name), skip setting PATCH
+                        pass
         return replace_vars
 
     def init_state(self):
