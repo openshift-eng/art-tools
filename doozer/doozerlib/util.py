@@ -562,9 +562,15 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 break
             current_assembly = parent_assembly
         if patch_version is None:
-            raise ValueError(
-                "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
-            )
+            hotfix_previous_assembly = releases_config.releases[
+                current_assembly
+            ].assembly.basis.hotfix_previous_assembly
+            if hotfix_previous_assembly:
+                patch_version = int(hotfix_previous_assembly.rsplit('.', 1)[-1])
+            else:
+                raise ValueError(
+                    "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
+                )
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
