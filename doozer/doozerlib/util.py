@@ -562,9 +562,8 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 break
             current_assembly = parent_assembly
         if patch_version is None:
-            raise ValueError(
-                "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
-            )
+            # For CUSTOM assemblies, if patch_version cannot be determined, use the assembly name as release name
+            return assembly_name
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 

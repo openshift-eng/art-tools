@@ -196,13 +196,16 @@ class PromotePipeline:
         # Get release name
         assembly_type = util.get_assembly_type(releases_config, self.assembly)
         release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
-        # Ensure release name is valid
-        if not VersionInfo.is_valid(release_name):
+        # Ensure release name is valid (skip validation for CUSTOM assemblies which may use non-semver names)
+        if assembly_type != AssemblyTypes.CUSTOM and not VersionInfo.is_valid(release_name):
             raise ValueError(f"Release name `{release_name}` is not a valid semver.")
         logger.info("Release name: %s", release_name)
 
-        self._slack_client.bind_channel(release_name)
-        await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
+        # Skip Slack notifications for CUSTOM assemblies since they don't follow standard naming patterns
+        if assembly_type != AssemblyTypes.CUSTOM:
+            await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
+        else:
+            logger.info("Skipping Slack notifications for CUSTOM assembly type")
 
         justifications = []
         try:
@@ -557,7 +560,7 @@ class PromotePipeline:
         except Exception as err:
             self._logger.exception(err)
             message = f"Promoting release {release_name} failed"
-            await self._slack_client.say_in_thread(message)
+            await self._say_in_thread_if_not_custom(message, assembly_type)
             raise
 
         # Print release infos to console
@@ -660,7 +663,14 @@ class PromotePipeline:
 
         json.dump(data, sys.stdout)
 
-        await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
+        await self._say_in_thread_if_not_custom(f":white_check_mark: promote completed for {release_name}.", assembly_type)
+
+    async def _say_in_thread_if_not_custom(self, message: str, assembly_type: AssemblyTypes):
+        """Send Slack message only if not a CUSTOM assembly type"""
+        if assembly_type != AssemblyTypes.CUSTOM:
+            await self._slack_client.say_in_thread(message)
+        else:
+            self._logger.info("Skipping Slack notification for CUSTOM assembly: %s", message)
 
     @staticmethod
     def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
