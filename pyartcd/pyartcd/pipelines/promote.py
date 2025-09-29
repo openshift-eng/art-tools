@@ -196,8 +196,8 @@ class PromotePipeline:
         # Get release name
         assembly_type = util.get_assembly_type(releases_config, self.assembly)
         release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
-        # Ensure release name is valid
-        if not VersionInfo.is_valid(release_name):
+        # Ensure release name is valid (skip validation for CUSTOM assemblies which may use non-semver names)
+        if assembly_type != AssemblyTypes.CUSTOM and not VersionInfo.is_valid(release_name):
             raise ValueError(f"Release name `{release_name}` is not a valid semver.")
         logger.info("Release name: %s", release_name)
 
