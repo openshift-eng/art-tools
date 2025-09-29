@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
 import aiohttp
-import requests, requests_gssapi
+import requests
+import requests_gssapi
 from artcommonlib.constants import RELEASE_SCHEDULES
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
