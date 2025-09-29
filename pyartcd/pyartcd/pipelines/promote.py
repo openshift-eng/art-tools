@@ -421,7 +421,7 @@ class PromotePipeline:
 
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
-            if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories)
 
             if not tag_stable:
