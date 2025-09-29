@@ -640,12 +640,19 @@ async def invalidate_cloudfront_cache(invalidation_path):
 
 
 async def mirror_to_s3(
-    source: Union[str, Path], dest: str, exclude: Optional[str] = None, include: Optional[str] = None, dry_run=False
+    source: Union[str, Path],
+    dest: str,
+    exclude: Optional[str] = None,
+    include: Optional[str] = None,
+    dry_run: bool = False,
+    delete: bool = False,
 ):
     """
     Copy to AWS S3
     """
     cmd = ["aws", "s3", "sync", "--no-progress", "--exact-timestamps"]
+    if delete:
+        cmd.append("--delete")
     paths = ['--', f'{source}', f'{dest}']
     if exclude is not None:
         cmd.append(f"--exclude={exclude}")
