@@ -1541,7 +1541,7 @@ def get_flaws(
         first_fix_flaw_bugs = [
             flaw_bug_info['bug']
             for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], assembly)
+            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], flaw_bug_tracker.config.get('version')[0])
         ]
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
