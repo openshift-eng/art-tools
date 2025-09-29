@@ -71,9 +71,9 @@ class BuildFbcPipeline:
 
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
-            await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
-            )
+            # await self._slack_client.say(
+            #     f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
+            # )
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
