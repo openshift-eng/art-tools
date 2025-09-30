@@ -433,9 +433,7 @@ class PromotePipeline:
             if shipment_config and shipment_config.get("url"):
                 shipment_url = shipment_config["url"]
                 self._logger.info("Found shipment configuration with URL: %s", shipment_url)
-                self._logger.info(
-                    "Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas)
-                )
+                self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
                 try:
                     await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
                     self._logger.info("Successfully updated shipment MR with payload SHAs")
