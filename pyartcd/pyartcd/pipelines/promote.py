@@ -424,26 +424,26 @@ class PromotePipeline:
             if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories)
 
-                # Update shipment MR with payload SHAs immediately after promotion
-                payload_shas = {}
-                for arch, release_info in release_infos.items():
-                    payload_shas[arch] = release_info["digest"]
+            # Update shipment MR with payload SHAs immediately after promotion
+            payload_shas = {}
+            for arch, release_info in release_infos.items():
+                payload_shas[arch] = release_info["digest"]
 
-                shipment_config = group_config.get("shipment")
-                if shipment_config and shipment_config.get("url"):
-                    shipment_url = shipment_config["url"]
-                    self._logger.info("Found shipment configuration with URL: %s", shipment_url)
-                    self._logger.info(
-                        "Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas)
-                    )
-                    try:
-                        await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
-                        self._logger.info("Successfully updated shipment MR with payload SHAs")
-                    except Exception as ex:
-                        self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
-                        await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
-                else:
-                    self._logger.info("No shipment configuration found, skipping shipment MR update")
+            shipment_config = group_config.get("shipment")
+            if shipment_config and shipment_config.get("url"):
+                shipment_url = shipment_config["url"]
+                self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+                self._logger.info(
+                    "Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas)
+                )
+                try:
+                    await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                    self._logger.info("Successfully updated shipment MR with payload SHAs")
+                except Exception as ex:
+                    self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                    await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+            else:
+                self._logger.info("No shipment configuration found, skipping shipment MR update")
 
             if not tag_stable:
                 self._logger.warning(
