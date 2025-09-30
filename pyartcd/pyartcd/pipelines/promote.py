@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import ssl
 import sys
 import tarfile
 import traceback
@@ -34,6 +35,7 @@ from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group, new_roundtrip_yaml_handler
 from elliottlib.shipment_utils import get_shipment_config_from_mr, get_shipment_configs_from_mr
 from github import Github, GithubException
+from requests_gssapi import HTTPSPNEGOAuth
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
 from semver import VersionInfo
@@ -399,6 +401,25 @@ class PromotePipeline:
                 "All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr
             )
 
+            # Update shipment MR with payload SHAs immediately after promotion
+            payload_shas = {}
+            for arch, release_info in release_infos.items():
+                payload_shas[arch] = release_info["digest"]
+
+            shipment_config = group_config.get("shipment")
+            if shipment_config and shipment_config.get("url"):
+                shipment_url = shipment_config["url"]
+                self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+                self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
+                try:
+                    await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                    self._logger.info("Successfully updated shipment MR with payload SHAs")
+                except Exception as ex:
+                    self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                    await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+            else:
+                self._logger.info("No shipment configuration found, skipping shipment MR update")
+
             # Signing payloads prior to adding it to the release controller assures that we are testing
             # signature verification processes in an installing/running cluster. In the future, we might
             # want to sign with a beta key before being accepted, so we don't gold sign all named releases,
@@ -423,25 +444,6 @@ class PromotePipeline:
             # Skip ECs and RCs
             if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories)
-
-            # Update shipment MR with payload SHAs immediately after promotion
-            payload_shas = {}
-            for arch, release_info in release_infos.items():
-                payload_shas[arch] = release_info["digest"]
-
-            shipment_config = group_config.get("shipment")
-            if shipment_config and shipment_config.get("url"):
-                shipment_url = shipment_config["url"]
-                self._logger.info("Found shipment configuration with URL: %s", shipment_url)
-                self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
-                try:
-                    await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
-                    self._logger.info("Successfully updated shipment MR with payload SHAs")
-                except Exception as ex:
-                    self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
-                    await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
-            else:
-                self._logger.info("No shipment configuration found, skipping shipment MR update")
 
             if not tag_stable:
                 self._logger.warning(
@@ -2142,10 +2144,48 @@ class PromotePipeline:
         # Load shipment configs from MR
         shipments_by_kind = get_shipment_configs_from_mr(shipment_url)
 
-        # Update the image shipment with SHA information (only image shipments need SHAs)
-        if "image" in shipments_by_kind:
-            # Build format dictionary for SHA replacement
-            format_dict = {}
+        # Collect all file changes before creating a single MR
+        files_to_update = {}  # file_path -> updated_content
+        templates_replaced_total = 0
+
+        # Process all shipment types (except FBC) for template replacement
+        for shipment_kind, shipment_config in shipments_by_kind.items():
+            if shipment_kind == "fbc":
+                continue  # Skip FBC shipments
+
+            self._logger.info("Processing %s shipment for template replacement", shipment_kind)
+
+            # Check for template updates for this shipment
+            file_path, updated_content, templates_replaced = await self._prepare_shipment_templates(
+                shipment_kind, shipment_config, payload_shas, mr, source_project, shipments_by_kind
+            )
+
+            if file_path and updated_content and templates_replaced > 0:
+                files_to_update[file_path] = updated_content
+                templates_replaced_total += templates_replaced
+                self._logger.info(
+                    "Prepared %d template replacements for %s shipment", templates_replaced, shipment_kind
+                )
+            else:
+                self._logger.info("No template replacements needed for %s shipment", shipment_kind)
+
+        # Create a single MR with all the file updates
+        if files_to_update:
+            await self._create_consolidated_shipment_update_mr(
+                mr, source_project, files_to_update, templates_replaced_total
+            )
+        else:
+            self._logger.info("No template replacements needed for any shipment files")
+
+    async def _prepare_shipment_templates(
+        self, shipment_kind: str, shipment_config, payload_shas: Dict[str, str], mr, source_project, shipments_by_kind
+    ):
+        """Prepare template replacements for a single shipment and return file path, content, and replacement count"""
+        # Build format dictionary for template replacement
+        format_dict = {}
+
+        # Add SHA digests for image shipments
+        if shipment_kind == "image":
             for arch, sha in payload_shas.items():
                 if arch == "multi":
                     continue  # Skip multi-arch as it's not a specific architecture
@@ -2165,172 +2205,331 @@ class PromotePipeline:
 
                 self._logger.info("Prepared format variable: %s -> %s", arch, sha)
 
-            # Validate template placeholders in solution field
-            image_shipment = shipments_by_kind["image"]
+        # Generate IMAGE_ADVISORY template key for all shipment types (get from image shipment data)
+        try:
+            image_shipment = shipments_by_kind.get("image")
+
             if (
-                hasattr(image_shipment.shipment.data.releaseNotes, 'solution')
-                and image_shipment.shipment.data.releaseNotes.solution
+                image_shipment
+                and hasattr(image_shipment.shipment.data.releaseNotes, 'type')
+                and hasattr(image_shipment.shipment.data.releaseNotes, 'live_id')
+                and image_shipment.shipment.data.releaseNotes.type
+                and image_shipment.shipment.data.releaseNotes.live_id
             ):
-                solution_text = image_shipment.shipment.data.releaseNotes.solution
-                # Check for placeholders that have no corresponding SHA
-                placeholder_pattern = r'\{([^}]+)\}'
-                placeholders = re.findall(placeholder_pattern, solution_text)
-                for placeholder in placeholders:
-                    if placeholder not in format_dict:
-                        raise ValueError(
-                            f"Solution contains placeholder {{{placeholder}}} but no corresponding SHA was found"
-                        )
-
-            # Get the original file content to preserve formatting
-            diff_info = mr.diffs.list(all=True)[0]
-            diff = mr.diffs.get(diff_info.id)
-            image_file_path = None
-            for file_diff in diff.diffs:
-                file_path = file_diff.get('new_path') or file_diff.get('old_path')
-                if file_path and file_path.endswith(('.yaml', '.yml')) and 'image' in file_path:
-                    image_file_path = file_path
-                    break
-
-            if not image_file_path:
-                self._logger.error("Could not find image shipment file in MR")
-                raise ValueError("Could not find image shipment file in MR")
-
-            # Get original file content to preserve formatting
-            original_file = source_project.files.get(image_file_path, mr.source_branch)
-            original_content = original_file.decode().decode('utf-8')
-
-            # Replace SHA placeholders directly in the original content to preserve formatting
-            updated_content = original_content
-            templates_replaced = 0
-
-            for var_name, sha_value in format_dict.items():
-                placeholder = f"{{{var_name}}}"
-                if placeholder in updated_content:
-                    updated_content = updated_content.replace(placeholder, sha_value)
-                    templates_replaced += 1
-                    self._logger.info("Replaced %s with %s", placeholder, sha_value)
-
-            if templates_replaced > 0:
-                self._logger.info("Successfully replaced %d format placeholders with payload SHAs", templates_replaced)
+                advisory_type = image_shipment.shipment.data.releaseNotes.type
+                live_id = image_shipment.shipment.data.releaseNotes.live_id
+                year = datetime.now().strftime("%Y")
+                image_advisory = f"{advisory_type}-{year}:{live_id}"
+                format_dict["IMAGE_ADVISORY"] = image_advisory
+                self._logger.info("Generated IMAGE_ADVISORY: %s", image_advisory)
             else:
-                self._logger.warning(
-                    "No format placeholders found in shipment file. Expected placeholders: %s",
-                    list(f"{{{var}}}" for var in format_dict.keys()),
+                self._logger.warning("Cannot generate IMAGE_ADVISORY: missing image shipment or type/live_id data")
+        except Exception as ex:
+            self._logger.warning("Failed to generate IMAGE_ADVISORY: %s", ex)
+
+        # Generate RPM_ADVISORY template key for all shipment types
+        try:
+            rpm_advisory = await self._get_rpm_advisory()
+            if rpm_advisory:
+                format_dict["RPM_ADVISORY"] = rpm_advisory
+                self._logger.info("Generated RPM_ADVISORY: %s", rpm_advisory)
+            else:
+                # Don't replace RPM_ADVISORY placeholder if we can't generate it
+                self._logger.warning("Could not generate RPM_ADVISORY: no RPM advisory found in releases.yml")
+        except Exception as ex:
+            # Don't replace RPM_ADVISORY placeholder on error
+            self._logger.warning("Failed to generate RPM_ADVISORY: %s", ex)
+
+        # If no replacements are needed, skip this shipment
+        if not format_dict:
+            self._logger.info("No template replacements needed for %s shipment", shipment_kind)
+            return None, None, 0
+
+        # Check if the shipment file actually contains any of our placeholders
+        # Find the shipment file first to check its content
+        diff_info = mr.diffs.list(all=True)[0]
+        diff = mr.diffs.get(diff_info.id)
+        shipment_file_path = None
+        for file_diff in diff.diffs:
+            file_path = file_diff.get('new_path') or file_diff.get('old_path')
+            if file_path and file_path.endswith(('.yaml', '.yml')) and shipment_kind in file_path:
+                shipment_file_path = file_path
+                break
+
+        if not shipment_file_path:
+            self._logger.warning("Could not find %s shipment file in MR", shipment_kind)
+            return None, None, 0
+
+        # Get original file content to check for placeholders
+        original_file = source_project.files.get(shipment_file_path, mr.source_branch)
+        original_content = original_file.decode().decode('utf-8')
+
+        # Check if any of our placeholders are actually present in the file
+        placeholders_found = []
+        for var_name in format_dict.keys():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in original_content:
+                placeholders_found.append(placeholder)
+
+        if not placeholders_found:
+            self._logger.info("No relevant template placeholders found in %s shipment file", shipment_kind)
+            return None, None, 0
+
+        self._logger.info("Found template placeholders in %s shipment: %s", shipment_kind, placeholders_found)
+
+        # Validate template placeholders in both description and solution fields (for image shipments)
+        if shipment_kind == "image":
+            # Check solution field for SHA digest placeholders
+            if hasattr(shipment_config.shipment.data.releaseNotes, 'solution'):
+                solution_text = shipment_config.shipment.data.releaseNotes.solution
+                if solution_text:
+                    # Check for SHA digest placeholders that have no corresponding replacement
+                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholders = re.findall(placeholder_pattern, solution_text)
+                    for placeholder in placeholders:
+                        if placeholder.endswith('_DIGEST') and placeholder not in format_dict:
+                            raise ValueError(
+                                f"Solution contains placeholder {{{placeholder}}} but no corresponding value was found"
+                            )
+
+            # Check description field for advisory placeholders
+            if hasattr(shipment_config.shipment.data.releaseNotes, 'description'):
+                description_text = shipment_config.shipment.data.releaseNotes.description
+                if description_text:
+                    # Check for advisory placeholders that have no corresponding replacement
+                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholders = re.findall(placeholder_pattern, description_text)
+                    for placeholder in placeholders:
+                        if placeholder in ["IMAGE_ADVISORY", "RPM_ADVISORY"] and placeholder not in format_dict:
+                            # Allow advisory placeholders to remain if we can't generate them
+                            pass
+
+        # File content was already loaded above for placeholder checking
+
+        # Replace template placeholders directly in the original content to preserve formatting
+        # Advisory placeholders (IMAGE_ADVISORY, RPM_ADVISORY) go in description field
+        # SHA digest placeholders (x864_DIGEST, etc.) go in solution field
+        updated_content = original_content
+        templates_replaced = 0
+
+        for var_name, replacement_value in format_dict.items():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in updated_content:
+                # Log appropriate context based on placeholder type
+                if var_name.endswith('_DIGEST'):
+                    context = "solution"
+                elif var_name in ["IMAGE_ADVISORY", "RPM_ADVISORY"]:
+                    context = "description"
+                else:
+                    context = "content"
+
+                updated_content = updated_content.replace(placeholder, replacement_value)
+                templates_replaced += 1
+                self._logger.info("Replaced %s with %s in %s field", placeholder, replacement_value, context)
+
+        if templates_replaced > 0:
+            self._logger.info(
+                "Successfully replaced %d template placeholders in %s shipment", templates_replaced, shipment_kind
+            )
+            return shipment_file_path, updated_content, templates_replaced
+        else:
+            self._logger.info("No template placeholders found in %s shipment file", shipment_kind)
+            return None, None, 0
+
+    async def _create_consolidated_shipment_update_mr(
+        self, mr, source_project, files_to_update: Dict[str, str], templates_replaced_total: int
+    ):
+        """Create a new MR to update all shipments with template replacements"""
+        try:
+            if self.runtime.dry_run:
+                self._logger.info(
+                    "[DRY RUN] Would have created MR to update shipment files with template replacements: %s",
+                    list(files_to_update.keys()),
                 )
+                return None
 
-            if image_file_path:
-                # Create a new MR to update the shipment with SHAs
-                try:
-                    if self.runtime.dry_run:
-                        self._logger.info(
-                            "[DRY RUN] Would have created MR to update shipment file %s with payload SHAs",
-                            image_file_path,
-                        )
-                        return
+            # Check if an MR with template updates already exists (reentrant check)
+            sha_mr_title_pattern = f"Update {self.assembly} Docs release notes"
+            existing_mrs = source_project.mergerequests.list(
+                target_branch=mr.source_branch, state='opened', search=sha_mr_title_pattern
+            )
 
-                    # Check if an MR with payload SHAs already exists (reentrant check)
-                    sha_mr_title_pattern = f"Update {self.assembly} shipment with payload SHAs"
-                    existing_mrs = source_project.mergerequests.list(
-                        target_branch=mr.source_branch, state='opened', search=sha_mr_title_pattern
+            for existing_mr in existing_mrs:
+                if existing_mr.title == sha_mr_title_pattern:
+                    self._logger.info(
+                        "Payload SHA update MR already exists: %s. Skipping creation.", existing_mr.web_url
                     )
-
-                    for existing_mr in existing_mrs:
-                        if existing_mr.title == sha_mr_title_pattern:
-                            self._logger.info(
-                                "Payload SHA update MR already exists: %s. Skipping creation.", existing_mr.web_url
-                            )
-                            await self._slack_client.say_in_thread(
-                                f"Payload SHA update MR already exists: {existing_mr.web_url}"
-                            )
-
-                            # Check if comment about this MR already exists on main shipment MR
-                            main_mr_comment = f"Docs team, please review the existing MR to update payload SHAs: {existing_mr.web_url}"
-                            existing_notes = mr.notes.list(all=True)
-                            comment_exists = any(note.body == main_mr_comment for note in existing_notes)
-
-                            if not comment_exists:
-                                try:
-                                    mr.notes.create({'body': main_mr_comment})
-                                    self._logger.info("Added comment to main shipment MR: %s", shipment_url)
-                                except Exception as comment_ex:
-                                    self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
-                            else:
-                                self._logger.info(
-                                    "Comment about payload SHA update MR already exists on main shipment MR"
-                                )
-
-                            return
-
-                    # Create a new branch for the SHA update
-                    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-                    sha_branch = f"update-shas-{self.assembly}-{timestamp}"
-
-                    # Create branch from the shipment MR's source branch
-                    source_project.branches.create({'branch': sha_branch, 'ref': mr.source_branch})
-                    self._logger.info("Created SHA update branch: %s", sha_branch)
-
-                    # updated_content is already prepared above with direct string replacement
-
-                    # Update the file in the new branch
-                    file_to_update = source_project.files.get(image_file_path, sha_branch)
-                    file_to_update.content = updated_content
-                    file_to_update.save(
-                        branch=sha_branch,
-                        commit_message=f"Update shipment with payload SHAs for {self.assembly}",
-                    )
-
-                    # Create MR to merge SHA updates into the shipment MR branch
-                    sha_mr_title = f"Update {self.assembly} shipment with payload SHAs"
-                    sha_mr_description = f"""This MR updates the shipment configuration with payload SHAs from the successful promote job.
-
-**Release**: {self.assembly}
-**Promote Job**: {os.environ.get('BUILD_URL', 'N/A')}
-
-**Updated SHAs:**
-"""
-                    for arch, sha in format_dict.items():
-                        sha_mr_description += f"- {arch}: {sha}\n"
-
-                    sha_mr = source_project.mergerequests.create(
-                        {
-                            'source_branch': sha_branch,
-                            'target_branch': mr.source_branch,
-                            'title': sha_mr_title,
-                            'description': sha_mr_description,
-                            'remove_source_branch': True,
-                        }
-                    )
-
-                    sha_mr_url = sha_mr.web_url
-                    self._logger.info("Created SHA update MR: %s", sha_mr_url)
                     await self._slack_client.say_in_thread(
-                        f"Created MR to update shipment with payload SHAs: {sha_mr_url}"
+                        f"Payload SHA update MR already exists: {existing_mr.web_url}"
                     )
 
-                    # Comment on the main shipment MR to notify about the SHA update MR
-                    main_mr_comment = f"Docs team, please review the MR to update payload SHAs: {sha_mr_url}"
-
-                    # Check if comment already exists to avoid duplicates
+                    # Check if comment about this MR already exists on main shipment MR
+                    main_mr_comment = (
+                        f"Docs team, please review the existing MR to update release notes: {existing_mr.web_url}"
+                    )
                     existing_notes = mr.notes.list(all=True)
                     comment_exists = any(note.body == main_mr_comment for note in existing_notes)
 
                     if not comment_exists:
                         try:
                             mr.notes.create({'body': main_mr_comment})
-                            self._logger.info("Added comment to main shipment MR: %s", shipment_url)
+                            self._logger.info("Added comment to main shipment MR")
                         except Exception as comment_ex:
                             self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
                     else:
                         self._logger.info("Comment about payload SHA update MR already exists on main shipment MR")
 
-                except Exception as ex:
-                    self._logger.error("Failed to create SHA update MR: %s", ex)
-                    raise
+                    return None
+
+            # Create a new branch for the template updates
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+            update_branch = f"update-shas-{self.assembly}-{timestamp}"
+
+            # Create branch from the shipment MR's source branch
+            source_project.branches.create({'branch': update_branch, 'ref': mr.source_branch})
+            self._logger.info("Created template update branch: %s", update_branch)
+
+            # Update all files in the new branch
+            for file_path, updated_content in files_to_update.items():
+                file_to_update = source_project.files.get(file_path, update_branch)
+                file_to_update.content = updated_content
+                file_to_update.save(
+                    branch=update_branch,
+                    commit_message=f"Update {file_path.split('/')[-1]} with payload SHAs for {self.assembly}",
+                )
+                self._logger.info("Updated file %s in branch %s", file_path, update_branch)
+
+            # Create MR to merge template updates into the shipment MR branch
+            update_mr_title = f"Update {self.assembly} Docs release notes"
+
+            shipment_files = [f"- {file_path.split('/')[-1]}" for file_path in files_to_update.keys()]
+            shipment_files_str = "\n".join(shipment_files)
+
+            update_mr_description = f"""This MR updates shipment configurations with payload SHAs from the successful promote job.
+
+**Release**: {self.assembly}
+**Promote Job**: {os.environ.get('BUILD_URL', 'N/A')}
+**Total Templates Replaced**: {templates_replaced_total}
+
+**Updated Files:**
+{shipment_files_str}
+
+**Updated Templates:**
+- Replaced SHA digest placeholders
+- Updated advisory references
+
+"""
+
+            update_mr = source_project.mergerequests.create(
+                {
+                    'source_branch': update_branch,
+                    'target_branch': mr.source_branch,
+                    'title': update_mr_title,
+                    'description': update_mr_description,
+                    'remove_source_branch': True,
+                }
+            )
+
+            update_mr_url = update_mr.web_url
+            self._logger.info("Created consolidated template update MR: %s", update_mr_url)
+            await self._slack_client.say_in_thread(f"Created MR to update shipment with payload SHAs: {update_mr_url}")
+
+            # Comment on the main shipment MR to notify about the template update MR
+            main_mr_comment = f"Docs team, please review the MR to update release notes: {update_mr_url}"
+
+            # Check if comment already exists to avoid duplicates
+            existing_notes = mr.notes.list(all=True)
+            comment_exists = any(note.body == main_mr_comment for note in existing_notes)
+
+            if not comment_exists:
+                try:
+                    mr.notes.create({'body': main_mr_comment})
+                    self._logger.info("Added comment to main shipment MR")
+                except Exception as comment_ex:
+                    self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
             else:
-                self._logger.error("Could not find image shipment file in MR")
-                raise ValueError("Could not find image shipment file in MR")
-        else:
-            self._logger.warning("No image shipment found in MR - SHAs not updated")
+                self._logger.info("Comment about template update MR already exists on main shipment MR")
+
+        except Exception as ex:
+            self._logger.error("Failed to create consolidated template update MR: %s", ex)
+            raise
+
+    async def _get_rpm_advisory(self) -> Optional[str]:
+        """Get RPM advisory ID from releases.yml and query errata endpoint for advisory type.
+
+        :return: Formatted RPM advisory string like "RHBA-2025:12345" or None if not found
+        """
+        try:
+            # Load releases.yml config to get RPM advisory ID
+            releases_config = await util.load_releases_config(
+                group=self.group,
+                data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
+            )
+
+            # Debug: Show available releases in the config
+            available_releases = list(releases_config.get("releases", {}).keys())
+            self._logger.info("Available releases in releases.yml: %s", available_releases)
+
+            # Get the assembly config from releases.yml
+            assembly_config = releases_config.get("releases", {}).get(self.assembly)
+            if not assembly_config:
+                self._logger.warning("Assembly %s not found in releases.yml", self.assembly)
+                return None
+
+            self._logger.info("Assembly config keys for %s: %s", self.assembly, list(assembly_config.keys()))
+
+            # Get RPM advisory ID from assembly.group.advisories path
+            assembly_group_advisories = assembly_config.get("assembly", {}).get("group", {}).get("advisories", {})
+            rpm_advisory_id = assembly_group_advisories.get("rpm")
+
+            self._logger.info("Assembly group advisories for %s: %s", self.assembly, assembly_group_advisories)
+
+            if not rpm_advisory_id:
+                self._logger.info("No RPM advisory ID found for assembly %s", self.assembly)
+                return None
+
+            self._logger.info("Found RPM advisory ID %s for assembly %s", rpm_advisory_id, self.assembly)
+
+            # Query errata endpoint to get advisory type
+            errata_endpoint = "https://errata.devel.redhat.com/api/v1/erratum/{}"
+            errata_url = urlparse(errata_endpoint.format(rpm_advisory_id)).geturl()
+
+            self._logger.info("Querying errata API endpoint: %s", errata_url)
+
+            # Make request to errata endpoint
+            response = requests.get(
+                errata_url,
+                verify=ssl.get_default_verify_paths().openssl_cafile,
+                auth=HTTPSPNEGOAuth(),
+            )
+            response.raise_for_status()
+
+            advisory_data = response.json()
+
+            # Extract advisory type from response using similar logic to format_advisory_data
+            advisory_type = None
+            if "errata" in advisory_data:
+                errata_data = advisory_data["errata"]
+                # Get the first (and typically only) advisory type key
+                for key in errata_data:
+                    advisory_type = key
+                    break
+
+            if not advisory_type:
+                self._logger.warning(
+                    "Could not extract advisory type from errata response for RPM advisory %s", rpm_advisory_id
+                )
+                return None
+
+            # Generate the formatted advisory string: {advisory_type}-{year}:{advisory_id}
+            year = datetime.now().strftime("%Y")
+            rpm_advisory = f"{advisory_type.upper()}-{year}:{rpm_advisory_id}"
+
+            return rpm_advisory
+
+        except Exception as ex:
+            self._logger.error("Error getting RPM advisory: %s", ex)
+            return None
 
 
 @cli.command("promote")
