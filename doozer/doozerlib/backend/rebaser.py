@@ -32,6 +32,7 @@ from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
+from jira import JIRA, JIRAError
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -2138,6 +2139,7 @@ class KonfluxRebaser:
             if not isinstance(updates, list):
                 raise TypeError('`updates` key must be a list in art.yaml')
 
+            sr_list = []
             for u in updates:
                 f = u.get('file', None)
                 u_list = u.get('update_list', [])
@@ -2151,6 +2153,7 @@ class KonfluxRebaser:
                     raise ValueError('{} does not exist as defined in art.yaml'.format(f_path))
 
                 self._logger.info('Updating {}'.format(f_path))
+
                 # Read the content
                 async with aiofiles.open(f_path, 'r+', encoding="utf-8") as sr_file:
                     sr_file_str = await sr_file.read()
@@ -2164,7 +2167,107 @@ class KonfluxRebaser:
                         sr_file_str = sr_file_str.replace(s, r)
                         if sr_file_str == original_string:
                             self._logger.error(f'Search `{s}` and replace was ineffective for {metadata.distgit_key}')
+                            sr_list.append((s, r))
 
                 # Overwrite file with updated content
                 async with aiofiles.open(f_path, 'w', encoding='utf-8') as sr_file:
                     await sr_file.write(sr_file_str)
+
+            jira_client: JIRA = Runtime.build_jira_client(self._runtime)
+            major, minor = self._runtime.get_major_minor_fields()
+            summary_field = f"Make substitutions work for {major}.{minor} in manifests of {metadata.distgit_key}"
+            project = "OCPBUGS"
+            pscomponent = metadata.distgit_key
+            # retrieve the target version string (e.g., 'z' or '4.21.0')
+            target_version_segment = Model(self._runtime.gitdata.load_data(key='bug').data).target_release[-1]
+
+            # query JIRA to see if an existing issue is already open
+            found_issue = self.query_jira(jira_client, summary_field, project, target_version_segment)
+            if not found_issue:
+                self._logger.info(f"a new JIRA issue for {metadata.distgit_key} will be raised")
+                # raise a new JIRA issue
+                self.raise_jira(jira_client, summary_field, project, sr_list, pscomponent, f, target_version_segment)
+            else:
+                self._logger.info(
+                    f"An existing JIRA {found_issue[0].key} for {metadata.distgit_key} is already existing"
+                )
+
+    def query_jira(self, jira_client, summary_field, project, target_version_segment):
+        major, minor = self._runtime.get_major_minor_fields()
+        jql_query = [
+            f'project = "{project}"',
+            f'summary ~ "{summary_field}"',
+            f'labels in ("art:{major}-{minor}:fix-olm-substitution")',
+            f'"Target Version" = "{target_version_segment}"',
+            'status not in (Closed, Resolved)',
+        ]
+        final_sql_query = ' AND '.join(jql_query)
+        try:
+            issues = jira_client.search_issues(final_sql_query)
+            return issues
+        except JIRAError as e:
+            raise RuntimeError(f'Failed to query JIRA {e.text}')
+
+    def raise_jira(self, jira_client, summary_field, project, sr_list, pscomponent, f, target_version_segment):
+        major, minor = self._runtime.get_major_minor_fields()
+        formatted_sr_list = [f"- search: {s_val} \n  replace: {r_val}" for s_val, r_val in sr_list]
+        formatted_output = '\n'.join(formatted_sr_list)
+        component_data = self.get_issue_component(pscomponent)
+        component_name = component_data['issue_component']
+        jira_description = f'''
+                This bug was raised automatically by Doozer when rebasing the image.
+                For {pscomponent}, the following substitution(s) in {f} did not work:
+                - search : replace
+                {{code}}
+                {formatted_output}{{code}}
+
+                Please update the file so that the substitution works for {major}.{minor} releases.
+                This is likely due to the format of the version or release in the file not matching what is expected.'
+        '''
+        fields = {
+            'project': {'key': project},
+            'summary': f'{summary_field}',
+            'description': f'{jira_description}',
+            'issuetype': {'name': 'Bug'},
+            'labels': [
+                f'art:{major}-{minor}:fix-olm-substitution',
+                f'art:pscomponent:{pscomponent}-container',
+            ],
+            'versions': [{'name': f'{major}.{minor}'}],
+            'components': [{'name': f'{component_name}'}],
+        }
+        try:
+            new_issue = jira_client.create_issue(
+                fields,
+            )
+            self._logger.info(f"a new JIRA issue {new_issue.key} for {pscomponent} was raised")
+
+            # the customfield_12319940 (Target Version) has to be updated AFTER a JIRA issue was created
+            try:
+                # retrieve the target version string (e.g., 'z' or '4.21.0')
+                target_version = target_version_segment
+
+                # Build the update payload using the retrieved string
+                issue_update = {
+                    'customfield_12319940': [{'name': target_version}],
+                }
+                self._logger.info(
+                    f"Attempting to update issue {new_issue.key} Target Version to: {target_version_segment}"
+                )
+                new_issue.update(fields=issue_update)
+                self._logger.info(f"Successfully updated Target Version for issue {new_issue.key}.")
+
+            except Exception as e:
+                self._logger.error(f"An error occurred while updating the Target Version on issue {new_issue.key}: {e}")
+        except JIRAError as e:
+            raise RuntimeError(f'Failed to create JIRA issue: {e.text}')
+
+    def get_issue_component(self, is_comp):
+        product_config_model = self._runtime.get_product_config()
+        issue_comp = f"{is_comp}-container"
+        component_data = product_config_model.bug_mapping.components.get(issue_comp, None)
+        if component_data is not None:
+            return component_data
+        else:
+            self._logger.warning(f"Configuration data for component '{issue_comp}' not found in product.yml.")
+            return None
