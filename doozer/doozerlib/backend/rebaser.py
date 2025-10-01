@@ -32,6 +32,7 @@ from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
+from jira import JIRA, JIRAError
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -2138,6 +2139,7 @@ class KonfluxRebaser:
             if not isinstance(updates, list):
                 raise TypeError('`updates` key must be a list in art.yaml')
 
+            sr_list = []
             for u in updates:
                 f = u.get('file', None)
                 u_list = u.get('update_list', [])
@@ -2151,6 +2153,7 @@ class KonfluxRebaser:
                     raise ValueError('{} does not exist as defined in art.yaml'.format(f_path))
 
                 self._logger.info('Updating {}'.format(f_path))
+
                 # Read the content
                 async with aiofiles.open(f_path, 'r+', encoding="utf-8") as sr_file:
                     sr_file_str = await sr_file.read()
@@ -2164,7 +2167,64 @@ class KonfluxRebaser:
                         sr_file_str = sr_file_str.replace(s, r)
                         if sr_file_str == original_string:
                             self._logger.error(f'Search `{s}` and replace was ineffective for {metadata.distgit_key}')
+                            sr_list.append((s, r))
 
                 # Overwrite file with updated content
                 async with aiofiles.open(f_path, 'w', encoding='utf-8') as sr_file:
                     await sr_file.write(sr_file_str)
+
+            # check if there is already a JIRA issue opened for this component
+            jira_client: JIRA = Runtime.build_jira_client(self._runtime)
+            major, minor = int(self._runtime.group_config.vars.MAJOR), int(self._runtime.group_config.vars.MINOR)
+            jql_query = (
+                f'project = "OCPBUGS" AND '
+                f'summary ~ "Make substitutOOOns work for {major}.{minor} in manifests of {metadata.distgit_key}" AND '
+                f'labels in (art:{major}-{minor}:fix-olm-substitution) AND '
+                f'status not in (Closed, Resolved) '
+            )
+
+            issues = jira_client.search_issues(jql_query)
+            formatted_sr_list = [f"- search: {s_val} \n  replace: {r_val}" for s_val, r_val in sr_list]
+            formatted_output = '\n'.join(formatted_sr_list)
+            is_comp = metadata.distgit_key
+            issue_comp = self.get_issue_component(is_comp)
+            if not issues:
+                self._logger.info(f"a new JIRA issue for {metadata.distgit_key} will be raised")
+                # raise a new JIRA issue
+                fields = {
+                    'project': {'key': 'OCPBUGS'},
+                    'summary': f'Make substitutions work for {major}.{minor} in manifests of {metadata.distgit_key}',
+                    'description': (
+                        'This bug was raised automatically by Doozer when rebasing the image.\n\n'
+                        f'For {metadata.distgit_key}, the following substitution(s) in {f} did not work:\n'
+                        f'- search : replace \n{{code}}'
+                        f'{formatted_output}{{code}} \n\n'
+                        f'Please update the file so that the substitution works for {major}.{minor} releases.\n\n'
+                        'This is likely due to the format of the version or release in the file not matching what is expected.\n'
+                    ),
+                    'issuetype': {'name': 'Bug'},
+                    'labels': [
+                        f'art:{major}-{minor}:fix-olm-substitution',
+                        f'art:components:{metadata.distgit_key}-container',
+                    ],
+                    'versions': [{'name': f'{major}.{minor}'}],
+                    'components': [{'name': f'{issue_comp}'}],
+                }
+                try:
+                    new_issue = jira_client.create_issue(
+                        fields,
+                    )
+                    self._logger.info(f"a new JIRA issue {new_issue.key} for {metadata.distgit_key} was raised")
+                except JIRAError as e:
+                    raise RuntimeError(f'Failed to create JIRA issue: {e.text}')
+            else:
+                self._logger.info(f"An existing JIRA {issues[0].key} for {metadata.distgit_key} is already existing")
+
+    def get_issue_component(self, is_comp):
+        product_config_model = self._runtime.get_product_config()
+        issue_comp = f"{is_comp}-container"
+        component_data = product_config_model.bug_mapping.components.get(issue_comp, None)
+        if component_data is not None:
+            return component_data
+        else:
+            self._logger.warning(f"Configuration data for component '{issue_comp}' not found in product.yml.")
