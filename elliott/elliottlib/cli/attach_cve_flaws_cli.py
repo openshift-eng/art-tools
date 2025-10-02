@@ -245,9 +245,8 @@ class AttachCveFlaws:
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
-            release_notes.description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-            )
+            replace_vars['CVES'] = formatted_cve_list
+            release_notes.description = formatter.format(cve_boilerplate['description'], **replace_vars)
         elif self.reconcile:
             # Convert RHSA back to RHBA
             if release_notes.type == 'RHBA':
