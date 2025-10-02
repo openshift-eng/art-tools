@@ -656,7 +656,9 @@ class KonfluxOcp4Pipeline:
                 LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
                 return
 
-            await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE)
+            image_tag = build["image_tag"]
+            latest_tag = f'{build["name"]}-{self.version}'
+            await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE, [image_tag, latest_tag])
 
         await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
 

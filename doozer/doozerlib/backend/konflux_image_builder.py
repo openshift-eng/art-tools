@@ -221,6 +221,9 @@ class KonfluxImageBuilder:
 
                     record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
+                    image_tag = image_pullspec.split(':')[-1]
+                    record["image_tag"] = image_tag
+
                     # Validate SLSA attestation and source image signature
                     try:
                         await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
