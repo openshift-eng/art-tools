@@ -508,7 +508,7 @@ async def fetch_slsa_attestation(
 
 @limit_concurrency(limit=32)
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
-async def sync_to_quay(source_pullspec, destination_repo):
+async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
     cmd = [
         'oc',
@@ -553,6 +553,29 @@ async def sync_to_quay(source_pullspec, destination_repo):
             f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} after 30 minutes"
         )
         raise
+
+    # Mirror optional tags if provided
+    if tags:
+        for tag in tags:
+            LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}")
+            cmd = [
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                f"{destination_repo}@sha256:{shasum}",
+                f"{destination_repo}:{tag}",
+            ]
+            if konflux_registry_auth_file:
+                cmd += [f'--registry-config={konflux_registry_auth_file}']
+            try:
+                await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
+                LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
+            except TimeoutError:
+                LOGGER.warning(
+                    f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} after 30 minutes"
+                )
+                raise
 
 
 def validate_build_priority(build_priority):
