@@ -84,7 +84,7 @@ LOCK_POLICY = {
     },
     Lock.SIGNING: {
         'retry_count': 36000,
-        'retry_delay_min': 0.1,
+        'retry_delay_min': 0.4,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
