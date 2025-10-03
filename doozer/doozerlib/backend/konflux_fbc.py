@@ -732,6 +732,18 @@ class KonfluxFbcRebaser:
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
 
+            # For an operator bundle that uses replaces -- such as OADP
+            # Update "replaces" in the channel
+            replaces = None
+            if 'oadp-' in olm_bundle_name:
+                # Find the current head - the entry that is not replaced by any other entry
+                bundle_with_replaces = [it for it in channel['entries'] if 'oadp-' in it['name']]
+                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
+                if current_head:
+                    # The new bundle should replace the current head
+                    replaces = current_head['name']
+
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
@@ -746,6 +758,8 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
+            if replaces:
+                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
@@ -880,12 +894,15 @@ class KonfluxFbcRebaser:
         ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
-        dest_repos = {
-            p_split[1]: p_split[0]
-            for bundle_blob in olm_bundle_blobs
-            for related_image in bundle_blob.get("relatedImages", [])
-            if (p_split := related_image["image"].split('@', 1))
-        }
+        # TODO: Understand what this is doing
+        dest_repos = {}
+        for bundle_blob in olm_bundle_blobs:
+            for related_image in bundle_blob.get("relatedImages", []):
+                if '@' in related_image["image"]:
+                    repo, digest = related_image["image"].split('@', 1)
+                    dest_repos[digest] = repo
+                else:
+                    continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None
@@ -904,7 +921,9 @@ class KonfluxFbcRebaser:
                             source_repo,
                         ],
                     }
+                    # If source is ame as destination, we don't need to add an IDMS mapping
                     for sha, source_repo in source_repos.items()
+                    if sha in dest_repos and source_repo != dest_repos[sha]
                 ],
             },
         }
