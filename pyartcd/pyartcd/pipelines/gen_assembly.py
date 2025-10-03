@@ -75,7 +75,7 @@ class GenAssemblyPipeline:
         self.gen_microshift = gen_microshift
         if in_flight:
             self.in_flight = in_flight
-        elif not custom and not pre_ga_mode and build_system == 'brew':
+        elif not custom and not pre_ga_mode:
             self.in_flight = get_inflight(assembly, group)
         else:
             self.in_flight = None
