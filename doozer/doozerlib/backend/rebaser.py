@@ -2178,7 +2178,7 @@ class KonfluxRebaser:
             major, minor = int(self._runtime.group_config.vars.MAJOR), int(self._runtime.group_config.vars.MINOR)
             jql_query = (
                 f'project = "OCPBUGS" AND '
-                f'summary ~ "Make substitutOOOns work for {major}.{minor} in manifests of {metadata.distgit_key}" AND '
+                f'summary ~ "Make substitutions work for {major}.{minor} in manifests of {metadata.distgit_key}" AND '
                 f'labels in (art:{major}-{minor}:fix-olm-substitution) AND '
                 f'status not in (Closed, Resolved) '
             )
