@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
 import aiohttp
 import requests
+import requests_gssapi
 from artcommonlib.constants import RELEASE_SCHEDULES
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
@@ -184,7 +185,10 @@ def get_assembly_release_date(assembly, group):
 
     :raises ValueError: If the assembly release date is not found
     """
-    release_schedules = requests.get(
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    release_schedules = s.get(
         f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
     )
     try:
@@ -206,6 +210,8 @@ async def get_assembly_release_date_async(release_name: str):
     version = VersionInfo.parse(release_name)
     release_train = f'openshift-{version.major}.{version.minor}.z'
     async with aiohttp.ClientSession() as session:
+        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+        await session.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
         async with session.get(
             f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
         ) as response:
@@ -222,7 +228,10 @@ def is_release_next_week(group):
     """
     Check if there release of group need to release in the near week
     """
-    release_schedules = requests.get(
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    release_schedules = s.get(
         f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
     )
     for release in release_schedules.json()['all_ga_tasks']:
@@ -239,7 +248,10 @@ def get_inflight(assembly, group):
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    release_schedules = requests.get(
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    release_schedules = s.get(
         f'{RELEASE_SCHEDULES}/openshift-{major}.{minor - 1}.z/?fields=all_ga_tasks',
         headers={'Accept': 'application/json'},
     )
