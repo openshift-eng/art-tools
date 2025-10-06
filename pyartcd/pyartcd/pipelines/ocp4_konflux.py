@@ -85,6 +85,7 @@ class KonfluxOcp4Pipeline:
         skip_plashets: bool = False,
         build_priority: str = None,
         use_mass_rebuild_locks: bool = False,
+        network_mode: Optional[str] = None,
     ):
         self.runtime = runtime
         self.assembly = assembly
@@ -101,6 +102,7 @@ class KonfluxOcp4Pipeline:
         self.skip_plashets = skip_plashets
         self.build_priority = build_priority
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
+        self.network_mode = network_mode
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -230,6 +232,8 @@ class KonfluxOcp4Pipeline:
                 f"--message='Updating Dockerfile version and release {version}-{input_release}'",
             ]
         )
+        if self.network_mode:
+            cmd.extend(['--network-mode', self.network_mode])
         if not self.runtime.dry_run:
             cmd.append('--push')
 
@@ -282,6 +286,8 @@ class KonfluxOcp4Pipeline:
                 "--konflux-namespace=ocp-art-tenant",
             ]
         )
+        if self.network_mode:
+            cmd.extend(['--network-mode', self.network_mode])
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
@@ -818,6 +824,11 @@ class KonfluxOcp4Pipeline:
     default=False,
     help='Use legacy mass rebuild locks instead of Kueue priorities (for fallback/revert scenarios).',
 )
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
 @pass_runtime
 @click_coroutine
 async def ocp4(
@@ -839,6 +850,7 @@ async def ocp4(
     skip_plashets,
     build_priority: Optional[str],
     use_mass_rebuild_locks: bool,
+    network_mode: Optional[str],
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -866,6 +878,7 @@ async def ocp4(
         skip_plashets=skip_plashets,
         build_priority=build_priority,
         use_mass_rebuild_locks=use_mass_rebuild_locks,
+        network_mode=network_mode,
     )
 
     if ignore_locks:

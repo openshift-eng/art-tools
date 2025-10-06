@@ -635,6 +635,7 @@ class TestMetadata(TestCase):
     def test_konflux_network_mode_group_missing(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
+        runtime.network_mode_override = None
         meta = Metadata("image", runtime, data_obj)
 
         runtime.group_config = Model(
@@ -656,6 +657,7 @@ class TestMetadata(TestCase):
     def test_konflux_network_mode_image_missing(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
+        runtime.network_mode_override = None
         meta = Metadata("image", runtime, data_obj)
 
         meta.config = Model(
@@ -677,6 +679,7 @@ class TestMetadata(TestCase):
     def test_konflux_network_mode_both_missing(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
+        runtime.network_mode_override = None
         meta = Metadata("image", runtime, data_obj)
 
         meta.config = Model(
@@ -696,6 +699,7 @@ class TestMetadata(TestCase):
     def test_konflux_network_mode_both_set(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
+        runtime.network_mode_override = None
         meta = Metadata("image", runtime, data_obj)
 
         meta.config = Model(
@@ -715,3 +719,53 @@ class TestMetadata(TestCase):
         )
 
         self.assertEqual(meta.get_konflux_network_mode(), "internal-only")
+
+    def test_konflux_network_mode_cli_override_precedence(self):
+        """Test CLI override takes precedence over image and group config."""
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        runtime.network_mode_override = "open"
+        meta = Metadata("image", runtime, data_obj)
+
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "hermetic",
+                },
+            }
+        )
+
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "internal-only",
+                },
+            }
+        )
+
+        self.assertEqual(meta.get_konflux_network_mode(), "open")
+
+    def test_konflux_network_mode_runtime_context_missing(self):
+        """Test fallback to existing hierarchy when no CLI override."""
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        runtime.network_mode_override = None
+        meta = Metadata("image", runtime, data_obj)
+
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "hermetic",
+                },
+            }
+        )
+
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "internal-only",
+                },
+            }
+        )
+
+        self.assertEqual(meta.get_konflux_network_mode(), "hermetic")

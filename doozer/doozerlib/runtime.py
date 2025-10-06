@@ -145,6 +145,8 @@ class Runtime(GroupRuntime):
         for key, val in kwargs.items():
             self.__dict__[key] = val
 
+        self.network_mode_override = None
+
         if self.latest_parent_version:
             self.ignore_missing_base = True
 
