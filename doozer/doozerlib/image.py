@@ -667,18 +667,21 @@ class ImageMetadata(Metadata):
         if cachi2_config_override not in [Missing, None]:
             # If cachi2 override is defined in image metadata
             cachi2_enabled = cachi2_config_override
-            self.logger.info("cachi2 enabled from metadata config")
+            source = "metadata config"
+
         elif cachi2_group_override not in [Missing, None]:
             # If cachi2 override is defined in group metadata
             cachi2_enabled = cachi2_group_override
-            self.logger.info("cachi2 enabled from group config")
+            source = "group config"
+
         else:
             # Enable cachi2 based on cachito config
-            self.logger.info("cachi2 override not found. fallback to use cachito config")
             cachi2_enabled = artlib_util.is_cachito_enabled(
                 metadata=self, group_config=self.runtime.group_config, logger=self.logger
             )
+            source = "cachito config"
 
+        self.logger.info("cachi2 %s from %s", "enabled" if cachi2_enabled else "disabled", source)
         return cachi2_enabled
 
     def is_lockfile_generation_enabled(self) -> bool:
@@ -710,15 +713,21 @@ class ImageMetadata(Metadata):
             return False
 
         # Third check: lockfile-specific overrides
+        source = None
         lockfile_config_override = self.config.konflux.cachi2.lockfile.enabled
+
         if lockfile_config_override not in [Missing, None]:
             lockfile_enabled = bool(lockfile_config_override)
-            self.logger.info(f"Lockfile generation set from metadata config {lockfile_enabled}")
-        else:
-            lockfile_group_override = self.runtime.group_config.konflux.cachi2.lockfile.enabled
-            if lockfile_group_override not in [Missing, None]:
-                lockfile_enabled = bool(lockfile_group_override)
-                self.logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
+            source = "metadata config"
+
+        elif (lockfile_group_override := self.runtime.group_config.konflux.cachi2.lockfile.enabled) not in [
+            Missing,
+            None,
+        ]:
+            lockfile_enabled = bool(lockfile_group_override)
+            source = "group config"
+
+        self.logger.info(f"Lockfile generation set from {source} {lockfile_enabled}")
 
         return lockfile_enabled
 
@@ -735,19 +744,23 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if lockfile force generation is enabled, False otherwise.
         """
-        lockfile_force_config_override = self.config.konflux.cachi2.lockfile.force
-        if lockfile_force_config_override not in [Missing, None]:
+
+        lockfile_force = False
+        source = None
+
+        if (lockfile_force_config_override := self.config.konflux.cachi2.lockfile.force) not in [Missing, None]:
             lockfile_force = bool(lockfile_force_config_override)
-            self.logger.info(f"Lockfile force generation set from metadata config: {lockfile_force}")
-            return lockfile_force
+            source = "metadata config"
 
-        lockfile_force_group_override = self.runtime.group_config.konflux.cachi2.lockfile.force
-        if lockfile_force_group_override not in [Missing, None]:
+        elif (lockfile_force_group_override := self.runtime.group_config.konflux.cachi2.lockfile.force) not in [
+            Missing,
+            None,
+        ]:
             lockfile_force = bool(lockfile_force_group_override)
-            self.logger.info(f"Lockfile force generation set from group config: {lockfile_force}")
-            return lockfile_force
+            source = "group config"
 
-        return False
+        self.logger.info(f"Lockfile force generation set from {source}: {lockfile_force}")
+        return lockfile_force
 
     def is_lockfile_parent_inspect_enabled(self) -> bool:
         """
