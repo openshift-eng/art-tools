@@ -737,7 +737,7 @@ class KonfluxFbcRebaser:
             replaces = None
             if 'oadp-' in olm_bundle_name:
                 # Find the current head - the entry that is not replaced by any other entry
-                bundle_with_replaces = [it for it in channel['entries'] if 'oadp-' in it['name']]
+                bundle_with_replaces = [it for it in channel['entries']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
                 current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
                 if current_head:
