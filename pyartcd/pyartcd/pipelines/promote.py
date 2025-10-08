@@ -2506,24 +2506,27 @@ class PromotePipeline:
 
             advisory_data = response.json()
 
-            # Extract advisory type from response using similar logic to format_advisory_data
+            # Extract advisory type and errata_id from response using similar logic to format_advisory_data
             advisory_type = None
+            errata_id = None
             if "errata" in advisory_data:
                 errata_data = advisory_data["errata"]
                 # Get the first (and typically only) advisory type key
                 for key in errata_data:
                     advisory_type = key
+                    errata_id = errata_data[key].get("errata_id")
                     break
 
-            if not advisory_type:
+            if not advisory_type or not errata_id:
                 self._logger.warning(
-                    "Could not extract advisory type from errata response for RPM advisory %s", rpm_advisory_id
+                    "Could not extract advisory type or errata_id from errata response for RPM advisory %s",
+                    rpm_advisory_id,
                 )
                 return None
 
-            # Generate the formatted advisory string: {advisory_type}-{year}:{advisory_id}
+            # Generate the formatted advisory string: {advisory_type}-{year}:{errata_id}
             year = datetime.now().strftime("%Y")
-            rpm_advisory = f"{advisory_type.upper()}-{year}:{rpm_advisory_id}"
+            rpm_advisory = f"{advisory_type.upper()}-{year}:{errata_id}"
 
             return rpm_advisory
 
