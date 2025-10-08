@@ -95,7 +95,8 @@ class BuildOadpPipeline:
     async def run(self):
         """Run the OADP rebase and build pipeline"""
         await self._rebase_and_build()
-        self.trigger_bundle_build()
+        # TODO: Uncomment when ready
+        # self.trigger_bundle_build()
 
     async def _rebase_and_build(self):
         """Rebase and build OADP image"""
