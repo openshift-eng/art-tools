@@ -2432,14 +2432,32 @@ class PromotePipeline:
 
             update_mr_url = update_mr.web_url
             self._logger.info("Created consolidated template update MR: %s", update_mr_url)
-            await self._slack_client.say_in_thread(f"Created MR to update shipment with payload SHAs: {update_mr_url}")
+
+            # Auto-merge Docs rel notes updates since the Docs team will review and approve the main Shipment MR
+            try:
+                # Wait a moment for GitLab to process the MR
+                await asyncio.sleep(2)
+
+                # Set auto-merge to merge when pipeline passes
+                update_mr = source_project.mergerequests.get(update_mr.id, lazy=False)
+                update_mr.merge(merge_when_pipeline_succeeds=True, should_remove_source_branch=True)
+                self._logger.info("Successfully enabled auto-merge for template update MR: %s", update_mr_url)
+                await self._slack_client.say_in_thread(
+                    f"Enabled auto-merge for MR with payload SHAs (will merge when pipeline passes): {update_mr_url}"
+                )
+            except Exception as merge_ex:
+                self._logger.warning("Failed to enable auto-merge for template update MR: %s", merge_ex)
+                await self._slack_client.say_in_thread(
+                    f"Created MR to update shipment with payload SHAs (auto-merge setup failed): {update_mr_url}"
+                )
 
             # Comment on the main shipment MR to notify about the template update MR
-            main_mr_comment = f"Docs team, please review the MR to update release notes: {update_mr_url}"
+            # Since pipeline may take time, always notify docs team about the auto-merge MR
+            main_mr_comment = f"@hybrid-platforms/art/team-docs: Auto-merge has been enabled for payload SHA updates. The MR will automatically merge when the pipeline passes: {update_mr_url}"
 
             # Check if comment already exists to avoid duplicates
             existing_notes = mr.notes.list(all=True)
-            comment_exists = any(note.body == main_mr_comment for note in existing_notes)
+            comment_exists = any(main_mr_comment in note.body for note in existing_notes)
 
             if not comment_exists:
                 try:
