@@ -86,7 +86,9 @@ class FbcImportCli:
                 major_str, minor_str = self.major_minor.split(".")
                 major, minor = int(major_str), int(minor_str)
             except (ValueError, AttributeError):
-                raise ValueError(f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)")
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
         else:
             if (
                 not runtime.group_config.vars
@@ -237,7 +239,9 @@ class FbcMergeCli:
                 major_str, minor_str = self.major_minor.split(".")
                 major, minor = int(major_str), int(minor_str)
             except (ValueError, AttributeError):
-                raise ValueError(f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)")
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
         else:
             if (
                 not runtime.group_config.vars
@@ -621,10 +625,12 @@ class FbcRebaseAndBuildCli:
                 major_str, minor_str = self.major_minor.split(".")
                 ocp_version = (int(major_str), int(minor_str))
             except (ValueError, AttributeError):
-                raise ValueError(f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)")
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
         else:
             ocp_version = (runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR)
-        
+
         importer = KonfluxFbcImporter(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
