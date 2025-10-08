@@ -837,3 +837,48 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # More than one image excluded
         tag = self.ocp4._display_tag_for(['rpm1', 'rpm2'], 'rpm', is_excluded=True)
         self.assertEqual(tag, ' [rpms except 2]')
+
+
+class TestKonfluxOcp4Pipeline(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_konflux_pipeline_network_mode_parameter_flow(self, mock_cmd):
+        """Test pipeline passes network-mode to both doozer commands."""
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcp4Pipeline
+
+        runtime = MagicMock()
+        runtime.dry_run = False
+
+        pipeline = KonfluxOcp4Pipeline(
+            runtime=runtime,
+            assembly='stream',
+            version='4.14',
+            data_path='test-path',
+            image_build_strategy='all',
+            image_list='',
+            rpm_build_strategy='none',
+            rpm_list='',
+            data_gitref='',
+            kubeconfig=None,
+            skip_rebase=False,
+            skip_bundle_build=False,
+            arches=(),
+            plr_template='',
+            lock_identifier='test',
+            skip_plashets=False,
+            build_priority='auto',
+            use_mass_rebuild_locks=False,
+            network_mode='open',
+        )
+
+        await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        self.assertEqual(mock_cmd.call_count, 2)
+
+        rebase_call = mock_cmd.call_args_list[0][0][0]
+        build_call = mock_cmd.call_args_list[1][0][0]
+
+        self.assertIn('--network-mode', rebase_call)
+        self.assertIn('open', rebase_call)
+        self.assertIn('--network-mode', build_call)
+        self.assertIn('open', build_call)

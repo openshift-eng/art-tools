@@ -142,6 +142,11 @@ class KonfluxRebaseCli:
     help="Repo group type to use (e.g. signed, unsigned).",
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -154,12 +159,16 @@ async def images_konflux_rebase(
     force_yum_updates: bool,
     repo_type: str,
     image_repo: str,
+    network_mode: Optional[str],
     message: str,
     push: bool,
 ):
     """
     Refresh a group's konflux content from source content.
     """
+    if network_mode:
+        runtime.network_mode_override = network_mode
+
     cli = KonfluxRebaseCli(
         runtime=runtime,
         version=version,
@@ -275,6 +284,11 @@ class KonfluxBuildCli:
     required=True,
     help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
 )
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -287,7 +301,11 @@ async def images_konflux_build(
     dry_run: bool,
     plr_template: str,
     build_priority: Optional[str],
+    network_mode: Optional[str],
 ):
+    if network_mode:
+        runtime.network_mode_override = network_mode
+
     cli = KonfluxBuildCli(
         runtime=runtime,
         konflux_kubeconfig=konflux_kubeconfig,

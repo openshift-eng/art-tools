@@ -610,3 +610,30 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
 
             # Should not call get_attestation when image is already changing
             mock_get_attestation.assert_not_called()
+
+    async def test_network_mode_override_end_to_end_integration(self):
+        """Test complete CLI override flow through all components."""
+        runtime = MagicMock()
+        runtime.network_mode_override = "internal-only"
+        runtime.assembly = "test"
+        runtime.get_releases_config.return_value = {}
+
+        group_config = MagicMock()
+        group_config.konflux.get.return_value = "hermetic"
+        runtime.group_config = group_config
+
+        image_config = MagicMock()
+        image_config.konflux.get.return_value = "open"
+
+        data_obj = MagicMock()
+        data_obj.key = "test"
+        data_obj.filename = "test.yml"
+        data_obj.data = {"name": "test"}
+
+        from doozerlib.metadata import Metadata
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.config = image_config
+
+        result = meta.get_konflux_network_mode()
+        self.assertEqual(result, "internal-only")
