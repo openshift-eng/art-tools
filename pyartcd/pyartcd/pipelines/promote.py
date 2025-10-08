@@ -2453,7 +2453,7 @@ class PromotePipeline:
 
             # Comment on the main shipment MR to notify about the template update MR
             # Since pipeline may take time, always notify docs team about the auto-merge MR
-            main_mr_comment = f"@hybrid-platforms/art/team-docs: Auto-merge has been enabled for payload SHA updates. The MR will automatically merge when the pipeline passes: {update_mr_url}"
+            main_mr_comment = f"@hybrid-platforms/art/team-docs: Please review the MR to update release notes after it merges (it is set to automerge) and approve the Shipment MR: {update_mr_url}"
 
             # Check if comment already exists to avoid duplicates
             existing_notes = mr.notes.list(all=True)
