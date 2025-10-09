@@ -23,7 +23,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.backend.konflux_watcher import ContainerInfo, PipelineRunInfo
+from doozerlib.backend.pipelinerun_utils import ContainerInfo, PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
@@ -191,15 +191,13 @@ class KonfluxImageBuilder:
                     build_priority=build_priority,
                     dest_dir=dest_dir,
                 )
-                pipelinerun_name = pipelinerun['metadata']['name']
+                pipelinerun_name = pipelinerun.name
                 record["task_id"] = pipelinerun_name
-                record["task_url"] = self._konflux_client.resource_url(pipelinerun)
-                # For the initial call, create a temporary PipelineRunInfo with empty pods
-                initial_pipelinerun_info = PipelineRunInfo(pipelinerun, {})
+                record["task_url"] = self._konflux_client.resource_url(pipelinerun.get_snapshot())
                 await self.update_konflux_db(
                     metadata,
                     build_repo,
-                    initial_pipelinerun_info,
+                    pipelinerun,
                     KonfluxBuildOutcome.PENDING,
                     building_arches,
                     build_priority,
@@ -541,7 +539,7 @@ class KonfluxImageBuilder:
             build_priority=build_priority,
         )
 
-        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun)}")
+        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun.get_snapshot())}")
         return pipelinerun
 
     @staticmethod

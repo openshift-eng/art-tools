@@ -22,6 +22,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient, resource
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution, SourceResolver
@@ -715,8 +716,8 @@ class KonfluxOlmBundleBuilder:
             artifact_type="operatorbundle",
             build_priority=BUNDLE_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun)
-        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
+        url = konflux_client.resource_url(pipelinerun.get_snapshot())
+        logger.info(f"PipelineRun {pipelinerun.name} created: {url}")
         return pipelinerun, url
 
     async def _update_konflux_db(
@@ -725,7 +726,7 @@ class KonfluxOlmBundleBuilder:
         build_repo: BuildRepo,
         bundle_package_name: str,
         bundle_csv_name: str,
-        pipelinerun: resource.ResourceInstance,
+        pipelinerun: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         operator_nvr: str,
         operand_nvrs: list[str],
@@ -750,9 +751,10 @@ class KonfluxOlmBundleBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
-            pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
-            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun.name
+            pipelinerun_snapshot = pipelinerun.get_snapshot()
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_snapshot)
+            build_component = pipelinerun_snapshot['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),
@@ -788,7 +790,7 @@ class KonfluxOlmBundleBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    results = pipelinerun.get('status', {}).get('results', [])
+                    results = pipelinerun_snapshot.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 

@@ -28,6 +28,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from kubernetes.dynamic import resource
@@ -380,8 +381,8 @@ class KonfluxFbcFragmentMerger:
                 build_repo=build_repo,
                 output_image=target_index,
             )
-            plr_name = created_plr["metadata"]["name"]
-            plr_url = konflux_client.resource_url(created_plr)
+            plr_name = created_plr.name
+            plr_url = konflux_client.resource_url(created_plr.get_snapshot())
             logger.info(f"Created Pipelinerun {plr_name}: {plr_url}")
 
             # Wait for the Pipelinerun to complete
@@ -1226,15 +1227,15 @@ class KonfluxFbcBuilder:
             pipelinerun_template_url=self.pipelinerun_template_url,
             build_priority=FBC_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun)
-        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
+        url = konflux_client.resource_url(pipelinerun.get_snapshot())
+        logger.info(f"PipelineRun {pipelinerun.name} created: {url}")
         return pipelinerun, url
 
     async def _update_konflux_db(
         self,
         metadata: ImageMetadata,
         build_repo: BuildRepo,
-        pipelinerun: resource.ResourceInstance,
+        pipelinerun: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
@@ -1263,9 +1264,10 @@ class KonfluxFbcBuilder:
             source_repo = dfp.labels.get('io.openshift.build.source-location')
             commitish = dfp.labels.get('io.openshift.build.commit.id')
 
-            pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
-            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun.name
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun.get_snapshot())
+            pipelinerun_snapshot = pipelinerun.get_snapshot()
+            build_component = pipelinerun_snapshot['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': name,
@@ -1299,7 +1301,7 @@ class KonfluxFbcBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    results = pipelinerun.get('status', {}).get('results', [])
+                    results = pipelinerun_snapshot.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 

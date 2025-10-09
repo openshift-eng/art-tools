@@ -14,7 +14,8 @@ from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
 from doozerlib import constants
-from doozerlib.backend.konflux_watcher import KonfluxWatcher, PipelineRunInfo
+from doozerlib.backend.konflux_watcher import KonfluxWatcher
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -685,7 +686,7 @@ class KonfluxClient:
         artifact_type: Optional[str] = None,
         service_account: Optional[str] = None,
         rebuild: Optional[bool] = None,
-    ):
+    ) -> "PipelineRunInfo":
         """
         Start a PipelineRun for building an image.
 
@@ -712,7 +713,7 @@ class KonfluxClient:
         :param service_account: The service account to use for the PipelineRun.
         :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
         :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
-        :return: The PipelineRun resource.
+        :return: The PipelineRun resource as a PipelineRunInfo.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
         if unsupported_arches:
@@ -752,22 +753,25 @@ class KonfluxClient:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
             fake_pipelinerun.metadata.name = f"{component_name}-dry-run"
             LOGGER.warning(f"[DRY RUN] Would have created PipelineRun: {fake_pipelinerun.metadata.name}")
-            return fake_pipelinerun
+            return PipelineRunInfo(fake_pipelinerun, {})
 
         pipelinerun = await self._create(pipelinerun_manifest, async_req=True)
-        LOGGER.debug(f"Created PipelineRun: {self.resource_url(pipelinerun)}")
-        return pipelinerun
+        pipelinerun_info = PipelineRunInfo(pipelinerun, {})
+        LOGGER.debug(f"Created PipelineRun: {self.resource_url(pipelinerun.to_dict())}")
+        return pipelinerun_info
 
     @staticmethod
-    def resource_url(resource_instance: resource.ResourceInstance) -> str:
-        """Returns the URL to the Konflux UI for the given resource instance.
-        :param resource_instance: The resource instance.
+    def resource_url(resource_dict: Dict) -> str:
+        """Returns the URL to the Konflux UI for the given resource dictionary.
+        :param resource_dict: The resource dictionary (from get_snapshot(), to_dict(), etc).
         :return: The URL.
         """
-        kind = resource_instance.kind.lower()
-        name = resource_instance.metadata.name
-        namespace = resource_instance.metadata.namespace or constants.KONFLUX_DEFAULT_NAMESPACE
-        application = resource_instance.metadata.labels.get("appstudio.openshift.io/application", "unknown-application")
+        kind = resource_dict.get('kind', '').lower()
+        metadata = resource_dict.get('metadata', {})
+        name = metadata.get('name', '')
+        namespace = metadata.get('namespace') or constants.KONFLUX_DEFAULT_NAMESPACE
+        labels = metadata.get('labels', {})
+        application = labels.get("appstudio.openshift.io/application", "unknown-application")
         return f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/{application}/{kind}s/{name}"
 
     async def wait_for_pipelinerun(
@@ -852,7 +856,7 @@ class KonfluxClient:
             return resource.ResourceInstance(self.dyn_client, release)
 
         release_obj = await self._get(API_VERSION, KIND_RELEASE, release_name)
-        url = self.resource_url(release_obj)
+        url = self.resource_url(release_obj.to_dict())
         self._logger.info("Found release at %s", url)
 
         def _inner():

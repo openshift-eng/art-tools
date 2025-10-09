@@ -317,6 +317,9 @@ def assembly_basis_event(
         time_str = target_assembly.basis.time
         if not isinstance(time_str, str):
             raise ValueError(f"Invalid time format for assembly {assembly}: {time_str}")
+        # Handle 'Z' suffix for UTC which is not supported in Python 3.10's fromisoformat
+        if time_str.endswith('Z'):
+            time_str = time_str[:-1] + '+00:00'
         dt = datetime.fromisoformat(time_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
