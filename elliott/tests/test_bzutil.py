@@ -455,9 +455,9 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
 
     def test_is_viable_bug(self):
         bug = mock.MagicMock()
-        bug.status = "MODIFIED"
+        bug.status = "VERIFIED"
         self.assertTrue(bzutil.is_viable_bug(bug))
-        bug.status = "ASSIGNED"
+        bug.status = "MODIFIED"
         self.assertFalse(bzutil.is_viable_bug(bug))
 
     def test_to_timestamp(self):
