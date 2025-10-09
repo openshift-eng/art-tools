@@ -3,6 +3,7 @@ import datetime
 import logging
 import os
 import random
+import threading
 import time
 import traceback
 from typing import Dict, List, Optional, Sequence, Union, cast
@@ -13,6 +14,7 @@ from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
 from doozerlib import constants
+from doozerlib.backend.konflux_watcher import KonfluxWatcher, PipelineRunInfo
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -21,6 +23,30 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
+
+# Label key used to filter PipelineRuns for this process
+_COMMON_RUNTIME_LABEL_KEY = "doozer-watch-id"
+# Label value is set once on first use and remains fixed for the process lifetime
+_COMMON_RUNTIME_LABEL_VALUE = None
+_COMMON_RUNTIME_LABEL_LOCK = threading.Lock()
+
+
+def get_common_runtime_watcher_labels() -> Dict[str, str]:
+    """
+    Get the common runtime watcher labels that identify PipelineRuns for this doozer invocation.
+
+    The label value is generated once on first call and remains fixed for the process lifetime.
+    Uses nanoseconds since epoch for uniqueness.
+
+    :return: Dict of label key-value pairs
+    """
+    global _COMMON_RUNTIME_LABEL_VALUE
+    with _COMMON_RUNTIME_LABEL_LOCK:
+        if _COMMON_RUNTIME_LABEL_VALUE is None:
+            # Use nanoseconds since epoch for uniqueness
+            _COMMON_RUNTIME_LABEL_VALUE = str(time.time_ns())
+        return {_COMMON_RUNTIME_LABEL_KEY: _COMMON_RUNTIME_LABEL_VALUE}
+
 
 API_VERSION = "appstudio.redhat.com/v1alpha1"
 KIND_SNAPSHOT = "Snapshot"
@@ -55,6 +81,7 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+        self._config = config  # Store Configuration for watcher
         # In case of a network outage,  the client may hang indefinitely without raising any exception.
         # This is a workaround to set a timeout for the requests.
         # https://github.com/kubernetes-client/python/blob/master/examples/watch/timeout-settings.md
@@ -482,6 +509,10 @@ class KonfluxClient:
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
+        # Add doozer watch labels for filtering by watcher
+        watch_labels = get_common_runtime_watcher_labels()
+        obj["metadata"]["labels"].update(watch_labels)
+
         # Add Kueue build priority label if specified
         if build_priority:
             priority_class = f"build-priority-{build_priority}"
@@ -745,7 +776,7 @@ class KonfluxClient:
         namespace: Optional[str] = None,
         overall_timeout_timedelta: Optional[datetime.timedelta] = None,
         pending_timeout_timedelta: Optional[datetime.timedelta] = None,
-    ) -> tuple[resource.ResourceInstance, list[Dict]]:
+    ) -> PipelineRunInfo:
         """
         Wait for a PipelineRun to complete.
 
@@ -753,7 +784,7 @@ class KonfluxClient:
         :param namespace: The namespace of the PipelineRun.
         :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
         :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 2 hour)
-        :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
+        :return: The PipelineRunInfo object.
         """
         if overall_timeout_timedelta is None:
             overall_timeout_timedelta = datetime.timedelta(hours=5)
@@ -771,261 +802,22 @@ class KonfluxClient:
                 "status": {"conditions": [{"status": "True", "type": "Succeeded"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
-            return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(
-                self.dyn_client, api_version="v1", kind="Pod"
-            )
+            return PipelineRunInfo(pipelinerun, {})
 
-        api = await self._get_api("tekton.dev/v1", "PipelineRun")
-        pod_resource = await self._get_api("v1", "Pod")
-        corev1_client = await self._get_corev1()
+        # Get or create a shared watcher for this namespace
+        watch_labels = get_common_runtime_watcher_labels()
+        watcher = KonfluxWatcher.get_shared_watcher(
+            namespace=namespace,
+            cfg=self._config,
+            watch_labels=watch_labels,
+        )
 
-        def _inner():
-            watcher = watch.Watch()
-            succeeded_status = "Not Found"
-            succeeded_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
-
-            # If a pipelinerun runs more than an hour, successful pods
-            # might be garbage collected. Keep track of pod state across
-            # the pipeline run so that we can record information in bigquery.
-            pod_history: Dict[str, Dict] = dict()
-
-            while True:
-                try:
-                    for event in watcher.stream(
-                        api.get,
-                        # Specifying resource_version=0 tells the API to pull the current
-                        # version of the object, give us an update, and then watch for new
-                        # events. Combined with timeout_seconds, it ensures we periodically print an
-                        # update about the current running pods for the pipeline
-                        resource_version=0,
-                        namespace=namespace,
-                        serialize=False,
-                        field_selector=f"metadata.name={pipelinerun_name}",
-                        # timeout_seconds specifies a server side timeout. If there
-                        # is no activity during this period, the for loop will exit
-                        # gracefully. This ensures we will at least log *something*
-                        # while waiting for a long pipelinerun. If we somehow miss
-                        # an event, it also ensures we will come back and check
-                        # the object with an explicit get at least once per period.
-                        timeout_seconds=5 * 60,
-                        _request_timeout=self.request_timeout,
-                    ):
-                        assert isinstance(event, Dict)
-                        cancel_pipelinerun = (
-                            False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
-                        )
-
-                        # The watch will provide event["object"] on each iteration, but it may have a long backlog
-                        # of resourceVersion updates to deliver us. Meaning that event["object"] may be very stale
-                        # relative to the current state of the object on the server. Thus, we do a live query
-                        # to read the current object and use the watcher notification only to tap us on the shoulder
-                        # periodically. Konflux will prune pipelinerun objects ~10 minutes after they complete,
-                        # so we should have plenty of time to get the last status.
-                        live_obj = api.get(
-                            name=pipelinerun_name,
-                            namespace=namespace,
-                            serialize=True,
-                            _request_timeout=self.request_timeout,
-                        )
-                        obj = resource.ResourceInstance(api, live_obj)
-
-                        # status takes some time to appear
-                        try:
-                            succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
-                            if succeeded_condition:
-                                succeeded_status = succeeded_condition.status
-                                succeeded_reason = succeeded_condition.reason
-                        except AttributeError:
-                            pass
-
-                        pod_desc = []
-                        pods = pod_resource.get(
-                            namespace=namespace,
-                            label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
-                            _request_timeout=self.request_timeout,
-                        )
-                        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
-                        for pod_instance in pods.items:
-                            pod_name = pod_instance.metadata.name
-                            try:
-                                # Convert to normal dict for pod_history
-                                pod_history[pod_name] = pod_instance.to_dict()
-                                pod_phase = pod_instance.status.phase
-                                if pod_phase == 'Succeeded':
-                                    # Cut down on log output. No need to see successful pods again and again.
-                                    continue
-                                # Calculate the pod age based on the creation timestamp
-                                creation_time_str = pod_instance.metadata.get('creationTimestamp')
-                                if creation_time_str:
-                                    creation_time = datetime.datetime.strptime(
-                                        creation_time_str, "%Y-%m-%dT%H:%M:%SZ"
-                                    ).replace(tzinfo=datetime.timezone.utc)
-                                else:
-                                    creation_time = current_time
-                                age = current_time - creation_time
-
-                                if pod_phase == 'Pending' and age > pending_timeout_timedelta:
-                                    self._logger.error(
-                                        "PipelineRun %s pod %s pending beyond threshold %s; cancelling run",
-                                        pipelinerun_name,
-                                        pod_name,
-                                        str(pending_timeout_timedelta),
-                                    )
-                                    cancel_pipelinerun = True
-
-                                age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
-                                pod_desc.append(f"\tPod {pod_name} [phase={pod_phase}][age={age_str}]")
-                            except:
-                                e_str = traceback.format_exc()
-                                pod_desc.append(f"\tPod {pod_name} - unable to report information: {e_str}")
-
-                        # Count all successful pods, not just ones that are still around.
-                        successful_pods = 0
-                        for _, pod in pod_history.items():
-                            if pod.get('status', {}).get('phase') == 'Succeeded':
-                                successful_pods += 1
-
-                        self._logger.info(
-                            "PipelineRun %s [status=%s][reason=%s]; pods[total=%d][successful=%d][extant=%d]\n%s",
-                            pipelinerun_name,
-                            succeeded_status,
-                            succeeded_reason,
-                            len(pod_history),
-                            successful_pods,
-                            len(pods.items),
-                            '\n'.join(pod_desc),
-                        )
-
-                        if succeeded_status not in ["Unknown", "Not Found"]:
-                            # allow final pods to update their status if they can
-                            time.sleep(5)
-                            pods_instances = pod_resource.get(
-                                namespace=namespace,
-                                label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
-                                _request_timeout=self.request_timeout,
-                            )
-                            # We will convert ResourceInstances to Dicts so that they can be manipulated with
-                            # extra information.
-                            for pod_instance in pods_instances.items:
-                                pod = (
-                                    pod_instance.to_dict()
-                                )  # Convert to normal dict so that we can store log_output later.
-                                pod_name = pod.get('metadata').get('name')
-                                pod_status = pod.get('status', {})
-                                pod_phase = pod_status.get('phase')
-                                # Update pod history with the final snapshot
-                                pod_history[pod_name] = pod
-                                if pod_phase != 'Succeeded':
-                                    self._logger.warning(
-                                        f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}'
-                                    )
-
-                                    # Now iterate through containers and record logs for unexpected exit_code values
-                                    container_statuses = pod_status.get("containerStatuses", [])
-                                    for container_status in container_statuses:
-                                        container_name = container_status.get("name")
-                                        state = container_status.get("state", {})
-                                        terminated = state.get("terminated", {})
-                                        exit_code = terminated.get("exitCode")
-                                        if exit_code is None or exit_code != 0:
-                                            try:
-                                                log_response = corev1_client.read_namespaced_pod_log(
-                                                    name=pod_name,
-                                                    namespace=namespace,
-                                                    container=container_name,
-                                                    _request_timeout=self.request_timeout,
-                                                )
-                                                # stuff log information into the container_status, so that it can be
-                                                # included in the bigquery database.
-                                                container_status['log_output'] = log_response
-                                                self._logger.warning(
-                                                    f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n'
-                                                )
-                                            except:
-                                                e_str = traceback.format_exc()
-                                                self._logger.warning(
-                                                    f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}'
-                                                )
-
-                            watcher.stop()
-                            return obj, list(pod_history.values())
-
-                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
-                            self._logger.error(
-                                "PipelineRun %s has run longer than timeout %s; cancelling run",
-                                pipelinerun_name,
-                                str(overall_timeout_timedelta),
-                            )
-                            cancel_pipelinerun = True
-
-                        if cancel_pipelinerun:
-                            self._logger.info("PipelineRun %s is being cancelled", pipelinerun_name)
-                            try:
-                                # Setting spec.status in the PipelineRun should cause tekton to start canceling the pipeline.
-                                # This includes terminating pods associated with the run.
-                                api.patch(
-                                    name=obj.metadata.name,
-                                    namespace=namespace,
-                                    body={
-                                        'spec': {
-                                            'status': 'Cancelled',
-                                        },
-                                    },
-                                    content_type="application/merge-patch+json",
-                                    _request_timeout=self.request_timeout,
-                                )
-                            except:
-                                self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
-                                traceback.print_exc()
-
-                    # Check if the PipelineRun still exists before continuing to watch
-                    try:
-                        _ = api.get(
-                            name=pipelinerun_name,
-                            namespace=namespace,
-                            _request_timeout=self.request_timeout,
-                        )
-                        self._logger.info(
-                            "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
-                        )
-                    except exceptions.NotFoundError:
-                        self._logger.info(
-                            "PipelineRun %s no longer exists (likely garbage collected); stopping watch",
-                            pipelinerun_name,
-                        )
-
-                        # Create a placeholder indicating the resource was garbage collected
-                        placeholder_pipelinerun = {
-                            "metadata": {
-                                "name": pipelinerun_name,
-                                "namespace": namespace,
-                                "labels": {
-                                    "appstudio.openshift.io/application": "garbage-collected",
-                                    "appstudio.openshift.io/component": "garbage-collected",
-                                },
-                            },
-                            "apiVersion": "tekton.dev/v1",
-                            "kind": "PipelineRun",
-                            "status": {
-                                "conditions": [{"status": "False", "type": "Succeeded", "reason": "GarbageCollected"}]
-                            },
-                        }
-                        return resource.ResourceInstance(self.dyn_client, placeholder_pipelinerun), list(
-                            pod_history.values()
-                        )
-                except TimeoutError:
-                    self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
-                    continue
-                except exceptions.ApiException as e:
-                    if e.status == 410:
-                        # If the last result is too old, an `ApiException` exception will be thrown with
-                        # `code` 410. In that case we have to recover by retrying without resource_version.
-                        self._logger.debug("%s: Resource version is too old. Recovering...", pipelinerun_name)
-                        continue
-                    raise
-
-        return await exectools.to_thread(_inner)
+        # Use the watcher to wait for the PipelineRun to complete
+        return await watcher.wait_for_pipelinerun_termination(
+            pipelinerun_name=pipelinerun_name,
+            overall_timeout_timedelta=overall_timeout_timedelta,
+            pod_pending_timeout_timedelta=pending_timeout_timedelta,
+        )
 
     async def wait_for_release(
         self,
