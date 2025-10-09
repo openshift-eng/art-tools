@@ -40,3 +40,18 @@ KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = ["4.21", "4.20", "4.19", "4.18", "4.17",
 KONFLUX_ART_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
 
 KONFLUX_DEFAULT_BUILD_PRIORITY = 5
+
+# Tenant mappings for OADP/MTA/MTC/Logging builds
+GROUP_NAMESPACE_MAP = {
+    "oadp-": "art-oadp-tenant",
+    "mta-": "art-mta-tenant",
+    "mtc-": "art-mtc-tenant",
+    "logging-": "art-logging-tenant",
+}
+
+GROUP_KUBECONFIG_MAP = {
+    "oadp-": "OADP_KONFLUX_SA_KUBECONFIG",
+    "mta-": "MTA_KONFLUX_SA_KUBECONFIG",
+    "mtc-": "MTC_KONFLUX_SA_KUBECONFIG",
+    "logging-": "LOGGING_KONFLUX_SA_KUBECONFIG",
+}

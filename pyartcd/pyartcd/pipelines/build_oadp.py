@@ -7,6 +7,7 @@ from typing import Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins
@@ -18,6 +19,7 @@ from pyartcd.util import default_release_suffix
 
 class BuildOadpPipeline:
     """Rebase and build OADP for an assembly"""
+
 
     def __init__(
         self,
@@ -140,19 +142,34 @@ class BuildOadpPipeline:
             "--build-priority=1",
         ]
 
-        # Use kubeconfig from CLI parameter or environment variable
-        kubeconfig = self.kubeconfig or os.environ.get('KONFLUX_SA_KUBECONFIG')
+        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+            if self.group.startswith(prefix):
+                build_cmd.append(f"--konflux-namespace={namespace}")
+                break
+
+        # Use kubeconfig from CLI parameter or tenant-specific environment variable
+        kubeconfig = self.kubeconfig
         if not kubeconfig:
-            raise ValueError(
-                "KONFLUX_SA_KUBECONFIG environment variable or --kubeconfig parameter is required for Konflux builds"
-            )
+            # Determine the appropriate environment variable based on group prefix
+            kubeconfig_env_var = None
+            for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+                if self.group.startswith(prefix):
+                    kubeconfig_env_var = env_var
+                    break
+            
+            if kubeconfig_env_var:
+                kubeconfig = os.environ.get(kubeconfig_env_var)
+            
+            if not kubeconfig:
+                available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+                raise ValueError(
+                    f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+                )
 
         build_cmd.extend(
             [
                 "--konflux-kubeconfig",
                 kubeconfig,
-                "--konflux-namespace",
-                "ocp-art-tenant",
             ]
         )
         if self.runtime.dry_run:
