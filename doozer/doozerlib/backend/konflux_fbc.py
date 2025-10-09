@@ -551,6 +551,7 @@ class KonfluxFbcRebaser:
         push: bool,
         fbc_repo: str,
         upcycle: bool,
+        ocp_version_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -563,6 +564,7 @@ class KonfluxFbcRebaser:
         self.push = push
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.upcycle = upcycle
+        self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
@@ -656,7 +658,10 @@ class KonfluxFbcRebaser:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
         group_config = metadata.runtime.group_config
-        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        if self.ocp_version_override:
+            ocp_version = self.ocp_version_override
+        else:
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
         # OCP 4.17+ requires bundle object to CSV metadata migration.
         migrate_level = "none"
         if ocp_version >= (4, 17):

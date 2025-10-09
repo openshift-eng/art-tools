@@ -31,6 +31,7 @@ class BuildFbcPipeline:
         prod_registry_auth: Optional[str],
         force: bool,
         group: str,
+        major_minor: Optional[str],
     ):
         self.runtime = runtime
         self.version = version
@@ -48,6 +49,7 @@ class BuildFbcPipeline:
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.force = force
+        self.major_minor = major_minor
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -131,6 +133,8 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--prod-registry-auth', self.prod_registry_auth])
         if self.force:
             doozer_opts.append('--force')
+        if self.major_minor:
+            doozer_opts.extend(['--major-minor', self.major_minor])
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
@@ -225,6 +229,11 @@ class BuildFbcPipeline:
     help="The registry authentication file to use for the production index image.",
 )
 @click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -244,6 +253,7 @@ async def build_fbc(
     prod_registry_auth: Optional[str],
     force: bool,
     group: str,
+    major_minor: Optional[str],
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,
@@ -262,5 +272,6 @@ async def build_fbc(
         prod_registry_auth=prod_registry_auth,
         force=force,
         group=group,
+        major_minor=major_minor,
     )
     await pipeline.run()
