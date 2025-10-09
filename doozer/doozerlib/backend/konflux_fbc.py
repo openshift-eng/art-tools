@@ -257,6 +257,7 @@ class KonfluxFbcFragmentMerger:
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
         plr_template: Optional[str] = None,
+        major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
     ):
         """
@@ -280,6 +281,7 @@ class KonfluxFbcFragmentMerger:
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
+        self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
             config_file=self.konflux_kubeconfig,
@@ -294,8 +296,11 @@ class KonfluxFbcFragmentMerger:
             raise ValueError("At least one fragment must be provided.")
         if not target_index:
             raise ValueError("Target index must be provided.")
-        major = int(self.group_config.get("vars", {}).get("MAJOR"))
-        minor = int(self.group_config.get("vars", {}).get("MINOR"))
+        if self.major_minor_override:
+            major, minor = self.major_minor_override
+        else:
+            major = int(self.group_config.get("vars", {}).get("MAJOR"))
+            minor = int(self.group_config.get("vars", {}).get("MINOR"))
         logger = self._logger
         konflux_client = self._konflux_client
 

@@ -28,6 +28,7 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
             index_image="example.com/test/test-index-image:latest",
             push=True,
             fbc_repo="https://example.com/test/fbc.git",
+            major_minor=None,
             message="Test commit",
             dest_dir="/tmp/fbc",
             registry_auth="/path/to/auth/file.json",
@@ -93,6 +94,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
             force=False,
             output="json",
             reset_to_prod=True,
+            major_minor=None,
         )
 
     def _setup_database_mocks(self, bundle_builds=None, fbc_builds=None):
