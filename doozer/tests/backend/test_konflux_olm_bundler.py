@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.konflux_db import Engine
 from doozerlib import constants
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 
 
 class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
@@ -19,6 +21,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.group_config = MagicMock()
         self.konflux_db = MagicMock()
         self.source_resolver = MagicMock()
+        # Ensure fresh logger for proper assertLogs() behavior
+        self.test_logger = logging.getLogger('doozerlib.backend.konflux_olm_bundler')
         self.rebaser = KonfluxOlmBundleRebaser(
             base_dir=self.base_dir,
             group=self.group,
@@ -26,6 +30,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             group_config=self.group_config,
             konflux_db=self.konflux_db,
             source_resolver=self.source_resolver,
+            logger=self.test_logger,
         )
 
     @patch("aiofiles.open")
@@ -140,7 +145,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         # Test when operator_index_mode is invalid
         self.rebaser._group_config.operator_index_mode = 'invalid-mode'
         del self.rebaser._operator_index_mode
-        with self.assertLogs(self.rebaser._logger, level='WARNING') as cm:
+        with self.assertLogs(self.rebaser._logger.name, level='WARNING') as cm:
             self.assertEqual(self.rebaser._operator_index_mode, 'ga')
             self.assertIn(
                 'invalid-mode is not a valid group_config.operator_index_mode. Defaulting to "ga"', cm.output[0]
@@ -186,7 +191,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.rebaser._group_config.operator_index_mode = 'invalid-mode'
         del self.rebaser._operator_index_mode
         del self.rebaser._redhat_delivery_tags
-        with self.assertLogs(self.rebaser._logger, level='WARNING') as cm:
+        with self.assertLogs(self.rebaser._logger.name, level='WARNING') as cm:
             expected_tags = {
                 'com.redhat.delivery.operator.bundle': 'true',
                 'com.redhat.openshift.versions': '=v4.8',
@@ -507,6 +512,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.skip_checks = False
         self.dry_run = False
         self.konflux_client = AsyncMock()
+        # Ensure fresh logger for proper assertLogs() behavior
+        self.test_logger = logging.getLogger('doozerlib.backend.konflux_olm_bundler')
         with patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient") as mock_konflux_client:
             mock_konflux_client.return_value = self.konflux_client
             mock_konflux_client.from_kubeconfig.return_value = self.konflux_client
@@ -522,6 +529,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 image_repo=self.image_repo,
                 skip_checks=self.skip_checks,
                 dry_run=self.dry_run,
+                logger=self.test_logger,
             )
 
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
@@ -612,18 +620,21 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.commit_hash = "test-commit-hash"
         build_repo.local_dir = Path("/path/to/local/dir")
 
-        pipelinerun = MagicMock()
-        pipelinerun.status.results = [
-            {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {
-                'name': 'IMAGE_DIGEST',
-                'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+        pipelinerun_dict = {
+            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+                    {
+                        'name': 'IMAGE_DIGEST',
+                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                    },
+                ],
+                'startTime': '2023-10-01T12:00:00Z',
+                'completionTime': '2023-10-01T12:30:00Z',
             },
-        ]
-        pipelinerun.metadata.name = "test-pipelinerun"
-        pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
-        pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
-        pipelinerun.metadata.name = "test-pipelinerun"
+        }
+        pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
 
         mock_resource_url.return_value = "https://example.com/pipelinerun"
 
@@ -701,10 +712,11 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.commit_hash = "test-commit-hash"
         build_repo.local_dir = Path("/path/to/local/dir")
 
-        pipelinerun = MagicMock()
-        pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
-        pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
-        pipelinerun.metadata.name = "test-pipelinerun"
+        pipelinerun_dict = {
+            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
+            'status': {'startTime': '2023-10-01T12:00:00Z', 'completionTime': '2023-10-01T12:30:00Z'},
+        }
+        pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
 
         mock_resource_url.return_value = "https://example.com/pipelinerun"
 
@@ -777,17 +789,21 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.commit_hash = "test-commit-hash"
         build_repo.local_dir = Path("/path/to/local/dir")
 
-        pipelinerun = MagicMock()
-        pipelinerun.status.results = [
-            {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {
-                'name': 'IMAGE_DIGEST',
-                'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+        pipelinerun_dict = {
+            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+                    {
+                        'name': 'IMAGE_DIGEST',
+                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                    },
+                ],
+                'startTime': '2023-10-01T12:00:00Z',
+                'completionTime': '2023-10-01T12:30:00Z',
             },
-        ]
-        pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
-        pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
-        pipelinerun.metadata.name = "test-pipelinerun"
+        }
+        pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
 
         mock_resource_url.return_value = "https://example.com/pipelinerun"
 
@@ -814,7 +830,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         self.builder._db = None
 
-        with self.assertLogs(self.builder._logger, level='WARNING') as cm:
+        with self.assertLogs(self.builder._logger.name, level='WARNING') as cm:
             await self.builder._update_konflux_db(
                 metadata,
                 build_repo,
@@ -844,17 +860,21 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.commit_hash = "test-commit-hash"
         build_repo.local_dir = Path("/path/to/local/dir")
 
-        pipelinerun = MagicMock()
-        pipelinerun.status.results = [
-            {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {
-                'name': 'IMAGE_DIGEST',
-                'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+        pipelinerun_dict = {
+            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
+            'status': {
+                'results': [
+                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+                    {
+                        'name': 'IMAGE_DIGEST',
+                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                    },
+                ],
+                'startTime': '2023-10-01T12:00:00Z',
+                'completionTime': '2023-10-01T12:30:00Z',
             },
-        ]
-        pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
-        pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
-        pipelinerun.metadata.name = "test-pipelinerun"
+        }
+        pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
 
         mock_resource_url.return_value = "https://example.com/pipelinerun"
 
@@ -881,7 +901,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         self.db.add_build.side_effect = Exception("Test exception")
 
-        with self.assertLogs(self.builder._logger, level='ERROR') as cm:
+        with self.assertLogs(self.builder._logger.name, level='ERROR') as cm:
             await self.builder._update_konflux_db(
                 metadata,
                 build_repo,

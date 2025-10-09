@@ -1,3 +1,4 @@
+import logging
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -12,6 +13,7 @@ from doozerlib.backend.konflux_fbc import (
     KonfluxFbcImporter,
     KonfluxFbcRebaser,
 )
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo, PodInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.opm import OpmRegistryAuth, yaml
 
@@ -670,7 +672,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.pipelinerun_template_url = "https://example.com/template.yaml"
         self.dry_run = False
         self.record_logger = MagicMock()
-        self.logger = MagicMock()
+        self.logger = logging.getLogger("test-logger")
 
         with patch("doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient) as MockKonfluxClient:
             self.kube_client = MockKonfluxClient.from_kubeconfig.return_value = AsyncMock(spec=KonfluxClient)
@@ -818,7 +820,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "metadata": {"name": "test-pipelinerun-name"},
             "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
         }
-        mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
+        mock_konflux_client.wait_for_pipelinerun.return_value = PipelineRunInfo(mock_pipelinerun, {})
 
         mock_dfp = MockDockerfileParser.return_value
         mock_dfp.envs = {
@@ -894,7 +896,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "metadata": {"name": "test-pipelinerun-name"},
             "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
         }
-        mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
+        mock_konflux_client.wait_for_pipelinerun.return_value = PipelineRunInfo(mock_pipelinerun, {})
 
         mock_dfp = MockDockerfileParser.return_value
         mock_dfp.envs = {

@@ -686,7 +686,7 @@ class KonfluxClient:
         artifact_type: Optional[str] = None,
         service_account: Optional[str] = None,
         rebuild: Optional[bool] = None,
-    ) -> "PipelineRunInfo":
+    ) -> PipelineRunInfo:
         """
         Start a PipelineRun for building an image.
 

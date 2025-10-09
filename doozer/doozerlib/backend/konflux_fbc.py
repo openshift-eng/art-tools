@@ -1311,7 +1311,7 @@ class KonfluxFbcBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    status = pipelinerun.get('status', {})
+                    status = pipelinerun_snapshot.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')
 
@@ -1326,7 +1326,7 @@ class KonfluxFbcBuilder:
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun.get('status', {})
+                    status = pipelinerun_snapshot.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')
                     build_record_params.update(
