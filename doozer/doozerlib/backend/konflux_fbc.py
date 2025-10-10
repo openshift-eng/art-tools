@@ -1154,7 +1154,7 @@ class KonfluxFbcBuilder:
                     arches=arches,
                     logger=logger,
                 )
-                pipelinerun_name = pipelinerun.metadata.name
+                pipelinerun_name = pipelinerun.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
                 if not self.dry_run:
@@ -1177,7 +1177,9 @@ class KonfluxFbcBuilder:
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self._update_konflux_db(metadata, build_repo, pipelinerun, outcome, arches, logger=logger)
+                    await self._update_konflux_db(
+                        metadata, build_repo, pipelinerun_info, outcome, arches, logger=logger
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(

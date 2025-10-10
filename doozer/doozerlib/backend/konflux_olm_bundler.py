@@ -572,7 +572,7 @@ class KonfluxOlmBundleBuilder:
                 pipelinerun, url = await self._start_build(
                     metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks
                 )
-                pipelinerun_name = pipelinerun.metadata.name
+                pipelinerun_name = pipelinerun.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
 
