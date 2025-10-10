@@ -812,8 +812,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
         mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_pipelinerun_info = MagicMock()
+        mock_pipelinerun_info.name = "test-pipelinerun-name"
+        mock_pipelinerun_info.get_snapshot.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
         mock_start_build.return_value = (
-            MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
+            mock_pipelinerun_info,
             "https://example.com/pipeline",
         )
         mock_pipelinerun = {
@@ -854,7 +857,14 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                     all_arches,
                     logger=ANY,
                 ),
-                call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+                call(
+                    metadata,
+                    build_repo,
+                    mock_konflux_client.wait_for_pipelinerun.return_value,
+                    KonfluxBuildOutcome.SUCCESS,
+                    all_arches,
+                    logger=ANY,
+                ),
             ]
         )
         mock_konflux_client.wait_for_pipelinerun.assert_called_once_with(
@@ -888,8 +898,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
         mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_pipelinerun_info = MagicMock()
+        mock_pipelinerun_info.name = "test-pipelinerun-name"
+        mock_pipelinerun_info.get_snapshot.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
         mock_start_build.return_value = (
-            MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
+            mock_pipelinerun_info,
             "https://example.com/pipeline",
         )
         mock_pipelinerun = {
@@ -924,7 +937,14 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                     all_arches,
                     logger=ANY,
                 ),
-                call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+                call(
+                    metadata,
+                    build_repo,
+                    mock_konflux_client.wait_for_pipelinerun.return_value,
+                    KonfluxBuildOutcome.SUCCESS,
+                    all_arches,
+                    logger=ANY,
+                ),
             ]
         )
         mock_konflux_client.wait_for_pipelinerun.assert_called_once_with(
