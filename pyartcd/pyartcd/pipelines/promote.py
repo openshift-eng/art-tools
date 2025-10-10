@@ -890,6 +890,61 @@ class PromotePipeline:
             dry_run=self.runtime.dry_run,
         )
 
+    def generate_sha256sum_file(self, directory_path: str, sha256sum_file_path: str):
+        """
+        Generate a comprehensive sha256sum.txt file by scanning all files in the directory.
+
+        Args:
+            directory_path: Path to the directory containing files to hash
+            sha256sum_file_path: Path where the sha256sum.txt file should be written
+        """
+        sha_entries = []
+
+        # Walk through the directory and compute SHA256 for each file
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                # Skip sha256sum.txt itself and any GPG signature files
+                if file in ['sha256sum.txt', 'sha256sum.txt.gpg']:
+                    continue
+
+                file_path = os.path.join(root, file)
+                # Compute relative path from the directory for the sha256sum.txt entry
+                relative_path = os.path.relpath(file_path, directory_path)
+
+                # For symlinks, compute SHA256 of the target file
+                # This is important because S3 doesn't support symlinks and will store them as regular files
+                if os.path.islink(file_path):
+                    # Resolve the symlink to get the actual file
+                    target_path = os.path.join(root, os.readlink(file_path))
+                    if not os.path.isabs(os.readlink(file_path)):
+                        # If the symlink is relative, resolve it relative to the symlink's directory
+                        target_path = os.path.normpath(target_path)
+
+                    # Only process if target exists and is a regular file
+                    if os.path.exists(target_path) and os.path.isfile(target_path):
+                        with open(target_path, 'rb') as f:
+                            shasum = hashlib.sha256(f.read()).hexdigest()
+                        sha_entries.append((shasum, relative_path))
+                    else:
+                        self._logger.warning(
+                            f"Symlink {file_path} points to non-existent or non-file target {target_path}"
+                        )
+                else:
+                    # Regular file - compute its SHA256
+                    with open(file_path, 'rb') as f:
+                        shasum = hashlib.sha256(f.read()).hexdigest()
+                    sha_entries.append((shasum, relative_path))
+
+        # Sort entries by filename for consistent output
+        sha_entries.sort(key=lambda x: x[1])
+
+        # Write the sha256sum.txt file
+        with open(sha256sum_file_path, 'w') as f:
+            for shasum, filename in sha_entries:
+                f.write(f"{shasum}  {filename}\n")
+
+        self._logger.info(f"Generated sha256sum.txt with {len(sha_entries)} entries at {sha256sum_file_path}")
+
     async def publish_client(self, base_to_mirror_dir: str, pullspec, release_name, build_arch, client_type):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/{build_arch}", ignore_errors=True)
@@ -915,12 +970,6 @@ class PromotePipeline:
                 if response.ok:
                     with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", "wb") as f:
                         f.write(response.raw.read())
-                    # calc shasum
-                    with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", 'rb') as f:
-                        shasum = hashlib.sha256(f.read()).hexdigest()
-                    # write shasum to sha256sum.txt
-                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                        f.write(f"{shasum}  {source_name}-src-{release_name}-{build_arch}.tar.gz\n")
                 else:
                     response.raise_for_status()
             else:
@@ -953,12 +1002,6 @@ class PromotePipeline:
                     tarball = Path(f'{file}.tar.gz')
                     with tarfile.open(tarball, "w:gz") as tar:
                         tar.add(f"{file}", arcname="oc-mirror")
-                    # calc shasum
-                    with open(tarball, 'rb') as f:
-                        shasum = hashlib.sha256(f.read()).hexdigest()
-                    # write shasum to sha256sum.txt
-                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                        f.write(f"{shasum}  {tarball.name}\n")
                     # remove extracted file
                     file.unlink()
                     files_extracted += 1
@@ -974,14 +1017,12 @@ class PromotePipeline:
         self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch)
 
         util.log_dir_tree(client_mirror_dir)  # print dir tree
-        util.log_file_content(f"{client_mirror_dir}/sha256sum.txt")  # print sha256sum.txt
 
-        with open(f"{client_mirror_dir}/sha256sum.txt", "r") as shas:
-            archives = [line.split()[-1] for line in shas.readlines()]
-            seen = set()
-            dupes = [x for x in archives if x in seen or seen.add(x)]
-            if dupes:
-                raise ValueError(f'Duplicate archive entries in {client_mirror_dir}/sha256sum.txt: {dupes}')
+        # Generate comprehensive sha256sum.txt by scanning the directory
+        sha256sum_path = f"{client_mirror_dir}/sha256sum.txt"
+        self.generate_sha256sum_file(client_mirror_dir, sha256sum_path)
+
+        util.log_file_content(sha256sum_path)  # print sha256sum.txt
 
         # Publish the clients to our S3 bucket.
         await util.mirror_to_s3(
@@ -1049,12 +1090,6 @@ class PromotePipeline:
             tar.add(f'{client_mirror_dir}/{binary_name}', f'{binary_name}')
         self._logger.info('Created tarball %s at %s', archive_name, client_mirror_dir)
 
-        # Write shasum to sha256sum.txt
-        with open(f'{client_mirror_dir}/{archive_name}', 'rb') as f:
-            shasum = hashlib.sha256(f.read()).hexdigest()
-        with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-            f.write(f"{shasum}  {archive_name}\n")
-
         # Remove baremetal-installer binary
         os.remove(f'{client_mirror_dir}/{binary_name}')
 
@@ -1091,10 +1126,6 @@ class PromotePipeline:
             os.symlink(
                 f"opm-{platform}-{release_name}.tar.gz", f"{client_mirror_dir}/opm-{platform}.tar.gz"
             )  # create symlink
-            with open(f"{client_mirror_dir}/opm-{platform}-{release_name}.tar.gz", 'rb') as f:  # calc shasum
-                shasum = hashlib.sha256(f.read()).hexdigest()
-            with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:  # write shasum to sha256sum.txt
-                f.write(f"{shasum}  opm-{platform}-{release_name}.tar.gz\n")
 
     async def publish_multi_client(self, base_to_mirror_dir: str, pullspec: str, release_name, arch_list, client_type):
         # Anything under this directory will be sync'd to the mirror
@@ -1111,20 +1142,34 @@ class PromotePipeline:
             # extract baremetal installer binary
             self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch)
             # create symlink for clients
-            self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=True)
+            self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=False)
+
+            # Generate comprehensive sha256sum.txt for this architecture subdirectory
+            arch_sha256sum_path = f"{client_mirror_dir}/sha256sum.txt"
+            self.generate_sha256sum_file(client_mirror_dir, arch_sha256sum_path)
+            util.log_file_content(arch_sha256sum_path)  # print sha256sum.txt
 
         # Create a master sha256sum.txt including the sha256sum.txt files from all subarches
         # This is the file we will sign -- trust is transitive to the subarches
+        master_sha_entries = []
         for dir in os.listdir(release_mirror_dir):
-            if not os.path.isdir(f"{release_mirror_dir}/{dir}"):
+            dir_path = f"{release_mirror_dir}/{dir}"
+            if not os.path.isdir(dir_path):
                 continue
-            for root, dirs, files in os.walk(f"{release_mirror_dir}/{dir}"):
-                if "sha256sum.txt" not in files:
-                    continue
-                with open(f"{root}/sha256sum.txt", "rb") as f:
+            sha_file_path = f"{dir_path}/sha256sum.txt"
+            if os.path.exists(sha_file_path):
+                with open(sha_file_path, "rb") as f:
                     shasum = hashlib.sha256(f.read()).hexdigest()
-                with open(f"{release_mirror_dir}/sha256sum.txt", 'a') as f:  # write shasum to sha256sum.txt
-                    f.write(f"{shasum}  {dir}/sha256sum.txt\n")
+                master_sha_entries.append((shasum, f"{dir}/sha256sum.txt"))
+
+        # Sort entries for consistent output
+        master_sha_entries.sort(key=lambda x: x[1])
+
+        # Write the master sha256sum.txt
+        with open(f"{release_mirror_dir}/sha256sum.txt", 'w') as f:
+            for shasum, filename in master_sha_entries:
+                f.write(f"{shasum}  {filename}\n")
+
         util.log_dir_tree(release_mirror_dir)
 
         # Publish the clients to our S3 bucket.
