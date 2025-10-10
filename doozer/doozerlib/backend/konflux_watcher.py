@@ -72,6 +72,8 @@ class KonfluxWatcher:
 
         label_desc = f"labels={watch_labels}" if watch_labels else "all PipelineRuns"
         self._logger.info(f"Started KonfluxWatcher for namespace={namespace}, {label_desc}")
+        time.sleep(10)
+        self._logger.info(f"KonfluxWatcher initialized for namespace={namespace}, {label_desc}")
 
     @staticmethod
     def get_shared_watcher(
@@ -230,7 +232,7 @@ class KonfluxWatcher:
                     if pipelinerun_name in self._update_events:
                         self._update_events[pipelinerun_name].set()
 
-                self._logger.debug(
+                self._logger.info(
                     f"Updated cache for PipelineRun {pipelinerun_name} (event={event_type}, exists={pipelinerun_dict is not None})"
                 )
 
@@ -245,13 +247,13 @@ class KonfluxWatcher:
 
         :param pipelinerun_name: The name of the PipelineRun
         :return: The PipelineRunInfo object
-        :raises exceptions.NotFoundError: If the PipelineRun is not found in cache
+        :raises ValueError: If the PipelineRun is not found in cache
         """
 
         def _get_from_cache():
             with self._cache_lock:
                 if pipelinerun_name not in self._pipelinerun_cache:
-                    raise exceptions.NotFoundError(f"PipelineRun {pipelinerun_name} not found in cache")
+                    raise ValueError(f"PipelineRun {pipelinerun_name} not found in cache")
 
                 pipelinerun_dict = self._pipelinerun_cache[pipelinerun_name]
                 pod_cache_entries = self._pod_cache.get(pipelinerun_name, {})
@@ -304,7 +306,7 @@ class KonfluxWatcher:
         :param overall_timeout_timedelta: Maximum time to wait for completion
         :param pod_pending_timeout_timedelta: Maximum time to wait for pending pods
         :return: The PipelineRunInfo object
-        :raises exceptions.NotFoundError: If the PipelineRun is not found
+        :raises ValueError: If the PipelineRun is not found
         :raises TimeoutError: If timeouts are exceeded
         """
 
@@ -329,7 +331,7 @@ class KonfluxWatcher:
                             event.clear()
                             event.wait(timeout=5)
                             continue
-                        raise exceptions.NotFoundError(f"PipelineRun {pipelinerun_name} not found")
+                        raise ValueError(f"PipelineRun {pipelinerun_name} not found")
 
                     pipelinerun_dict = self._pipelinerun_cache[pipelinerun_name]
                     pod_cache_entries = self._pod_cache.get(pipelinerun_name, {})
