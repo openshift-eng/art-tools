@@ -22,6 +22,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient, resource
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution, SourceResolver
@@ -480,7 +481,10 @@ class KonfluxOlmBundleBuilder:
         self._record_logger = record_logger
         self._logger = logger
         self._konflux_client = KonfluxClient.from_kubeconfig(
-            self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run
+            default_namespace=self.konflux_namespace,
+            config_file=self.konflux_kubeconfig,
+            context=self.konflux_context,
+            dry_run=self.dry_run,
         )
 
     async def build(self, metadata: ImageMetadata):
@@ -589,19 +593,17 @@ class KonfluxOlmBundleBuilder:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
 
                 # Wait for the PipelineRun to complete
-                pipelinerun, pods = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
+                pipelinerun_info = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                pipelinerun = pipelinerun_info.get_snapshot()
+                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if not self.dry_run:
-                    image_pullspec = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
-                    )
-                    image_digest = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
-                    )
+                    results = pipelinerun.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -720,8 +722,8 @@ class KonfluxOlmBundleBuilder:
             artifact_type="operatorbundle",
             build_priority=BUNDLE_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun)
-        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
+        url = konflux_client.resource_url(pipelinerun.get_snapshot())
+        logger.info(f"PipelineRun {pipelinerun.name} created: {url}")
         return pipelinerun, url
 
     async def _update_konflux_db(
@@ -730,7 +732,7 @@ class KonfluxOlmBundleBuilder:
         build_repo: BuildRepo,
         bundle_package_name: str,
         bundle_csv_name: str,
-        pipelinerun: resource.ResourceInstance,
+        pipelinerun: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         operator_nvr: str,
         operand_nvrs: list[str],
@@ -755,9 +757,10 @@ class KonfluxOlmBundleBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
-            pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
-            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun.name
+            pipelinerun_snapshot = pipelinerun.get_snapshot()
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_snapshot)
+            build_component = pipelinerun_snapshot['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),
@@ -793,12 +796,9 @@ class KonfluxOlmBundleBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    image_pullspec = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
-                    )
-                    image_digest = next(
-                        (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None
-                    )
+                    results = pipelinerun_snapshot.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -806,8 +806,9 @@ class KonfluxOlmBundleBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_snapshot.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
 
                     build_record_params.update(
                         {
@@ -820,8 +821,9 @@ class KonfluxOlmBundleBuilder:
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_snapshot.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
                     build_record_params.update(
                         {
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(

@@ -42,7 +42,6 @@ class TestImageMetadata(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp(prefix="ocp-cd-test-logs")
 
         self.test_file = os.path.join(self.test_dir, "test_file")
-        logging.basicConfig(filename=self.test_file, level=logging.DEBUG)
         self.logger = logging.getLogger()
 
         self.cwd = os.getcwd()
@@ -54,9 +53,6 @@ class TestImageMetadata(unittest.TestCase):
 
     def tearDown(self):
         os.chdir(self.cwd)
-
-        logging.shutdown()
-        reload(logging)
         shutil.rmtree(self.test_dir)
 
     @unittest.skip("assertion failing, check if desired behavior changed")
@@ -189,6 +185,7 @@ class TestImageMetadata(unittest.TestCase):
             }
         )
         rt = MagicMock()
+        rt.logger = logging.getLogger('test_runtime')  # Use real logger
         return image.ImageMetadata(rt, data_obj)
 
     def test_cachi2_enabled_1(self):
