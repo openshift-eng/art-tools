@@ -482,6 +482,17 @@ class KonfluxClient:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
 
+        # Ensure that a watcher is running before creating a new PipelineRun.
+        # Empirically, there seems to be a race condition in the pythong client
+        # which allows PipelineRuns created after the watcher is created to
+        # be missed.
+        watch_labels = get_common_runtime_watcher_labels()
+        _ = KonfluxWatcher.get_shared_watcher(
+            namespace=namespace,
+            cfg=self._config,
+            watch_labels=watch_labels,
+        )
+
         template = await self._get_pipelinerun_template(pipelinerun_template_url)
         rendered = template.render(
             {
@@ -715,6 +726,7 @@ class KonfluxClient:
         :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
         :return: The PipelineRun resource as a PipelineRunInfo.
         """
+
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
         if unsupported_arches:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
