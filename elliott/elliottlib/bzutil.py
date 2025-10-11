@@ -1222,13 +1222,13 @@ def get_highest_impact(trackers, tracker_flaws_map):
 def is_viable_bug(bug_obj):
     """Check if a bug is viable to attach to an advisory.
 
-    A viable bug must be in one of MODIFIED and VERIFIED status. We accept ON_QA
-    bugs as viable as well, as they will be shortly moved to MODIFIED while attaching.
+    A viable bug must be in the VERIFIED state as of our policy
+    change around pre-merge verification and QE responsibilities.
 
     :param bug_obj: bug object
     :returns: True if viable
     """
-    return bug_obj.status in ["MODIFIED", "ON_QA", "VERIFIED"]
+    return bug_obj.status in ["VERIFIED"]
 
 
 def _construct_query_url(config, status, search_filter='default', flag=None):
