@@ -140,8 +140,8 @@ class PodInfo:
             self._pod_dict = pod
         self._container_logs = container_logs or {}
 
-    def get_snapshot(self) -> Dict:
-        """Return the pod dictionary snapshot."""
+    def to_dict(self) -> Dict:
+        """Return the pod dictionary representation."""
         return self._pod_dict
 
     @property
@@ -245,6 +245,21 @@ class PodInfo:
     def __repr__(self):
         return f"PodInfo(name={self.name}, namespace={self.namespace}, phase={self.phase})"
 
+    def __str__(self):
+        """Return a human-readable string representation of the Pod."""
+        containers = self.get_all_containers()
+        container_count = len(containers)
+        failed_containers = [c for c in containers if c.is_failed()]
+        failed_count = len(failed_containers)
+
+        status_info = f"phase={self.phase}"
+        if failed_count > 0:
+            status_info += f", {failed_count}/{container_count} containers failed"
+        else:
+            status_info += f", {container_count} containers"
+
+        return f"Pod '{self.name}' in {self.namespace}: {status_info}"
+
 
 class PipelineRunInfo:
     """Encapsulates information about a Konflux PipelineRun."""
@@ -263,8 +278,8 @@ class PipelineRunInfo:
             self._pipelinerun_dict = pipelinerun
         self._pods = pods
 
-    def get_snapshot(self) -> Dict:
-        """Return the PipelineRun dictionary snapshot."""
+    def to_dict(self) -> Dict:
+        """Return the PipelineRun dictionary representation."""
         return self._pipelinerun_dict
 
     @property
@@ -306,7 +321,7 @@ class PipelineRunInfo:
         """
         pod_dicts = []
         for pod_info in self._pods.values():
-            pod_dict = pod_info.get_snapshot().copy()
+            pod_dict = pod_info.to_dict().copy()
             # For backward compatibility, add log_output field
             log_output = {}
             for container in pod_info.get_all_containers():
@@ -336,3 +351,18 @@ class PipelineRunInfo:
 
     def __repr__(self):
         return f"PipelineRunInfo(name={self.name}, namespace={self.namespace})"
+
+    def __str__(self):
+        """Return a human-readable string representation of the PipelineRun."""
+        succeeded_condition = self.find_condition('Succeeded')
+        status = "Unknown"
+        if succeeded_condition:
+            if succeeded_condition.status == "True":
+                status = "Succeeded"
+            elif succeeded_condition.status == "False":
+                status = f"Failed ({succeeded_condition.reason})"
+            else:
+                status = f"Running ({succeeded_condition.reason})"
+
+        pod_count = len(self._pods)
+        return f"PipelineRun '{self.name}' in {self.namespace}: {status} with {pod_count} pod(s)"

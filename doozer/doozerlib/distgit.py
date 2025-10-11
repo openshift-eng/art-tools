@@ -1503,8 +1503,8 @@ class ImageDistGitRepo(DistGitRepo):
             self.runtime.konflux_db.add_build(build_record)
             self.logger.info('Brew build info stored successfully')
 
-        except Exception as err:
-            self.logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            self.logger.exception('Failed writing record to the konflux DB')
 
     def _logs_dir(self, task_id=None):
         segments = [self.runtime.brew_logs_dir, self.metadata.distgit_key]

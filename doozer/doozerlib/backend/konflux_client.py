@@ -764,7 +764,7 @@ class KonfluxClient:
     @staticmethod
     def resource_url(resource_dict: Dict) -> str:
         """Returns the URL to the Konflux UI for the given resource dictionary.
-        :param resource_dict: The resource dictionary (from get_snapshot(), to_dict(), etc).
+        :param resource_dict: The resource dictionary (from PipelineRunInfo.to_dict(), ResourceInstance.to_dict(), etc).
         :return: The URL.
         """
         kind = resource_dict.get('kind', '').lower()

@@ -442,10 +442,10 @@ class KonfluxOlmBundleRebaser:
 
 
 class KonfluxOlmBundleBuildError(Exception):
-    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[resource.ResourceInstance]) -> None:
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
         super().__init__(message)
         self.pipelinerun_name = pipelinerun_name
-        self.pipelinerun = pipelinerun
+        self.pipelinerun_dict = pipelinerun_dict
 
 
 class KonfluxOlmBundleBuilder:
@@ -567,12 +567,13 @@ class KonfluxOlmBundleBuilder:
             # Start the bundle build
             logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
             retries = 3
+            pipelinerun_dict = None  # Initialize to handle cases where the loop doesn't set it
             for attempt in range(retries):
                 logger.info("Build attempt %d/%d", attempt + 1, retries)
-                pipelinerun, url = await self._start_build(
+                pipelinerun_info, url = await self._start_build(
                     metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks
                 )
-                pipelinerun_name = pipelinerun.name
+                pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
 
@@ -584,7 +585,7 @@ class KonfluxOlmBundleBuilder:
                         bundle_build_repo,
                         package_name,
                         csv_name,
-                        pipelinerun,
+                        pipelinerun_info,
                         outcome,
                         operator_nvr,
                         operand_nvrs,
@@ -596,12 +597,12 @@ class KonfluxOlmBundleBuilder:
                 pipelinerun_info = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                pipelinerun = pipelinerun_info.get_snapshot()
+                pipelinerun_dict = pipelinerun_info.to_dict()
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if not self.dry_run:
-                    results = pipelinerun.get('status', {}).get('results', [])
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
@@ -620,7 +621,7 @@ class KonfluxOlmBundleBuilder:
                         bundle_build_repo,
                         package_name,
                         csv_name,
-                        pipelinerun,
+                        pipelinerun_info,
                         outcome,
                         operator_nvr,
                         operand_nvrs,
@@ -629,7 +630,9 @@ class KonfluxOlmBundleBuilder:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxOlmBundleBuildError(
-                        f"Konflux bundle image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun
+                        f"Konflux bundle image build for {metadata.distgit_key} failed",
+                        pipelinerun_name,
+                        pipelinerun_dict,
                     )
                     logger.error(f"{error}: {url}")
                 else:
@@ -643,7 +646,7 @@ class KonfluxOlmBundleBuilder:
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_olm_bundle_konflux", **record)
-        return pipelinerun_name, pipelinerun
+        return pipelinerun_name, pipelinerun_dict
 
     @staticmethod
     def get_application_name(group_name: str):
@@ -675,7 +678,7 @@ class KonfluxOlmBundleBuilder:
         namespace: str,
         skip_checks: bool = False,
         additional_tags: Optional[Sequence[str]] = None,
-    ):
+    ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not bundle_build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -704,7 +707,7 @@ class KonfluxOlmBundleBuilder:
         )
         logger.info(f"Konflux component {component_name} created")
         # Start a PipelineRun
-        pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
+        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=namespace,
             application_name=app_name,
@@ -722,9 +725,9 @@ class KonfluxOlmBundleBuilder:
             artifact_type="operatorbundle",
             build_priority=BUNDLE_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun.get_snapshot())
-        logger.info(f"PipelineRun {pipelinerun.name} created: {url}")
-        return pipelinerun, url
+        url = konflux_client.resource_url(pipelinerun_info.to_dict())
+        logger.info(f"PipelineRun {pipelinerun_info.name} created: {url}")
+        return pipelinerun_info, url
 
     async def _update_konflux_db(
         self,
@@ -732,7 +735,7 @@ class KonfluxOlmBundleBuilder:
         build_repo: BuildRepo,
         bundle_package_name: str,
         bundle_csv_name: str,
-        pipelinerun: PipelineRunInfo,
+        pipelinerun_info: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         operator_nvr: str,
         operand_nvrs: list[str],
@@ -757,10 +760,10 @@ class KonfluxOlmBundleBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
-            pipelinerun_name = pipelinerun.name
-            pipelinerun_snapshot = pipelinerun.get_snapshot()
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_snapshot)
-            build_component = pipelinerun_snapshot['metadata']['labels'].get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun_info.name
+            pipelinerun_dict = pipelinerun_info.to_dict()
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_dict)
+            build_component = pipelinerun_dict['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),
@@ -796,7 +799,7 @@ class KonfluxOlmBundleBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    results = pipelinerun_snapshot.get('status', {}).get('results', [])
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
@@ -806,7 +809,7 @@ class KonfluxOlmBundleBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    status = pipelinerun_snapshot.get('status', {})
+                    status = pipelinerun_dict.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')
 
@@ -821,7 +824,7 @@ class KonfluxOlmBundleBuilder:
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun_snapshot.get('status', {})
+                    status = pipelinerun_dict.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')
                     build_record_params.update(
@@ -837,5 +840,5 @@ class KonfluxOlmBundleBuilder:
             db.add_build(build_record)
             logger.info(f'Konflux build info stored successfully with status {outcome}')
 
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            logger.exception('Failed writing record to the konflux DB')

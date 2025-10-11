@@ -814,7 +814,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
         mock_pipelinerun_info = MagicMock()
         mock_pipelinerun_info.name = "test-pipelinerun-name"
-        mock_pipelinerun_info.get_snapshot.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
+        mock_pipelinerun_info.to_dict.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
         mock_start_build.return_value = (
             mock_pipelinerun_info,
             "https://example.com/pipeline",
@@ -900,7 +900,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         mock_konflux_client.resource_url = MagicMock(return_value="https://example.com/pipeline")
         mock_pipelinerun_info = MagicMock()
         mock_pipelinerun_info.name = "test-pipelinerun-name"
-        mock_pipelinerun_info.get_snapshot.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
+        mock_pipelinerun_info.to_dict.return_value = {"metadata": {"name": "test-pipelinerun-name"}}
         mock_start_build.return_value = (
             mock_pipelinerun_info,
             "https://example.com/pipeline",
