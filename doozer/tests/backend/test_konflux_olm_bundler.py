@@ -915,4 +915,4 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 'test-operator-1.0-1',
                 ["operand1-1.0-1", "operand2-1.0-1"],
             )
-            self.assertIn('Failed writing record to the konflux DB: Test exception', cm.output[0])
+            self.assertIn('Failed writing record to the konflux DB', cm.output[0])

@@ -1373,6 +1373,6 @@ class KonfluxFbcBuilder:
             db.add_build(build_record)
             logger.info(f'Konflux build info stored successfully with status {outcome}')
 
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            logger.exception('Failed writing record to the konflux DB')
             raise

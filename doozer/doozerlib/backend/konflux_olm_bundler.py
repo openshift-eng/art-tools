@@ -620,7 +620,7 @@ class KonfluxOlmBundleBuilder:
                         bundle_build_repo,
                         package_name,
                         csv_name,
-                        pipelinerun,
+                        pipelinerun_info,
                         outcome,
                         operator_nvr,
                         operand_nvrs,
@@ -675,7 +675,7 @@ class KonfluxOlmBundleBuilder:
         namespace: str,
         skip_checks: bool = False,
         additional_tags: Optional[Sequence[str]] = None,
-    ):
+    ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not bundle_build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -732,7 +732,7 @@ class KonfluxOlmBundleBuilder:
         build_repo: BuildRepo,
         bundle_package_name: str,
         bundle_csv_name: str,
-        pipelinerun: PipelineRunInfo,
+        pipelinerun_info: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         operator_nvr: str,
         operand_nvrs: list[str],
@@ -757,8 +757,8 @@ class KonfluxOlmBundleBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
-            pipelinerun_name = pipelinerun.name
-            pipelinerun_snapshot = pipelinerun.get_snapshot()
+            pipelinerun_name = pipelinerun_info.name
+            pipelinerun_snapshot = pipelinerun_info.get_snapshot()
             build_pipeline_url = KonfluxClient.resource_url(pipelinerun_snapshot)
             build_component = pipelinerun_snapshot['metadata']['labels'].get('appstudio.openshift.io/component')
 
@@ -837,5 +837,5 @@ class KonfluxOlmBundleBuilder:
             db.add_build(build_record)
             logger.info(f'Konflux build info stored successfully with status {outcome}')
 
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            logger.exception('Failed writing record to the konflux DB')
