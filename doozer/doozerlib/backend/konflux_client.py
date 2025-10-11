@@ -446,8 +446,14 @@ class KonfluxClient:
         :return: The template.
         """
         self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
+
+        headers = {}
+        if os.getenv("GITHUB_TOKEN"):
+            # Use a github token to avoid rate limiting when avaialble.
+            headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(template_url) as response:
+            async with session.get(template_url, headers=headers) as response:
                 response.raise_for_status()
                 template_text = await response.text()
                 template = jinja2.Template(template_text, autoescape=True)
