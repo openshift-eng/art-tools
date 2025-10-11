@@ -5,7 +5,7 @@ import os
 import pprint
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 
@@ -204,12 +204,9 @@ class KonfluxImageBuilder:
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                timeout_timedelta = None
-                if metadata.config.konflux.build_timeout:
-                    timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
 
                 pipelinerun_info = await self._konflux_client.wait_for_pipelinerun(
-                    pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
+                    pipelinerun_name, namespace=self._config.namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
@@ -521,6 +518,18 @@ class KonfluxImageBuilder:
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
+        # Prepare annotations
+        annotations = {
+            "art-network-mode": metadata.get_konflux_network_mode(),
+            "art-nvr": nvr,
+        }
+
+        # Add timeout annotation if configured
+        build_timeout_minutes = metadata.config.konflux.build_timeout
+        if build_timeout_minutes:
+            annotations["art-overall-timeout-minutes"] = str(build_timeout_minutes)
+            logger.info(f"Setting custom build timeout: {build_timeout_minutes} minutes")
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -538,7 +547,7 @@ class KonfluxImageBuilder:
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
             sast=sast,
-            annotations={"art-network-mode": metadata.get_konflux_network_mode(), "art-nvr": nvr},
+            annotations=annotations,
             build_priority=build_priority,
         )
 
