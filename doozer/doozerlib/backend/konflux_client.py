@@ -482,17 +482,6 @@ class KonfluxClient:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
 
-        # Ensure that a watcher is running before creating a new PipelineRun.
-        # Empirically, there seems to be a race condition in the pythong client
-        # which allows PipelineRuns created after the watcher is created to
-        # be missed.
-        watch_labels = get_common_runtime_watcher_labels()
-        _ = KonfluxWatcher.get_shared_watcher(
-            namespace=namespace,
-            cfg=self._config,
-            watch_labels=watch_labels,
-        )
-
         template = await self._get_pipelinerun_template(pipelinerun_template_url)
         rendered = template.render(
             {
@@ -790,23 +779,13 @@ class KonfluxClient:
         self,
         pipelinerun_name: str,
         namespace: Optional[str] = None,
-        overall_timeout_timedelta: Optional[datetime.timedelta] = None,
-        pending_timeout_timedelta: Optional[datetime.timedelta] = None,
     ) -> PipelineRunInfo:
         """
-        Wait for a PipelineRun to complete.
-
+        Wait for a PipelineRun to complete. Timeout must be specified via the 'art-overall-timeout-minutes' annotation on the PipelineRun.
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
-        :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
-        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 2 hour)
         :return: The PipelineRunInfo object.
         """
-        if overall_timeout_timedelta is None:
-            overall_timeout_timedelta = datetime.timedelta(hours=5)
-
-        if pending_timeout_timedelta is None:
-            pending_timeout_timedelta = datetime.timedelta(hours=2)
 
         namespace = namespace or self.default_namespace
         if self.dry_run:
@@ -822,7 +801,7 @@ class KonfluxClient:
 
         # Get or create a shared watcher for this namespace
         watch_labels = get_common_runtime_watcher_labels()
-        watcher = KonfluxWatcher.get_shared_watcher(
+        watcher = await KonfluxWatcher.get_shared_watcher(
             namespace=namespace,
             cfg=self._config,
             watch_labels=watch_labels,
@@ -831,8 +810,6 @@ class KonfluxClient:
         # Use the watcher to wait for the PipelineRun to complete
         return await watcher.wait_for_pipelinerun_termination(
             pipelinerun_name=pipelinerun_name,
-            overall_timeout_timedelta=overall_timeout_timedelta,
-            pod_pending_timeout_timedelta=pending_timeout_timedelta,
         )
 
     async def wait_for_release(
