@@ -36,10 +36,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class KonfluxImageBuildError(Exception):
-    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[resource.ResourceInstance]) -> None:
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
         super().__init__(message)
         self.pipelinerun_name = pipelinerun_name
-        self.pipelinerun = pipelinerun
+        self.pipelinerun_dict = pipelinerun_dict
 
 
 @dataclass
@@ -181,7 +181,7 @@ class KonfluxImageBuilder:
 
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(
+                pipelinerun_info = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
                     building_arches=building_arches,
@@ -191,13 +191,13 @@ class KonfluxImageBuilder:
                     build_priority=build_priority,
                     dest_dir=dest_dir,
                 )
-                pipelinerun_name = pipelinerun.name
+                pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
-                record["task_url"] = self._konflux_client.resource_url(pipelinerun.get_snapshot())
+                record["task_url"] = self._konflux_client.resource_url(pipelinerun_info.to_dict())
                 await self.update_konflux_db(
                     metadata,
                     build_repo,
-                    pipelinerun,
+                    pipelinerun_info,
                     KonfluxBuildOutcome.PENDING,
                     building_arches,
                     build_priority,
@@ -215,7 +215,7 @@ class KonfluxImageBuilder:
 
                 # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
                 if outcome is KonfluxBuildOutcome.SUCCESS:
-                    results = pipelinerun_info.get_snapshot().get('status', {}).get('results', [])
+                    results = pipelinerun_info.to_dict().get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
@@ -244,7 +244,7 @@ class KonfluxImageBuilder:
                     error = KonfluxImageBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
                         pipelinerun_name,
-                        pipelinerun_info.get_snapshot(),
+                        pipelinerun_info.to_dict(),
                     )
                 else:
                     metadata.build_status = True
@@ -258,7 +258,7 @@ class KonfluxImageBuilder:
             if self._record_logger:
                 self._record_logger.add_record("image_build_konflux", **record)
             metadata.build_event.set()
-        return pipelinerun_name, pipelinerun
+        return pipelinerun_name, pipelinerun_info.to_dict()
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
         """Parse the Dockerfile and return the UUID tag, component name, version, and release.
@@ -477,7 +477,7 @@ class KonfluxImageBuilder:
         nvr: str,
         build_priority: str,
         dest_dir: Optional[Path] = None,
-    ):
+    ) -> PipelineRunInfo:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
             raise IOError(
@@ -530,7 +530,7 @@ class KonfluxImageBuilder:
             annotations["art-overall-timeout-minutes"] = str(build_timeout_minutes)
             logger.info(f"Setting custom build timeout: {build_timeout_minutes} minutes")
 
-        pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
+        pipelinerun_info = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,
@@ -551,8 +551,8 @@ class KonfluxImageBuilder:
             build_priority=build_priority,
         )
 
-        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun.get_snapshot())}")
-        return pipelinerun
+        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun_info.to_dict())}")
+        return pipelinerun_info
 
     @staticmethod
     async def get_installed_packages(
@@ -673,12 +673,12 @@ class KonfluxImageBuilder:
         release = df.labels['release']
         nvr = "-".join([component_name, version, release])
 
-        pipelinerun = pipelinerun_info.get_snapshot()
+        pipelinerun_dict = pipelinerun_info.to_dict()
         pipelinerun_name = pipelinerun_info.name
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
-        pipelinerun_uid = pipelinerun['metadata']['uid']
-        build_pipeline_url = self._konflux_client.resource_url(pipelinerun)
-        build_component = pipelinerun['metadata']['labels']['appstudio.openshift.io/component']
+        pipelinerun_uid = pipelinerun_dict['metadata']['uid']
+        build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
+        build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
 
         build_record_params = {
             'name': metadata.distgit_key,
@@ -715,7 +715,7 @@ class KonfluxImageBuilder:
             # - name: IMAGE_DIGEST
             #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-            results = pipelinerun.get('status', {}).get('results', [])
+            results = pipelinerun_dict.get('status', {}).get('results', [])
             image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
             image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
@@ -737,7 +737,7 @@ class KonfluxImageBuilder:
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )
-        status = pipelinerun.get('status', {})
+        status = pipelinerun_dict.get('status', {})
         if status:
             start_time = status.get('startTime')
             if start_time:
@@ -794,7 +794,7 @@ class KonfluxImageBuilder:
         pods = pipelinerun_info.get_pods()
 
         for pod_info in pods:
-            pod = pod_info.get_snapshot()
+            pod = pod_info.to_dict()
             pod_metadata = pod.get('metadata', {})
             max_finished_time = None
             all_containers_finished = True

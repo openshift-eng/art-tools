@@ -201,7 +201,7 @@ class KonfluxWatcher:
                             temp_pod_info = PodInfo(pod_instance)
                             pod_name = temp_pod_info.name
                             if pod_name:
-                                pod_dict = temp_pod_info.get_snapshot()
+                                pod_dict = temp_pod_info.to_dict()
                                 container_logs = {}
 
                                 # Only fetch logs for pods that are not in a successful/pending/running state.
