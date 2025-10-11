@@ -47,7 +47,9 @@ class FindBugsMode:
 
 class FindBugsSweep(FindBugsMode):
     def __init__(self, cve_only: bool = False):
-        super().__init__(status={'MODIFIED', 'ON_QA', 'VERIFIED'}, cve_only=cve_only)
+        # Policy document: https://docs.google.com/document/d/1RkyN1hp1_mUqeks0kVzPscDeZVo-RDCYCTq6VLNB9i4/edit?tab=t.0#heading=h.m52kbuqe0dss
+        # Accordingly, ART only sweeps VERIFIED by default.
+        super().__init__(status={'VERIFIED'}, cve_only=cve_only)
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
