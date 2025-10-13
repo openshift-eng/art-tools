@@ -597,20 +597,22 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
 
 
 def start_build_plashets(
-    version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
 ) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'RELEASE': release,
+        'ASSEMBLY': assembly,
+        'REPOS': ','.join(repos) if repos else '',
+        'DATA_PATH': data_path,
+        'DATA_GITREF': data_gitref,
+        'COPY_LINKS': copy_links,
+        'DRY_RUN': dry_run,
+    }
+
     return start_build(
         job=Jobs.BUILD_PLASHETS,
-        params={
-            'VERSION': version,
-            'RELEASE': release,
-            'ASSEMBLY': assembly,
-            'REPOS': ','.join(repos) if repos else '',
-            'DATA_PATH': data_path,
-            'DATA_GITREF': data_gitref,
-            'COPY_LINKS': copy_links,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 

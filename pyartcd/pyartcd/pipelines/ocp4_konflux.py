@@ -676,8 +676,9 @@ class KonfluxOcp4Pipeline:
 
         # Build plashets if needed
         if not self.skip_plashets and self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            group_param = f"openshift-{self.version}"
             jenkins.start_build_plashets(
-                version=self.version,
+                group=group_param,
                 release=self.release,
                 assembly=self.assembly,
                 data_path=self.data_path,

@@ -307,7 +307,7 @@ class BuildMicroShiftBootcPipeline:
             return
 
         jenkins.start_build_plashets(
-            version=f"{major}.{minor}",
+            group=self.group,
             release=default_release_suffix(),
             assembly=self.assembly,
             repos=[microshift_plashet_name],
