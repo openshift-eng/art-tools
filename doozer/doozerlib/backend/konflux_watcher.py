@@ -483,7 +483,7 @@ class KonfluxWatcher:
                     if pipelinerun_name not in self._pipelinerun_cache:
                         not_found_count += 1
                         self._logger.warning(
-                            f"PipelineRun {pipelinerun_name} waiter failed to find PLR in cache on attempt {not_found_count}; Current cache contains: {self._pipelinerun_cache.keys}"
+                            f"PipelineRun {pipelinerun_name} waiter failed to find PLR in cache on attempt {not_found_count}; Current cache contains: {self._pipelinerun_cache.keys()}"
                         )
                         if not_found_count >= 2:  # Wait for 2 polling intervals
                             raise ValueError(f"PipelineRun {pipelinerun_name} not found")
