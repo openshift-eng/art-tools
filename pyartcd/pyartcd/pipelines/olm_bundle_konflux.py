@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 from aioredlock import LockError
 from artcommonlib import exectools
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -95,8 +96,33 @@ async def olm_bundle_konflux(
     cmd.append('beta:images:konflux:bundle')
     if force:
         cmd.append('--force')
-    if kubeconfig:
-        cmd.extend(['--konflux-kubeconfig', kubeconfig])
+
+    # Set namespace based on group prefix
+    for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+        if group.startswith(prefix):
+            cmd.extend(['--konflux-namespace', namespace])
+            break
+
+    # Use kubeconfig from CLI parameter or tenant-specific environment variable
+    final_kubeconfig = kubeconfig
+    if not final_kubeconfig:
+        # Determine the appropriate environment variable based on group prefix
+        kubeconfig_env_var = None
+        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+            if group.startswith(prefix):
+                kubeconfig_env_var = env_var
+                break
+
+        if kubeconfig_env_var:
+            final_kubeconfig = os.environ.get(kubeconfig_env_var)
+
+        if not final_kubeconfig:
+            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            raise ValueError(
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+            )
+
+    cmd.extend(['--konflux-kubeconfig', final_kubeconfig])
     if plr_template:
         plr_template_owner, plr_template_branch = (
             plr_template.split("@") if plr_template else ["openshift-priv", "main"]
