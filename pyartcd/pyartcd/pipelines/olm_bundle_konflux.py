@@ -173,19 +173,24 @@ async def olm_bundle_konflux(
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
         if operator_nvrs:
+            runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
             # Check if this is an OADP, MTA, or MTC group and if OCP_TARGET_VERSIONS is configured
             if group and (group.startswith("oadp-") or group.startswith("mta-") or group.startswith("mtc-")):
+                runtime.logger.info(f'Group {group} matches OADP/MTA/MTC pattern, checking for OCP_TARGET_VERSIONS')
                 # Load group config to check for OCP_TARGET_VERSIONS
                 group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
 
                 # Check if OCP_TARGET_VERSIONS is defined in group config
-                ocp_target_versions = getattr(group_config, 'OCP_TARGET_VERSIONS', None)
+                ocp_target_versions = group_config.get("OCP_TARGET_VERSIONS")
+                runtime.logger.info(f'OCP_TARGET_VERSIONS from group config: {ocp_target_versions}')
 
                 if ocp_target_versions:
+                    runtime.logger.info(f'Starting multiple FBC jobs for target versions: {ocp_target_versions}')
                     # Generate multiple FBC jobs, one for each target version
                     for target_version in ocp_target_versions:
+                        runtime.logger.info(f'Starting FBC job for target version: {target_version}')
                         jenkins.start_build_fbc(
-                            version=target_version,
+                            version=version,
                             group=group,
                             assembly=assembly,
                             operator_nvrs=operator_nvrs,
@@ -193,6 +198,7 @@ async def olm_bundle_konflux(
                             ocp_target_version=target_version,
                         )
                 else:
+                    runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                     # No OCP_TARGET_VERSIONS defined, use original behavior
                     jenkins.start_build_fbc(
                         version=version,
@@ -202,7 +208,8 @@ async def olm_bundle_konflux(
                         dry_run=runtime.dry_run,
                     )
             else:
-                # Not an OADP group, use original behavior
+                runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
+                # Not an OADP/MTA/MTC group, use original behavior
                 jenkins.start_build_fbc(
                     version=version,
                     group=group if group else None,
