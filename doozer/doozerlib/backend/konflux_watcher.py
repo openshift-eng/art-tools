@@ -382,6 +382,9 @@ class KonfluxWatcher:
     def _notify_waiters(self):
         """Notify all async waiters about cache updates."""
         with self._waiter_events_lock:
+            self._logger.info(
+                f"Notifying {len(self._waiter_events)} waiter(s) about cache updates: {self._waiter_events}"
+            )
             for event in self._waiter_events.values():
                 self._loop.call_soon_threadsafe(event.set)
 
@@ -470,11 +473,18 @@ class KonfluxWatcher:
             self._next_waiter_id += 1
             self._waiter_events[waiter_id] = event
 
+        self._logger.info(
+            f"PipelineRun {pipelinerun_name} waiter will use waiter_id={waiter_id} to and event {event} to await termination"
+        )
+
         try:
             while True:
                 with self._cache_lock:
                     if pipelinerun_name not in self._pipelinerun_cache:
                         not_found_count += 1
+                        self._logger.warning(
+                            f"PipelineRun {pipelinerun_name} waiter failed to find PLR in cache on attempt {not_found_count}; Current cache contains: {self._pipelinerun_cache.keys}"
+                        )
                         if not_found_count >= 2:  # Wait for 2 polling intervals
                             raise ValueError(f"PipelineRun {pipelinerun_name} not found")
                     else:
