@@ -621,6 +621,7 @@ def start_build_fbc(
     operator_nvrs: list,
     dry_run: bool,
     group: Optional[str] = None,
+    ocp_target_version: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -631,6 +632,8 @@ def start_build_fbc(
     }
     if group:
         params['GROUP'] = group
+    if ocp_target_version:
+        params['OCP_TARGET_VERSION'] = ocp_target_version
 
     return start_build(
         job=Jobs.BUILD_FBC,

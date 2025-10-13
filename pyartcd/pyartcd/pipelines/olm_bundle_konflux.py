@@ -11,6 +11,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 
 @cli.command('olm-bundle-konflux')
@@ -172,13 +173,43 @@ async def olm_bundle_konflux(
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
         if operator_nvrs:
-            jenkins.start_build_fbc(
-                version=version,
-                group=group if group else None,
-                assembly=assembly,
-                operator_nvrs=operator_nvrs,
-                dry_run=runtime.dry_run,
-            )
+            # Check if this is an OADP, MTA, or MTC group and if OCP_TARGET_VERSIONS is configured
+            if group and (group.startswith("oadp-") or group.startswith("mta-") or group.startswith("mtc-")):
+                # Load group config to check for OCP_TARGET_VERSIONS
+                group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
+
+                # Check if OCP_TARGET_VERSIONS is defined in group config
+                ocp_target_versions = getattr(group_config, 'OCP_TARGET_VERSIONS', None)
+
+                if ocp_target_versions:
+                    # Generate multiple FBC jobs, one for each target version
+                    for target_version in ocp_target_versions:
+                        jenkins.start_build_fbc(
+                            version=target_version,
+                            group=group,
+                            assembly=assembly,
+                            operator_nvrs=operator_nvrs,
+                            dry_run=runtime.dry_run,
+                            ocp_target_version=target_version,
+                        )
+                else:
+                    # No OCP_TARGET_VERSIONS defined, use original behavior
+                    jenkins.start_build_fbc(
+                        version=version,
+                        group=group,
+                        assembly=assembly,
+                        operator_nvrs=operator_nvrs,
+                        dry_run=runtime.dry_run,
+                    )
+            else:
+                # Not an OADP group, use original behavior
+                jenkins.start_build_fbc(
+                    version=version,
+                    group=group if group else None,
+                    assembly=assembly,
+                    operator_nvrs=operator_nvrs,
+                    dry_run=runtime.dry_run,
+                )
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
