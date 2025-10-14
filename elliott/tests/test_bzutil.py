@@ -504,24 +504,36 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('CVE-2022-123', sort_list[4])
 
     def test_is_first_fix_any_validate(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+
         # should raise error when no tracker bugs are found
-        tr = '4.8.0'
         self.assertRaisesRegex(
-            ValueError, r'does not seem to have trackers', bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [], tr
+            ValueError,
+            r'does not seem to have trackers',
+            bzutil.is_first_fix_any,
+            mock_runtime,
+            BugzillaBug(flexmock(id=1)),
+            [],
         )
 
         # should raise error when flaw alias isn't present
-        tr = '4.8.0'
         self.assertRaisesRegex(
             ValueError,
             r'does not have a CVE alias',
             bzutil.is_first_fix_any,
+            mock_runtime,
             BugzillaBug(flexmock(id=1)),
             [JIRABug(flexmock(key="OCPBUGS-foo"))],
-            tr,
         )
 
     def test_is_first_fix_any(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive('image_metas').and_return([])
+
         hydra_data = {
             'package_state': [
                 {
@@ -555,26 +567,34 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
             flexmock(status_code=200, json=lambda: pyxis_data)
         ).ordered()
 
-        tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
         tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
         expected = True
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
     def test_is_first_fix_any_missing_package_state(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive('image_metas').and_return([])
+
         hydra_data = {}
         flexmock(requests).should_receive('get').and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
         )
-        tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
         tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
         expected = False
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
     def test_is_first_fix_any_fail(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive('image_metas').and_return([])
+
         hydra_data = {
             'package_state': [
                 {
@@ -608,11 +628,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
             flexmock(status_code=200, json=lambda: pyxis_data)
         ).ordered()
 
-        tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
         tracker_bugs = [flexmock(id=2, whiteboard_component='openshift')]
         expected = False
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
 
