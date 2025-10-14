@@ -1466,21 +1466,16 @@ def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]
         if ocp_product_name in package_info['product_name']:
             pkg_name = package_info['package_name']
 
-            # golang container component is special and it is always first-fix
-            if pkg_name == "openshift-golang-builder-container":
-                components_not_yet_fixed.append(pkg_name)
-                continue
-
             # is it a delivery repo?
             # if it is then we need to match the delivery repo name to component name
             if '/' in pkg_name:
                 matched = False
                 for meta in runtime.image_metas():
                     delivery_repo_names = meta.config.delivery.delivery_repo_names
-                    pkg_name_without_rhel = pkg_name.replace("-rhel8", "").replace("-rhel9", "")
+                    pkg_name_without_rhel = re.sub(r"-rhel\d+", "", pkg_name)
                     for delivery_repo in delivery_repo_names:
                         # prodsec data is extremely messy in terms of rhel suffixes
-                        delivery_repo_without_rhel = delivery_repo.replace("-rhel8", "").replace("-rhel9", "")
+                        delivery_repo_without_rhel = re.sub(r"-rhel\d+", "", delivery_repo)
                         if delivery_repo_without_rhel == pkg_name_without_rhel:
                             matched = True
                             components_not_yet_fixed.append(meta.get_component_name())
@@ -1490,6 +1485,9 @@ def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]
                         f"Could not find component name for {pkg_name}! is it an art component? is the delivery repo defined?"
                     )
             else:
+                # if it not a delivery repo then it could already be a component name like
+                # openshift-golang-builder-container, rhcos or rpm name e.g openshift-clients
+                # in which case we can just add it to the list of components not yet fixed
                 components_not_yet_fixed.append(pkg_name)
 
     logger.info(f"{components_not_yet_fixed=}")
