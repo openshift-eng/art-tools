@@ -36,25 +36,36 @@ def find_bugs_second_fix_cli(runtime: Runtime, close, noop):
 
 
 def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
-    allowed_phases = ['pre-release','signing']
+    allowed_phases = ['pre-release', 'signing']
     phase_value = runtime.group_config.software_lifecycle.phase
     if phase_value in allowed_phases:
         LOGGER.info(
             f"Software lifecycle is {runtime.group_config.software_lifecycle.phase}. Performing second-fix action ..."
         )
         major_version, minor_version = runtime.get_major_minor()
+
+        LOGGER.info("Fetching tracker bugs .. ")
         trackers = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+        LOGGER.info(f"{len(trackers)} trackers found: {[b.id for b in trackers]}")
+
+        trackers = [b for b in trackers if b.is_tracker_bug()]
+        LOGGER.info(f"{len(trackers)} valid trackers found: {[b.id for b in trackers]}")
+
+        LOGGER.info(f"Fetching flaw bugs .. ")
         flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
-        tracker_flaws, not_first_fix_flaw_bugs = get_flaws(
-            flaw_bug_tracker, trackers, runtime.assembly_type, runtime.assembly
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(
+            flaw_bug_tracker, trackers, runtime.assembly_type, runtime.assembly, major_version
         )
-        # Extract Bugzilla IDs from not_first_flaw_bugs into a set for efficient lookup
-        not_first_flaw_bug_ids_set = {bug.id for bug in not_first_fix_flaw_bugs}
+        # Extract Bugzilla IDs from first_flaw_bugs into a set for efficient lookup
+        first_flaw_bug_ids_set = {bug.id for bug in first_fix_flaw_bugs}
         # Filter tracker_flaws based on these Bugzilla IDs
         matching_tracker_keys_list = []
 
         for tracker_id, bugzilla_ids_list in tracker_flaws.items():
-            if any(bz_id in not_first_flaw_bug_ids_set for bz_id in bugzilla_ids_list):
+            if len(bugzilla_ids_list) != 1:
+                raise ValueError("Did not expect flaws to be more than 1")
+            bz_id = bugzilla_ids_list[0]
+            if bz_id not in first_flaw_bug_ids_set:
                 matching_tracker_keys_list.append(tracker_id)
 
         if close:

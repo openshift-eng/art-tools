@@ -150,6 +150,7 @@ class AttachCveFlaws:
                 tracker_bugs,
                 self.runtime.assembly_type,
                 self.runtime.assembly,
+                self.major,
             )
             if tracker_bugs
             else ({}, [])
