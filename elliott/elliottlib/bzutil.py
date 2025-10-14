@@ -23,14 +23,13 @@ from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
 from jira import JIRA, Issue, JIRAError
 from koji import ClientSession
-from requests_gssapi import HTTPSPNEGOAuth
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from elliottlib import constants, errata, exceptions, util
+from elliottlib import constants, errata, exceptions
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
-from elliottlib.util import chunk, isolate_timestamp_in_release
+from elliottlib.util import chunk, get_component_by_delivery_repo, isolate_timestamp_in_release
 
 logger = logutil.get_logger(__name__)
 
@@ -1431,7 +1430,7 @@ def sort_cve_bugs(bugs):
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
-def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]):
+def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]) -> bool:
     major_version, _ = runtime.get_major_minor()
 
     if not tracker_bugs:
@@ -1468,22 +1467,14 @@ def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]
 
             # is it a delivery repo?
             # if it is then we need to match the delivery repo name to component name
-            if '/' in pkg_name:
-                matched = False
-                for meta in runtime.image_metas():
-                    delivery_repo_names = meta.config.delivery.delivery_repo_names
-                    pkg_name_without_rhel = re.sub(r"-rhel\d+", "", pkg_name)
-                    for delivery_repo in delivery_repo_names:
-                        # prodsec data is extremely messy in terms of rhel suffixes
-                        delivery_repo_without_rhel = re.sub(r"-rhel\d+", "", delivery_repo)
-                        if delivery_repo_without_rhel == pkg_name_without_rhel:
-                            matched = True
-                            components_not_yet_fixed.append(meta.get_component_name())
-                            break
-                if not matched:
+            if "openshift4/" in pkg_name:
+                comp_name = get_component_by_delivery_repo(runtime, pkg_name)
+                if not comp_name:
                     logger.warning(
                         f"Could not find component name for {pkg_name}! is it an art component? is the delivery repo defined?"
                     )
+                else:
+                    components_not_yet_fixed.append(comp_name)
             else:
                 # if it not a delivery repo then it could already be a component name like
                 # openshift-golang-builder-container, rhcos or rpm name e.g openshift-clients
@@ -1516,10 +1507,7 @@ def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]
     return False
 
 
-def get_flaws(
-    runtime,
-    tracker_bugs: List[Bug],
-) -> (Dict, List):
+def get_flaws(runtime, tracker_bugs: List[Bug]) -> (Dict, List):
     assembly = runtime.assembly
     assembly_type = runtime.assembly_type
     flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
