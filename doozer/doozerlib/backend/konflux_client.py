@@ -446,11 +446,19 @@ class KonfluxClient:
         :return: The template.
         """
         self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
+        # In order to not be rate limited, requests for raw files from github
+        # need to go through the API and be authenticated with a bearer token.
+        if not template_url.startswith('https://api.github.com'):
+            raise ValueError('Template URL must be accessed through api.github.com')
 
-        headers = {}
+        headers = {
+            "Accept": "application/vnd.github.v3.raw",  # Request raw file contents
+        }
         if os.getenv("GITHUB_TOKEN"):
             # Use a github token to avoid rate limiting when avaialble.
             headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
+        else:
+            self._logger.warning('GITHUB_TOKEN not set. Template retrieval may be rate limited.')
 
         async with aiohttp.ClientSession() as session:
             async with session.get(template_url, headers=headers) as response:
