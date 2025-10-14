@@ -555,11 +555,34 @@ class KonfluxImageBuilder:
         return pipelinerun_info
 
     @staticmethod
+    def _is_builder_package(source_info: str) -> bool:
+        """
+        Categorize packages by build stage for debug logging.
+
+        Returns True if the package appears to come from a builder stage
+        based on sourceInfo patterns.
+        """
+        if not source_info:
+            return False
+
+        builder_patterns = [
+            "/go.mod",  # Go modules from golang-builder
+            "/vendor/",  # Vendored dependencies
+            "requirements-build.txt",  # Build-time Python deps
+            "/workspace",  # Builder workspace paths
+            "package-lock.json",  # NPM dependencies
+        ]
+        return any(pattern in source_info for pattern in builder_patterns)
+
+    @staticmethod
     async def get_installed_packages(
         image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
     ) -> Tuple[Set[str], Set[str]]:
         """
         :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
+
+        Enhanced to process ALL RPM packages from Contextual SBOM, including packages from
+        both builder stages and final container layer for complete supply chain visibility.
         """
 
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
@@ -602,6 +625,7 @@ class KonfluxImageBuilder:
 
             # we request konflux to generate sbom in spdx schema: https://spdx.dev/
             # https://github.com/openshift-eng/art-tools/blob/fb172e73df248b1dbc09c3666b5229b4db705427/doozer/doozerlib/backend/konflux_client.py#L473
+            # Enhanced to process ALL RPM packages from Contextual SBOM (builder + final stages)
             for x in sbom_contents["packages"]:
                 purl_string = next(
                     (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
@@ -614,8 +638,17 @@ class KonfluxImageBuilder:
                 if purl_string.startswith("pkg:"):
                     try:
                         purl = PackageURL.from_string(purl_string)
-                        # right now, we only care about rpms
+                        # Process ALL rpm packages (builder + final stages for complete inventory)
                         if purl.type == "rpm":
+                            # Debug logging for package origin attribution
+                            source_info = x.get("sourceInfo", "")
+                            is_builder = KonfluxImageBuilder._is_builder_package(source_info)
+                            LOGGER.debug(
+                                f"Processing RPM package {purl.name}-{purl.version} "
+                                f"(origin: {'builder' if is_builder else 'final'}, "
+                                f"sourceInfo: {source_info[:50]}...)"
+                            )
+
                             # get the installed package (name + version)
                             if purl.name and purl.version:
                                 package_nvrs.add(f"{purl.name}-{purl.version}")
