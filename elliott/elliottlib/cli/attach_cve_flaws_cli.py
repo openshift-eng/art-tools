@@ -146,11 +146,8 @@ class AttachCveFlaws:
         # Get flaw bugs
         tracker_flaws, flaw_bugs = (
             get_flaws(
-                self.runtime.get_bug_tracker('bugzilla'),
+                self.runtime,
                 tracker_bugs,
-                self.runtime.assembly_type,
-                self.runtime.assembly,
-                self.major,
             )
             if tracker_bugs
             else ({}, [])

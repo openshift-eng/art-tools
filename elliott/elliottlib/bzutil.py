@@ -1431,7 +1431,9 @@ def sort_cve_bugs(bugs):
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
-def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], major_version: str):
+def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug]):
+    major_version, _ = runtime.get_major_minor()
+
     if not tracker_bugs:
         # This shouldn't happen
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
@@ -1444,42 +1446,53 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], major_v
         )
 
     alias = flaw_bug.alias[0]
+    logger.info(f"Fetching CVE data from hydra for {alias}")
     cve_url = f"https://access.redhat.com/hydra/rest/securitydata/cve/{alias}.json"
     response = requests.get(cve_url)
     response.raise_for_status()
-    data = response.json()
+    hydra_data = response.json()
 
     ocp_product_name = f"Red Hat OpenShift Container Platform {major_version}"
     components_not_yet_fixed = []
-    pyxis_base_url = (
-        "https://pyxis.engineering.redhat.com/v1/repositories/registry/registry.access.redhat.com"
-        "/repository/{pkg_name}/images?page_size=1&include=data.brew"
-    )
 
-    if 'package_state' not in data:
+    if 'package_state' not in hydra_data:
         logger.info(f'{flaw_bug.id} ({alias}) not considered a first-fix because no unfixed components were found')
         return False
 
-    for package_info in data['package_state']:
+    for package_info in hydra_data['package_state']:
         # previously we were also checking `package_info['fix_state'] in ['Affected', 'Under investigation']`
         # but we don't need to verify that since according to @sfowler if a package has a tracker for a cve
         # and was found in the list of unfixed components then it is assumed to be `Affected`
         if ocp_product_name in package_info['product_name']:
             pkg_name = package_info['package_name']
-            # for images `package_name` field is usually the container delivery repo
-            # otherwise we assume it's the exact brew package name
+
+            # golang container component is special and it is always first-fix
+            if pkg_name == "openshift-golang-builder-container":
+                components_not_yet_fixed.append(pkg_name)
+                continue
+
+            # is it a delivery repo?
+            # if it is then we need to match the delivery repo name to component name
             if '/' in pkg_name:
-                pyxis_url = pyxis_base_url.format(pkg_name=pkg_name)
-                response = requests.get(pyxis_url, auth=HTTPSPNEGOAuth())
-                if response.status_code == requests.codes.ok:
-                    data = response.json()['data']
-                    if data and 'brew' in data[0]:
-                        pkg_name = data[0]['brew']['package']
-                    else:
-                        logger.warn(f'could not find brew package info at {pyxis_url}')
-                else:
-                    logger.warn(f'got status={response.status_code} for {pyxis_url}')
-            components_not_yet_fixed.append(pkg_name)
+                matched = False
+                for meta in runtime.image_metas():
+                    delivery_repo_names = meta.config.delivery.delivery_repo_names
+                    pkg_name_without_rhel = pkg_name.replace("-rhel8", "").replace("-rhel9", "")
+                    for delivery_repo in delivery_repo_names:
+                        # prodsec data is extremely messy in terms of rhel suffixes
+                        delivery_repo_without_rhel = delivery_repo.replace("-rhel8", "").replace("-rhel9", "")
+                        if delivery_repo_without_rhel == pkg_name_without_rhel:
+                            matched = True
+                            components_not_yet_fixed.append(meta.get_component_name())
+                            break
+                if not matched:
+                    logger.warning(
+                        f"Could not find component name for {pkg_name}! is it an art component? is the delivery repo defined?"
+                    )
+            else:
+                components_not_yet_fixed.append(pkg_name)
+
+    logger.info(f"{components_not_yet_fixed=}")
 
     # get tracker components
     first_fix_components = []
@@ -1506,12 +1519,13 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], major_v
 
 
 def get_flaws(
-    flaw_bug_tracker: BugTracker,
+    runtime,
     tracker_bugs: List[Bug],
-    assembly_type: AssemblyTypes,
-    assembly: str,
-    major_version: str,
 ) -> (Dict, List):
+    assembly = runtime.assembly
+    assembly_type = runtime.assembly_type
+    flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
+
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -1545,7 +1559,7 @@ def get_flaws(
         first_fix_flaw_bugs = [
             flaw_bug_info['bug']
             for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], major_version)
+            if is_first_fix_any(runtime, flaw_bug_info['bug'], flaw_bug_info['trackers'])
         ]
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')

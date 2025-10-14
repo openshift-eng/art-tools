@@ -30,7 +30,7 @@ def find_bugs_second_fix_cli(runtime: Runtime, close, noop):
 
         $ elliott -g openshift-4.Y find-bugs:second-fix
     """
-    runtime.initialize()
+    runtime.initialize(mode='images')
     find_bugs_obj = FindBugsSecondFix()
     find_bugs_second_fix(runtime, find_bugs_obj, close, noop, runtime.get_bug_tracker('jira'))
 
@@ -51,11 +51,8 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
         trackers = [b for b in trackers if b.is_tracker_bug()]
         LOGGER.info(f"{len(trackers)} valid trackers found: {[b.id for b in trackers]}")
 
-        LOGGER.info(f"Fetching flaw bugs .. ")
-        flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(
-            flaw_bug_tracker, trackers, runtime.assembly_type, runtime.assembly, major_version
-        )
+        LOGGER.info("Fetching flaw bugs .. ")
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(runtime, trackers)
         # Extract Bugzilla IDs from first_flaw_bugs into a set for efficient lookup
         first_flaw_bug_ids_set = {bug.id for bug in first_fix_flaw_bugs}
         # Filter tracker_flaws based on these Bugzilla IDs
