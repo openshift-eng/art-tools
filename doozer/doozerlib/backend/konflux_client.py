@@ -437,15 +437,16 @@ class KonfluxClient:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
+    @staticmethod
     @alru_cache
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
-    async def _get_pipelinerun_template(self, template_url: str):
+    async def _get_pipelinerun_template(template_url: str):
         """Get a PipelineRun template.
 
         :param template_url: The URL to the template.
         :return: The template.
         """
-        self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
+        LOGGER.info(f"Pulling Konflux PLR template from: {template_url}")
         # In order to not be rate limited, requests for raw files from github
         # need to go through the API and be authenticated with a bearer token.
         if not template_url.startswith('https://api.github.com'):
@@ -458,7 +459,7 @@ class KonfluxClient:
             # Use a github token to avoid rate limiting when avaialble.
             headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
         else:
-            self._logger.warning('GITHUB_TOKEN not set. Template retrieval may be rate limited.')
+            LOGGER.warning('GITHUB_TOKEN not set. Template retrieval may be rate limited.')
 
         async with aiohttp.ClientSession() as session:
             async with session.get(template_url, headers=headers) as response:
