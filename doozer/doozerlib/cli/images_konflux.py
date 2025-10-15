@@ -369,7 +369,6 @@ class KonfluxBundleCli:
                 assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
                 dgk_records[record.name] = record
             # Load image metas for the given operators
-            runtime.images = list(dgk_records.keys())
             runtime.initialize(mode='images', clone_distgits=False)
             for dgk in dgk_records.keys():
                 metadata = runtime.image_map[dgk]
