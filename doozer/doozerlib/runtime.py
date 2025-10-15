@@ -1065,7 +1065,7 @@ class Runtime(GroupRuntime):
                 This is usually a lookup in streams.yml, but can also be overridden on the command line. If
                 the stream_name cannot be resolved, an exception is thrown.
         """
-
+        self._logger.info(f"current streams: {self.streams.items()}")
         # If the stream has an override from the command line, return it.
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
