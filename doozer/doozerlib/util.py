@@ -791,11 +791,12 @@ def get_konflux_build_priority(metadata):
         logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
         return str(group_config_priority)
 
-    # 3. Priority 7 for pre-release or signing phases
+    # 3. Higher than default priority for main & pre-GA N-1 streams.
     phase = metadata.runtime.group_config.software_lifecycle.phase
     if phase in ("pre-release", "signing"):
-        logger.info(f"Using phase-based priority for {metadata.distgit_key}: 7 (phase: {phase})")
-        return "7"
+        pre_release_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - 2))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {pre_release_priority} (phase: {phase})")
+        return pre_release_priority
 
     # Default
     logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
