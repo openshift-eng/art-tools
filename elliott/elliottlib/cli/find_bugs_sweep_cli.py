@@ -558,8 +558,14 @@ def categorize_bugs_by_type(
             # builds from errata/rpm advisories are only fetched if --build-system=brew
             # builds from shipment/image advisories are only fetched if --build-system=konflux
             # so only complain about bugs for which builds were fetched
-            not_found_image_bugs = [b for b in still_not_found if b.whiteboard_component.endswith("-container")]
-            not_found_rpm_bugs = [b for b in still_not_found if not b.whiteboard_component.endswith("-container")]
+
+            # whiteboard value could be component or delivery repo name
+            not_found_image_bugs = [
+                b
+                for b in still_not_found
+                if b.whiteboard_component.endswith("-container") or "openshift4/" in b.whiteboard_component
+            ]
+            not_found_rpm_bugs = [b for b in still_not_found if b not in not_found_image_bugs]
 
             if runtime.build_system == "brew":
                 message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
