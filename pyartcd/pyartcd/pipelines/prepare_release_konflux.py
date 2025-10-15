@@ -281,6 +281,7 @@ class PrepareReleaseKonfluxPipeline:
 
     async def validate_assembly(self):
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
+        self.logger.info(f"Assembly type: {self.assembly_type}")
         # validate assembly and init release vars
         if self.releases_config.get("releases", {}).get(self.assembly) is None:
             raise ValueError(f"Assembly not found: {self.assembly}")
@@ -386,7 +387,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # find bugs
         self.logger.info("Finding bugs for %s advisory ...", impetus)
-        bug_ids = (await self.find_bugs(build_system='brew', permissive=True)).get(impetus, [])
+        bug_ids = (await self.find_bugs(build_system='brew')).get(impetus, [])
 
         if bug_ids:
             self.logger.info(f"Found {len(bug_ids)} {impetus} bugs: {bug_ids}")

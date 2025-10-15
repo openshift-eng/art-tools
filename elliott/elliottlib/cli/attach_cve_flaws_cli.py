@@ -291,9 +291,8 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(
-                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
-            )
+            tracker_flaws, flaw_bugs = get_flaws(self.runtime, attached_trackers) if attached_trackers else ({}, [])
+            self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for advisory {advisory_id} to be attached")
 
             try:
                 if flaw_bugs:

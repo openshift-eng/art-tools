@@ -535,6 +535,16 @@ def categorize_bugs_by_type(
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
+    def _message(kind: str, bug_data: list[tuple[str, str]]) -> str:
+        advisory_type = "errata" if runtime.build_system == "brew" else "shipment"
+        return (
+            f'No attached builds found in {advisory_type} advisories for {kind} tracker bugs (bug, package): '
+            f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
+        )
+
+    def _is_image_component(component: str) -> bool:
+        return component.endswith("-container") or "openshift4/" in component
+
     not_found = set(tracker_bugs) - found
     if not_found:
         still_not_found = not_found
@@ -547,17 +557,26 @@ def categorize_bugs_by_type(
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
-            still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
-            message = (
-                'No attached builds found in advisories for tracker bugs (bug, package): '
-                f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
-                f'ids in the assembly definition'
-            )
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
-            else:
-                raise ValueError(message)
+            # We want to separate image and rpm tracker bug-build-validation since they are handled differently
+            # builds from errata/rpm advisories are only fetched if --build-system=brew
+            # builds from shipment/image advisories are only fetched if --build-system=konflux
+            # so only complain about bugs for which builds were fetched
+
+            # whiteboard value could be component or delivery repo name
+            not_found_image_bugs = [b for b in still_not_found if _is_image_component(b.whiteboard_component)]
+            not_found_rpm_bugs = [b for b in still_not_found if b not in not_found_image_bugs]
+            message = ""
+            if runtime.build_system == "brew" and not_found_rpm_bugs:
+                message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
+            elif runtime.build_system == "konflux" and not_found_image_bugs:
+                message = _message("image", [(b.id, b.whiteboard_component) for b in not_found_image_bugs])
+
+            if message:
+                if permissive:
+                    logger.warning(f"{message} Ignoring them because --permissive.")
+                    issues.append(message)
+                else:
+                    raise ValueError(message)
 
     return bugs_by_type, issues
 
