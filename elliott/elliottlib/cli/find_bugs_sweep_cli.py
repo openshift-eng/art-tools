@@ -542,6 +542,9 @@ def categorize_bugs_by_type(
             f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
         )
 
+    def _is_image_component(component: str) -> bool:
+        return component.endswith("-container") or "openshift4/" in component
+
     not_found = set(tracker_bugs) - found
     if not_found:
         still_not_found = not_found
@@ -560,23 +563,22 @@ def categorize_bugs_by_type(
             # so only complain about bugs for which builds were fetched
 
             # whiteboard value could be component or delivery repo name
-            not_found_image_bugs = [
-                b
-                for b in still_not_found
-                if b.whiteboard_component.endswith("-container") or "openshift4/" in b.whiteboard_component
-            ]
+            not_found_image_bugs = [b for b in still_not_found if _is_image_component(b.whiteboard_component)]
             not_found_rpm_bugs = [b for b in still_not_found if b not in not_found_image_bugs]
-
-            if runtime.build_system == "brew":
+            message = ""
+            if runtime.build_system == "brew" and not_found_rpm_bugs:
                 message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
-            else:
+            elif runtime.build_system == "konflux" and not_found_image_bugs:
                 message = _message("image", [(b.id, b.whiteboard_component) for b in not_found_image_bugs])
-
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
             else:
-                raise ValueError(message)
+                raise ValueError(f"Invalid build system {runtime.build_system}")
+
+            if message:
+                if permissive:
+                    logger.warning(f"{message} Ignoring them because --permissive.")
+                    issues.append(message)
+                else:
+                    raise ValueError(message)
 
     return bugs_by_type, issues
 
