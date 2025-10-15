@@ -30,7 +30,7 @@ import elliottlib.exceptions
 
 # ours
 from elliottlib import Runtime
-from elliottlib.cli.advisory_commons_cli import advisory_commons_cli
+from elliottlib.cli.advisory_date_cli import advisory_date_cli
 from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
 from elliottlib.cli.advisory_images_cli import advisory_images_cli
 from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
@@ -302,7 +302,7 @@ cli.add_command(find_bugs_qe_cli)
 cli.add_command(get_golang_versions_cli)
 cli.add_command(validate_rhsa_cli)
 cli.add_command(rhcos_cli)
-cli.add_command(advisory_commons_cli)
+cli.add_command(advisory_date_cli)
 cli.add_command(find_bugs_blocker_cli)
 cli.add_command(remove_bugs_cli)
 cli.add_command(repair_bugs_cli)
