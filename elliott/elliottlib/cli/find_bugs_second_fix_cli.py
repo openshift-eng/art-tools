@@ -77,7 +77,7 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
                         f" These CVE trackers {k} were computed as second fixes and therefore they will be closed"
                     )
                     comment = f'''
-    This CVE tracker was closed since it was not declared as first-fix for the recent OCP {major_version}.{minor_version} version
+    Closing this CVE tracker, as the CVE has been declared fixed for this component for {major_version}.{int(minor_version) - 1}.
     in pre-release
     '''
                     target = "CLOSED"
