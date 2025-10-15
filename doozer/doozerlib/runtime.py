@@ -1066,7 +1066,7 @@ class Runtime(GroupRuntime):
                 the stream_name cannot be resolved, an exception is thrown.
         """
         self._logger.info(f"current streams: {self.streams.items()}")
-        self._logger.info(f"current streams: {self._build_data_loader.load_config("streams")}")
+        self._logger.info(f"current streams: {self._build_data_loader.load_config('streams')}")
         # If the stream has an override from the command line, return it.
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
