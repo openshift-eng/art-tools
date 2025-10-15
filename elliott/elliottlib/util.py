@@ -397,7 +397,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
         if len(nvr[2].split('.')[1]) > 2:
-            #golang-builder release like 202510150934.g4284440.el9
+            # golang-builder release like 202510150934.g4284440.el9
             build_system = 'brew'
         else:
             nvr_build_system = get_build_system(nvr[2].split('.')[1])
