@@ -1066,6 +1066,7 @@ class Runtime(GroupRuntime):
                 the stream_name cannot be resolved, an exception is thrown.
         """
         self._logger.info(f"current streams: {self.streams.items()}")
+        self._logger.info(f"current streams: {self._build_data_loader.load_config("streams")}")
         # If the stream has an override from the command line, return it.
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
@@ -1075,6 +1076,12 @@ class Runtime(GroupRuntime):
                 ((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2
             )
         )
+        # if len(self.streams.items()) == 0:
+        #     matched_streams = list(
+        #         itertools.islice(
+        #             ((n, s) for n, s in self._build_data_loader.load_config("streams") if stream_name == n or stream_name in s.get('aliases', [])), 2
+        #         )
+        #     )
         if len(matched_streams) == 0:
             raise IOError(f"Unable to find definition for stream '{stream_name}'")
         if len(matched_streams) > 1:
