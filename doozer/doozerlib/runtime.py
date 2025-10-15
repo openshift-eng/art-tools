@@ -436,7 +436,7 @@ class Runtime(GroupRuntime):
             return
 
         # Read in the streams definition for this group if one exists
-        streams_data = self._build_data_loader.load_config("streams", self.group, replace_vars=replace_vars)
+        streams_data = self._build_data_loader.load_config("streams", default={}, replace_vars=replace_vars)
         if streams_data:
             org_stream_model = Model(dict_to_model=streams_data)
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)

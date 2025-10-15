@@ -14,7 +14,7 @@ class Lock(enum.Enum):
     OLM_BUNDLE = 'lock:olm-bundle:{version}'
     OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
-    PLASHET = 'lock:compose:{assembly}:{version}'
+    PLASHET = 'lock:compose:{assembly}:{group}'
     BUILD = 'lock:build:{version}'
     BUILD_KONFLUX = 'lock:build-konflux:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
