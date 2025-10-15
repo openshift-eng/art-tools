@@ -17,13 +17,12 @@ from errata_tool import Erratum
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
-from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
 from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
-from elliottlib.util import get_advisory_boilerplate
+from elliottlib.util import get_advisory_boilerplate, get_component_by_delivery_repo
 
 YAML = new_roundtrip_yaml_handler()
 
@@ -144,16 +143,7 @@ class AttachCveFlaws:
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
         # Get flaw bugs
-        tracker_flaws, flaw_bugs = (
-            get_flaws(
-                self.runtime.get_bug_tracker('bugzilla'),
-                tracker_bugs,
-                self.runtime.assembly_type,
-                self.runtime.assembly,
-            )
-            if tracker_bugs
-            else ({}, [])
-        )
+        tracker_flaws, flaw_bugs = get_flaws(self.runtime, tracker_bugs) if tracker_bugs else ({}, [])
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
         # Update the release notes
