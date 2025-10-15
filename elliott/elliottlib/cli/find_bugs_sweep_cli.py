@@ -570,8 +570,6 @@ def categorize_bugs_by_type(
                 message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
             elif runtime.build_system == "konflux" and not_found_image_bugs:
                 message = _message("image", [(b.id, b.whiteboard_component) for b in not_found_image_bugs])
-            else:
-                raise ValueError(f"Invalid build system {runtime.build_system}")
 
             if message:
                 if permissive:
