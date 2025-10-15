@@ -396,13 +396,17 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     for nvr in nvrs:
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
-        nvr_build_system = get_build_system(nvr[2].split('.')[1])
-        if build_system is not None:
-            assert build_system == nvr_build_system, (
-                f'Build system mismatch for {nvr}: {build_system} != {nvr_build_system}'
-            )
+        if len(nvr[2].split('.')[1]) > 2:
+            #golang-builder release like 202510150934.g4284440.el9
+            build_system = 'brew'
         else:
-            build_system = nvr_build_system
+            nvr_build_system = get_build_system(nvr[2].split('.')[1])
+            if build_system is not None:
+                assert build_system == nvr_build_system, (
+                    f'Build system mismatch for {nvr}: {build_system} != {nvr_build_system}'
+                )
+            else:
+                build_system = nvr_build_system
     if build_system == 'brew':
         return get_golang_container_nvrs_brew(nvrs, logger)
     elif build_system == 'konflux':
