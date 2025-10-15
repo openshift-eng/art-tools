@@ -65,6 +65,10 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
             if bz_id not in first_flaw_bug_ids_set:
                 matching_tracker_keys_list.append(tracker_id)
 
+        LOGGER.info(
+            f"{len(matching_tracker_keys_list)} CVE trackers that are second-fix: {sorted(matching_tracker_keys_list)}"
+        )
+
         if close:
             bug_tracker = runtime.get_bug_tracker('jira')
             for k in trackers:

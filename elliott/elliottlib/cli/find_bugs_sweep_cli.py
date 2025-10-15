@@ -18,7 +18,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_builds_from_mr
-from elliottlib.util import chunk
+from elliottlib.util import chunk, get_component_by_delivery_repo
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -560,23 +560,6 @@ def categorize_bugs_by_type(
                 raise ValueError(message)
 
     return bugs_by_type, issues
-
-
-def get_component_by_delivery_repo(runtime: Runtime, delivery_repo_name: str) -> Optional[str]:
-    """Get the component name from the delivery repo name
-    For example, "openshift4/ose-sriov-network-device-plugin-rhel9" -> "sriov-network-device-plugin-container"
-    """
-    if not runtime.image_metas():
-        raise ValueError("No image metas found. Forgot to initialize runtime with mode='images'?")
-
-    # strip off the -rhel{digit} suffix
-    def _strip(name: str) -> str:
-        return re.sub(r"-rhel\d+$", "", name)
-
-    for image in runtime.image_metas():
-        if _strip(delivery_repo_name) in [_strip(r) for r in image.config.delivery.delivery_repo_names]:
-            return image.get_component_name()
-    return None
 
 
 def extras_bugs(bugs: type_bug_set) -> type_bug_set:
