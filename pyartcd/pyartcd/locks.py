@@ -24,6 +24,7 @@ class Lock(enum.Enum):
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
+    FBC_BUILD = 'lock:fbc-build:{group}'
 
 
 class Keys(enum.Enum):
@@ -103,6 +104,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.FBC_BUILD: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
