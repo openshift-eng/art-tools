@@ -77,6 +77,10 @@ class AttachCveFlaws:
 
         self.errata_api: Optional[AsyncErrataAPI] = None
         self.major, self.minor, self.patch = self.runtime.get_major_minor_patch()
+        self._replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch}
+        rpm_advisory = self.runtime.group_config.advisories.get("rpm")
+        if rpm_advisory is not None:
+            self._replace_vars.update({"RPM_ADVISORY": rpm_advisory})
 
     async def run(self):
         if self.runtime.build_system == 'konflux':
@@ -197,7 +201,7 @@ class AttachCveFlaws:
         """
         Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
         """
-
+        formatter = SafeFormatter()
         if flaw_bugs:
             if release_notes.type != 'RHSA':
                 # Set the release notes type to RHSA
@@ -224,19 +228,18 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHSA',
             )
-            formatter = SafeFormatter()
             highest_impact = get_highest_security_impact(flaw_bugs)
-            replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch, "IMPACT": highest_impact}
-            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **replace_vars)
-            release_notes.topic = formatter.format(cve_boilerplate['topic'], **replace_vars)
-            release_notes.solution = formatter.format(cve_boilerplate['solution'], **replace_vars)
-
-            # Update description
+            self._replace_vars["IMPACT"] = highest_impact
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
-            replace_vars['CVES'] = formatted_cve_list
-            release_notes.description = formatter.format(cve_boilerplate['description'], **replace_vars)
+            self._replace_vars['CVES'] = formatted_cve_list
+            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **self._replace_vars)
+            release_notes.topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
+            release_notes.solution = formatter.format(cve_boilerplate['solution'], **self._replace_vars)
+
+            # Update description
+            release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
         elif self.reconcile:
             # Convert RHSA back to RHBA
             if release_notes.type == 'RHBA':
@@ -261,10 +264,10 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHBA',
             )
-            release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.synopsis = formatter.format(boilerplate['synopsis'], **self._replace_vars)
+            release_notes.topic = formatter.format(boilerplate['topic'], **self._replace_vars)
+            release_notes.solution = formatter.format(boilerplate['solution'], **self._replace_vars)
+            release_notes.description = formatter.format(boilerplate['description'], **self._replace_vars)
 
     async def handle_brew_cve_flaws(self):
         """
@@ -410,21 +413,20 @@ class AttachCveFlaws:
         :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
         :returns: updated advisory object and a boolean indicating if advisory was updated
         """
-
         updated = False
+        formatter = SafeFormatter()
         if not is_security_advisory(advisory):
             self.logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
             updated = True
-            security_impact = 'Low'
-            formatter = SafeFormatter()
-            replace_vars = {"MINOR": self.minor, "PATCH": self.patch, "IMPACT": security_impact}
+            low_impact = 'Low'
+            self._replace_vars['IMPACT'] = low_impact
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
-                synopsis=formatter.format(cve_boilerplate['synopsis'], **replace_vars),
-                topic=formatter.format(cve_boilerplate['topic'], **replace_vars),
-                solution=formatter.format(cve_boilerplate['solution'], **replace_vars),
-                security_impact=security_impact,
+                synopsis=formatter.format(cve_boilerplate['synopsis'], **self._replace_vars),
+                topic=formatter.format(cve_boilerplate['topic'], **self._replace_vars),
+                solution=formatter.format(cve_boilerplate['solution'], **self._replace_vars),
+                security_impact=low_impact,
             )
 
         flaw_bugs = sort_cve_bugs(flaw_bugs)
@@ -438,9 +440,8 @@ class AttachCveFlaws:
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
-            formatted_description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-            )
+            self._replace_vars['CVES'] = formatted_cve_list
+            formatted_description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
             advisory.update(description=formatted_description)
 
         highest_impact = get_highest_security_impact(flaw_bugs)
@@ -449,15 +450,16 @@ class AttachCveFlaws:
                 self.logger.info(
                     f'Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}'
                 )
+                self._replace_vars['IMPACT'] = highest_impact
                 advisory.update(security_impact=highest_impact)
                 updated = True
             else:
                 self.logger.info(
                     f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust'
                 )
-
+                self._replace_vars['IMPACT'] = highest_impact = advisory.security_impact
         if highest_impact not in advisory.topic:
-            topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
+            topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
             self.logger.info('Topic updated to include impact of {}'.format(highest_impact))
             advisory.update(topic=topic)
 
