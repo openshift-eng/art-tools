@@ -4,7 +4,7 @@ import click
 from artcommonlib import logutil
 
 from elliottlib import Runtime
-from elliottlib.bzutil import get_flaws
+from elliottlib.bzutil import get_second_fix_trackers
 from elliottlib.cli.common import cli
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
 
@@ -51,49 +51,34 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
         trackers = [b for b in trackers if b.is_tracker_bug()]
         LOGGER.info(f"{len(trackers)} valid trackers found: {[b.id for b in trackers]}")
 
-        LOGGER.info("Fetching flaw bugs .. ")
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(runtime, trackers)
-        # Extract Bugzilla IDs from first_flaw_bugs into a set for efficient lookup
-        first_flaw_bug_ids_set = {bug.id for bug in first_fix_flaw_bugs}
-        # Filter tracker_flaws based on these Bugzilla IDs
-        matching_tracker_keys_list = []
-
-        for tracker_id, bugzilla_ids_list in tracker_flaws.items():
-            if len(bugzilla_ids_list) != 1:
-                raise ValueError("Did not expect flaws to be more than 1")
-            bz_id = bugzilla_ids_list[0]
-            if bz_id not in first_flaw_bug_ids_set:
-                matching_tracker_keys_list.append(tracker_id)
-
+        LOGGER.info("Computing second-fix tracker ids .. ")
+        second_fix_trackers = get_second_fix_trackers(runtime, trackers)
         LOGGER.info(
-            f"{len(matching_tracker_keys_list)} CVE trackers that are second-fix: {sorted(matching_tracker_keys_list)}"
+            f"{len(second_fix_trackers)} CVE trackers that are second-fix: {sorted([b.id for b in second_fix_trackers])}"
         )
 
         if close:
             bug_tracker = runtime.get_bug_tracker('jira')
-            for k in trackers:
-                if k.id in matching_tracker_keys_list:
-                    LOGGER.info(
-                        f" These CVE trackers {k} were computed as second fixes and therefore they will be closed"
+            for k in second_fix_trackers:
+                LOGGER.info(f"Tracker {k.id} is a second fix for it's associated CVE and therefore it will be closed")
+                comment = f'''
+Closing this CVE tracker, as the CVE has been declared fixed for this component for {major_version}.{int(minor_version) - 1}.
+in pre-release
+'''
+                target = "CLOSED"
+                try:
+                    bug_tracker.update_bug_status(
+                        bug=k, target_status=target, comment=comment, log_comment=True, noop=noop
                     )
-                    comment = f'''
-    Closing this CVE tracker, as the CVE has been declared fixed for this component for {major_version}.{int(minor_version) - 1}.
-    in pre-release
-    '''
-                    target = "CLOSED"
-                    try:
-                        bug_tracker.update_bug_status(
-                            bug=k, target_status=target, comment=comment, log_comment=True, noop=noop
-                        )
-                    except Exception as e:
-                        LOGGER.error(traceback.format_exc())
-                        LOGGER.error(f'exception with OCPBUGS: {k} bug tracker: {e}')
+                except Exception as e:
+                    LOGGER.error(traceback.format_exc())
+                    LOGGER.error(f'exception with OCPBUGS: {k} bug tracker: {e}')
         else:
             LOGGER.info(
-                f"Found {len(matching_tracker_keys_list)} CVE trackers that are not first-fix for OCP {major_version}.{minor_version} pre-release"
+                f"Found {len(second_fix_trackers)} CVE trackers that are not first-fix for OCP {major_version}.{minor_version} pre-release"
             )
-            for k in matching_tracker_keys_list:
-                LOGGER.info(k)
+            for k in second_fix_trackers:
+                LOGGER.info(k.id)
             LOGGER.info("Use --close to close these CVE trackers.")
     else:
         LOGGER.info(f"Software lifecycle is not in {phase_value} . The first-fix logic doesn't apply here.")
