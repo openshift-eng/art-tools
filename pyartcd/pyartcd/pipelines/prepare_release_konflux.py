@@ -9,7 +9,6 @@ import time
 from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
-from json import JSONDecodeError
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
@@ -288,6 +287,9 @@ class PrepareReleaseKonfluxPipeline:
         if self.assembly_type == AssemblyTypes.STREAM:
             raise ValueError("Preparing a release from a stream assembly is no longer supported.")
 
+        if not self.release_date:
+            raise ValueError("Can't find release date in assembly config")
+
         # validate product from group config
         merged_group_config = assembly_group_config(
             Model(self.releases_config), self.assembly, Model(self.group_config)
@@ -314,19 +316,6 @@ class PrepareReleaseKonfluxPipeline:
     async def prepare_et_advisories(self):
         """
         Prepare and manage all ET advisories for the current assembly.
-        """
-        for impetus, advisory_num in self.assembly_group_config.get("advisories", {}).items():
-            if impetus not in {"rpm", "rhcos"}:
-                self.logger.info(
-                    "Skipping unsupported %s advisory %s for assembly %s ...", impetus, advisory_num, self.assembly
-                )
-                continue
-            self.logger.info("Preparing %s advisory for assembly %s ...", impetus, self.assembly)
-            await self.prepare_et_advisory(impetus)
-
-    async def prepare_et_advisory(self, impetus: str):
-        """
-        Prepare and manage a single ET advisory for the current assembly.
 
         This function performs the following steps:
         1. Checks if an advisory exists for the assembly; if not, creates one and updates the build data.
@@ -335,101 +324,100 @@ class PrepareReleaseKonfluxPipeline:
         4. Attaches CVE flaw bugs to the advisory.
         5. Attempts to change the advisory state to QE.
         6. Attempts to trigger a push of the advisory to the CDN stage.
-
-        Args:
-            impetus (str): The impetus for the advisory.
-        Raises:
-            ValueError: If the release date is missing from the assembly config.
         """
-        advisory_num = self.assembly_group_config.get("advisories", {}).get(impetus)
-        if advisory_num is None:
-            self.logger.info("Can't find advisory entry '%s' in assembly config, skip prepare advisory.", impetus)
-            return
+        SUPPORTED_IMPETUSES = {"rpm", "rhcos"}
+        impetus_advisories = self.assembly_group_config.get("advisories", {}).copy()
+        if invalid := impetus_advisories.keys() - SUPPORTED_IMPETUSES:
+            raise ValueError(f"Invalid advisory impetuses: {', '.join(invalid)}")
 
-        if advisory_num < 0:
-            # create advisory
-            if not self.release_date:
-                raise ValueError("Can't find release date in assembly config, skip prepare rpm advisory.")
-            else:
-                self.logger.info(f"Fetched release date from assembly: {self.release_date}")
-            advisory_type = (
-                "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
-            )
-            advisory_num = await self.create_advisory(advisory_type, impetus, self.release_date)
-            await self._slack_client.say_in_thread(
-                f"ET {impetus} advisory {advisory_num} created with release date {self.release_date}"
-            )
-            self.updated_assembly_group_config.advisories[impetus] = advisory_num
-            await self.create_update_build_data_pr()
+        # Create advisories if needed
+        for impetus, advisory_num in impetus_advisories.items():
+            self.logger.info("Preparing %s advisory for assembly %s ...", impetus, self.assembly)
+            if advisory_num < 0:
+                # create advisory
+                advisory_type = (
+                    "RHEA" if self.assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0") else "RHBA"
+                )
+                advisory_num = await self.create_advisory(advisory_type, impetus, self.release_date)
+                await self._slack_client.say_in_thread(
+                    f"ET {impetus} advisory {advisory_num} created with release date {self.release_date}"
+                )
+                self.updated_assembly_group_config.advisories[impetus] = impetus_advisories[impetus] = advisory_num
 
+        # Update assembly PR
+        await self.create_update_build_data_pr()
+
+        # Sweep builds
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
+        for impetus, advisory_num in impetus_advisories.items():
+            if advisory_num <= 0:
+                raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
+            self.logger.info("Sweep builds into the the %s advisory ...", impetus)
+            sweep_opts = []
+            match impetus:
+                case "rpm":
+                    kind = "rpm"
+                case "image" | "extras" | "rhcos":
+                    kind = "image"
+                    if impetus == "image":
+                        sweep_opts.append("--payload")
+                    elif impetus == "extras":
+                        sweep_opts.append("--non-payload")
+                    elif impetus == "rhcos":
+                        sweep_opts.append("--only-rhcos")
+                case _:
+                    raise ValueError(f"Unknown impetus {impetus} for advisory preparation.")
+            operate_cmd = ["find-builds", f"--kind={kind}", f"--attach={advisory_num}", "--clean"] + sweep_opts
+            if self.dry_run:
+                operate_cmd += ["--dry-run"]
+            await self.run_cmd_with_retry(base_command, operate_cmd)
 
-        # sweep builds
-        self.logger.info("Sweep builds into the the %s advisory ...", impetus)
-        sweep_opts = []
-        match impetus:
-            case "rpm":
-                kind = "rpm"
-            case "image" | "extras" | "rhcos":
-                kind = "image"
-                if impetus == "image":
-                    sweep_opts.append("--payload")
-                elif impetus == "extras":
-                    sweep_opts.append("--non-payload")
-                elif impetus == "rhcos":
-                    sweep_opts.append("--only-rhcos")
-            case _:
-                raise ValueError(f"Unknown impetus {impetus} for advisory preparation.")
-        operate_cmd = ["find-builds", f"--kind={kind}", f"--attach={advisory_num}", "--clean"] + sweep_opts
-        if self.dry_run:
-            operate_cmd += ["--dry-run"]
-        await self.run_cmd_with_retry(base_command, operate_cmd)
+        # Find bugs
+        self.logger.info("Finding bugs...", impetus)
+        impetus_bugs = await self.find_bugs(build_system='brew')
 
-        # find bugs
-        self.logger.info("Finding bugs for %s advisory ...", impetus)
-        bug_ids = (await self.find_bugs(build_system='brew')).get(impetus, [])
+        # Process bugs
+        for impetus, advisory_num in impetus_advisories.items():
+            bug_ids = impetus_bugs.get(impetus)
+            if not bug_ids:
+                self.logger.info("No bugs found for %s advisory.", impetus)
+                continue
 
-        if bug_ids:
-            self.logger.info(f"Found {len(bug_ids)} {impetus} bugs: {bug_ids}")
-        else:
-            self.logger.info("No bugs found for %s advisory.", impetus)
-
-        # attach bugs
-        if bug_ids:
+            # attach bugs
             self.logger.info("Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids)
             operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
 
-        # unconditionally attach cve flaws
-        self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
-        operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
-        if self.dry_run:
-            operate_cmd += ["--dry-run"]
-        await self.run_cmd_with_retry(base_command, operate_cmd)
-
-        # change status to qe
-        try:
-            operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(advisory_num)]
+            # unconditionally attach cve flaws
+            self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
+            operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(base_command, operate_cmd)
-        except Exception as ex:
-            self.logger.warning(f"Unable to move {impetus} advisory {advisory_num} to QE: {ex}")
-            await self._slack_client.say_in_thread(
-                f"Unable to move {impetus} advisory {advisory_num} to QE. Details in log."
-            )
-            return
 
-        # push to CDN stage
-        try:
-            push_cdn_stage(advisory_num)
-        except Exception as ex:
-            self.logger.warning(f"Unable to trigger push rpm advisory {advisory_num} to CDN stage: {ex}")
-            await self._slack_client.say_in_thread(
-                f"Unable to trigger push rpm advisory {advisory_num} to CDN stage. Details in log."
-            )
+            # change status to qe
+            try:
+                operate_cmd = ["change-state", "-s", "QE", "--from", "NEW_FILES", "-a", str(advisory_num)]
+                if self.dry_run:
+                    operate_cmd += ["--dry-run"]
+                await self.run_cmd_with_retry(base_command, operate_cmd)
+            except Exception as ex:
+                self.logger.warning(f"Unable to move {impetus} advisory {advisory_num} to QE: {ex}")
+                await self._slack_client.say_in_thread(
+                    f"Unable to move {impetus} advisory {advisory_num} to QE. Details in log."
+                )
+                continue
+
+            # push to CDN stage
+            try:
+                push_cdn_stage(advisory_num)
+            except Exception as ex:
+                self.logger.warning(f"Unable to trigger push rpm advisory {advisory_num} to CDN stage: {ex}")
+                await self._slack_client.say_in_thread(
+                    f"Unable to trigger push rpm advisory {advisory_num} to CDN stage. Details in log."
+                )
 
     async def create_advisory(
         self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0
