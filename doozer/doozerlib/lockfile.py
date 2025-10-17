@@ -383,7 +383,19 @@ class RPMLockfileGenerator:
                 self.logger.info(f"Found digest in target branch for {image_meta.distgit_key}")
 
         if old_fingerprint == fingerprint:
-            self.logger.info(f"No changes in RPM list for {image_meta.distgit_key}. Skipping lockfile generation.")
+            self.logger.info(
+                f"No changes in RPM list for {image_meta.distgit_key}. Checking upstream lockfile existence."
+            )
+
+            lockfile_path = dest_dir / filename
+            upstream_lockfile = await self._get_lockfile_from_target_branch(lockfile_path, image_meta)
+            if upstream_lockfile is None:
+                self.logger.info(
+                    f"Lockfile not found upstream for {image_meta.distgit_key}. Regenerating despite matching fingerprint."
+                )
+                return True, rpms_to_install
+
+            self.logger.info(f"Lockfile exists upstream for {image_meta.distgit_key}. Skipping lockfile generation.")
             return False, rpms_to_install
         elif old_fingerprint:
             self.logger.info(f"RPM list changed for {image_meta.distgit_key}. Regenerating lockfile.")
@@ -514,12 +526,12 @@ class RPMLockfileGenerator:
 
             server, org, repo_name = split_git_url(git_url)
             if 'github.com' not in server:
-                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
+                self.logger.warning(f"Non-GitHub repository, skipping: {git_url}")
                 return None
 
             token = os.environ.get('GITHUB_TOKEN')
             if not token:
-                self.logger.debug("GITHUB_TOKEN not available")
+                self.logger.warning("GITHUB_TOKEN not available, unable to perform digest check")
                 return None
 
             async with aiohttp.ClientSession() as session:
@@ -548,17 +560,17 @@ class RPMLockfileGenerator:
             return None
 
         try:
-            git_url = image_meta.distgit_remote_url()
+            git_url = str(image_meta.config.content.source.git.url)
             lockfile_filename = lockfile_path.name
 
             server, org, repo_name = split_git_url(git_url)
             if 'github.com' not in server:
-                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
+                self.logger.warning(f"Non-GitHub repository, skipping: {git_url}")
                 return None
 
             token = os.environ.get('GITHUB_TOKEN')
             if not token:
-                self.logger.debug("GITHUB_TOKEN not available")
+                self.logger.warning("GITHUB_TOKEN not available, unable to download lockfile")
                 return None
 
             async with aiohttp.ClientSession() as session:
