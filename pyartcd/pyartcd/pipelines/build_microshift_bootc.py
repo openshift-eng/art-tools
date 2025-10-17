@@ -140,12 +140,14 @@ class BuildMicroShiftBootcPipeline:
             else:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
                 # sync per-arch bootc-pullspec.txt to mirror
-                await asyncio.gather(
-                    *(
-                        self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}")
-                        for arch, digest in digest_by_arch.items()
-                    ),
-                )
+                if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                    self._logger.info(f"Found assembly type {self.assembly_type}. Syncing bootc build to mirror")
+                    await asyncio.gather(
+                        *(
+                            self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}")
+                            for arch, digest in digest_by_arch.items()
+                        ),
+                    )
         else:
             self._logger.warning(
                 "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
