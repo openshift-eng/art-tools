@@ -622,6 +622,7 @@ def start_build_fbc(
     assembly: str,
     operator_nvrs: list,
     dry_run: bool,
+    force_build: Optional[bool] = None,
     group: Optional[str] = None,
     ocp_target_version: Optional[str] = None,
     **kwargs,
@@ -636,6 +637,8 @@ def start_build_fbc(
         params['GROUP'] = group
     if ocp_target_version:
         params['OCP_TARGET_VERSION'] = ocp_target_version
+    if force_build:
+        params["FORCE_BUILD"] = force_build
 
     return start_build(
         job=Jobs.BUILD_FBC,
