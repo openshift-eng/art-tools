@@ -139,10 +139,75 @@ class BuildMicroShiftBootcPipeline:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
                 await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                # sync per-arch bootc-pullspec.txt to mirror
+                if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                    self._logger.info(f"Found assembly type {self.assembly_type}. Syncing bootc build to mirror")
+                    await asyncio.gather(
+                        *(
+                            self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}")
+                            for arch, digest in digest_by_arch.items()
+                        ),
+                    )
         else:
             self._logger.warning(
                 "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
             )
+
+    async def sync_to_mirror(self, arch, el_target, pullspec):
+        arch = brew_arch_for_go_arch(arch)
+        release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
+        ocp_dir = "ocp-dev-preview" if self.assembly_type == AssemblyTypes.PREVIEW else "ocp"
+
+        major, minor = self._ocp_version
+        # This is where we sync microshift artifacts on mirror. Refer to microshift_sync job
+        # The paths should be the same in both of these places
+        release_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/{release_name}/{el_target}"
+        latest_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/latest-{major}.{minor}/{el_target}"
+        cloudflare_endpoint_url = os.environ['CLOUDFLARE_ENDPOINT']
+
+        async def _run_for(local_path, s3_path):
+            cmd = [
+                "aws",
+                "s3",
+                "sync",
+                "--no-progress",
+                "--exact-timestamps",
+                "--exclude",
+                "*",
+                "--include",
+                "bootc-pullspec.txt",
+                "--cache-control",
+                "no-cache, no-store, must-revalidate",
+                "--metadata-directive",
+                "REPLACE",
+                str(local_path),
+                f"s3://art-srv-enterprise{s3_path}",
+            ]
+            if self.runtime.dry_run:
+                cmd.append("--dryrun")
+
+            await asyncio.gather(
+                # Sync to S3
+                exectools.cmd_assert_async(cmd),
+                # Sync to Cloudflare as well
+                exectools.cmd_assert_async(
+                    cmd
+                    + [
+                        "--profile",
+                        "cloudflare",
+                        "--endpoint-url",
+                        cloudflare_endpoint_url,
+                    ]
+                ),
+            )
+
+        with tempfile.TemporaryDirectory(dir=self._working_dir) as local_dir:
+            local_path = Path(local_dir, "bootc-pullspec.txt")
+            with open(local_path, "w") as f:
+                f.write(pullspec)
+            self._logger.info(f"write {pullspec} to {local_path}")
+            await _run_for(local_dir, release_path)
+            await _run_for(local_dir, latest_path)
 
     async def get_latest_bootc_build(self):
         bootc_image_name = "microshift-bootc"
