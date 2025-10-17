@@ -23,14 +23,13 @@ from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
 from jira import JIRA, Issue, JIRAError
 from koji import ClientSession
-from requests_gssapi import HTTPSPNEGOAuth
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from elliottlib import constants, errata, exceptions, util
+from elliottlib import constants, errata, exceptions
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
-from elliottlib.util import chunk, isolate_timestamp_in_release
+from elliottlib.util import chunk, get_component_by_delivery_repo, isolate_timestamp_in_release
 
 logger = logutil.get_logger(__name__)
 
@@ -1222,13 +1221,13 @@ def get_highest_impact(trackers, tracker_flaws_map):
 def is_viable_bug(bug_obj):
     """Check if a bug is viable to attach to an advisory.
 
-    A viable bug must be in one of MODIFIED and VERIFIED status. We accept ON_QA
-    bugs as viable as well, as they will be shortly moved to MODIFIED while attaching.
+    A viable bug must be in the VERIFIED state as of our policy
+    change around pre-merge verification and QE responsibilities.
 
     :param bug_obj: bug object
     :returns: True if viable
     """
-    return bug_obj.status in ["MODIFIED", "ON_QA", "VERIFIED"]
+    return bug_obj.status in ["VERIFIED"]
 
 
 def _construct_query_url(config, status, search_filter='default', flag=None):
@@ -1431,7 +1430,71 @@ def sort_cve_bugs(bugs):
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
-def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembly: str):
+def get_cve_unfixed_components(runtime, cve_alias: str) -> Dict:
+    """
+    Get the unfixed components for the given CVE alias e.g. CVE-2022-1234.
+    Returns the Hydra data as a dictionary.
+    Raises an exception if the Hydra data is not found.
+    """
+    cve_url = f"https://access.redhat.com/hydra/rest/securitydata/cve/{cve_alias}.json"
+    logger.info(f"Fetching {cve_url}")
+    response = requests.get(cve_url)
+    response.raise_for_status()
+    hydra_data = response.json()
+    ocp_product_name = f"Red Hat OpenShift Container Platform {runtime.get_major_minor()[0]}"
+    unfixed_components = []
+
+    if 'package_state' not in hydra_data:
+        return []
+
+    for package_info in hydra_data['package_state']:
+        # previously we were also checking `package_info['fix_state'] in ['Affected', 'Under investigation']`
+        # but we don't need to verify that since according to @sfowler if a package has a tracker for a cve
+        # and was found in the list of unfixed components then it is assumed to be `Affected`
+        if ocp_product_name in package_info['product_name']:
+            pkg_name = package_info['package_name']
+
+            # is it a delivery repo?
+            # if it is then we need to match the delivery repo name to component name
+            if "openshift4/" in pkg_name:
+                comp_name = get_component_by_delivery_repo(runtime, pkg_name)
+                if not comp_name:
+                    logger.warning(
+                        f"Could not find component name for {pkg_name}! is it an art component? is the delivery repo defined?"
+                    )
+                else:
+                    unfixed_components.append(comp_name)
+            else:
+                # if it not a delivery repo then it could already be a component name like
+                # openshift-golang-builder-container, rhcos or rpm name e.g openshift-clients
+                # in which case we can just add it to the list of components not yet fixed
+                unfixed_components.append(pkg_name)
+    return unfixed_components
+
+
+def is_first_fix_for_tracker(runtime, flaw_bug: BugzillaBug, tracker_bug: JIRABug) -> bool:
+    """
+    Check if the given flaw bug is a first-fix for the given tracker bug's component.
+    """
+    if not (hasattr(flaw_bug, 'alias') and flaw_bug.alias):
+        raise ValueError(
+            f'Flaw bug {flaw_bug.id} does not have a CVE alias. Is it a CVE bug? The tracker bug {tracker_bug.id} '
+            f'references the flaw bug. If it is not a valid flaw bug please remove references from the tracker bugs.'
+        )
+    alias = flaw_bug.alias[0]
+    unfixed_components = get_cve_unfixed_components(runtime, alias)
+    first_fix = tracker_bug.whiteboard_component in unfixed_components
+    logger.info(
+        f"Flaw bug {flaw_bug.id} is {'first-fix' if first_fix else 'second-fix'} for tracker bug {tracker_bug.id}"
+    )
+    return first_fix
+
+
+def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[JIRABug]) -> bool:
+    """
+    Check if the given flaw bug is a first-fix for any tracker bug's component in the given tracker bugs list.
+    """
+
     if not tracker_bugs:
         # This shouldn't happen
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
@@ -1444,71 +1507,33 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], assembl
         )
 
     alias = flaw_bug.alias[0]
-    cve_url = f"https://access.redhat.com/hydra/rest/securitydata/cve/{alias}.json"
-    response = requests.get(cve_url)
-    response.raise_for_status()
-    data = response.json()
+    unfixed_components = get_cve_unfixed_components(runtime, alias)
 
-    major, _ = util.minor_version_tuple(assembly)
-    ocp_product_name = f"Red Hat OpenShift Container Platform {major}"
-    components_not_yet_fixed = []
-    pyxis_base_url = (
-        "https://pyxis.engineering.redhat.com/v1/repositories/registry/registry.access.redhat.com"
-        "/repository/{pkg_name}/images?page_size=1&include=data.brew"
-    )
-
-    if 'package_state' not in data:
-        logger.info(f'{flaw_bug.id} ({alias}) not considered a first-fix because no unfixed components were found')
-        return False
-
-    for package_info in data['package_state']:
-        # previously we were also checking `package_info['fix_state'] in ['Affected', 'Under investigation']`
-        # but we don't need to verify that since according to @sfowler if a package has a tracker for a cve
-        # and was found in the list of unfixed components then it is assumed to be `Affected`
-        if ocp_product_name in package_info['product_name']:
-            pkg_name = package_info['package_name']
-            # for images `package_name` field is usually the container delivery repo
-            # otherwise we assume it's the exact brew package name
-            if '/' in pkg_name:
-                pyxis_url = pyxis_base_url.format(pkg_name=pkg_name)
-                response = requests.get(pyxis_url, auth=HTTPSPNEGOAuth())
-                if response.status_code == requests.codes.ok:
-                    data = response.json()['data']
-                    if data:
-                        pkg_name = data[0]['brew']['package']
-                    else:
-                        logger.warn(f'could not find brew package info at {pyxis_url}')
-                else:
-                    logger.warn(f'got status={response.status_code} for {pyxis_url}')
-            components_not_yet_fixed.append(pkg_name)
-
-    # get tracker components
-    first_fix_components = []
-    for t in tracker_bugs:
-        component = t.whiteboard_component
-        if component in components_not_yet_fixed:
-            first_fix_components.append((component, t.id))
-            logger.info(f'Component {component} for CVE {alias} has a first-fix with {t.id}')
-        else:
-            logger.info(f'Component {component} for CVE {alias} has been fixed before {t.id}')
-
-    if first_fix_components:
-        logger.info(
-            f'{flaw_bug.id} ({alias}) considered first-fix for these (component, tracker): {first_fix_components}'
-        )
-        return True
-
-    logger.info(
-        f'{flaw_bug.id} ({alias}) not considered a first-fix because newly fixed trackers '
-        f'components {[t.whiteboard_component for t in tracker_bugs]}, were not found in unfixed components '
-        f'{components_not_yet_fixed}'
-    )
+    # NOTE: We may in future want to validate that all given trackers bugs are a first fix for the flaw bug
+    # and if not then second-fix close operation should be performed on them
+    # but for now we will just return True if any of the trackers is a first fix
+    for tracker_bug in tracker_bugs:
+        if tracker_bug.whiteboard_component in unfixed_components:
+            logger.info(
+                f"Flaw bug {flaw_bug.id} is a first-fix for tracker bug {tracker_bug.id}. Other associated trackers of the flaw bug will not be checked."
+            )
+            return True
     return False
 
 
-def get_flaws(
-    flaw_bug_tracker: BugTracker, tracker_bugs: List[Bug], assembly_type: AssemblyTypes, assembly: str
-) -> (Dict, List):
+def get_flaws(runtime, tracker_bugs: List[Bug]) -> (Dict, List):
+    """
+    For a given list of tracker bugs, get corresponding eligible flaw bugs that should be attached to advisory.
+
+    Returns a tuple of (tracker_flaws, first_fix_flaw_bugs) where:
+    - tracker_flaws is a dictionary with tracker bug id as key and list of flaw bug ids as value
+    - first_fix_flaw_bugs is a list of flaw bug objects that are considered first-fix i.e. eligible to be attached to advisory.
+    """
+
+    assembly = runtime.assembly
+    assembly_type = runtime.assembly_type
+    flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
+
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -1527,7 +1552,8 @@ def get_flaws(
     # if explicitly requested, proceed with first-fix filtering
     is_prega = assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]
     is_ga_assembly = assembly_type == AssemblyTypes.STANDARD and assembly.endswith(".0")
-    is_for_ga = is_prega or is_ga_assembly
+    is_default_assembly = assembly_type == AssemblyTypes.STREAM
+    is_for_ga = is_default_assembly or is_prega or is_ga_assembly
 
     # if current_target_release is GA then run first-fix bug filtering
     # for GA not every flaw bug is considered first-fix
@@ -1541,8 +1567,36 @@ def get_flaws(
         first_fix_flaw_bugs = [
             flaw_bug_info['bug']
             for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], assembly)
+            if is_first_fix_any(runtime, flaw_bug_info['bug'], flaw_bug_info['trackers'])
         ]
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
     return tracker_flaws, first_fix_flaw_bugs
+
+
+def get_second_fix_trackers(runtime, tracker_bugs: List[JIRABug]) -> List[JIRABug]:
+    """
+    Get the second-fix trackers for the given list of tracker bugs.
+    It is assumed that every tracker bug has exactly one flaw bug associated with it.
+    Returns a list of tracker bugs that are second-fix.
+    """
+
+    flaw_bug_tracker = runtime.get_bug_tracker('bugzilla')
+    tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(tracker_bugs, flaw_bug_tracker)
+
+    # do a sanity check that a tracker does not have more than one flaw associated with it
+    # because it will break our following logic
+    for tracker_id, flaw_bug_ids in tracker_flaws.items():
+        if len(flaw_bug_ids) != 1:
+            raise ValueError(
+                f"Did not expect a tracker to have more than one flaw associated with it: Tracker {tracker_id} has {len(flaw_bug_ids)} flaws associated with it: {flaw_bug_ids}"
+            )
+
+    second_fix_trackers = []
+    for flaw_bug_info in flaw_tracker_map.values():
+        flaw_bug = flaw_bug_info['bug']
+        trackers = flaw_bug_info['trackers']
+        for tracker in trackers:
+            if not is_first_fix_for_tracker(runtime, flaw_bug, tracker):
+                second_fix_trackers.append(tracker)
+    return second_fix_trackers

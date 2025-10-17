@@ -33,6 +33,11 @@
     },
     "patch_version-": {
     },
+    "hotfix_previous_assembly": {
+      "description": "For a hotfix release, set previous assembly from which patch version will be inferred",
+      "type": "string",
+      "minLength": 1
+    },
     "reference_releases": {
       "title": "Reference releases",
       "description": "Indicates this release should be assembled with specified existing release images",

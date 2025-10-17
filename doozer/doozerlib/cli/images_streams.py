@@ -957,9 +957,6 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'issuetype': {'name': 'Bug'},
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
-            'customfield_12319940': [
-                {'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}
-            ],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
             'description': description,
@@ -970,7 +967,24 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             issue = jira_client.create_issue(
                 fields,
             )
-            # check depend issues and set depend to a higher version issue if ture
+            try:
+                # retrieve the target version string (e.g., 'z' or '4.21.0')
+                target_version_segment = Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]
+
+                # Build the update payload using the retrieved string
+                issue_update = {
+                    'customfield_12319940': [{'name': target_version_segment}],
+                }
+                runtime.logger.info(
+                    f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
+                )
+                issue.update(fields=issue_update)
+                runtime.logger.info(f"Successfully updated Target Version for issue {issue.key}.")
+
+            except Exception as e:
+                runtime.logger.error(f"An error occurred while updating the Target Version on issue {issue.key}: {e}")
+
+            # check depend issues and set depend to a higher version issue if true
             look_for_summary = f'Update {major}.{minor + 1} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want

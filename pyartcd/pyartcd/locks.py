@@ -14,7 +14,7 @@ class Lock(enum.Enum):
     OLM_BUNDLE = 'lock:olm-bundle:{version}'
     OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
-    PLASHET = 'lock:compose:{assembly}:{version}'
+    PLASHET = 'lock:compose:{assembly}:{group}'
     BUILD = 'lock:build:{version}'
     BUILD_KONFLUX = 'lock:build-konflux:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
@@ -24,6 +24,7 @@ class Lock(enum.Enum):
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
+    FBC_BUILD = 'lock:fbc-build:{group}'
 
 
 class Keys(enum.Enum):
@@ -84,7 +85,7 @@ LOCK_POLICY = {
     },
     Lock.SIGNING: {
         'retry_count': 36000,
-        'retry_delay_min': 0.1,
+        'retry_delay_min': 0.4,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
@@ -103,6 +104,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.FBC_BUILD: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

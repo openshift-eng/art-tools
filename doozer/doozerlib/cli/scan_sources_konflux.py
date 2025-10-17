@@ -7,6 +7,7 @@ import random
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from json import JSONDecodeError
 from typing import Dict, List, Optional, cast
 
 import aiohttp
@@ -26,7 +27,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import deep_merge
+from artcommonlib.util import deep_merge, fetch_slsa_attestation
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -493,25 +494,16 @@ class ConfigScanSources:
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
-        # get_konflux_slsa_attestation command will raise an exception if it cannot find the attestation
-        try:
-            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-                pullspec=build_record.image_pullspec,
-                registry_auth_file=self.registry_auth_file,
-            )
-
-        except ChildProcessError as e:
-            self.logger.warning('Failed to download SLSA attestation: %s', e)
+        # Fetch the SLSA attestation for the latest build
+        attestation = await fetch_slsa_attestation(
+            build_record.image_pullspec, build_record.name, self.registry_auth_file
+        )
+        if not attestation:
+            self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
             return
 
-        try:
-            # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
-        except Exception as e:
-            raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
-
         # Inspect the SLSA attestation to see if the build is hermetic
-        is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+        is_hermetic = attestation["predicate"]["invocation"]["parameters"]["hermetic"]
         is_hermetic = True if is_hermetic.lower() == "true" else False
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
@@ -520,8 +512,8 @@ class ConfigScanSources:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(
-                    code=RebuildHintCode.CONFIG_CHANGE,
-                    reason=f"Latest build {build_record.image_pullspec} network mode was {is_hermetic} but we need {network_mode}",
+                    code=RebuildHintCode.NETWORK_MODE_CHANGE,
+                    reason=f"Latest build {build_record.image_pullspec} network mode was {'hermetic' if is_hermetic else 'open'} but {network_mode} is required",
                 ),
             )
 
@@ -922,22 +914,7 @@ class ConfigScanSources:
                         f'which changed at event {extra_latest_tagging_event}',
                     )
 
-    async def _fetch_slsa_attestation(self, build_record: KonfluxBuildRecord) -> Optional[str]:
-        """
-        Fetch SLSA attestation for the given build record.
-        """
-        try:
-            # Get SLSA attestation for the build
-            self.logger.info(f'Fetching SLSA attestation for {build_record.image_pullspec}')
-            attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-                pullspec=build_record.image_pullspec,
-                registry_auth_file=self.registry_auth_file,
-            )
-            return attestation
-        except ChildProcessError:
-            return None
-
-    def _extract_task_bundles_from_attestation(self, attestation: str) -> Dict[str, str]:
+    def _extract_task_bundles_from_attestation(self, attestation: Dict) -> Dict[str, str]:
         """
         Extract task bundles from SLSA attestation materials.
         Returns a dict mapping task names to their SHA256 digests.
@@ -953,8 +930,8 @@ class ConfigScanSources:
             #     "uri": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta"
             #   },
             # ...]
-            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
-            materials = payload_json["predicate"]["materials"]
+            materials = attestation["predicate"]["materials"]
+
         except Exception as e:
             self.logger.warning("Failed to parse SLSA attestation for task bundle check: %s", e)
             return {}
@@ -972,56 +949,26 @@ class ConfigScanSources:
 
         return task_bundles
 
-    async def _check_single_task_bundle(
-        self, image_meta: ImageMetadata, task_name: str, used_sha: str, current_sha: str
-    ) -> Optional[RebuildHint]:
+    async def check_task_bundle_age(self, task_name: str, used_sha: str, current_sha: str):
         """
-        Check if a single task bundle should trigger a rebuild based on its age and staggered rebuild logic.
-        Returns a RebuildHint if a rebuild should be triggered, None otherwise.
+        Check if a single task bundle is old enough to warrant a rebuild.
+        Returns a tuple with task info and age if old enough, None otherwise.
         """
         self.logger.info(
             f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
         )
 
-        # Task bundle version differs, check if it's more than TASK_BUNDLE_AGE_THRESHOLD_DAYS days old and apply staggered rebuild logic
         task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
         if not task_age_days:
             return None
 
-        if task_age_days < TASK_BUNDLE_AGE_THRESHOLD_DAYS:
+        if task_age_days >= TASK_BUNDLE_AGE_THRESHOLD_DAYS:
+            return task_name, used_sha, current_sha, task_age_days
+        else:
             self.logger.info(
                 f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild'
             )
             return None
-
-        # Staggered rebuild logic: probability increases as age increases
-        #   - At 10 days: 1 in 21 chance (~5%)
-        #   - At 15 days: 1 in 16 chance (~6%)
-        #   - At 20 days: 1 in 11 chance (~9%)
-        #   - At 25 days: 1 in 6 chance (~17%)
-        #   - At 29 days: 1 in 2 chance (50%)
-        #   - At 30+ days: Always rebuild (100%)
-        self.logger.info(
-            f'Task bundle {task_name} is {task_age_days} days old (>= {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), applying staggered rebuild logic'
-        )
-        rebuild_probability_denominator = max(30 - task_age_days, 1)
-        should_rebuild = random.randint(1, rebuild_probability_denominator) == 1
-
-        if not should_rebuild:
-            self.logger.info(
-                f'Task bundle {task_name} is {task_age_days} days old but staggered rebuild '
-                f'logic decided not to rebuild (probability was 1/{rebuild_probability_denominator})'
-            )
-            return None
-
-        self.logger.info(
-            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundle {task_name} ({task_age_days} days old)'
-        )
-        return RebuildHint(
-            RebuildHintCode.TASK_BUNDLE_OUTDATED,
-            f'Task bundle {task_name} is {task_age_days} days old (>={TASK_BUNDLE_AGE_THRESHOLD_DAYS} days) '
-            f'and newer version is available (staggered rebuild)',
-        )
 
     @skip_check_if_changing
     async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
@@ -1039,11 +986,11 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # Fetch SLSA attestation
-        attestation = await self._fetch_slsa_attestation(build_record)
+        attestation = await fetch_slsa_attestation(
+            build_record.image_pullspec, build_record.name, self.registry_auth_file
+        )
         if not attestation:
-            self.logger.warning(
-                f'Failed to fetch SLSA attestation for {image_meta.distgit_key}, skipping task bundle check'
-            )
+            self.logger.warning('Skipping task bundle check for %s', image_meta.distgit_key)
             return
 
         # Extract task bundles from attestation
@@ -1063,7 +1010,7 @@ class ConfigScanSources:
 
         self.logger.info(f'Retrieved {len(current_task_bundles)} current task bundles from GitHub')
 
-        # Check each task bundle for outdated versions concurrently
+        # Check each task bundle for outdated versions
         self.logger.info(f'Comparing task bundle versions for {image_meta.distgit_key}')
 
         # Filter out task bundles that are up-to-date or not found in current template
@@ -1083,19 +1030,66 @@ class ConfigScanSources:
         if not outdated_task_bundles:
             return
 
-        # Process all outdated task bundles concurrently
-        rebuild_hints = await asyncio.gather(
+        # Check if any outdated task bundles are old enough and apply staggered rebuild logic once
+        # Execute all age checks in parallel
+        age_check_results = await asyncio.gather(
             *[
-                self._check_single_task_bundle(image_meta, task_name, used_sha, current_sha)
+                self.check_task_bundle_age(task_name, used_sha, current_sha)
                 for task_name, used_sha, current_sha in outdated_task_bundles
             ]
         )
 
-        # Check if any task bundle requires a rebuild
-        for rebuild_hint in rebuild_hints:
-            if rebuild_hint:
-                self.add_image_meta_change(image_meta, rebuild_hint)
-                return
+        # Filter out None results to get only old enough task bundles
+        old_outdated_tasks = [result for result in age_check_results if result is not None]
+
+        if not old_outdated_tasks:
+            return
+
+        # Apply staggered rebuild logic once for all old outdated tasks
+        # Use the oldest task for probability calculation
+        oldest_task = max(old_outdated_tasks, key=lambda x: x[3])
+        task_name, used_sha, current_sha, task_age_days = oldest_task
+
+        self.logger.info(
+            f'Found {len(old_outdated_tasks)} outdated task bundles >= {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days old, '
+            f'applying staggered rebuild logic based on oldest task {task_name} ({task_age_days} days old)'
+        )
+
+        # Staggered rebuild logic: probability increases as age increases
+        #   - At 10 days: 1 in 21 chance (~5%)
+        #   - At 15 days: 1 in 16 chance (~6%)
+        #   - At 20 days: 1 in 11 chance (~9%)
+        #   - At 25 days: 1 in 6 chance (~17%)
+        #   - At 29 days: 1 in 2 chance (50%)
+        #   - At 30+ days: Always rebuild (100%)
+        rebuild_probability_denominator = max(30 - task_age_days, 1)
+        probability_percentage = (1.0 / rebuild_probability_denominator) * 100
+        random_number = random.randint(1, rebuild_probability_denominator)
+        should_rebuild = random_number == 1
+
+        self.logger.info(
+            f'Staggered rebuild probability: {probability_percentage:.1f}% (1/{rebuild_probability_denominator}), '
+            f'generated random number: {random_number}, rebuild decision: {should_rebuild}'
+        )
+
+        if not should_rebuild:
+            self.logger.info(
+                f'Staggered rebuild logic decided not to rebuild despite {len(old_outdated_tasks)} outdated task bundles '
+                f'(probability was {probability_percentage:.1f}% based on oldest task {task_name})'
+            )
+            return
+
+        # Trigger rebuild using the oldest task as the reason
+        self.logger.info(
+            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundles '
+            f'(oldest: {task_name}, {task_age_days} days old)'
+        )
+        rebuild_hint = RebuildHint(
+            RebuildHintCode.TASK_BUNDLE_OUTDATED,
+            f'Task bundle {task_name} is {task_age_days} days old (>={TASK_BUNDLE_AGE_THRESHOLD_DAYS} days) '
+            f'and newer version is available (staggered rebuild)',
+        )
+        self.add_image_meta_change(image_meta, rebuild_hint)
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(5))
     async def get_current_task_bundle_shas(self) -> Dict[str, str]:

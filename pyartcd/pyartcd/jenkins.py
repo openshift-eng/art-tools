@@ -526,21 +526,27 @@ def start_olm_bundle_konflux(
     operator_nvrs: list,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
+    group: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
         return
 
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+    }
+
+    if group:
+        params['GROUP'] = group
+
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
-        params={
-            'BUILD_VERSION': build_version,
-            'ASSEMBLY': assembly,
-            'DOOZER_DATA_PATH': doozer_data_path,
-            'DOOZER_DATA_GITREF': doozer_data_gitref,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-        },
+        params=params,
         **kwargs,
     )
 
@@ -591,20 +597,22 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
 
 
 def start_build_plashets(
-    version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
 ) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'RELEASE': release,
+        'ASSEMBLY': assembly,
+        'REPOS': ','.join(repos) if repos else '',
+        'DATA_PATH': data_path,
+        'DATA_GITREF': data_gitref,
+        'COPY_LINKS': copy_links,
+        'DRY_RUN': dry_run,
+    }
+
     return start_build(
         job=Jobs.BUILD_PLASHETS,
-        params={
-            'VERSION': version,
-            'RELEASE': release,
-            'ASSEMBLY': assembly,
-            'REPOS': ','.join(repos) if repos else '',
-            'DATA_PATH': data_path,
-            'DATA_GITREF': data_gitref,
-            'COPY_LINKS': copy_links,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
@@ -614,16 +622,24 @@ def start_build_fbc(
     assembly: str,
     operator_nvrs: list,
     dry_run: bool,
+    group: Optional[str] = None,
+    ocp_target_version: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+        'DRY_RUN': dry_run,
+    }
+    if group:
+        params['GROUP'] = group
+    if ocp_target_version:
+        params['OCP_TARGET_VERSION'] = ocp_target_version
+
     return start_build(
         job=Jobs.BUILD_FBC,
-        params={
-            'BUILD_VERSION': version,
-            'ASSEMBLY': assembly,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 

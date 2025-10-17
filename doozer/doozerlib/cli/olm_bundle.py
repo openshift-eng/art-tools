@@ -316,8 +316,8 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             runtime.konflux_db.add_build(build_record)
             LOGGER.info('Brew build info stored successfully')
 
-        except Exception as err:
-            LOGGER.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            LOGGER.exception('Failed writing record to the konflux DB')
 
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
     get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]

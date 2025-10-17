@@ -386,8 +386,9 @@ class Ocp4Pipeline:
         If automation is "scheduled", job was triggered by hand and there were RPMs in the build plan: return True
         """
 
+        # get_freeze_automation now accepts the full group name
         automation_state: str = await util.get_freeze_automation(
-            version=self.version,
+            group=f'openshift-{self.version}',
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
@@ -474,6 +475,10 @@ class Ocp4Pipeline:
         """
         Update rebase fail counters for images that failed to rebase.
         """
+
+        if self.assembly == 'test':
+            # Ignore for test assembly
+            return
 
         # Reset fail counters for images that were rebased successfully
         successful_images = []
@@ -782,8 +787,9 @@ class Ocp4Pipeline:
 
         # Build plashets
         if not self.skip_plashets and self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            group_param = f"openshift-{self.version}"
             jenkins.start_build_plashets(
-                version=self.version,
+                group=group_param,
                 release=self.release,
                 assembly=self.assembly,
                 data_path=self.data_path,

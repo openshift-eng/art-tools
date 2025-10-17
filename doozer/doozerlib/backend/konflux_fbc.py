@@ -28,6 +28,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from kubernetes.dynamic import resource
@@ -39,6 +40,7 @@ yaml = opm.yaml
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry:v{major}.{minor}"
+FBC_BUILD_PRIORITY = "3"
 
 
 class KonfluxFbcImporter:
@@ -256,6 +258,7 @@ class KonfluxFbcFragmentMerger:
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
         plr_template: Optional[str] = None,
+        major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
     ):
         """
@@ -279,6 +282,7 @@ class KonfluxFbcFragmentMerger:
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
+        self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
             config_file=self.konflux_kubeconfig,
@@ -293,8 +297,11 @@ class KonfluxFbcFragmentMerger:
             raise ValueError("At least one fragment must be provided.")
         if not target_index:
             raise ValueError("Target index must be provided.")
-        major = int(self.group_config.get("vars", {}).get("MAJOR"))
-        minor = int(self.group_config.get("vars", {}).get("MINOR"))
+        if self.major_minor_override:
+            major, minor = self.major_minor_override
+        else:
+            major = int(self.group_config.get("vars", {}).get("MAJOR"))
+            minor = int(self.group_config.get("vars", {}).get("MINOR"))
         logger = self._logger
         konflux_client = self._konflux_client
 
@@ -379,14 +386,15 @@ class KonfluxFbcFragmentMerger:
                 build_repo=build_repo,
                 output_image=target_index,
             )
-            plr_name = created_plr["metadata"]["name"]
-            plr_url = konflux_client.resource_url(created_plr)
+            plr_name = created_plr.name
+            plr_url = konflux_client.resource_url(created_plr.to_dict())
             logger.info(f"Created Pipelinerun {plr_name}: {plr_url}")
 
             # Wait for the Pipelinerun to complete
             logger.info(f"Waiting for Pipelinerun {plr_name} to complete...")
-            plr, _ = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
-            succeeded_condition = artlib_util.KubeCondition.find_condition(plr, 'Succeeded')
+            plr_info = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
+            plr = plr_info.to_dict()
+            succeeded_condition = plr_info.find_condition('Succeeded')
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
             logger.info(
                 "Pipelinerun %s completed with outcome: %s",
@@ -528,6 +536,7 @@ class KonfluxFbcFragmentMerger:
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
+            build_priority=FBC_BUILD_PRIORITY,
         )
         return created_plr
 
@@ -544,6 +553,7 @@ class KonfluxFbcRebaser:
         push: bool,
         fbc_repo: str,
         upcycle: bool,
+        ocp_version_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -556,6 +566,7 @@ class KonfluxFbcRebaser:
         self.push = push
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.upcycle = upcycle
+        self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
@@ -649,7 +660,10 @@ class KonfluxFbcRebaser:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
         group_config = metadata.runtime.group_config
-        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        if self.ocp_version_override:
+            ocp_version = self.ocp_version_override
+        else:
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
         # OCP 4.17+ requires bundle object to CSV metadata migration.
         migrate_level = "none"
         if ocp_version >= (4, 17):
@@ -730,6 +744,18 @@ class KonfluxFbcRebaser:
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
 
+            # For an operator bundle that uses replaces -- such as OADP
+            # Update "replaces" in the channel
+            replaces = None
+            if 'oadp-' in olm_bundle_name:
+                # Find the current head - the entry that is not replaced by any other entry
+                bundle_with_replaces = [it for it in channel['entries']]
+                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
+                if current_head:
+                    # The new bundle should replace the current head
+                    replaces = current_head['name']
+
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
@@ -744,6 +770,8 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
+            if replaces:
+                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
@@ -878,12 +906,14 @@ class KonfluxFbcRebaser:
         ]
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
-        dest_repos = {
-            p_split[1]: p_split[0]
-            for bundle_blob in olm_bundle_blobs
-            for related_image in bundle_blob.get("relatedImages", [])
-            if (p_split := related_image["image"].split('@', 1))
-        }
+        dest_repos = {}
+        for bundle_blob in olm_bundle_blobs:
+            for related_image in bundle_blob.get("relatedImages", []):
+                if '@' in related_image["image"]:
+                    repo, digest = related_image["image"].split('@', 1)
+                    dest_repos[digest] = repo
+                else:
+                    continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None
@@ -902,7 +932,9 @@ class KonfluxFbcRebaser:
                             source_repo,
                         ],
                     }
+                    # If source is same as destination, we don't need to add an IDMS mapping
                     for sha, source_repo in source_repos.items()
+                    if sha in dest_repos and source_repo != dest_repos[sha]
                 ],
             },
         }
@@ -984,10 +1016,10 @@ class KonfluxFbcRebaser:
 
 
 class KonfluxFbcBuildError(Exception):
-    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[resource.ResourceInstance]) -> None:
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
         super().__init__(message)
         self.pipelinerun_name = pipelinerun_name
-        self.pipelinerun = pipelinerun
+        self.pipelinerun_dict = pipelinerun_dict
 
 
 class KonfluxFbcBuilder:
@@ -1023,7 +1055,10 @@ class KonfluxFbcBuilder:
         self._record_logger = record_logger
         self._logger = logger.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
-            konflux_namespace, konflux_kubeconfig, konflux_context, dry_run=self.dry_run
+            default_namespace=konflux_namespace,
+            config_file=konflux_kubeconfig,
+            context=konflux_context,
+            dry_run=self.dry_run,
         )
 
     @staticmethod
@@ -1111,40 +1146,43 @@ class KonfluxFbcBuilder:
             arches = metadata.get_arches()
             for attempt in range(1, retries + 1):
                 logger.info("Build attempt %d/%d", attempt, retries)
-                pipelinerun, url = await self._start_build(
+                pipelinerun_info, url = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
                     output_image=output_image,
                     arches=arches,
                     logger=logger,
                 )
-                pipelinerun_name = pipelinerun.metadata.name
+                pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
                 if not self.dry_run:
                     await self._update_konflux_db(
-                        metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, arches, logger=logger
+                        metadata, build_repo, pipelinerun_info, KonfluxBuildOutcome.PENDING, arches, logger=logger
                     )
                 else:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun, _ = await self._konflux_client.wait_for_pipelinerun(
+                pipelinerun_info = await self._konflux_client.wait_for_pipelinerun(
                     pipelinerun_name, namespace=self.konflux_namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                pipelinerun_dict = pipelinerun_info.to_dict()
+                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self._update_konflux_db(metadata, build_repo, pipelinerun, outcome, arches, logger=logger)
+                    await self._update_konflux_db(
+                        metadata, build_repo, pipelinerun_info, outcome, arches, logger=logger
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun
+                        f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun_dict
                     )
                 else:
                     error = None
@@ -1158,7 +1196,7 @@ class KonfluxFbcBuilder:
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_fbc_konflux", **record)
-        return pipelinerun_name, pipelinerun
+        return pipelinerun_name, pipelinerun_dict
 
     async def _start_build(
         self,
@@ -1167,7 +1205,7 @@ class KonfluxFbcBuilder:
         output_image: str,
         arches: Sequence[str],
         logger: logging.Logger,
-    ):
+    ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -1201,7 +1239,7 @@ class KonfluxFbcBuilder:
             for delivery_repo in delivery_repo_names:
                 additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
 
-        pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
+        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
@@ -1217,16 +1255,17 @@ class KonfluxFbcBuilder:
             hermetic=True,
             dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
+            build_priority=FBC_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun)
-        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
-        return pipelinerun, url
+        url = konflux_client.resource_url(pipelinerun_info.to_dict())
+        logger.info(f"PipelineRun {pipelinerun_info.name} created: {url}")
+        return pipelinerun_info, url
 
     async def _update_konflux_db(
         self,
         metadata: ImageMetadata,
         build_repo: BuildRepo,
-        pipelinerun: resource.ResourceInstance,
+        pipelinerun_info: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
@@ -1255,9 +1294,10 @@ class KonfluxFbcBuilder:
             source_repo = dfp.labels.get('io.openshift.build.source-location')
             commitish = dfp.labels.get('io.openshift.build.commit.id')
 
-            pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
-            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun_info.name
+            pipelinerun_dict = pipelinerun_info.to_dict()
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_dict)
+            build_component = pipelinerun_dict['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': name,
@@ -1291,12 +1331,9 @@ class KonfluxFbcBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    image_pullspec = next(
-                        (r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_URL'), None
-                    )
-                    image_digest = next(
-                        (r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_DIGEST'), None
-                    )
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -1304,8 +1341,9 @@ class KonfluxFbcBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_dict.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
 
                     build_record_params.update(
                         {
@@ -1318,8 +1356,9 @@ class KonfluxFbcBuilder:
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_dict.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
                     build_record_params.update(
                         {
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
@@ -1333,6 +1372,6 @@ class KonfluxFbcBuilder:
             db.add_build(build_record)
             logger.info(f'Konflux build info stored successfully with status {outcome}')
 
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            logger.exception('Failed writing record to the konflux DB')
             raise

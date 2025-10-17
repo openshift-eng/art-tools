@@ -360,11 +360,11 @@ data:
         ]
         repodata_with_arch = Repodata(name="testrepo", primary_rpms=self.rpms + rpms_with_arch, modules=[])
 
-        # Test exact architecture match - should return arch-specific AND noarch
+        # Test exact architecture match - should return only latest version (all are 1.0.0, so any one)
         found, not_found = repodata_with_arch.get_rpms("multiarch", arch="x86_64")
-        self.assertEqual(len(found), 2)  # x86_64 + noarch
-        found_arches = {rpm.arch for rpm in found}
-        self.assertEqual(found_arches, {"x86_64", "noarch"})
+        self.assertEqual(len(found), 1)  # Only latest version
+        # Should be one of x86_64 or noarch (both are available for this arch, all same version)
+        self.assertIn(found[0].arch, {"x86_64", "noarch"})
         self.assertEqual(not_found, [])
 
         # Test arch with only noarch available
@@ -373,171 +373,18 @@ data:
         self.assertEqual(found[0].arch, "noarch")
         self.assertEqual(not_found, [])
 
-        # Test another arch - should return arch-specific AND noarch (if they exist)
+        # Test another arch - should return only latest version (all are 1.0.0, so any one)
         found, not_found = repodata_with_arch.get_rpms("multiarch", arch="aarch64")
-        self.assertEqual(len(found), 2)  # aarch64 + noarch
-        found_arches = {rpm.arch for rpm in found}
-        self.assertEqual(found_arches, {"aarch64", "noarch"})
+        self.assertEqual(len(found), 1)  # Only latest version
+        # Should be one of aarch64 or noarch (both are available for this arch, all same version)
+        self.assertIn(found[0].arch, {"aarch64", "noarch"})
         self.assertEqual(not_found, [])
 
         # Test arch with no matches - should return only noarch (no fallback to other arches)
         found, not_found = repodata_with_arch.get_rpms("multiarch", arch="s390x")
         self.assertEqual(len(found), 1)  # only noarch
-        found_arches = {rpm.arch for rpm in found}
-        self.assertEqual(found_arches, {"noarch"})
+        self.assertEqual(found[0].arch, "noarch")
         self.assertEqual(not_found, [])
-
-    def test_get_rpms_nvr_extraction_single(self):
-        rpms_multi_version = [
-            Rpm(
-                name="pam",
-                epoch=0,
-                version="1.5.1",
-                checksum="abc",
-                size=100,
-                location="pam-1.5.1-24.el9_4.x86_64.rpm",
-                sourcerpm="pam-1.5.1-24.el9_4.src.rpm",
-                release="24.el9_4",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="pam",
-                epoch=0,
-                version="1.5.2",
-                checksum="def",
-                size=200,
-                location="pam-1.5.2-1.el9.x86_64.rpm",
-                sourcerpm="pam-1.5.2-1.el9.src.rpm",
-                release="1.el9",
-                arch="x86_64",
-            ),
-        ]
-        repodata = Repodata(name="testrepo", primary_rpms=rpms_multi_version, modules=[])
-
-        found, not_found = repodata.get_rpms("pam-1.5.1-24.el9_4", arch="x86_64")
-        self.assertEqual(len(found), 2)
-        found_names = {rpm.name for rpm in found}
-        found_versions = {rpm.version for rpm in found}
-        self.assertEqual(found_names, {"pam"})
-        self.assertEqual(found_versions, {"1.5.1", "1.5.2"})
-        self.assertEqual(not_found, [])
-
-    def test_get_rpms_nvr_extraction_multiple(self):
-        rpms_test = [
-            Rpm(
-                name="pam",
-                epoch=0,
-                version="1.5.1",
-                checksum="abc1",
-                size=100,
-                location="pam-1.5.1-24.el9_4.x86_64.rpm",
-                sourcerpm="pam-1.5.1-24.el9_4.src.rpm",
-                release="24.el9_4",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="pam",
-                epoch=0,
-                version="1.5.2",
-                checksum="abc2",
-                size=200,
-                location="pam-1.5.2-1.el9.x86_64.rpm",
-                sourcerpm="pam-1.5.2-1.el9.src.rpm",
-                release="1.el9",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="p11-kit-trust",
-                epoch=0,
-                version="0.25.3",
-                checksum="def1",
-                size=300,
-                location="p11-kit-trust-0.25.3-2.el9.x86_64.rpm",
-                sourcerpm="p11-kit-trust-0.25.3-2.el9.src.rpm",
-                release="2.el9",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="p11-kit-trust",
-                epoch=0,
-                version="0.25.4",
-                checksum="def2",
-                size=400,
-                location="p11-kit-trust-0.25.4-1.el9.x86_64.rpm",
-                sourcerpm="p11-kit-trust-0.25.4-1.el9.src.rpm",
-                release="1.el9",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="wget",
-                epoch=0,
-                version="1.21.1",
-                checksum="ghi1",
-                size=500,
-                location="wget-1.21.1-7.el9.x86_64.rpm",
-                sourcerpm="wget-1.21.1-7.el9.src.rpm",
-                release="7.el9",
-                arch="x86_64",
-            ),
-            Rpm(
-                name="curl",
-                epoch=0,
-                version="7.76.1",
-                checksum="jkl1",
-                size=600,
-                location="curl-7.76.1-26.el9_3.3.x86_64.rpm",
-                sourcerpm="curl-7.76.1-26.el9_3.3.src.rpm",
-                release="26.el9_3.3",
-                arch="x86_64",
-            ),
-        ]
-        repodata = Repodata(name="testrepo", primary_rpms=rpms_test, modules=[])
-
-        items = ["pam-1.5.1-24.el9_4", "p11-kit-trust-0.25.3-2.el9", "wget", "curl"]
-        found, not_found = repodata.get_rpms(items, arch="x86_64")
-
-        self.assertEqual(len(found), 6)
-        found_names = {rpm.name for rpm in found}
-        self.assertEqual(found_names, {"pam", "p11-kit-trust", "wget", "curl"})
-        self.assertEqual(not_found, [])
-
-        pam_rpms = [rpm for rpm in found if rpm.name == "pam"]
-        p11_rpms = [rpm for rpm in found if rpm.name == "p11-kit-trust"]
-        wget_rpms = [rpm for rpm in found if rpm.name == "wget"]
-        curl_rpms = [rpm for rpm in found if rpm.name == "curl"]
-
-        self.assertEqual(len(pam_rpms), 2)
-        self.assertEqual(len(p11_rpms), 2)
-        self.assertEqual(len(wget_rpms), 1)
-        self.assertEqual(len(curl_rpms), 1)
-
-    def test_get_rpms_nvr_extraction_invalid_nvr(self):
-        found, not_found = self.repodata.get_rpms("invalid-nvr-format", arch="x86_64")
-        self.assertEqual(found, [])
-        self.assertEqual(not_found, ["invalid-nvr-format"])
-
-    def test_get_rpms_nvr_extraction_mixed_valid_invalid(self):
-        rpms_test = [
-            Rpm(
-                name="wget",
-                epoch=0,
-                version="1.21.1",
-                checksum="abc",
-                size=100,
-                location="wget-1.21.1-7.el9.x86_64.rpm",
-                sourcerpm="wget-1.21.1-7.el9.src.rpm",
-                release="7.el9",
-                arch="x86_64",
-            ),
-        ]
-        repodata = Repodata(name="testrepo", primary_rpms=rpms_test, modules=[])
-
-        items = ["wget-1.21.1-7.el9", "invalid-nvr", "nonexistent-pkg"]
-        found, not_found = repodata.get_rpms(items, arch="x86_64")
-
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].name, "wget")
-        self.assertEqual(set(not_found), {"invalid-nvr", "nonexistent-pkg"})
 
     def test_get_rpms_with_arch_no_match(self):
         # Test when no RPM matches the requested architecture and no noarch exists
@@ -565,8 +412,8 @@ data:
         self.assertEqual(len(found), 0)
         self.assertEqual(not_found, ["other-arch-only"])  # Should be not_found for x86_64
 
-    def test_get_rpms_returns_all_versions_for_arch(self):
-        # Test that get_rpms returns all versions for a specific architecture
+    def test_get_rpms_returns_latest_version_for_arch(self):
+        # Test that get_rpms returns only the latest version for a specific architecture
         rpms_multiple_versions = [
             Rpm(
                 name="multi-version",
@@ -615,16 +462,278 @@ data:
         ]
         repodata_multi = Repodata(name="testrepo", primary_rpms=rpms_multiple_versions, modules=[])
 
-        # Should return all x86_64 versions plus noarch versions
+        # Should return only the latest version available for x86_64 (considering both x86_64 and noarch)
         found, not_found = repodata_multi.get_rpms("multi-version", arch="x86_64")
-        self.assertEqual(len(found), 3)  # 2 x86_64 + 1 noarch
+        self.assertEqual(len(found), 1)  # Only latest version
 
-        # Check that we get the right versions/architectures
-        versions = {rpm.version for rpm in found}
-        arches = {rpm.arch for rpm in found}
-        self.assertEqual(versions, {"1.0.0", "2.0.0", "3.0.0"})
-        self.assertEqual(arches, {"x86_64", "noarch"})
+        # Should be the noarch 3.0.0 since it's the latest overall
+        self.assertEqual(found[0].version, "3.0.0")
+        self.assertEqual(found[0].arch, "noarch")
         self.assertEqual(not_found, [])
+
+    def test_get_rpms_nvr_latest_filtering_same_version(self):
+        # Test NVR input where specific version IS the latest version
+        # Setup: Create RPMs where the NVR we request is already the latest
+        rpms_single_version = [
+            Rpm(
+                name="single-ver",
+                epoch=1,
+                version="1.0.0",
+                checksum="sv1",
+                size=100,
+                location="single-ver-1.0.0.rpm",
+                sourcerpm="single-ver-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            )
+        ]
+        repodata_single = Repodata(name="testrepo", primary_rpms=rpms_single_version, modules=[])
+
+        # Request the specific NVR - should only return that one RPM (not duplicated)
+        found, not_found = repodata_single.get_rpms("single-ver-1.0.0-1.el9", arch="x86_64")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].nvr, "single-ver-1.0.0-1.el9")
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_nvr_latest_filtering_different_versions(self):
+        # Test NVR input where specific version is NOT the latest version
+        # Setup: Create multiple versions where requested NVR is not the latest
+        rpms_multi_versions = [
+            Rpm(
+                name="multi-ver",
+                epoch=1,
+                version="1.0.0",
+                checksum="mv1",
+                size=100,
+                location="multi-ver-1.0.0.rpm",
+                sourcerpm="multi-ver-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="multi-ver",
+                epoch=1,
+                version="2.0.0",
+                checksum="mv2",
+                size=200,
+                location="multi-ver-2.0.0.rpm",
+                sourcerpm="multi-ver-2.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="multi-ver",
+                epoch=1,
+                version="1.5.0",
+                checksum="mv3",
+                size=150,
+                location="multi-ver-1.5.0.rpm",
+                sourcerpm="multi-ver-1.5.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+        ]
+        repodata_multi = Repodata(name="testrepo", primary_rpms=rpms_multi_versions, modules=[])
+
+        # Request older version 1.0.0 - should return both 1.0.0 (specific) and 2.0.0 (latest)
+        found, not_found = repodata_multi.get_rpms("multi-ver-1.0.0-1.el9", arch="x86_64")
+        self.assertEqual(len(found), 2)
+        found_nvrs = {rpm.nvr for rpm in found}
+        self.assertEqual(found_nvrs, {"multi-ver-1.0.0-1.el9", "multi-ver-2.0.0-1.el9"})
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_nvr_latest_filtering_with_noarch(self):
+        # Test NVR filtering with noarch packages included
+        rpms_with_noarch = [
+            Rpm(
+                name="with-noarch",
+                epoch=1,
+                version="1.0.0",
+                checksum="wn1",
+                size=100,
+                location="with-noarch-1.0.0-x86_64.rpm",
+                sourcerpm="with-noarch-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="with-noarch",
+                epoch=1,
+                version="2.0.0",
+                checksum="wn2",
+                size=200,
+                location="with-noarch-2.0.0-noarch.rpm",
+                sourcerpm="with-noarch-2.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="noarch",
+            ),
+        ]
+        repodata_noarch = Repodata(name="testrepo", primary_rpms=rpms_with_noarch, modules=[])
+
+        # Request x86_64 version 1.0.0 - should return 1.0.0 (specific) and 2.0.0 (latest, noarch)
+        found, not_found = repodata_noarch.get_rpms("with-noarch-1.0.0-1.el9", arch="x86_64")
+        self.assertEqual(len(found), 2)
+        found_nvrs = {rpm.nvr for rpm in found}
+        self.assertEqual(found_nvrs, {"with-noarch-1.0.0-1.el9", "with-noarch-2.0.0-1.el9"})
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_nvr_not_found(self):
+        # Test NVR input where the specific version doesn't exist
+        found, not_found = self.repodata.get_rpms("foo-9.9.9-1.el9", arch="x86_64")
+        # Should still return latest version of foo, but report the specific NVR as not found
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "foo")
+        self.assertEqual(found[0].nvr, "foo-1.2.3-1.el9")  # Latest version
+        self.assertEqual(not_found, ["foo-9.9.9-1.el9"])
+
+    def test_get_rpms_mixed_nvr_and_names(self):
+        # Test mixed input: some NVRs, some package names
+        # Add an extra version of foo for testing
+        extra_foo = Rpm(
+            name="foo",
+            epoch=1,
+            version="1.5.0",
+            checksum="abc2",
+            size=150,
+            location="foo-1.5.0.rpm",
+            sourcerpm="foo-1.5.0-1.el9.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        rpms_with_extra = self.rpms + [extra_foo]
+        repodata_mixed = Repodata(name="testrepo", primary_rpms=rpms_with_extra, modules=[])
+
+        items = [
+            "foo-1.2.3-1.el9",  # NVR: should return 1.2.3 (specific) + 1.5.0 (latest)
+            "bar",  # Name: should return only latest version (2.0.0)
+            "nonexistent",  # Should be not found
+        ]
+        found, not_found = repodata_mixed.get_rpms(items, arch="x86_64")
+
+        # Should find: foo 1.2.3, foo 1.5.0, bar 2.0.0
+        self.assertEqual(len(found), 3)
+        found_nvrs = {rpm.nvr for rpm in found}
+        self.assertEqual(found_nvrs, {"foo-1.2.3-1.el9", "foo-1.5.0-1.el9", "bar-2.0.0-1.el9"})
+        self.assertEqual(not_found, ["nonexistent"])
+
+    def test_get_rpms_name_returns_latest_version_only(self):
+        # Test that package name inputs return only the LATEST version
+        rpms_multiple_foo = [
+            Rpm(
+                name="foo",
+                epoch=1,
+                version="1.0.0",
+                checksum="f1",
+                size=100,
+                location="foo-1.0.0.rpm",
+                sourcerpm="foo-1.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="foo",
+                epoch=1,
+                version="2.0.0",
+                checksum="f2",
+                size=200,
+                location="foo-2.0.0.rpm",
+                sourcerpm="foo-2.0.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+            Rpm(
+                name="foo",
+                epoch=1,
+                version="1.5.0",
+                checksum="f3",
+                size=150,
+                location="foo-1.5.0.rpm",
+                sourcerpm="foo-1.5.0-1.el9.src.rpm",
+                release="1.el9",
+                arch="x86_64",
+            ),
+        ]
+        repodata_multiple = Repodata(name="testrepo", primary_rpms=rpms_multiple_foo, modules=[])
+
+        # Request by name - should return ONLY the latest version (2.0.0)
+        found, not_found = repodata_multiple.get_rpms("foo", arch="x86_64")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].version, "2.0.0")  # Latest version
+        self.assertEqual(not_found, [])
+
+    def test_get_rpms_invalid_nvr_fallback(self):
+        # Test that invalid NVR strings gracefully fall back to name-based behavior
+        found, not_found = self.repodata.get_rpms("foo-invalid-nvr-format", arch="x86_64")
+        # Should treat as package name and return not found (since no package named "foo-invalid-nvr-format")
+        self.assertEqual(found, [])
+        self.assertEqual(not_found, ["foo-invalid-nvr-format"])
+
+    def test_detect_nvr_vs_name_package_names(self):
+        # Test package names that should NOT be identified as NVRs
+        test_cases = [
+            "elfutils-debuginfod-client",  # The original issue case
+            "python3-devel",
+            "systemd-networkd",
+            "container-selinux",
+            "libxml2-python3",
+            "ovn25.03",  # Package name with dots and numbers (Brew package ID 86705)
+            "python3",  # Package name ending with digit (Brew package ID 34040)
+            # Additional variations to test diverse patterns
+            "lib2.5-devel",  # Another package name with dots and numbers
+            "python3-libs",  # Package name with digit and suffix
+        ]
+
+        for package_name in test_cases:
+            with self.subTest(package_name=package_name):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(package_name)
+                self.assertFalse(is_nvr, f"{package_name} should be detected as package name, not NVR")
+                self.assertEqual(extracted_name, package_name, "Package name should be returned unchanged")
+
+    def test_detect_nvr_vs_name_actual_nvrs(self):
+        # Test actual NVR strings that should be identified as NVRs
+        test_cases = [
+            ("elfutils-debuginfod-client-0.188-3.el9", "elfutils-debuginfod-client"),
+            ("python3-devel-3.9.16-1.el9_2.1", "python3-devel"),
+            ("systemd-networkd-252-14.el9_2.3", "systemd-networkd"),
+            ("container-selinux-2.205.0-2.el9", "container-selinux"),
+            ("foo-1.2.3-4.el9", "foo"),
+            ("bar-2.0-1.fc38", "bar"),
+            ("ovn25.03-25.03.1-63.el10fdp", "ovn25.03"),  # Real Brew package with dots in name
+            ("ovn25.03-25.03.0-73.el9fdp", "ovn25.03"),  # Different version and el9 distro
+            ("python3-3.6.8-51.el8_8.11", "python3"),  # Real Brew package ending with digit
+            ("python3-3.6.8-21.el7_9.2", "python3"),  # Different release and el7 distro
+        ]
+
+        for nvr, expected_name in test_cases:
+            with self.subTest(nvr=nvr):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(nvr)
+                self.assertTrue(is_nvr, f"{nvr} should be detected as NVR")
+                self.assertEqual(extracted_name, expected_name, "Package name should be extracted correctly")
+
+    def test_detect_nvr_vs_name_edge_cases(self):
+        # Test edge cases and ambiguous strings
+        test_cases = [
+            # These look like NVRs but have non-version/release components
+            ("foo-bar-baz", False, "foo-bar-baz"),  # No digits in version/release
+            ("test-alpha-beta", False, "test-alpha-beta"),  # Alphabetic components
+            ("package-name-only", False, "package-name-only"),  # Just a package name
+            # Package names with dots and numbers that should NOT be NVRs
+            ("package2.5-name", False, "package2.5-name"),  # Similar to ovn25.03 pattern
+            ("lib1.2-dev", False, "lib1.2-dev"),  # Another versioned package name
+            # These should be detected as NVRs
+            ("test-1.0-alpha1", True, "test"),  # Version has digit, release has digit
+            ("package-2.5.1-1.20230101", True, "package"),  # Valid version/release
+            ("versioned2.1-1.0.0-1.el9", True, "versioned2.1"),  # Package with dots, valid NVR
+            # Additional real-world patterns from Brew packages
+            ("python3-3.6.8-15.1.el8_1.2", True, "python3"),  # Complex release with dots
+            ("ovn25.03-25.03.0-51.el10fdp", True, "ovn25.03"),  # Different variant of ovn NVR
+        ]
+
+        for input_str, expected_is_nvr, expected_name in test_cases:
+            with self.subTest(input=input_str):
+                is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(input_str)
+                self.assertEqual(is_nvr, expected_is_nvr, f"NVR detection failed for {input_str}")
+                self.assertEqual(extracted_name, expected_name, f"Name extraction failed for {input_str}")
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):

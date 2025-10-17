@@ -344,10 +344,7 @@ class BugValidator:
     async def _verify_attached_flaws_for(
         self, advisory_id: int, attached_trackers: Iterable[Bug], attached_flaws: Iterable[Bug]
     ):
-        flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(
-            flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
-        )
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(self.runtime, attached_trackers)
 
         # Check if attached flaws match expected flaws
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}

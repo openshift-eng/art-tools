@@ -141,7 +141,7 @@ class ConformaVerifyCli:
         pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
 
         # we need to fetch build records so we can map nvrs to pullspecs
-        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, batch_nvrs, strict=True)
+        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, batch_nvrs)
         nvrs_by_pullspec = {str(record.image_pullspec): record.nvr for record in build_records_by_nvrs.values()}
 
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:

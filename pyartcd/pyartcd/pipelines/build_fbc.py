@@ -1,13 +1,16 @@
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 
-from pyartcd import constants
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 
@@ -30,10 +33,14 @@ class BuildFbcPipeline:
         reset_to_prod: bool,
         prod_registry_auth: Optional[str],
         force: bool,
+        group: str,
+        major_minor: Optional[str],
+        ignore_locks: bool,
     ):
         self.runtime = runtime
         self.version = version
         self.assembly = assembly
+        self.group = group
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.only = only
@@ -46,6 +53,8 @@ class BuildFbcPipeline:
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.force = force
+        self.major_minor = major_minor
+        self.ignore_locks = ignore_locks
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -75,12 +84,15 @@ class BuildFbcPipeline:
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
+        # If unspecified, assume it's for openshift
+        group = f"openshift-{self.version}" if not self.group else self.group
+
         cmd = [
             'doozer',
             '--build-system=konflux',
             f'--working-dir={self.runtime.doozer_working}',
             f'--assembly={self.assembly}',
-            f'--group=openshift-{self.version}{"@" + self.data_gitref if self.data_gitref else ""}',
+            f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
         ]
         if self.data_path:
             cmd.append(f'--data-path={self.data_path}')
@@ -106,8 +118,33 @@ class BuildFbcPipeline:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        if self.kubeconfig:
-            doozer_opts.extend(['--konflux-kubeconfig', self.kubeconfig])
+        # Set namespace based on group prefix
+        group = f"openshift-{self.version}" if not self.group else self.group
+        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+            if group.startswith(prefix):
+                doozer_opts.extend(['--konflux-namespace', namespace])
+                break
+
+        # Use kubeconfig from CLI parameter or tenant-specific environment variable
+        final_kubeconfig = self.kubeconfig
+        if not final_kubeconfig:
+            # Determine the appropriate environment variable based on group prefix
+            kubeconfig_env_var = None
+            for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+                if group.startswith(prefix):
+                    kubeconfig_env_var = env_var
+                    break
+
+            if kubeconfig_env_var:
+                final_kubeconfig = os.environ.get(kubeconfig_env_var)
+
+            if not final_kubeconfig:
+                available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+                raise ValueError(
+                    f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+                )
+
+        doozer_opts.extend(['--konflux-kubeconfig', final_kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -126,6 +163,8 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--prod-registry-auth', self.prod_registry_auth])
         if self.force:
             doozer_opts.append('--force')
+        if self.major_minor:
+            doozer_opts.extend(['--major-minor', self.major_minor])
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
@@ -174,6 +213,13 @@ class BuildFbcPipeline:
     default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=False,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
 @click.option(
     '--only',
@@ -213,6 +259,17 @@ class BuildFbcPipeline:
     help="The registry authentication file to use for the production index image.",
 )
 @click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
+)
+@click.option(
+    '--ignore-locks',
+    is_flag=True,
+    default=False,
+    help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -231,6 +288,9 @@ async def build_fbc(
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
     force: bool,
+    group: str,
+    major_minor: Optional[str],
+    ignore_locks: bool,
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,
@@ -248,5 +308,24 @@ async def build_fbc(
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
         force=force,
+        group=group,
+        major_minor=major_minor,
+        ignore_locks=ignore_locks,
     )
-    await pipeline.run()
+
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
+    # Use group-based lock name, default to openshift-{version} if group not specified
+    final_group = f"openshift-{version}" if not group else group
+
+    if ignore_locks:
+        await pipeline.run()
+    else:
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=Lock.FBC_BUILD,
+            lock_name=Lock.FBC_BUILD.value.format(group=final_group),
+            lock_id=lock_identifier,
+        )

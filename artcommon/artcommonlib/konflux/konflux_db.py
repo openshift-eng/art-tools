@@ -57,6 +57,13 @@ class KonfluxDb:
             field_type = annotations.get(param_name, str)  # Default to string if type is not provided
             mode = 'NULLABLE' if param.default is param.empty else 'REQUIRED'
 
+            # Handle Optional types (Union[X, None])
+            origin = typing.get_origin(field_type)
+            if origin is typing.Union:
+                # Get the non-None type from Optional[X]
+                args = typing.get_args(field_type)
+                field_type = next((arg for arg in args if arg is not type(None)), field_type)
+
             if field_type is int:
                 field_type_str = 'INTEGER'
             elif field_type is float:

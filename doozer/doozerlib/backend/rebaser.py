@@ -144,7 +144,9 @@ class KonfluxRebaser:
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
             # Clone the build repository
-            build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
+            build_repo = BuildRepo(
+                url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger, pull_url=source.pull_url
+            )
             await build_repo.ensure_source(upcycle=self.upcycle)
 
             # Rebase the image in the build repository
@@ -178,7 +180,8 @@ class KonfluxRebaser:
             # Push changes
             if push:
                 self._logger.info("Pushing changes to %s...", build_repo.url)
-                await build_repo.push()
+                force = True if self._runtime.assembly != "stream" else False
+                await build_repo.push(force=force)
 
             metadata.rebase_status = True
         finally:
@@ -235,7 +238,7 @@ class KonfluxRebaser:
 
         # Determine if this image contains private fixes
         if private_fix is None:
-            if source and source_dir:
+            if source and source_dir and source.url == source.pull_url:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
                 is_commit_in_public_upstream = await util.is_commit_in_public_upstream_async(
@@ -307,7 +310,26 @@ class KonfluxRebaser:
         metadata.private_fix = private_fix
 
         await self._update_dockerignore(build_repo.local_dir)
+
+        if self._runtime.group.startswith("oadp-"):
+            await self._remove_oadp_docs(build_repo.local_dir)
+
         return version, release, private_fix
+
+    @start_as_current_span_async(TRACER, "rebase.remove_oadp_docs")
+    async def _remove_oadp_docs(self, path):
+        """
+        Remove OADP docs from the build directory. They contain example secrets.
+        GitHub complains when we are trying to push those secrets, even if they are example ones
+        """
+        oadp_docs_paths = [
+            f"{path}/restic/doc/",  # oadp-velero-container
+            f"{path}/velero/restic/doc/",  # oadp-mustgather-container
+        ]
+        for oadp_docs_path in oadp_docs_paths:
+            if os.path.exists(oadp_docs_path):
+                self._logger.info(f"Remove OADP doc directory {oadp_docs_path}")
+                shutil.rmtree(oadp_docs_path)
 
     @start_as_current_span_async(TRACER, "rebase.update_dockerignore")
     async def _update_dockerignore(self, path):
@@ -441,7 +463,7 @@ class KonfluxRebaser:
         for i in ignore:
             exclude += ' --exclude="{}" '.format(i)
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
-        await exectools.cmd_assert_async(cmd)
+        await exectools.cmd_assert_async(cmd, suppress_output=True)
 
     @start_as_current_span_async(TRACER, "rebase.merge_source")
     async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
@@ -841,6 +863,12 @@ class KonfluxRebaser:
 
         # The vendor should always be Red Hat, Inc.
         dfp.labels["vendor"] = "Red Hat, Inc."
+
+        # "v4.20.0" -> "4.20"
+        cleaned_version = version.lstrip('v').rsplit('.', 1)[0]
+        # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
+        rhel_version = release.split(".")[-1]
+        dfp.labels["cpe"] = f"cpe:/a:redhat:openshift:{cleaned_version}::{rhel_version}"
 
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()

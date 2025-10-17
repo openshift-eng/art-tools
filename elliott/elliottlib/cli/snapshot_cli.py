@@ -66,7 +66,9 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[s
     type_nvrs = defaultdict(list)
     for nvr in nvrs:
         nvr_dict = parse_nvr(nvr)
-        if nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
+        if nvr_dict['name'].replace('-container', '') in runtime.image_map:
+            type_nvrs[KonfluxBuildRecord].append(nvr)
+        elif nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
             type_nvrs[KonfluxBundleBuildRecord].append(nvr)
         elif nvr_dict['name'].endswith('-fbc'):
             type_nvrs[KonfluxFbcBuildRecord].append(nvr)
@@ -361,7 +363,9 @@ async def new_snapshot_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        LOGGER.info(
+            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+        )
 
     if builds_file:
         if builds_file == "-":
@@ -516,7 +520,9 @@ async def get_snapshot_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        LOGGER.info(
+            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+        )
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,

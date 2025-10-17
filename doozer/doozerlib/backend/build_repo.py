@@ -29,16 +29,19 @@ class BuildRepo:
         username: Optional[str] = None,
         password: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
+        pull_url: Optional[str] = None,
     ) -> None:
         """Initialize a BuildRepo object.
-        :param url: The URL of the build source repository.
+        :param url: The URL of the build source repository (for pushing).
         :param branch: The branch of the build source repository to clone. None to not switch to any branch.
         :param local_dir: The local directory to clone the build source repository into.
         :param username: The username to use for accessing the build source repository (optional).
         :param password: The password to use for accessing the build source repository (optional).
         :param logger: A logger object to use for logging messages
+        :param pull_url: The URL of the repository to pull from. If None, uses url for both pull and push.
         """
         self.url = url
+        self.pull_url = pull_url or url
         self.branch = branch
         self.local_dir = Path(local_dir)
         self._username = username
@@ -48,8 +51,13 @@ class BuildRepo:
 
     @property
     def https_url(self) -> str:
-        """Get the HTTPS URL of the build source repository."""
+        """Get the HTTPS URL of the build source repository (push URL)."""
         return art_util.convert_remote_git_to_https(self.url)
+
+    @property
+    def https_pull_url(self) -> str:
+        """Get the HTTPS URL of the pull source repository."""
+        return art_util.convert_remote_git_to_https(self.pull_url)
 
     @property
     def commit_hash(self) -> Optional[str]:
@@ -123,7 +131,7 @@ class BuildRepo:
                 needs_clone = False
         if needs_clone:
             self._logger.info(
-                "Cloning build source repository %s on branch %s into %s...", self.url, self.branch, self.local_dir
+                "Cloning build source repository %s on branch %s into %s...", self.pull_url, self.branch, self.local_dir
             )
             await self.clone(strict=strict)
 
@@ -135,10 +143,12 @@ class BuildRepo:
         """
         local_dir = str(self.local_dir)
         self._logger.info(
-            "Cloning build source repository %s on branch %s into %s...", self.url, self.branch, local_dir
+            "Cloning build source repository %s on branch %s into %s...", self.pull_url, self.branch, local_dir
         )
         await self.init()
-        await self.set_remote_url(self.url)
+        await self.set_remote_url(self.url)  # Set origin for push
+        if self.pull_url != self.url:
+            await self.set_pull_remote(self.pull_url)  # Set pull remote for fetch
         self._commit_hash = None
         if self._username and self._password:
             await self._set_credentials(self._username, self._password)
@@ -172,6 +182,13 @@ class BuildRepo:
         else:
             await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url])
 
+    @start_as_current_span_async(TRACER, "build_repo.set_pull_remote")
+    async def set_pull_remote(self, pull_url: str):
+        """Set the URL of the pull remote in the build source repository.
+        :param pull_url: The URL of the pull remote.
+        """
+        await self.set_remote_url(pull_url, "pull")
+
     @start_as_current_span_async(TRACER, "build_repo.fetch")
     async def fetch(self, refspec: str, depth: Optional[int] = 1, strict: bool = False):
         """Fetch a refspec from the build source repository.
@@ -184,14 +201,16 @@ class BuildRepo:
         fetch_options = []
         if depth is not None:
             fetch_options.append(f"--depth={depth}")
+        # Use pull remote if different from push URL, otherwise use origin
+        remote_name = "pull" if self.pull_url != self.url else "origin"
         rc, _, err = await git_helper.gather_git_async(
-            ["-C", local_dir, "fetch"] + fetch_options + ["origin", refspec], check=False
+            ["-C", local_dir, "fetch"] + fetch_options + [remote_name, refspec], check=False
         )
         if rc != 0:
             if not strict and "fatal: couldn't find remote ref" in err:
-                self._logger.warning("Failed to fetch %s from %s: %s", refspec, self.url, err)
+                self._logger.warning("Failed to fetch %s from %s: %s", refspec, self.pull_url, err)
                 return False
-            raise ChildProcessError(f"Failed to fetch {refspec} from {self.url}: {err}")
+            raise ChildProcessError(f"Failed to fetch {refspec} from {self.pull_url}: {err}")
         return True
 
     @start_as_current_span_async(TRACER, "build_repo.switch")
@@ -251,10 +270,16 @@ class BuildRepo:
         await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag])
 
     @start_as_current_span_async(TRACER, "build_repo.push")
-    async def push(self):
-        """Push changes in the local directory to the build source repository."""
+    async def push(self, force: bool = False):
+        """Push changes in the local directory to the build source repository.
+        :param force: If True, use --force for rebase operations.
+        """
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "push", "origin", "HEAD"])
+        push_cmd = ["-C", local_dir, "push", "origin", "HEAD"]
+        if force:
+            push_cmd.append("--force")
+            self._logger.info("Using force push for branch %s", self.branch)
+        await git_helper.run_git_async(push_cmd)
         try:
             await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"])
         except Exception as e:
@@ -276,6 +301,15 @@ class BuildRepo:
         local_dir = str(local_dir)
         _, url, _ = await git_helper.gather_git_async(["-C", local_dir, "config", "--get", "remote.origin.url"])
         _, branch, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
-        repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger)
+
+        # Check if pull remote exists
+        pull_url = None
+        rc, pull_remote_url, _ = await git_helper.gather_git_async(
+            ["-C", local_dir, "config", "--get", "remote.pull.url"], check=False
+        )
+        if rc == 0:
+            pull_url = pull_remote_url.strip()
+
+        repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger=logger, pull_url=pull_url)
         repo._commit_hash = await BuildRepo._get_commit_hash(local_dir)
         return repo

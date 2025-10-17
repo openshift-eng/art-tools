@@ -60,6 +60,7 @@ class RebuildHintCode(Enum):
     ARCHES_CHANGE = (True, 14)
     DEPENDENCY_NEWER = (True, 15)
     TASK_BUNDLE_OUTDATED = (True, 16)
+    NETWORK_MODE_CHANGE = (True, 17)
 
 
 class RebuildHint(NamedTuple):
@@ -639,10 +640,13 @@ class Metadata(MetadataBase):
         return False, None
 
     def get_konflux_network_mode(self):
+        runtime_override = getattr(self.runtime, 'network_mode_override', None)
+        if runtime_override:
+            return runtime_override
+
         group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
         image_config_network_mode = self.config.konflux.get("network_mode")
 
-        # Image config supersedes group config, but set to "open" by default, if missing.
         network_mode = image_config_network_mode or group_config_network_mode or "open"
 
         valid_network_modes = ["hermetic", "internal-only", "open"]

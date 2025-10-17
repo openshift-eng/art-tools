@@ -280,6 +280,15 @@ class AssemblyInspector:
                 if assembly_nvr != installed_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
+                    if package_name == 'ose-aws-ecr-image-credential-provider':
+                        # FIXME: This package is special. It is built in the OCP build system, but it is
+                        # consumed in RHCOS RHEL layer. However, the version of the package that
+                        # RHCOS consumes is not necessarily the latest build in the OCP build system.
+                        # So we permit this discrepancy.
+                        self.runtime.logger.warning(
+                            f'RHCOS {rhcos_build.build_id} ({rhcos_build.brew_arch}) has {installed_nvr} installed but assembly expects {assembly_nvr}; permitting this discrepancy because {package_name} is special'
+                        )
+                        continue
                     issues.append(
                         AssemblyIssue(
                             f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed',
@@ -566,11 +575,7 @@ class AssemblyInspector:
         """Get external rpm build dicts from rhaos candidate Brew tags.
         :return: a dict. key is Brew tag name, value is another (component_name, rpm_build) dict
         """
-        replace_vars = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
-
-        # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
-        replace_vars['PATCH'] = replace_vars['release_name'].split('.')[-1]
-        et_data = self.runtime.get_errata_config(replace_vars=replace_vars)
+        et_data = self.runtime.get_errata_config()
         tag_pv_map = cast(Optional[Dict[str, str]], et_data.get('brew_tag_product_version_mapping'))
         if not tag_pv_map:
             return {}

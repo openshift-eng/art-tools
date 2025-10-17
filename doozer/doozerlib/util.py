@@ -2,6 +2,7 @@ import base64
 import copy
 import functools
 import json
+import logging
 import os
 import pathlib
 import re
@@ -18,7 +19,7 @@ from typing import Dict, List, Optional, Union
 import artcommonlib
 import semver
 import yaml
-from artcommonlib import exectools
+from artcommonlib import constants, exectools
 from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
@@ -35,6 +36,7 @@ except ImportError:
 from functools import lru_cache
 
 DICT_EMPTY = object()
+logger = logging.getLogger(__name__)
 
 
 def dict_get(dct, path, default=DICT_EMPTY):
@@ -560,9 +562,15 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 break
             current_assembly = parent_assembly
         if patch_version is None:
-            raise ValueError(
-                "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
-            )
+            hotfix_previous_assembly = releases_config.releases[
+                current_assembly
+            ].assembly.basis.hotfix_previous_assembly
+            if hotfix_previous_assembly:
+                patch_version = int(hotfix_previous_assembly.rsplit('.', 1)[-1])
+            else:
+                raise ValueError(
+                    "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
+                )
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
@@ -760,3 +768,36 @@ def infer_assembly_type(custom, assembly_name):
         return AssemblyTypes.PREVIEW
     else:
         return AssemblyTypes.STANDARD
+
+
+def get_konflux_build_priority(metadata):
+    """
+    Get the Konflux build priority based on the precedence rules.
+
+    :param metadata: ImageMetadata object containing config and runtime info
+    :return: Priority value as string (1-10)
+    """
+    logger.info(f"Resolving build priority for {metadata.distgit_key}")
+
+    # 1. Image config priority
+    image_config_priority = metadata.config.konflux.get("build_priority")
+    if image_config_priority:
+        logger.info(f"Using image config priority for {metadata.distgit_key}: {image_config_priority}")
+        return str(image_config_priority)
+
+    # 2. Group config priority
+    group_config_priority = metadata.runtime.group_config.konflux.get("build_priority")
+    if group_config_priority:
+        logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
+        return str(group_config_priority)
+
+    # 3. Higher than default priority for main & pre-GA N-1 streams.
+    phase = metadata.runtime.group_config.software_lifecycle.phase
+    if phase in ("pre-release", "signing"):
+        pre_release_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - 2))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {pre_release_priority} (phase: {phase})")
+        return pre_release_priority
+
+    # Default
+    logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
+    return str(constants.KONFLUX_DEFAULT_BUILD_PRIORITY)

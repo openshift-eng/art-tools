@@ -1,9 +1,11 @@
 import json
+import re
 import traceback
 
 import click
+from artcommonlib.util import isolate_major_minor_in_group
 
-from pyartcd import jenkins, locks
+from pyartcd import jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
@@ -21,10 +23,10 @@ class RpmMirror:
 
 class BuildPlashetsPipeline:
     def __init__(
-        self, runtime: Runtime, version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False
+        self, runtime: Runtime, group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False
     ):
         self.runtime = runtime
-        self.version = version
+        self.group = group
         self.release = release
         self.assembly = assembly
         self.repos = repos.split(',') if repos else []
@@ -48,16 +50,21 @@ class BuildPlashetsPipeline:
         if self.assembly != 'stream':
             return
 
-        # Since plashets may have been rebuilt, fire off sync for CI. This will transfer RPMs out to
-        # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
-        # Set block_until_building=False since it can take a very long time for the job to start
-        # it is enough for it to be queued
-        jenkins.start_sync_for_ci(version=self.version, block_until_building=False)
+        # If group looks like openshift-<MAJOR.MINOR>, trigger CI sync for plashets
+        if self.group.startswith('openshift-'):
+            major, minor = isolate_major_minor_in_group(self.group)
+            if major is not None:
+                version = f"{major}.{minor}"
+                # Since plashets may have been rebuilt, fire off sync for CI. This will transfer RPMs out to
+                # mirror.openshift.com/enterprise so that they may be consumed through CI rpm mirrors.
+                # Set block_until_building=False since it can take a very long time for the job to start
+                # it is enough for it to be queued
+                jenkins.start_sync_for_ci(version=version, block_until_building=False)
 
     async def build(self):
         try:
             plashets_built = await build_plashets(
-                stream=self.version,
+                group=self.group,
                 release=self.release,
                 assembly=self.assembly,
                 repos=self.repos,
@@ -73,8 +80,9 @@ class BuildPlashetsPipeline:
             error_msg = f'Failed building compose: {e}'
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
-            self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(f'Failed building compose for {self.version}')
+            channel = self.group if self.group.startswith('openshift-') else None
+            self.slack_client.bind_channel(channel)
+            await self.slack_client.say(f'Failed building compose for {self.group}')
             raise
 
     async def is_compose_build_permitted(self) -> bool:
@@ -84,13 +92,14 @@ class BuildPlashetsPipeline:
         Otherwise, return False
         """
 
+        # pass group instead of version to get_freeze_automation
         automation_freeze_state: str = await get_freeze_automation(
-            version=self.version,
+            group=self.group,
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
         )
-        self.runtime.logger.info('Automation freeze state for %s: %s', self.version, automation_freeze_state)
+        self.runtime.logger.info('Automation freeze state for %s: %s', self.group, automation_freeze_state)
 
         # If automation is not frozen, allow compose
         if automation_freeze_state not in ['scheduled', 'yes', 'True']:
@@ -99,10 +108,9 @@ class BuildPlashetsPipeline:
         # If scheduled automation is frozen and this is a manual build, allow compose
         if automation_freeze_state == 'scheduled' and is_manual_build():
             # Send a Slack notification since we're running compose build during automation freeze
-            self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(
-                f":alert: ocp4 build compose running during automation freeze for {self.version}"
-            )
+            channel = self.group if self.group.startswith('openshift-') else None
+            self.slack_client.bind_channel(channel)
+            await self.slack_client.say(f":alert: ocp4 build compose running during automation freeze for {self.group}")
             return True
 
         # In all other case, forbid compose
@@ -114,7 +122,7 @@ class BuildPlashetsPipeline:
     help="Create multiple yum repos (one for each arch) based on -candidate tags "
     "Those repos can be signed (release state) or unsigned (pre-release state)",
 )
-@click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
+@click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.14')
 @click.option('--release', required=True, help='e.g. 201901011200.?')
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
@@ -133,9 +141,9 @@ class BuildPlashetsPipeline:
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
-async def ocp4(
+async def build_plashets_cli(
     runtime: Runtime,
-    version: str,
+    group: str,
     release: str,
     assembly: str,
     repos: str,
@@ -145,7 +153,7 @@ async def ocp4(
 ):
     pipeline = BuildPlashetsPipeline(
         runtime=runtime,
-        version=version,
+        group=group,
         release=release,
         assembly=assembly,
         repos=repos,
@@ -155,7 +163,7 @@ async def ocp4(
     )
 
     lock = Lock.PLASHET
-    lock_name = lock.value.format(assembly=assembly, version=version)
+    lock_name = lock.value.format(assembly=assembly, group=group)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')

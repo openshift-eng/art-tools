@@ -1,12 +1,17 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
+import string
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 from artcommonlib import exectools
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
+from artcommonlib.util import isolate_major_minor_in_group
 
 from pyartcd import constants, util
 from pyartcd.constants import PLASHET_REMOTES
@@ -140,8 +145,40 @@ def plashet_config_for_major_minor(major, minor):
     }
 
 
+def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
+    repos = []
+    for name, config in plashet_config.items():
+        repo = Repo(
+            name=name,
+            type="plashet",
+        )
+        repo.plashet = PlashetRepo(
+            slug=config.get("slug"),
+            assembly_aware=True,
+            embargo_aware=True,
+            include_embargoed=config.get("include_embargoed", False),
+            include_previous_packages=config.get("include_previous_packages", []),
+            source=BrewSource(
+                type="brew",
+                from_tags=[
+                    BrewTag(
+                        name=(tag := config.get("tag")),
+                        product_version=config.get("product_version"),
+                        release_tag=config.get(
+                            "release_tag", tag.removesuffix("-candidate") if tag.endswith("-candidate") else tag
+                        ),
+                        inherit=config.get("inherit", False),
+                    )
+                ],
+                embargoed_tags=config.get("embargoed_tags", []),
+            ),
+        )
+        repos.append(repo)
+    return repos
+
+
 async def build_plashets(
-    stream: str,
+    group: str,
     release: str,
     assembly: str = 'stream',
     repos: Sequence[str] = (),
@@ -156,7 +193,7 @@ async def build_plashets(
     based on -candidate tags. Based on release state, those repos can be signed
     (release state) or unsigned (pre-release state)
 
-    :param stream: e.g. 4.14
+    :param group: e.g. openshift-4.14
     :param release: e.g. 202304181947.p?
     :param assembly: e.g. assembly name, defaults to 'stream'
     :param repos: (optional) limit the repos to build to this list. If empty, build all repos. e.g. ['rhel-8-server-ose-rpms']
@@ -182,12 +219,12 @@ async def build_plashets(
     }
     """
 
-    major, minor = stream.split('.')  # e.g. ('4', '14') from '4.14'
+    # major, minor = stream.split('.')  # e.g. ('4', '14') from '4.14'
     revision = release.replace('.p?', '')  # e.g. '202304181947' from '202304181947.p?'
 
     # Load group config
     group_config = await util.load_group_config(
-        group=f'openshift-{stream}', assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+        group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
     )
 
     # Check if assemblies are enabled for current group
@@ -195,14 +232,51 @@ async def build_plashets(
         assembly = 'stream'
         logger.warning("Assembly name reset to 'stream' because assemblies are not enabled in ocp-build-data.")
 
-    # Get plashet repos
-    group_repos = group_config.get('repos', {}).keys()
-    if repos:
-        logger.info(f"Filtering plashet repos to only the given ones: {repos}")
-        group_repos = [repo for repo in group_repos if repo in repos]
-    group_plashet_config = plashet_config_for_major_minor(major, minor)
-    plashet_config = {repo: group_plashet_config[repo] for repo in group_plashet_config if repo in group_repos}
-    logger.info("Building plashet repos: %s", ", ".join(plashet_config.keys()))
+    # Get plashet repo configs
+    if "all_repos" in group_config:
+        # This is new-style repo config.
+        # i.e. Plashet configs are defined in separate files in ocp-build-data
+        # and each repo has its own config file.
+        # Those repo definitions are stored in the "all_repos" key of the group config.
+        logger.info("Using new-style plashet configs")
+        all_repos = group_config['all_repos']
+        plashet_repos = [
+            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == 'plashet'
+        ]
+        if repos:
+            repo_set = set(repos)
+            plashet_repos = [repo for repo in plashet_repos if repo.name in repo_set]
+        group_vars = group_config.get("vars", {})
+        major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
+        plashet_config = PlashetConfig.model_validate(group_config.get('plashet', {}))
+
+    else:  # Fall back to old-style config
+        # old-style config only supports openshift-x.y groups
+        major, minor = isolate_major_minor_in_group(group)
+        if major is None:
+            raise ValueError("Old-style plashet config only supports openshift-x.y groups")
+        logger.info("Using old-style plashet configs in group.yml")
+        group_repos = group_config.get('repos', {}).keys()
+        if repos:
+            logger.info(f"Filtering plashet repos to only the given ones: {repos}")
+            group_repos = [repo for repo in group_repos if repo in repos]
+        old_style_config = plashet_config_for_major_minor(major, minor)
+        old_style_config = {
+            repo: old_style_config[repo] for repo in plashet_config_for_major_minor(major, minor) if repo in group_repos
+        }
+        plashet_repos = convert_plashet_config_to_new_style(old_style_config)
+        plashet_config = PlashetConfig(
+            base_dir=f"{major}.{minor}/$runtime_assembly/$slug",
+            plashet_dir="$yyyy-$MM/$revision",
+            create_symlinks=True,
+            symlink_name='latest',
+            create_repo_subdirs=True,
+            repo_subdir='os',
+            download_url="https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets/{MAJOR}.{MINOR}/$runtime_assembly/$slug/latest/$arch/os/",
+        )
+
+    plashet_repo_names = [repo.name for repo in plashet_repos]
+    logger.info("Building plashet repos: %s", ", ".join(plashet_repo_names))
 
     # Check release state
     signing_mode = await util.get_signing_mode(group_config=group_config)
@@ -210,53 +284,78 @@ async def build_plashets(
     # Create plashet repos on ocp-artifacts
     # We can't safely run doozer config:plashet from-tags in parallel as this moment.
     # Build plashet repos one by one.
+
     plashets_built = {}  # hold the information of all built plashet repos
     timestamp = datetime.strptime(revision, '%Y%m%d%H%M%S')
     signing_advisory = group_config.get('signing_advisory', '0')
-    arches = group_config['arches']
-    group_param = f'openshift-{stream}'
+    arches = plashet_config.arches or group_config['arches']
+    group_param = group
     if data_gitref:
         group_param += f'@{data_gitref}'
 
-    for repo_type, config in plashet_config.items():
-        logger.info('Building plashet repo for %s', repo_type)
-        slug = config['slug']
-        name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
-        base_dir = Path(working_dir, f'plashets/{major}.{minor}/{assembly}/{slug}')
+    for repo in plashet_repos:
+        logger.info('Building plashet repo for %s', repo.name)
+        assert repo.type == "plashet" and repo.plashet is not None
+        config = repo.plashet
+        slug = config.slug or repo.name
+        # name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
+        variables = {
+            'runtime_assembly': assembly,
+            'slug': slug,
+            'yyyy': f'{timestamp.year:04}',
+            'MM': f'{timestamp.month:02}',
+            'dd': f'{timestamp.day:02}',
+            'hh': f'{timestamp.hour:02}',
+            'mm': f'{timestamp.minute:02}',
+            'ss': f'{timestamp.second:02}',
+            'revision': revision,
+            'MAJOR': major,
+            'MINOR': minor,
+        }
+        base_dir_template = string.Template(plashet_config.base_dir)
+        base_dir_name = base_dir_template.substitute(**variables)
+        local_base_dir = Path(working_dir, base_dir_name)
+        plashet_name_template = string.Template(plashet_config.plashet_dir)
+        plashet_name = plashet_name_template.substitute(**variables)
+
         local_path = await build_plashet_from_tags(
             group_param=group_param,
             assembly=assembly,
-            base_dir=base_dir,
-            name=name,
+            base_dir=local_base_dir,
+            name=plashet_name,
             arches=arches,
-            include_embargoed=config['include_embargoed'],
+            include_embargoed=config.include_embargoed,
             signing_mode=signing_mode,
             signing_advisory=signing_advisory,
-            embargoed_tags=config['embargoed_tags'],
-            tag_pvs=((config["tag"], config['product_version']),),
-            include_previous_packages=config['include_previous_packages'],
+            embargoed_tags=config.source.embargoed_tags,
+            tag_pvs=((config.source.from_tags[0].name, config.source.from_tags[0].product_version),),
+            include_previous_packages=config.include_previous_packages,
+            repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,
             dry_run=dry_run,
             doozer_working=doozer_working,
         )
 
-        logger.info('Plashet repo for %s created: %s', repo_type, local_path)
-        symlink_path = create_latest_symlink(base_dir=base_dir, plashet_name=name)
-        logger.info('Symlink for %s created: %s', repo_type, symlink_path)
+        logger.info('Plashet repo for %s created: %s', repo.name, local_path)
+        if plashet_config.create_symlinks:
+            symlink_path = create_latest_symlink(
+                base_dir=local_base_dir, plashet_name=plashet_name, symlink_name=plashet_config.symlink_name
+            )
+            logger.info('Symlink for %s created: %s', repo.name, symlink_path)
 
-        remote_base_dir = Path(f'/mnt/data/pub/RHOCP/plashets/{major}.{minor}/{assembly}/{slug}')
-        logger.info('Copying %s to remote host...', base_dir)
+        remote_base_dir = Path("/mnt/data/pub/RHOCP/plashets", base_dir_name)
+        logger.info('Copying %s to remote host...', remote_base_dir)
 
         await asyncio.gather(
             *[
                 copy_to_remote(
-                    plashet_remote['host'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
+                    plashet_remote['host'], local_base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
                 )
                 for plashet_remote in PLASHET_REMOTES
             ]
         )
 
-        plashets_built[repo_type] = {
+        plashets_built[repo.name] = {
             'plashetDirName': revision,
             'localPlashetPath': str(local_path),
         }
@@ -276,6 +375,7 @@ async def build_plashet_from_tags(
     tag_pvs: Sequence[Tuple[str, str]],
     embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
+    repo_subdir: str | None = 'os',
     poll_for: int = 0,
     data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = 'doozer-working',
@@ -302,9 +402,9 @@ async def build_plashet_from_tags(
         str(base_dir),
         "--name",
         name,
-        "--repo-subdir",
-        "os",
     ]
+    if repo_subdir:
+        cmd.extend(["--repo-subdir", repo_subdir])
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
     cmd.extend(
@@ -338,8 +438,13 @@ async def build_plashet_from_tags(
     return os.path.abspath(Path(base_dir, name))
 
 
-def create_latest_symlink(base_dir: os.PathLike, plashet_name: str):
-    symlink_path = Path(base_dir, "latest")
+def create_latest_symlink(base_dir: os.PathLike, plashet_name: str, symlink_name: str = "latest"):
+    """
+    Create or update a 'latest' symlink to point to the given plashet_name directory
+    """
+    if not symlink_name:
+        raise ValueError("symlink_name must be a non-empty string")
+    symlink_path = Path(base_dir, symlink_name)
     if symlink_path.is_symlink():
         symlink_path.unlink()
     symlink_path.symlink_to(plashet_name, target_is_directory=True)

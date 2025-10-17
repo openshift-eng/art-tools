@@ -334,12 +334,16 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         hash2 = RPMLockfileGenerator._compute_hash(rpms2)
         self.assertEqual(hash1, hash2)
 
+    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_write_yaml')
     @patch('builtins.open', new_callable=mock_open, read_data='oldfingerprint')
     @patch('pathlib.Path.exists', return_value=True)
-    async def test_generate_lockfile_skips_if_fingerprint_matches(self, mock_exists, mock_file, mock_write_yaml):
+    async def test_generate_lockfile_skips_if_fingerprint_matches(
+        self, mock_exists, mock_file, mock_write_yaml, mock_get_lockfile
+    ):
         fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
         mock_file().read.return_value = fingerprint
+        mock_get_lockfile.return_value = "lockfile exists"  # Mock upstream lockfile exists
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -355,7 +359,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()
-        self.logger.info.assert_any_call("No changes in RPM list for test-image. Skipping lockfile generation.")
+        self.logger.info.assert_any_call("Lockfile exists upstream for test-image. Skipping lockfile generation.")
 
     @patch('builtins.open', new_callable=mock_open)
     @patch('pathlib.Path.exists', return_value=False)
@@ -522,8 +526,8 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         # Should call target branch digest fetching (called twice - in should_generate and sync)
         self.assertEqual(mock_get_digest.call_count, 2)
-        # Should call target branch lockfile fetching
-        mock_get_lockfile.assert_called_once()
+        # Should call target branch lockfile fetching (called twice - in should_generate and sync)
+        self.assertEqual(mock_get_lockfile.call_count, 2)
         # Should skip generation since fingerprints match
         self.generator.builder.fetch_rpms_info.assert_not_called()
         mock_write_yaml.assert_not_called()
@@ -614,7 +618,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
     async def test_generate_lockfile_handles_missing_upstream_lockfile(
         self, mock_exists, mock_write_text, mock_write_yaml, mock_get_digest, mock_get_lockfile
     ):
-        """Test that generate_lockfile handles case when upstream lockfile is missing"""
+        """Test that generate_lockfile regenerates when upstream lockfile is missing despite matching fingerprint"""
         fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
 
         # Mock target branch returning digest but no lockfile
@@ -636,13 +640,11 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
 
-        # Should still download digest file
+        # Should generate lockfile despite matching fingerprint because upstream lockfile is missing
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        mock_write_yaml.assert_called_once()
+        # Should write digest file
         mock_write_text.assert_any_call(fingerprint)
-        # Should log warning about missing lockfile
-        self.logger.warning.assert_any_call("Could not download lockfile from upstream branch for test-image")
-        # Should skip generation since fingerprints match
-        self.generator.builder.fetch_rpms_info.assert_not_called()
-        mock_write_yaml.assert_not_called()
 
     async def test_generate_lockfile_skips_when_repositories_empty(self):
         """Test that generate_lockfile skips when repositories set is empty"""
@@ -726,14 +728,17 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         image1 = self.create_mock_image_meta('image1', enabled=True, has_repos=True, has_rpms=True)
         image2 = self.create_mock_image_meta('image2', enabled=True, has_repos=True, has_rpms=True)
 
-        # Mock digest check to return same fingerprints (no generation needed)
+        # Mock digest check to return same fingerprints and lockfile exists upstream (no generation needed)
         with patch.object(self.generator, '_get_digest_from_target_branch', new=AsyncMock(return_value="same_hash")):
             with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
-                with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
-                    await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
+                with patch.object(
+                    self.generator, '_get_lockfile_from_target_branch', new=AsyncMock(return_value="lockfile exists")
+                ):
+                    with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
+                        await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
 
-                    # Should not load any repos
-                    mock_load.assert_not_called()
+                        # Should not load any repos
+                        mock_load.assert_not_called()
 
                     # Verify telemetry
                     mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 2)
@@ -809,16 +814,23 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
                 return "old_hash"
             return "same_hash"
 
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=mock_digest_check):
-            with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
-                with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()):
-                    await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
+        # Mock lockfile check to return existing lockfile for skipping image
+        async def mock_lockfile_check(lockfile_path, image_meta):
+            if image_meta.distgit_key == 'skips-generation':
+                return "lockfile exists"
+            return None
 
-                    # Verify logging
-                    self.logger.info.assert_any_call("Image needs-generation needs lockfile generation")
-                    self.logger.info.assert_any_call(
-                        "Image skips-generation skipping lockfile generation (digest unchanged)"
-                    )
+        with patch.object(self.generator, '_get_digest_from_target_branch', new=mock_digest_check):
+            with patch.object(self.generator, '_get_lockfile_from_target_branch', new=mock_lockfile_check):
+                with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
+                    with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()):
+                        await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
+
+                        # Verify logging
+                        self.logger.info.assert_any_call("Image needs-generation needs lockfile generation")
+                        self.logger.info.assert_any_call(
+                            "Image skips-generation skipping lockfile generation (digest unchanged)"
+                        )
                     self.logger.info.assert_any_call("Loading repositories for 1 images needing lockfile generation")
 
 
