@@ -1233,11 +1233,16 @@ class KonfluxFbcBuilder:
 
         additional_tags = []
         group_name = metadata.runtime.group
-        if metadata.runtime.assembly == "stream" and group_name.startswith("openshift-"):
+        if metadata.runtime.assembly == "stream":
+            if group_name.startswith("openshift-"):
+                product_name = "ocp"
+            else:
+                # eg: oadp-1.5 / mta-1.2
+                product_name = group_name.split("-")[0]
             version = group_name.removeprefix("openshift-")
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
-                additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
+                additional_tags.append(f"{product_name}__{version}__{delivery_repo.split('/')[-1]}")
 
         pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
