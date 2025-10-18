@@ -1,6 +1,8 @@
 #!/bin/sh
 export GOEXPERIMENT=strictfipsruntime
-export GOTOOLCHAIN=local
+if [[ "${FORCE_GOTOOLCHAIN:-true}" == "true" ]]; then
+  export GOTOOLCHAIN="local"
+fi
 
 LOG_PREFIX="Go compliance shim [${__doozer_group}][${__doozer_key}]:"
 echoerr() {
