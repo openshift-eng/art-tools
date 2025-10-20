@@ -1045,6 +1045,12 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
     help='Do not consider what is in master branch when determining what branch to target',
 )
 @click.option(
+    '--force-merge',
+    default=False,
+    is_flag=True,
+    help='DANGER! Use only with approval. Do not wait for standard CI PR merge. Call merge API directly.',
+)
+@click.option(
     '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
 )
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
@@ -1068,6 +1074,7 @@ def images_streams_prs(
     bug,
     interstitial,
     ignore_ci_master,
+    force_merge,
     ignore_missing_images,
     draft_prs,
     moist_run,
@@ -1610,6 +1617,9 @@ If you have any questions about this pull request, please reach out to `@release
                     yellow_print(
                         f'A PR is already open requesting desired reconciliation with ART: {existing_pr.html_url}'
                     )
+                    if force_merge:
+                        existing_pr.merge()
+                        yellow_print(f'Force merge is enabled. Triggering merge for: {existing_pr.html_url}')
                 continue
 
             # Otherwise, we need to create a pull request
