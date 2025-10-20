@@ -17,6 +17,11 @@ const SECURE_PROXY_ENDPOINTS = new Map([
     ['https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm', 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm']
 ]);
 
+// Allowlist of permitted hostnames for SSRF protection
+const ALLOWED_HOSTNAMES = new Set([
+    'developers.redhat.com'
+]);
+
 // Secure proxy function using pre-validated endpoints only
 async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: string, remainingPath: string): Promise<Response> {
     // Only allow requests to pre-validated secure endpoints
@@ -53,6 +58,12 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
         proxyUrl.pathname = proxyUrl.pathname + remainingPath;
     } catch (error) {
         return new Response('Invalid URL construction', { status: 400 });
+    }
+
+    // SSRF Protection: Verify hostname is in allowlist before making request
+    // This prevents requests to internal networks or unauthorized hosts
+    if (!ALLOWED_HOSTNAMES.has(proxyUrl.hostname)) {
+        return new Response('Hostname not in allowlist', { status: 403 });
     }
 
     // Verify the final URL still matches our allowlist (double-check security)
