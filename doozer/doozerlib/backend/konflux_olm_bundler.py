@@ -691,7 +691,6 @@ class KonfluxOlmBundleBuilder:
         # TODO: (2025-Jul-09) remove this once we have new builds using the new component name
         return f"{application_name}-{bundle_name}".replace(".", "-").replace("_", "-")
 
-    @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def _start_build(
         self,
         metadata: ImageMetadata,
