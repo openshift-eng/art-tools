@@ -670,6 +670,7 @@ class FbcRebaseAndBuildCli:
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            major_minor_override=ocp_version if self.major_minor else None,
             record_logger=runtime.record_logger,
         )
 
