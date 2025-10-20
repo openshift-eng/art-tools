@@ -22,6 +22,25 @@ const ALLOWED_HOSTNAMES = new Set([
     'developers.redhat.com'
 ]);
 
+// Wrapper function for fetch that only accepts allowlisted URLs
+// This function serves as a security boundary - it ONLY fetches from allowlisted hosts
+async function fetchFromAllowlistedHost(url: URL, request: Request, filteredHeaders: Headers): Promise<Response> {
+    // Final security check: hostname MUST be in allowlist
+    if (!ALLOWED_HOSTNAMES.has(url.hostname)) {
+        throw new Error('Hostname not in allowlist');
+    }
+
+    // Create request with validated URL
+    const proxyRequest = new Request(url, {
+        method: request.method,
+        headers: filteredHeaders,
+        body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
+    });
+
+    // Safe to fetch - hostname is verified to be in allowlist
+    return await fetch(proxyRequest);
+}
+
 // Secure proxy function using pre-validated endpoints only
 async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: string, remainingPath: string): Promise<Response> {
     // Only allow requests to pre-validated secure endpoints
@@ -88,15 +107,8 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
         }
     });
 
-    // Create request to pre-validated secure endpoint using URL object
-    const proxyRequest = new Request(proxyUrl, {
-        method: request.method,
-        headers: filteredHeaders,
-        body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
-    });
-
-    // Fetch from secure pre-validated endpoint
-    const response = await fetch(proxyRequest);
+    // Fetch from allowlisted host using secure wrapper function
+    const response = await fetchFromAllowlistedHost(proxyUrl, request, filteredHeaders);
 
     // Return the response to the client
     return new Response(response.body, response);
