@@ -44,8 +44,29 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
     // Get the pre-validated endpoint
     const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
 
-    // Create final URL by appending the validated path to secure endpoint
-    const finalUrl = secureEndpoint + remainingPath;
+    // Use URL constructor for safe URL creation - prevents SSRF by ensuring proper URL parsing
+    let proxyUrl: URL;
+    try {
+        // Create URL from trusted base endpoint
+        proxyUrl = new URL(secureEndpoint);
+        // Append validated path - URL constructor prevents malicious URL construction
+        proxyUrl.pathname = proxyUrl.pathname + remainingPath;
+    } catch (error) {
+        return new Response('Invalid URL construction', { status: 400 });
+    }
+
+    // Verify the final URL still matches our allowlist (double-check security)
+    const finalUrlString = proxyUrl.toString();
+    let isAllowedEndpoint = false;
+    for (const allowedEndpoint of SECURE_PROXY_ENDPOINTS.values()) {
+        if (finalUrlString.startsWith(allowedEndpoint)) {
+            isAllowedEndpoint = true;
+            break;
+        }
+    }
+    if (!isAllowedEndpoint) {
+        return new Response('Final URL does not match allowlist', { status: 403 });
+    }
 
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
@@ -56,8 +77,8 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
         }
     });
 
-    // Create request to pre-validated secure endpoint
-    const proxyRequest = new Request(finalUrl, {
+    // Create request to pre-validated secure endpoint using URL object
+    const proxyRequest = new Request(proxyUrl, {
         method: request.method,
         headers: filteredHeaders,
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
