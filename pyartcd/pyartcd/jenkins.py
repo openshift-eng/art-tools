@@ -651,12 +651,14 @@ def start_build_fbc(
 def start_oadp(
     group: str,
     assembly: str,
+    version: str,
     image_list: list = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
         'GROUP': group,
         'ASSEMBLY': assembly,
+        'VERSION': version,
     }
 
     # Build only changed images or none
