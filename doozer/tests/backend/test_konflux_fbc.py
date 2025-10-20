@@ -962,6 +962,153 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)
 
+    def test_extract_git_commits_from_nvrs(self):
+        """Test extraction of git commits from bundle NVRs"""
+        # Test single NVR with git commit
+        bundle_nvrs = "cluster-nfd-operator-metadata-container-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, ["gd5498aa"])
+
+        # Test multiple NVRs with different git commits
+        bundle_nvrs = "operator1-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1,operator2-v4.12.0.202509242028.p2.gf1234b.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, ["gd5498aa", "gf1234b"])
+
+        # Test multiple NVRs with duplicate git commits (should deduplicate)
+        bundle_nvrs = "operator1-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1,operator2-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, ["gd5498aa"])
+
+        # Test NVR without git commit
+        bundle_nvrs = "operator-without-commit-v4.12.0.202509242028.p2.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, [])
+
+        # Test empty string
+        result = self.builder._extract_git_commits_from_nvrs("")
+        self.assertEqual(result, [])
+
+        # Test None
+        result = self.builder._extract_git_commits_from_nvrs(None)
+        self.assertEqual(result, [])
+
+        # Test mixed case - some with commits, some without
+        bundle_nvrs = "operator1-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1,operator2-without-commit-v4.12.0.202509242028.p2.assembly.stream.el8-1,operator3-v4.12.0.202509242028.p2.gf1234b.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, ["gd5498aa", "gf1234b"])
+
+        # Test with spaces around commas
+        bundle_nvrs = "operator1-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1, operator2-v4.12.0.202509242028.p2.gf1234b.assembly.stream.el8-1"
+        result = self.builder._extract_git_commits_from_nvrs(bundle_nvrs)
+        self.assertEqual(result, ["gd5498aa", "gf1234b"])
+
+    async def test_start_build_with_git_commits_and_version_override(self):
+        """Test _start_build with git commits from bundle NVRs and major_minor_override for non-openshift groups"""
+        # Set up a non-openshift group with major_minor_override and git commits
+        self.builder.major_minor_override = (4, 12)
+        self.builder.source_git_commits = ["gd5498aa", "gf1234b"]
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "stream"
+        metadata.runtime.group = "oadp-1.5"  # Non-openshift group
+        metadata.config = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["openshift4/oadp-operator"]
+
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
+        kube_client = self.kube_client
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"},
+        )
+
+        result = await self.builder._start_build(
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
+        )
+
+        # Verify the additional tags include version override and git commits
+        expected_additional_tags = ["oadp__1.5__v4.12", "oadp__1.5__v4.12__gd5498aa", "oadp__1.5__v4.12__gf1234b"]
+
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=expected_additional_tags,
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+            build_priority='3',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
+    async def test_start_build_openshift_group(self):
+        """Test _start_build with openshift group format"""
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        metadata.runtime = MagicMock()
+        metadata.runtime.assembly = "stream"
+        metadata.runtime.group = "openshift-4.15"  # Openshift group
+        metadata.config = MagicMock()
+        metadata.config.delivery.delivery_repo_names = [
+            "openshift4/cluster-nfd-operator",
+            "openshift4/cluster-nfd-operator-bundle",
+        ]
+
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
+        kube_client = self.kube_client
+        kube_client.resource_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"},
+        )
+
+        result = await self.builder._start_build(
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
+        )
+
+        # Verify the additional tags for openshift group (no version override, no git commits)
+        expected_additional_tags = ["ocp__4.15__cluster-nfd-operator", "ocp__4.15__cluster-nfd-operator-bundle"]
+
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=expected_additional_tags,
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+            build_priority='3',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
 
 class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
