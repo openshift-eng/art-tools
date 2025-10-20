@@ -38,7 +38,8 @@ async function fetchFromAllowlistedHost(url: URL, request: Request, filteredHead
     });
 
     // Safe to fetch - hostname is verified to be in allowlist
-    // deepcode ignore Ssrf: URL hostname is validated against ALLOWED_HOSTNAMES allowlist before fetch. All URLs must pass: (1) base URL allowlist check, (2) path validation rejecting traversal/schemes/credentials, (3) URL parsing validation, (4) hostname allowlist verification, (5) final URL prefix verification. This provides defense-in-depth against SSRF.
+    // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method-exec.unsafe-dynamic-method-exec
+    // snyk:ignore: SSRF - URL hostname is validated against ALLOWED_HOSTNAMES allowlist before fetch. All URLs must pass: (1) base URL allowlist check, (2) path validation rejecting traversal/schemes/credentials, (3) URL parsing validation, (4) hostname allowlist verification, (5) final URL prefix verification. This provides defense-in-depth against SSRF.
     return await fetch(proxyRequest);
 }
 
