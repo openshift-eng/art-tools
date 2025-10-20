@@ -432,6 +432,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         with (
             patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
             patch("pyartcd.pipelines.prepare_release_konflux.GhApi") as mock_gh_api,
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             # Mock GitHub API
             mock_api = Mock()
