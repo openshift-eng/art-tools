@@ -1,7 +1,0 @@
-# Snyk (https://snyk.io) policy file
-version: v1.0.0
-ignore:
-  'art-cluster/cloudflare/src/index.ts:60':
-    - 'SNYK-JS-*':
-        reason: 'URL validated with HTTPS-only and domain whitelist'
-        expires: '2025-12-31T23:59:59.999Z'
