@@ -8,11 +8,81 @@ import * as crypto from 'crypto';
 const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
 const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
+// Helper function to sanitize paths and prevent path traversal attacks
+function sanitizePath(path: string): string {
+    // Decode URL-encoded characters that might hide path traversal
+    let sanitized = decodeURIComponent(path);
+
+    // Remove path traversal sequences
+    sanitized = sanitized.replace(/\.\./g, '');
+
+    // Normalize multiple slashes to single slash
+    sanitized = sanitized.replace(/\/+/g, '/');
+
+    // Remove any null bytes
+    sanitized = sanitized.replace(/\0/g, '');
+
+    // Ensure path starts with /
+    if (!sanitized.startsWith('/')) {
+        sanitized = '/' + sanitized;
+    }
+
+    return sanitized;
+}
+
 // Proxy function to forward the request to the target URL
 async function proxyToTarget(request: Request, targetBase: string, remainingPath: string): Promise<Response> {
-    const targetUrl = `${targetBase}${remainingPath}`;
+    // Sanitize the remaining path to prevent path traversal attacks
+    const sanitizedPath = sanitizePath(remainingPath);
 
-    // Filter headers
+    // Construct the target URL
+    const targetUrl = `${targetBase}${sanitizedPath}`;
+
+    // Parse URLs for validation
+    let parsedTarget: URL;
+    let parsedBase: URL;
+
+    try {
+        parsedTarget = new URL(targetUrl);
+        parsedBase = new URL(targetBase);
+    } catch (e) {
+        console.error('Invalid URL construction:', e);
+        return new Response('Invalid URL', { status: 400 });
+    }
+
+    // Validation 1: Ensure the scheme is HTTPS (or HTTP if needed)
+    const allowedSchemes = ['https:', 'http:'];
+    if (!allowedSchemes.includes(parsedTarget.protocol)) {
+        console.error('Blocked non-HTTP(S) scheme:', parsedTarget.protocol);
+        return new Response('Invalid URL scheme', { status: 400 });
+    }
+
+    // Validation 2: Ensure the target URL's origin matches the base URL's origin
+    // This prevents requests to arbitrary domains
+    if (parsedTarget.origin !== parsedBase.origin) {
+        console.error('Origin mismatch:', {
+            target: parsedTarget.origin,
+            base: parsedBase.origin
+        });
+        return new Response('Invalid target origin', { status: 400 });
+    }
+
+    // Validation 3: Ensure the path hasn't escaped the base path
+    // This prevents path traversal attacks
+    const normalizedTargetPath = parsedTarget.pathname;
+    const normalizedBasePath = parsedBase.pathname.endsWith('/')
+        ? parsedBase.pathname
+        : parsedBase.pathname + '/';
+
+    if (!normalizedTargetPath.startsWith(normalizedBasePath.replace(/\/+$/, ''))) {
+        console.error('Path traversal attempt detected:', {
+            targetPath: normalizedTargetPath,
+            basePath: normalizedBasePath
+        });
+        return new Response('Invalid target path', { status: 400 });
+    }
+
+    // Filter headers - only allow safe headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
     const filteredHeaders = new Headers();
     request.headers.forEach((value, key) => {
@@ -28,11 +98,16 @@ async function proxyToTarget(request: Request, targetBase: string, remainingPath
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
     });
 
-    // Fetch the response from the target URL
-    const response = await fetch(proxyRequest);
+    try {
+        // Fetch the response from the validated target URL
+        const response = await fetch(proxyRequest);
 
-    // Return the response to the client
-    return new Response(response.body, response);
+        // Return the response to the client
+        return new Response(response.body, response);
+    } catch (error) {
+        console.error('Proxy fetch failed:', error);
+        return new Response('Proxy request failed', { status: 502 });
+    }
 }
 
 async function listBucket(bucket: R2Bucket, options?: R2ListOptions, siteConfig: SiteConfig): Promise<R2Objects> {
