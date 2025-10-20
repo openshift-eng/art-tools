@@ -1619,6 +1619,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline = await PromotePipeline.create(
             runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
         )
+        pipeline.change_advisory_state_qe = AsyncMock()
 
         with self.assertRaisesRegex(ValueError, "Shipment config is defined but image advisory is also defined"):
             await pipeline.run()
