@@ -1034,7 +1034,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         # Verify the additional tags include version override and git commits
-        expected_additional_tags = ["oadp__1.5__v4.12", "oadp__1.5__v4.12__gd5498aa", "oadp__1.5__v4.12__gf1234b"]
+        expected_additional_tags = [
+            "test-group__v4.12__oadp-operator",
+            "test-group__v4.12__oadp-operator__gd5498aa",
+            "test-group__v4.12__oadp-operator__gf1234b",
+        ]
 
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
             generate_name='fbc-test-group-foo-',

@@ -1278,12 +1278,13 @@ class KonfluxFbcBuilder:
                 version = parts[1]
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
+                delivery_repo_name = delivery_repo.split('/')[-1]
                 if group_name.startswith("openshift-"):
-                    additional_tags.append(f"{product_name}__{version}__{delivery_repo.split('/')[-1]}")
+                    additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
                 else:
                     if self.major_minor_override:
                         tag_with_version = (
-                            f"{product_name}__{version}__v{'.'.join(map(str, self.major_minor_override))}"
+                            f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
                         )
                         additional_tags.append(f"{tag_with_version}")
                         for commit in self.source_git_commits:
