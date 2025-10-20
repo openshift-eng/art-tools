@@ -24,10 +24,27 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
         return new Response('Endpoint not in secure allowlist', { status: 403 });
     }
 
+    // Validate remainingPath to prevent SSRF attacks
+    // Reject paths containing:
+    // - Path traversal sequences (../)
+    // - Double slashes (//)
+    // - URL schemes (http://, https://, etc.)
+    // - Encoded variations that could bypass checks
+    const decodedPath = decodeURIComponent(remainingPath);
+    if (
+        decodedPath.includes('..') ||           // Path traversal
+        decodedPath.includes('//') ||           // Protocol-relative URLs or double slashes
+        /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(decodedPath) || // URL schemes (http:, https:, file:, etc.)
+        decodedPath.includes('@') ||            // Credentials in URL
+        decodedPath.includes('\\')              // Windows-style path separators
+    ) {
+        return new Response('Invalid path in request', { status: 400 });
+    }
+
     // Get the pre-validated endpoint
     const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
-    
-    // Create final URL by appending path to secure endpoint
+
+    // Create final URL by appending the validated path to secure endpoint
     const finalUrl = secureEndpoint + remainingPath;
 
     // Filter headers
