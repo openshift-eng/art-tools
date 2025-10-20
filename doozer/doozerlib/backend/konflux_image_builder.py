@@ -84,7 +84,6 @@ class KonfluxImageBuilder:
             dry_run=config.dry_run,
         )
 
-    @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
