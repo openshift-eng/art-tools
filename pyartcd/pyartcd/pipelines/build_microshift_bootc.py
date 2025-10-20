@@ -10,8 +10,8 @@ import tempfile
 import time
 import traceback
 from datetime import datetime, timezone
-from io import StringIO
 from importlib import util
+from io import StringIO
 from pathlib import Path
 from typing import Optional, cast
 from urllib.parse import urlparse
@@ -22,8 +22,8 @@ import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
@@ -42,7 +42,6 @@ from github import Github, GithubException
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
-from pyartcd.plashets import plashet_config_for_major_minor
 from pyartcd.plashets import convert_plashet_config_to_new_style, plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
