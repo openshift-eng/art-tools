@@ -119,8 +119,8 @@ class ConfigScanSources:
         for level in sorted(self.image_tree.keys()):
             await self.scan_images(self.image_tree[level])
 
-        # Check RHCOS status if the kubeconfig is provided
-        if self.ci_kubeconfig:
+        # Check RHCOS status if the kubeconfig is provided and group is openshift-*
+        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-"):
             await self.detect_rhcos_status()
 
         # Print the output report
@@ -730,7 +730,16 @@ class ConfigScanSources:
             builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
 
         # Find and map the builder image NVR
-        latest_builder_image_info = Model(await oc_image_info_for_arch_async__caching(builder_image_url))
+        # Use KONFLUX_OPERATOR_INDEX_AUTH_FILE for non-openshift groups (like OADP), otherwise use default
+        # Since OADP et. al. uses other streams like https://github.com/openshift-eng/ocp-build-data/blob/oadp-1.5/streams.yml#L13
+        builder_auth_file = (
+            (os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.registry_auth_file)
+            if not self.runtime.group.startswith("openshift-")
+            else self.registry_auth_file
+        )
+        latest_builder_image_info = Model(
+            await oc_image_info_for_arch_async__caching(builder_image_url, registry_config=builder_auth_file)
+        )
         builder_info_labels = latest_builder_image_info.config.config.Labels
         builder_nvr_list = [
             builder_info_labels['com.redhat.component'],

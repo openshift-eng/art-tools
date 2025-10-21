@@ -18,6 +18,7 @@ from pyartcd.pipelines import (
     fbc_import_from_index,
     gen_assembly,
     images_health,
+    oadp_scan_konflux,
     ocp4,
     ocp4_konflux,
     ocp4_scan,

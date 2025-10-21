@@ -10,9 +10,10 @@ from artcommonlib import exectools
 from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, jenkins
+from pyartcd import constants, jenkins, locks
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix
 
@@ -221,6 +222,7 @@ class BuildOadpPipeline:
     default=None,
     help="Path to the Konflux kubeconfig file (optional)",
 )
+@click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @pass_runtime
 @click_coroutine
 async def build_oadp(
@@ -232,6 +234,7 @@ async def build_oadp(
     image_list: str,
     skip_bundle_build: bool,
     kubeconfig: Optional[str],
+    ignore_locks: bool,
 ):
     """Rebase and build OADP image for an assembly"""
     try:
@@ -245,7 +248,22 @@ async def build_oadp(
             skip_bundle_build=skip_bundle_build,
             kubeconfig=kubeconfig,
         )
-        await pipeline.run()
+
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            runtime.logger.warning(
+                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+            )
+
+        if ignore_locks:
+            await pipeline.run()
+        else:
+            await locks.run_with_lock(
+                coro=pipeline.run(),
+                lock=Lock.OADP_BUILD,
+                lock_name=Lock.OADP_BUILD.value.format(group=group),
+                lock_id=lock_identifier,
+            )
     except Exception as err:
         error_message = f"build-oadp pipeline encountered error: {err}\n{traceback.format_exc()}"
         runtime.logger.error(error_message)

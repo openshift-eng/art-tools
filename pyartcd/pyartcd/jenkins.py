@@ -42,6 +42,7 @@ class Jobs(Enum):
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
+    OADP = 'aos-cd-builds/build%2Foadp'
 
 
 def get_jenkins_url():
@@ -642,6 +643,30 @@ def start_build_fbc(
 
     return start_build(
         job=Jobs.BUILD_FBC,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_oadp(
+    group: str,
+    assembly: str,
+    version: str,
+    image_list: list = None,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+        'VERSION': version,
+    }
+
+    # Build only changed images or none
+    if image_list:
+        params['IMAGE_LIST'] = ','.join(image_list)
+
+    return start_build(
+        job=Jobs.OADP,
         params=params,
         **kwargs,
     )
