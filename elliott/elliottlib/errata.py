@@ -104,6 +104,13 @@ def get_raw_erratum(advisory_id):
     return ErrataConnector()._get(f"/api/v1/erratum/{advisory_id}")
 
 
+def update_erratum(advisory_id, data):
+    """
+    Update an erratum
+    """
+    return ErrataConnector()._put(f"/api/v1/erratum/{advisory_id}", json=data)
+
+
 def add_jira_issue(advisory_id, jira_issue_id):
     """
     Attach a jira issue to advisory

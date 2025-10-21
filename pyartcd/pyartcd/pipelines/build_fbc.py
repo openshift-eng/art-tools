@@ -8,8 +8,9 @@ import click
 from artcommonlib import exectools
 from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 
-from pyartcd import constants
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 
@@ -34,6 +35,7 @@ class BuildFbcPipeline:
         force: bool,
         group: str,
         major_minor: Optional[str],
+        ignore_locks: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -52,6 +54,7 @@ class BuildFbcPipeline:
         self.prod_registry_auth = prod_registry_auth
         self.force = force
         self.major_minor = major_minor
+        self.ignore_locks = ignore_locks
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -261,6 +264,12 @@ class BuildFbcPipeline:
     metavar='MAJOR.MINOR',
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
+@click.option(
+    '--ignore-locks',
+    is_flag=True,
+    default=False,
+    help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -281,6 +290,7 @@ async def build_fbc(
     force: bool,
     group: str,
     major_minor: Optional[str],
+    ignore_locks: bool,
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,
@@ -300,5 +310,22 @@ async def build_fbc(
         force=force,
         group=group,
         major_minor=major_minor,
+        ignore_locks=ignore_locks,
     )
-    await pipeline.run()
+
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
+    # Use group-based lock name, default to openshift-{version} if group not specified
+    final_group = f"openshift-{version}" if not group else group
+
+    if ignore_locks:
+        await pipeline.run()
+    else:
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=Lock.FBC_BUILD,
+            lock_name=Lock.FBC_BUILD.value.format(group=final_group),
+            lock_id=lock_identifier,
+        )

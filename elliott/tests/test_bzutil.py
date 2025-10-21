@@ -119,6 +119,96 @@ class TestJIRABugTracker(unittest.TestCase):
         expected = {'foo': 1, 'bar': 2}
         self.assertEqual(actual, expected)
 
+    def test_security_filtering_in_query(self):
+        """Test that security filtering is included in JQL query when enabled"""
+        # Create a minimal tracker for testing
+        config = {'project': 'OCPBUGS', 'server': 'https://issues.redhat.com'}
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        tracker = JIRABugTracker(config)
+
+        # Test with security filtering enabled
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = True
+        query = tracker._query(status=["NEW"], search_filter="default")
+        self.assertIn(' and ("level" in', query)
+        self.assertIn(' or "level" is EMPTY)', query)
+
+        # Test with security filtering disabled
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = False
+        query = tracker._query(status=["NEW"], search_filter="default")
+        self.assertNotIn(' and ("level" in', query)
+        self.assertNotIn(' or "level" is EMPTY)', query)
+
+    def test_search_with_security_filtering(self):
+        """Test that search results respect security filtering"""
+        # Mock configuration
+        config = {'project': 'OCPBUGS', 'server': 'https://issues.redhat.com', 'token_auth': 'mock_token'}
+
+        # Create mock issues with different security levels
+        mock_security_allowed = flexmock(name="Red Hat Employee")
+        mock_security_disallowed = flexmock(name="Special Public")
+
+        mock_issue_allowed = flexmock(
+            key='OCPBUGS-11111',
+            fields=flexmock(
+                summary='Allowed security bug',
+                status=flexmock(name='NEW'),
+                components=[flexmock(name='Test Component')],
+                labels=['Security', 'SecurityTracking'],
+                security=mock_security_allowed,
+                project=flexmock(key='OCPBUGS'),
+            ),
+            permalink=lambda: 'https://issues.redhat.com/browse/OCPBUGS-11111',
+        )
+
+        mock_issue_disallowed = flexmock(
+            key='OCPBUGS-22222',
+            fields=flexmock(
+                summary='Disallowed security bug',
+                status=flexmock(name='NEW'),
+                components=[flexmock(name='Test Component')],
+                labels=['Security', 'SecurityTracking'],
+                security=mock_security_disallowed,
+                project=flexmock(key='OCPBUGS'),
+            ),
+            permalink=lambda: 'https://issues.redhat.com/browse/OCPBUGS-22222',
+        )
+
+        # Mock JIRA client search - should only return allowed bugs when filtering is enabled
+        mock_jira_client = flexmock()
+
+        # When security filtering is enabled, only return the allowed bug
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = True
+        mock_jira_client.should_receive("search_issues").and_return([mock_issue_allowed])
+
+        # Mock the login method
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        # Create tracker and perform search
+        tracker = JIRABugTracker(config)
+        bugs = tracker.search(['NEW'], 'default')
+
+        # Verify we only got the allowed bug
+        self.assertEqual(len(bugs), 1)
+        self.assertEqual(bugs[0].id, 'OCPBUGS-11111')
+        self.assertEqual(bugs[0].security_level.name, 'Red Hat Employee')
+        self.assertIn(bugs[0].security_level.name, constants.JIRA_SECURITY_ALLOWLIST)
+
+        # Test with security filtering disabled - should return both bugs
+        JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = False
+        mock_jira_client.should_receive("search_issues").and_return([mock_issue_allowed, mock_issue_disallowed])
+
+        bugs = tracker.search(['NEW'], 'default')
+
+        # Verify we got both bugs when filtering is disabled
+        self.assertEqual(len(bugs), 2)
+        bug_ids = [bug.id for bug in bugs]
+        self.assertIn('OCPBUGS-11111', bug_ids)
+        self.assertIn('OCPBUGS-22222', bug_ids)
+
 
 class TestBugzillaBugTracker(unittest.TestCase):
     def test_get_config(self):
@@ -504,115 +594,119 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('CVE-2022-123', sort_list[4])
 
     def test_is_first_fix_any_validate(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+
         # should raise error when no tracker bugs are found
-        tr = '4.8.0'
         self.assertRaisesRegex(
-            ValueError, r'does not seem to have trackers', bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [], tr
+            ValueError,
+            r'does not seem to have trackers',
+            bzutil.is_first_fix_any,
+            mock_runtime,
+            BugzillaBug(flexmock(id=1)),
+            [],
         )
 
         # should raise error when flaw alias isn't present
-        tr = '4.8.0'
         self.assertRaisesRegex(
             ValueError,
             r'does not have a CVE alias',
             bzutil.is_first_fix_any,
+            mock_runtime,
             BugzillaBug(flexmock(id=1)),
             [JIRABug(flexmock(key="OCPBUGS-foo"))],
-            tr,
         )
 
-    def test_is_first_fix_any(self):
+    def test_is_first_fix_any_image_delivery_repo(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+
+        # Mock image meta for openshift4/some-image delivery repo matching
+        mock_meta = flexmock()
+        mock_config = flexmock()
+        mock_delivery = flexmock()
+        mock_delivery.delivery_repo_names = ['openshift4/some-image']
+        mock_config.delivery = mock_delivery
+        mock_meta.config = mock_config
+        mock_meta.should_receive('get_component_name').and_return('some-image-component')
+
+        mock_runtime.should_receive('image_metas').and_return([mock_meta])
+
         hydra_data = {
             'package_state': [
-                {
-                    'product_name': "Red Hat Advanced Cluster Management for Kubernetes 2",
-                    'fix_state': "Affected",
-                    'package_name': "rhacm2/agent-service-rhel8",
-                },
-                {
-                    'product_name': "Red Hat OpenShift Container Platform 4",
-                    'fix_state': "Affected",
-                    'package_name': "openshift-clients",
-                },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Some other status",
                     'package_name': "openshift4/some-image",
                 },
-                {
-                    'product_name': "Red Hat OpenShift Container Platform 3",
-                    'fix_state': "Affected",
-                    'package_name': "openshift3/some-image",
-                },
             ],
         }
         flexmock(requests).should_receive('get').and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
-        ).ordered()
+        )
 
-        pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get').and_return(
-            flexmock(status_code=200, json=lambda: pyxis_data)
-        ).ordered()
-
-        tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
+        tracker_bugs = [flexmock(id=2, whiteboard_component='some-image-component')]
         expected = True
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
-    def test_is_first_fix_any_missing_package_state(self):
-        hydra_data = {}
-        flexmock(requests).should_receive('get').and_return(
-            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
-        )
-        tr = '4.8.0'
-        flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
-        expected = False
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
-        self.assertEqual(expected, actual)
+    def test_is_first_fix_any_component_name(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive('image_metas').and_return([])
 
-    def test_is_first_fix_any_fail(self):
         hydra_data = {
             'package_state': [
                 {
-                    'product_name': "Red Hat Advanced Cluster Management for Kubernetes 2",
-                    'fix_state': "Affected",
-                    'package_name': "rhacm2/agent-service-rhel8",
-                },
-                {
-                    'product_name': "Red Hat OpenShift Container Platform 4",
-                    'fix_state': "Affected",
-                    'package_name': "openshift-clients",
-                },
-                {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Some other status",
-                    'package_name': "openshift4/some-image",
-                },
-                {
-                    'product_name': "Red Hat OpenShift Container Platform 3",
-                    'fix_state': "Affected",
-                    'package_name': "openshift3/some-image",
+                    'package_name': "some-component-name",
                 },
             ],
         }
         flexmock(requests).should_receive('get').and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
-        ).ordered()
+        )
 
-        pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get').and_return(
-            flexmock(status_code=200, json=lambda: pyxis_data)
-        ).ordered()
-
-        tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='openshift')]
+        tracker_bugs = [flexmock(id=2, whiteboard_component='some-component-name')]
+        expected = True
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
+        self.assertEqual(expected, actual)
+
+    def test_is_first_fix_any_false(self):
+        # Mock runtime object
+        mock_runtime = flexmock()
+        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive('image_metas').and_return([])
+
+        hydra_data = {
+            'package_state': [
+                {
+                    'product_name': "Red Hat OpenShift Container Platform 4",
+                    'fix_state': "Affected",
+                    'package_name': "unrelated-component",
+                },
+                # will not be considered since it's not OCP 4
+                {
+                    'product_name': "Red Hat OpenShift Container Platform 3",
+                    'fix_state': "Affected",
+                    'package_name': "some-component-name",
+                },
+            ],
+        }
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        )
+
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
+        tracker_bugs = [flexmock(id=2, whiteboard_component='some-component-name')]
         expected = False
-        actual = bzutil.is_first_fix_any(flaw_bug, tracker_bugs, tr)
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
 

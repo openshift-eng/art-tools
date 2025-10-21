@@ -211,6 +211,28 @@ class KonfluxOlmBundleRebaser:
                 image_refs = yaml.safe_load(await f.read())
             for entry in image_refs.get('spec', {}).get('tags', []):
                 image_references[entry["name"]] = entry
+
+        # Validate that containerImage annotation in CSV matches an entry in image-references
+        # This catches cases where the upstream CSV has an outdated tag that doesn't match image-references
+        csv_files = list(operator_bundle_dir.glob('*.clusterserviceversion.yaml'))
+        if csv_files:
+            csv_file = csv_files[0]
+            async with aiofiles.open(csv_file, 'r') as f:
+                csv_content = await f.read()
+            csv_data = yaml.safe_load(csv_content)
+            container_image = csv_data.get('metadata', {}).get('annotations', {}).get('containerImage')
+
+            if container_image and image_references:
+                # Check if containerImage matches any spec from image-references
+                specs_from_refs = {ref['from']['name'] for ref in image_references.values()}
+                if container_image not in specs_from_refs:
+                    logger.warning(
+                        f"CSV containerImage annotation '{container_image}' does not match any entry in image-references file. "
+                        f"This may cause the containerImage to not be replaced correctly. "
+                        f"Expected one of: {specs_from_refs}. "
+                        f"Please update the upstream CSV to use the correct tag from image-references."
+                    )
+
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
             logger.warning(
@@ -669,7 +691,6 @@ class KonfluxOlmBundleBuilder:
         # TODO: (2025-Jul-09) remove this once we have new builds using the new component name
         return f"{application_name}-{bundle_name}".replace(".", "-").replace("_", "-")
 
-    @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def _start_build(
         self,
         metadata: ImageMetadata,

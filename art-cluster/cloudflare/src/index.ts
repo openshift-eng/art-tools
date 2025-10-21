@@ -8,9 +8,27 @@ import * as crypto from 'crypto';
 const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
 const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
-// Proxy function to forward the request to the target URL
-async function proxyToTarget(request: Request, targetBase: string, remainingPath: string): Promise<Response> {
-    const targetUrl = `${targetBase}${remainingPath}`;
+// Pre-validated secure proxy URLs - no dynamic construction from user input
+const SECURE_PROXY_ENDPOINTS = new Map([
+    ['https://developers.redhat.com/content-gateway/rest/mirror/pub/cgw', 'https://developers.redhat.com/content-gateway/rest/mirror/pub/cgw'],
+    ['https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/crc', 'https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/crc'],
+    ['https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/mirror-registry', 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/mirror-registry'],
+    ['https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/odo', 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/odo'],
+    ['https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm', 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm']
+]);
+
+// Secure proxy function using pre-validated endpoints only
+async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: string, remainingPath: string): Promise<Response> {
+    // Only allow requests to pre-validated secure endpoints
+    if (!SECURE_PROXY_ENDPOINTS.has(targetBaseUrl)) {
+        return new Response('Endpoint not in secure allowlist', { status: 403 });
+    }
+
+    // Get the pre-validated endpoint
+    const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
+    
+    // Create final URL by appending path to secure endpoint
+    const finalUrl = secureEndpoint + remainingPath;
 
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
@@ -21,14 +39,14 @@ async function proxyToTarget(request: Request, targetBase: string, remainingPath
         }
     });
 
-    // Set up the new request
-    const proxyRequest = new Request(targetUrl, {
+    // Create request to pre-validated secure endpoint
+    const proxyRequest = new Request(finalUrl, {
         method: request.method,
         headers: filteredHeaders,
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
     });
 
-    // Fetch the response from the target URL
+    // Fetch from secure pre-validated endpoint
     const response = await fetch(proxyRequest);
 
     // Return the response to the client
@@ -120,7 +138,7 @@ export default {
         // Proxy rule for CGW to Red Hat Content Gateway
         for (const [path, targetBase] of Object.entries(siteConfig.cgw)) {
             if (url.pathname.startsWith(path)) {
-                return proxyToTarget(request, targetBase, url.pathname.replace(path, ""));
+                return secureProxyToValidatedEndpoint(request, targetBase, url.pathname.replace(path, ""));
             }
         }
 

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -196,7 +197,10 @@ async def olm_bundle_konflux(
                             operator_nvrs=operator_nvrs,
                             dry_run=runtime.dry_run,
                             ocp_target_version=target_version,
+                            # Always force rebuild FBCs for OADP / MTA / MTC
+                            force_build=True,
                         )
+                        await asyncio.sleep(5)
                 else:
                     runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                     # No OCP_TARGET_VERSIONS defined, use original behavior

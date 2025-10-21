@@ -84,7 +84,6 @@ class KonfluxImageBuilder:
             dry_run=config.dry_run,
         )
 
-    @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -555,128 +554,110 @@ class KonfluxImageBuilder:
         return pipelinerun_info
 
     @staticmethod
-    def _is_builder_package(source_info: str) -> bool:
-        """
-        Categorize packages by build stage for debug logging.
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    async def _download_sbom_for_arch(arch: str, image_pullspec: str, registry_auth_file: Optional[str]) -> dict:
+        """Download and validate SBOM for single architecture.
 
-        Returns True if the package appears to come from a builder stage
-        based on sourceInfo patterns.
+        :param arch: Architecture to download SBOM for
+        :param image_pullspec: Image pullspec to download SBOM from
+        :param registry_auth_file: Registry authentication file path
+        :return: SBOM contents as dictionary
+        :raises ChildProcessError: If SBOM download or validation fails
         """
-        if not source_info:
-            return False
+        go_arch = go_arch_for_brew_arch(arch)
 
-        builder_patterns = [
-            "/go.mod",  # Go modules from golang-builder
-            "/vendor/",  # Vendored dependencies
-            "requirements-build.txt",  # Build-time Python deps
-            "/workspace",  # Builder workspace paths
-            "package-lock.json",  # NPM dependencies
+        cmd = [
+            "cosign",
+            "download",
+            "sbom",
+            image_pullspec,
+            "--platform",
+            f"linux/{go_arch}",
         ]
-        return any(pattern in source_info for pattern in builder_patterns)
+
+        env = os.environ.copy()
+        if registry_auth_file:
+            LOGGER.debug("Using registry auth file: %s", registry_auth_file)
+            env["REGISTRY_AUTH_FILE"] = registry_auth_file
+
+        rc, stdout, _ = await exectools.cmd_gather_async(cmd, env=env)
+        if rc != 0:
+            LOGGER.warning("cosign command failed to download SBOM: %s", stdout)
+            raise ChildProcessError("cosign command failed to download SBOM")
+
+        content = json.loads(stdout)
+
+        # Check if the SBOM is valid
+        if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
+            LOGGER.warning("cosign command returned invalid SBOM: %s", content)
+            raise ChildProcessError("cosign command returned invalid SBOM")
+
+        return content
 
     @staticmethod
-    async def get_installed_packages(
-        image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
-    ) -> Tuple[Set[str], Set[str]]:
+    def _parse_all_rpm_nvrs_from_sbom(sbom_contents: dict) -> Set[str]:
+        """Parse ALL RPM package NVRs from SBOM for comprehensive tracking.
+
+        Includes builder packages, final container packages, regardless of upstream qualifier.
+
+        :param sbom_contents: SBOM contents dictionary
+        :return: Set of all package NVRs (name-version-release)
         """
-        :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
+        all_rpm_nvrs = set()
 
-        Enhanced to process ALL RPM packages from Contextual SBOM, including packages from
-        both builder stages and final container layer for complete supply chain visibility.
+        # Process all packages from SPDX SBOM
+        for package in sbom_contents["packages"]:
+            purl_string = next(
+                (ref["referenceLocator"] for ref in package["externalRefs"] if ref["referenceType"] == "purl"), ""
+            )
+
+            if purl_string.startswith("pkg:"):
+                try:
+                    purl = PackageURL.from_string(purl_string)
+                    if purl.type == "rpm" and purl.name and purl.version:
+                        # Debug logging for package processing
+                        source_info = package.get("sourceInfo", "")
+                        LOGGER.debug(
+                            f"Processing RPM package {purl.name}-{purl.version} (sourceInfo: {source_info[:50]}...)"
+                        )
+
+                        all_rpm_nvrs.add(f"{purl.name}-{purl.version}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
+                    continue
+
+        return all_rpm_nvrs
+
+    @staticmethod
+    def _parse_source_rpm_nvrs_from_sbom(sbom_contents: dict) -> Set[str]:
+        """Parse source RPM NVRs from SBOM for installed_packages field.
+
+        Only includes packages with upstream qualifier (source RPMs).
+
+        :param sbom_contents: SBOM contents dictionary
+        :return: Set of source RPM NVRs (name-version-release)
         """
+        source_rpm_nvrs = set()
 
-        @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-        async def _get_sbom_with_retry(cmd, env):
-            rc, stdout, _ = await exectools.cmd_gather_async(cmd, env=env)
-            if rc != 0:
-                LOGGER.warning("cosign command failed to download SBOM: %s", stdout)
-                raise ChildProcessError("cosign command failed to download SBOM")
+        # Process all packages from SPDX SBOM
+        for package in sbom_contents["packages"]:
+            purl_string = next(
+                (ref["referenceLocator"] for ref in package["externalRefs"] if ref["referenceType"] == "purl"), ""
+            )
 
-            content = json.loads(stdout)
+            if purl_string.startswith("pkg:"):
+                try:
+                    purl = PackageURL.from_string(purl_string)
+                    if purl.type == "rpm":
+                        # Only process packages with upstream qualifier (source RPMs)
+                        source_rpm = purl.qualifiers.get("upstream", None)
+                        if source_rpm:
+                            source_rpm_nvrs.add(source_rpm.removesuffix(".src.rpm"))
+                except Exception as e:
+                    LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
+                    continue
 
-            # Check if the SBOM is valid
-            # The SBOM should be a JSON object with a "components" key that is a non-empty list
-            if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
-                LOGGER.warning("cosign command returned invalid SBOM: %s", content)
-                raise ChildProcessError("cosign command returned invalid SBOM")
-
-            return content
-
-        async def _get_for_arch(arch):
-            go_arch = go_arch_for_brew_arch(arch)
-
-            cmd = [
-                "cosign",
-                "download",
-                "sbom",
-                image_pullspec,
-                "--platform",
-                f"linux/{go_arch}",
-            ]
-
-            env = os.environ.copy()
-            if registry_auth_file:
-                LOGGER.debug("Using registry auth file: %s", registry_auth_file)
-                env["REGISTRY_AUTH_FILE"] = registry_auth_file
-
-            sbom_contents = await _get_sbom_with_retry(cmd, env=env)
-            source_rpms = set()
-            package_nvrs = set()
-
-            # we request konflux to generate sbom in spdx schema: https://spdx.dev/
-            # https://github.com/openshift-eng/art-tools/blob/fb172e73df248b1dbc09c3666b5229b4db705427/doozer/doozerlib/backend/konflux_client.py#L473
-            # Enhanced to process ALL RPM packages from Contextual SBOM (builder + final stages)
-            for x in sbom_contents["packages"]:
-                purl_string = next(
-                    (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
-                )
-
-                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
-                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
-                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
-                # so filter them out
-                if purl_string.startswith("pkg:"):
-                    try:
-                        purl = PackageURL.from_string(purl_string)
-                        # Process ALL rpm packages (builder + final stages for complete inventory)
-                        if purl.type == "rpm":
-                            # Debug logging for package origin attribution
-                            source_info = x.get("sourceInfo", "")
-                            is_builder = KonfluxImageBuilder._is_builder_package(source_info)
-                            LOGGER.debug(
-                                f"Processing RPM package {purl.name}-{purl.version} "
-                                f"(origin: {'builder' if is_builder else 'final'}, "
-                                f"sourceInfo: {source_info[:50]}...)"
-                            )
-
-                            # get the installed package (name + version)
-                            if purl.name and purl.version:
-                                package_nvrs.add(f"{purl.name}-{purl.version}")
-
-                            # get the source rpm
-                            source_rpm = purl.qualifiers.get("upstream", None)
-                            if source_rpm:
-                                source_rpms.add(source_rpm.removesuffix(".src.rpm"))
-                    except Exception as e:
-                        LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
-                        continue
-            if not source_rpms:
-                LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
-            return package_nvrs, source_rpms
-
-        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
-        for arch, result in zip(arches, results):
-            package_nvrs, source_rpms = result
-            if not source_rpms:
-                raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
-
-        all_package_nvrs = set()
-        all_source_rpms = set()
-        for package_nvrs, source_rpms in results:
-            all_package_nvrs.update(package_nvrs)
-            all_source_rpms.update(source_rpms)
-
-        return all_package_nvrs, all_source_rpms
+        return source_rpm_nvrs
 
     async def update_konflux_db(
         self,
@@ -758,15 +739,35 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            package_nvrs, source_rpms = await self.get_installed_packages(
-                image_pullspec, building_arches, self._config.registry_auth_file
-            )
+            # Efficient SBOM processing: download once per arch, extract both datasets
+            async def _get_for_arch(arch):
+                sbom_contents = await KonfluxImageBuilder._download_sbom_for_arch(
+                    arch, image_pullspec, self._config.registry_auth_file
+                )
+                all_package_nvrs = KonfluxImageBuilder._parse_all_rpm_nvrs_from_sbom(sbom_contents)
+                source_rpm_nvrs = KonfluxImageBuilder._parse_source_rpm_nvrs_from_sbom(sbom_contents)
+
+                if not source_rpm_nvrs:
+                    LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
+                return all_package_nvrs, source_rpm_nvrs
+
+            results = await asyncio.gather(*(_get_for_arch(arch) for arch in building_arches))
+            for arch, result in zip(building_arches, results):
+                all_package_nvrs, source_rpm_nvrs = result
+                if not source_rpm_nvrs:
+                    raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
+
+            all_package_nvrs_combined = set()
+            all_source_rpm_nvrs_combined = set()
+            for all_package_nvrs, source_rpm_nvrs in results:
+                all_package_nvrs_combined.update(all_package_nvrs)
+                all_source_rpm_nvrs_combined.update(source_rpm_nvrs)
 
             build_record_params.update(
                 {
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                    'installed_packages': sorted(source_rpms),
-                    'installed_rpms': sorted(package_nvrs),
+                    'installed_packages': sorted(all_source_rpm_nvrs_combined),
+                    'installed_rpms': sorted(all_package_nvrs_combined),
                     'image_tag': image_pullspec.split(':')[-1],
                 }
             )
