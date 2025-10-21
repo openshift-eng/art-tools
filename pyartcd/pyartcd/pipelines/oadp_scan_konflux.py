@@ -5,7 +5,7 @@ import os
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.constants import OADP_VERSIONS
+from artcommonlib.constants import NON_OCP_OPERATOR_VERSIONS
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -120,7 +120,7 @@ class OadpScanPipeline:
         jenkins.start_oadp(
             group=self.group,
             assembly='stream',
-            version=OADP_VERSIONS.get(self.group, "1.5.3"),  # fallback to latest if group not found
+            version=NON_OCP_OPERATOR_VERSIONS.get(self.group),
             image_list=image_list,
         )
 
