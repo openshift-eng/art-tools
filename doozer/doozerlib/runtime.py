@@ -270,7 +270,6 @@ class Runtime(GroupRuntime):
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
                 self.state = yaml.full_load(f)
-            self.state.update(state.TEMPLATE_BASE_STATE)
 
     def save_state(self):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
