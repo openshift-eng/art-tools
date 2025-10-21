@@ -108,6 +108,8 @@ class KonfluxRebaseCli:
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
                 LOGGER.error(f"Failed to rebase {image_name}: {result}")
+                LOGGER.error(f"Stack trace for {image_name}:")
+                LOGGER.error(''.join(traceback.format_exception(type(result), result, result.__traceback__)))
         if failed_images:
             runtime.state['images:konflux:rebase'] = {'failed-images': failed_images}
             raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
