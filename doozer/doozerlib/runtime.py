@@ -850,12 +850,15 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a list of architectures that are enabled globally in group.yml, for konflux.
         """
-        # For now, cli override (LIMIT_ARCHES) and arches_override in group config are not supported
-        arches = list(self.group_config.konflux.arches)
 
-        if not arches:
-            # Fall back to default arches param, if konflux_arches is missing
-            return list(self.arches)
+        if self.arches:
+            # CLI override takes precedence
+            arches = list(self.arches)
+
+        else:
+            # Use konflux arches if defined
+            arches = list(self.group_config.konflux.arches)
+
         return arches
 
     def get_product_config(self) -> Model:
