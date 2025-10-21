@@ -41,7 +41,7 @@ from pyartcd.pipelines import (
     tarball_sources,
     update_golang,
 )
-from pyartcd.pipelines.scheduled import schedule_ocp4_scan, schedule_ocp4_scan_konflux
+from pyartcd.pipelines.scheduled import schedule_oadp_scan, schedule_ocp4_scan, schedule_ocp4_scan_konflux
 
 
 def main(args: Optional[Sequence[str]] = None):
