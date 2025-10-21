@@ -43,6 +43,7 @@ class Jobs(Enum):
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     OADP = 'aos-cd-builds/build%2Foadp'
+    OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
 
 
 def get_jenkins_url():
@@ -667,6 +668,17 @@ def start_oadp(
 
     return start_build(
         job=Jobs.OADP,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_oadp_scan_konflux(group: str, **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+    }
+    return start_build(
+        job=Jobs.OADP_SCAN,
         params=params,
         **kwargs,
     )
