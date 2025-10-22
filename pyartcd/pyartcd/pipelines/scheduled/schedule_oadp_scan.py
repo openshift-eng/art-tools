@@ -24,7 +24,12 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
 
     # Schedule OADP scan
     runtime.logger.info('[%s] Scheduling oadp-scan-konflux', group)
-    jenkins.start_oadp_scan_konflux(group=group, block_until_building=False)
+
+    # Until ashwin's fork is not being used for logging builds
+    # https://github.com/openshift-eng/ocp-build-data/blob/logging-6.3/images/cluster-logging-operator.yml#L7
+    assembly = 'test' if group.startswith("logging-") else 'stream'
+
+    jenkins.start_oadp_scan_konflux(group=group, assembly=assembly, block_until_building=False)
 
 
 @cli.command('schedule-oadp-scan')
