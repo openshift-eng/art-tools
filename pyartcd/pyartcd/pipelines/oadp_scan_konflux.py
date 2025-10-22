@@ -120,7 +120,7 @@ class OadpScanPipeline:
         self.logger.info('Triggering an OADP %s build', self.group)
         jenkins.start_oadp(
             group=self.group,
-            assembly='stream',
+            assembly=self.assembly,
             version=NON_OCP_OPERATOR_VERSIONS.get(self.group),
             image_list=image_list,
         )
