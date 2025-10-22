@@ -673,10 +673,12 @@ def start_oadp(
     )
 
 
-def start_oadp_scan_konflux(group: str, **kwargs) -> Optional[str]:
+def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
     params = {
         'GROUP': group,
+        'ASSEMBLY': assembly,
     }
+
     return start_build(
         job=Jobs.OADP_SCAN,
         params=params,
