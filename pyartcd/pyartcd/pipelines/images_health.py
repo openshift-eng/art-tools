@@ -98,7 +98,12 @@ class ImagesHealthPipeline:
     async def notify_release_channel(self, version):
         self.slack_client.bind_channel(version)
 
-        concerns = [concern for concern in self.report if concern.get('group', '') == f'openshift-{version}']
+        concerns = [
+            concern
+            for concern in self.report
+            if concern.get('group', '') == f'openshift-{version}'
+            and concern['code'] != ConcernCode.LATEST_BUILT_SUCCEEDED
+        ]
 
         if not concerns:
             await self.slack_client.say(f':white_check_mark: All images are healthy for openshift-{version}')
@@ -121,8 +126,11 @@ class ImagesHealthPipeline:
 
         image_concerns = {}
         for concern in self.report:
-            if concern['code'] == ConcernCode.NEVER_BUILT.value:
-                # We don't report NEVER_BUILT concerns to forum-ocp-art
+            if (
+                concern['code'] == ConcernCode.NEVER_BUILT.value
+                or concern['code'] == ConcernCode.LATEST_BUILT_SUCCEEDED.value
+            ):
+                # We don't report NEVER_BUILT concerns to forum-ocp-art. Latest built succeeded is not a concern.
                 continue
             image_name = concern['image_name']
             image_concerns.setdefault(image_name, []).append(concern)
