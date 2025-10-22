@@ -598,7 +598,7 @@ class KonfluxClient:
                     if namespace == "art-logging-tenant" and "vector" in component_name:
                         # For the component "vector" in the logging namepace, we need to set the TARGET_DIRS
                         # https://gitlab.cee.redhat.com/openshift-logging/sustaining-eng/konflux-log-collection/-/merge_requests/67/diffs
-                        _modify_param(task["params"], "TARGET_DIRS", "$(params.source-context)")
+                        _modify_param(task["params"], "TARGET_DIRS", "./cluster-logging-operator")
                 case "clone-repository":
                     _modify_param(
                         task["params"],
