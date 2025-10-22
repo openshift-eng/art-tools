@@ -20,7 +20,7 @@ class ConcernCode(Enum):
     NEVER_BUILT = 'NEVER_BUILT'
     LATEST_ATTEMPT_FAILED = 'LATEST_ATTEMPT_FAILED'
     FAILING_AT_LEAST_FOR = 'FAILING_AT_LEAST_FOR'
-    LATEST_BUILT_SUCCEEDED = 'LATEST_BUILT_SUCCEEDED'
+    LATEST_BUILD_SUCCEEDED = 'LATEST_BUILT_SUCCEEDED'
 
 
 class Concern:
@@ -117,7 +117,7 @@ class ImagesHealthPipeline:
             # The latest attempt was a success
             self.add_concern(
                 Concern(
-                    code=ConcernCode.LATEST_BUILT_SUCCEEDED.value,
+                    code=ConcernCode.LATEST_BUILD_SUCCEEDED.value,
                     image_name=image_meta.distgit_key,
                     latest_built_nvr=builds[0].nvr,
                 )
@@ -196,4 +196,4 @@ class ImagesHealthPipeline:
 @pass_runtime
 async def images_health(runtime, limit, group, assembly):
     runtime.initialize(clone_distgits=False, clone_source=False)
-    await ImagesHealthPipeline(runtime, limit).run()
+    await ImagesHealthPipeline(runtime, limit, group, assembly).run()

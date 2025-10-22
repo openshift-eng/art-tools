@@ -102,7 +102,7 @@ class ImagesHealthPipeline:
             concern
             for concern in self.report
             if concern.get('group', '') == f'openshift-{version}'
-            and concern['code'] != ConcernCode.LATEST_BUILT_SUCCEEDED
+            and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED
         ]
 
         if not concerns:
@@ -128,7 +128,7 @@ class ImagesHealthPipeline:
         for concern in self.report:
             if (
                 concern['code'] == ConcernCode.NEVER_BUILT.value
-                or concern['code'] == ConcernCode.LATEST_BUILT_SUCCEEDED.value
+                or concern['code'] == ConcernCode.LATEST_BUILD_SUCCEEDED.value
             ):
                 # We don't report NEVER_BUILT concerns to forum-ocp-art. Latest built succeeded is not a concern.
                 continue
