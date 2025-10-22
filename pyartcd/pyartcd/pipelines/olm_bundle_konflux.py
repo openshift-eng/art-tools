@@ -1,15 +1,18 @@
+import asyncio
 import os
 from pathlib import Path
 
 import click
 from aioredlock import LockError
 from artcommonlib import exectools
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 
 @cli.command('olm-bundle-konflux')
@@ -95,8 +98,33 @@ async def olm_bundle_konflux(
     cmd.append('beta:images:konflux:bundle')
     if force:
         cmd.append('--force')
-    if kubeconfig:
-        cmd.extend(['--konflux-kubeconfig', kubeconfig])
+
+    # Set namespace based on group prefix
+    for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+        if group.startswith(prefix):
+            cmd.extend(['--konflux-namespace', namespace])
+            break
+
+    # Use kubeconfig from CLI parameter or tenant-specific environment variable
+    final_kubeconfig = kubeconfig
+    if not final_kubeconfig:
+        # Determine the appropriate environment variable based on group prefix
+        kubeconfig_env_var = None
+        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+            if group.startswith(prefix):
+                kubeconfig_env_var = env_var
+                break
+
+        if kubeconfig_env_var:
+            final_kubeconfig = os.environ.get(kubeconfig_env_var)
+
+        if not final_kubeconfig:
+            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            raise ValueError(
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+            )
+
+    cmd.extend(['--konflux-kubeconfig', final_kubeconfig])
     if plr_template:
         plr_template_owner, plr_template_branch = (
             plr_template.split("@") if plr_template else ["openshift-priv", "main"]
@@ -146,13 +174,53 @@ async def olm_bundle_konflux(
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
         if operator_nvrs:
-            jenkins.start_build_fbc(
-                version=version,
-                group=group if group else None,
-                assembly=assembly,
-                operator_nvrs=operator_nvrs,
-                dry_run=runtime.dry_run,
-            )
+            runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
+            # Check if this is an OADP, MTA, or MTC group and if OCP_TARGET_VERSIONS is configured
+            if group and (group.startswith("oadp-") or group.startswith("mta-") or group.startswith("mtc-")):
+                runtime.logger.info(f'Group {group} matches OADP/MTA/MTC pattern, checking for OCP_TARGET_VERSIONS')
+                # Load group config to check for OCP_TARGET_VERSIONS
+                group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
+
+                # Check if OCP_TARGET_VERSIONS is defined in group config
+                ocp_target_versions = group_config.get("OCP_TARGET_VERSIONS")
+                runtime.logger.info(f'OCP_TARGET_VERSIONS from group config: {ocp_target_versions}')
+
+                if ocp_target_versions:
+                    runtime.logger.info(f'Starting multiple FBC jobs for target versions: {ocp_target_versions}')
+                    # Generate multiple FBC jobs, one for each target version
+                    for target_version in ocp_target_versions:
+                        runtime.logger.info(f'Starting FBC job for target version: {target_version}')
+                        jenkins.start_build_fbc(
+                            version=version,
+                            group=group,
+                            assembly=assembly,
+                            operator_nvrs=operator_nvrs,
+                            dry_run=runtime.dry_run,
+                            ocp_target_version=target_version,
+                            # Always force rebuild FBCs for OADP / MTA / MTC
+                            force_build=True,
+                        )
+                        await asyncio.sleep(5)
+                else:
+                    runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
+                    # No OCP_TARGET_VERSIONS defined, use original behavior
+                    jenkins.start_build_fbc(
+                        version=version,
+                        group=group,
+                        assembly=assembly,
+                        operator_nvrs=operator_nvrs,
+                        dry_run=runtime.dry_run,
+                    )
+            else:
+                runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
+                # Not an OADP/MTA/MTC group, use original behavior
+                jenkins.start_build_fbc(
+                    version=version,
+                    group=group if group else None,
+                    assembly=assembly,
+                    operator_nvrs=operator_nvrs,
+                    dry_run=runtime.dry_run,
+                )
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)

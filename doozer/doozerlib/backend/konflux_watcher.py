@@ -382,6 +382,9 @@ class KonfluxWatcher:
     def _notify_waiters(self):
         """Notify all async waiters about cache updates."""
         with self._waiter_events_lock:
+            self._logger.info(
+                f"Notifying {len(self._waiter_events)} waiter(s) about cache updates: {self._waiter_events}"
+            )
             for event in self._waiter_events.values():
                 self._loop.call_soon_threadsafe(event.set)
 
@@ -453,15 +456,18 @@ class KonfluxWatcher:
     async def wait_for_pipelinerun_termination(
         self,
         pipelinerun_name: str,
+        initial_appearance_timeout: datetime.timedelta = datetime.timedelta(minutes=10),
     ) -> PipelineRunInfo:
         """
         Wait for a PipelineRun to reach a terminal state.
 
         :param pipelinerun_name: The name of the PipelineRun
+        :param initial_appearance_timeout: How long to wait for the pipelinerun to appear in cache before throwing ValueError (default: 10 minutes)
         :return: The PipelineRunInfo object
-        :raises ValueError: If the PipelineRun is not found
+        :raises ValueError: If the PipelineRun is not found within the initial appearance timeout
         """
-        not_found_count = 0
+        initial_wait_start_time = datetime.datetime.now(tz=datetime.timezone.utc)
+        pipelinerun_found = False
 
         # Create a unique event for this caller
         event = asyncio.Event()
@@ -470,15 +476,27 @@ class KonfluxWatcher:
             self._next_waiter_id += 1
             self._waiter_events[waiter_id] = event
 
+        self._logger.info(
+            f"PipelineRun {pipelinerun_name} waiter will use waiter_id={waiter_id} to and event {event} to await termination"
+        )
+
         try:
             while True:
                 with self._cache_lock:
                     if pipelinerun_name not in self._pipelinerun_cache:
-                        not_found_count += 1
-                        if not_found_count >= 2:  # Wait for 2 polling intervals
-                            raise ValueError(f"PipelineRun {pipelinerun_name} not found")
+                        elapsed_time = datetime.datetime.now(tz=datetime.timezone.utc) - initial_wait_start_time
+                        self._logger.warning(
+                            f"PipelineRun {pipelinerun_name} waiter failed to find PLR in cache; elapsed time: {elapsed_time}; Current cache contains: {self._pipelinerun_cache.keys()}"
+                        )
+                        if elapsed_time >= initial_appearance_timeout:
+                            raise ValueError(
+                                f"PipelineRun {pipelinerun_name} not found after waiting {elapsed_time} (timeout: {initial_appearance_timeout})"
+                            )
                     else:
-                        not_found_count = 0  # Reset counter when found
+                        if not pipelinerun_found:
+                            elapsed_time = datetime.datetime.now(tz=datetime.timezone.utc) - initial_wait_start_time
+                            self._logger.info(f"PipelineRun {pipelinerun_name} appeared in cache after {elapsed_time}")
+                            pipelinerun_found = True
 
                         pipelinerun_dict = self._pipelinerun_cache[pipelinerun_name]
                         pod_cache_entries = self._pod_cache.get(pipelinerun_name, {})

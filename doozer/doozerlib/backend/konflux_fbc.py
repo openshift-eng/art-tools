@@ -913,7 +913,6 @@ class KonfluxFbcRebaser:
                     repo, digest = related_image["image"].split('@', 1)
                     dest_repos[digest] = repo
                 else:
-                    # Skip is non-OCP operator
                     continue
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
@@ -1038,6 +1037,7 @@ class KonfluxFbcBuilder:
         skip_checks: bool = False,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
+        major_minor_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = LOGGER,
     ):
@@ -1053,6 +1053,8 @@ class KonfluxFbcBuilder:
         self.skip_checks = skip_checks
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
+        self.major_minor_override = major_minor_override
+        self.source_git_commits = []
         self._record_logger = record_logger
         self._logger = logger.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
@@ -1077,6 +1079,32 @@ class KonfluxFbcBuilder:
         # 'fbc-openshift-4-17-openshift-kubernetes-nmstate-operator' -> 'fbc-ose-4-17-openshift-kubernetes-nmstate-operator'
         name = f"fbc-ose-{name[14:]}" if name.startswith("fbc-openshift-") else name
         return name
+
+    def _extract_git_commits_from_nvrs(self, bundle_nvrs: str) -> list[str]:
+        """Extract git commit hashes from bundle NVRs, including the 'g' prefix.
+
+        Example: "cluster-nfd-operator-metadata-container-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1" -> ["gd5498aa"]
+        """
+        if not bundle_nvrs:
+            return []
+
+        import re
+
+        commits = []
+        # Split by comma in case there are multiple NVRs
+        nvrs = bundle_nvrs.split(',')
+
+        for nvr in nvrs:
+            nvr = nvr.strip()
+            if nvr:
+                # Look for pattern .g<commit> in the NVR and extract including the 'g'
+                match = re.search(r'\.(g[a-f0-9]+)\.', nvr)
+                if match:
+                    commit = match.group(1)  # This includes the 'g' prefix
+                    if commit not in commits:  # Avoid duplicates
+                        commits.append(commit)
+
+        return commits
 
     async def build(self, metadata: ImageMetadata):
         bundle_short_name = metadata.get_olm_bundle_short_name()
@@ -1130,6 +1158,11 @@ class KonfluxFbcBuilder:
             bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs")
             if bundle_nvrs:
                 record["bundle_nvrs"] = bundle_nvrs
+                # Extract git commits from bundle NVRs
+                # Example: "cluster-nfd-operator-metadata-container-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1" -> ["gd5498aa"]
+                self.source_git_commits = self._extract_git_commits_from_nvrs(bundle_nvrs)
+            else:
+                self.source_git_commits = []
 
             # Start FBC build
             logger.info("Starting FBC build...")
@@ -1234,11 +1267,35 @@ class KonfluxFbcBuilder:
 
         additional_tags = []
         group_name = metadata.runtime.group
-        if metadata.runtime.assembly == "stream" and group_name.startswith("openshift-"):
-            version = group_name.removeprefix("openshift-")
+        if metadata.runtime.assembly == "stream":
+            if group_name.startswith("openshift-"):
+                product_name = "ocp"
+                version = group_name.removeprefix("openshift-")
+            else:
+                # eg: oadp-1.5 / mta-1.2
+                parts = group_name.split("-", 1)
+                product_name = parts[0]
+                version = parts[1]
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
-                additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
+                delivery_repo_name = delivery_repo.split('/')[-1]
+                if group_name.startswith("openshift-"):
+                    additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
+                else:
+                    if self.major_minor_override:
+                        tag_with_version = (
+                            f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
+                        )
+                        additional_tags.append(f"{tag_with_version}")
+                        for commit in self.source_git_commits:
+                            additional_tags.append(f"{tag_with_version}__{commit}")
+
+        if additional_tags:
+            logger.info(
+                f"Additional tags being added: {additional_tags}",
+            )
+        else:
+            logger.info("No additional tags to be added")
 
         pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",

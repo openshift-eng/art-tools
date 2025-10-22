@@ -169,6 +169,23 @@ def get_rpm_if_pinned_directly(releases_config: Dict, assembly_name: str, rpm_na
     return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 
+def get_image_if_pinned_directly(releases_config: Dict, assembly_name: str, image_name: str) -> str:
+    # this does not consider inherited assemblies
+    # use with caution
+    try:
+        pinned_images = Model(releases_config).releases[assembly_name].assembly.members.images
+    except (KeyError, AttributeError):
+        # Assembly structure doesn't exist
+        return ""
+
+    image_metadata = next(
+        (image['metadata']['is'] for image in pinned_images if image['distgit_key'] == image_name), None
+    )
+    if image_metadata:
+        return image_metadata['nvr']  # Let it fail if 'nvr' key isn't found
+    return ""
+
+
 async def kinit():
     logger.info('Initializing ocp-build kerberos credentials')
 
@@ -247,7 +264,7 @@ def get_changes(yaml_data: dict) -> dict:
 
 
 async def get_freeze_automation(
-    version: str,
+    group: str,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = '',
     doozer_data_gitref: str = '',
@@ -256,7 +273,7 @@ async def get_freeze_automation(
     Returns freeze_automation flag for a specific group
     """
 
-    group_param = f'--group=openshift-{version}'
+    group_param = f'--group={group}'
     if doozer_data_gitref:
         group_param += f'@{doozer_data_gitref}'
 
@@ -329,8 +346,10 @@ async def is_build_permitted(
     """
 
     # Get 'freeze_automation' flag
+    # get_freeze_automation now expects a full group name like 'openshift-4.15'
+    group = f'openshift-{version}'
     freeze_automation = await get_freeze_automation(
-        version=version,
+        group=group,
         doozer_data_path=data_path,
         doozer_working=doozer_working,
         doozer_data_gitref=doozer_data_gitref,

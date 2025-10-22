@@ -172,7 +172,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.releases_config = Model(
             {
                 "releases": {
-                    "test-assembly": {"assembly": {"type": AssemblyTypes.STANDARD.value, "group": {"product": "ocp"}}}
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
                 }
             }
         )
@@ -224,7 +229,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     "test-assembly": {
                         "assembly": {
                             "type": AssemblyTypes.STANDARD.value,
-                            "group": {"product": "other-product"},
+                            "group": {"product": "other-product", "release_date": "2025-Oct-22"},
                         },
                     },
                 },
@@ -391,7 +396,16 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.assembly = "4.18.0"
         pipeline.releases_config = Model(
-            {"releases": {"4.18.0": {"assembly": {"type": AssemblyTypes.STANDARD.value, "group": {"product": "ocp"}}}}}
+            {
+                "releases": {
+                    "4.18.0": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
+                }
+            }
         )
         pipeline.logger = Mock()
         pipeline._slack_client = AsyncMock()
@@ -418,13 +432,14 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         with (
             patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
             patch("pyartcd.pipelines.prepare_release_konflux.GhApi") as mock_gh_api,
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             # Mock GitHub API
             mock_api = Mock()
             mock_api.pulls.list.return_value = Mock(items=[])
             mock_gh_api.return_value = mock_api
 
-            await pipeline.prepare_et_advisory("rpm")
+            await pipeline.prepare_et_advisories()
 
         # Assertions
         self.assertEqual(

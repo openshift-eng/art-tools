@@ -18,7 +18,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_builds_from_mr
-from elliottlib.util import chunk
+from elliottlib.util import chunk, get_component_by_delivery_repo
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -535,6 +535,16 @@ def categorize_bugs_by_type(
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
+    def _message(kind: str, bug_data: list[tuple[str, str]]) -> str:
+        advisory_type = "errata" if runtime.build_system == "brew" else "shipment"
+        return (
+            f'No attached builds found in {advisory_type} advisories for {kind} tracker bugs (bug, package): '
+            f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
+        )
+
+    def _is_image_component(component: str) -> bool:
+        return component.endswith("-container") or "openshift4/" in component
+
     not_found = set(tracker_bugs) - found
     if not_found:
         still_not_found = not_found
@@ -547,36 +557,28 @@ def categorize_bugs_by_type(
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
-            still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
-            message = (
-                'No attached builds found in advisories for tracker bugs (bug, package): '
-                f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
-                f'ids in the assembly definition'
-            )
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
-            else:
-                raise ValueError(message)
+            # We want to separate image and rpm tracker bug-build-validation since they are handled differently
+            # builds from errata/rpm advisories are only fetched if --build-system=brew
+            # builds from shipment/image advisories are only fetched if --build-system=konflux
+            # so only complain about bugs for which builds were fetched
+
+            # whiteboard value could be component or delivery repo name
+            not_found_image_bugs = [b for b in still_not_found if _is_image_component(b.whiteboard_component)]
+            not_found_rpm_bugs = [b for b in still_not_found if b not in not_found_image_bugs]
+            message = ""
+            if runtime.build_system == "brew" and not_found_rpm_bugs:
+                message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
+            elif runtime.build_system == "konflux" and not_found_image_bugs:
+                message = _message("image", [(b.id, b.whiteboard_component) for b in not_found_image_bugs])
+
+            if message:
+                if permissive:
+                    logger.warning(f"{message} Ignoring them because --permissive.")
+                    issues.append(message)
+                else:
+                    raise ValueError(message)
 
     return bugs_by_type, issues
-
-
-def get_component_by_delivery_repo(runtime: Runtime, delivery_repo_name: str) -> Optional[str]:
-    """Get the component name from the delivery repo name
-    For example, "openshift4/ose-sriov-network-device-plugin-rhel9" -> "sriov-network-device-plugin-container"
-    """
-    if not runtime.image_metas():
-        raise ValueError("No image metas found. Forgot to initialize runtime with mode='images'?")
-
-    # strip off the -rhel{digit} suffix
-    def _strip(name: str) -> str:
-        return re.sub(r"-rhel\d+$", "", name)
-
-    for image in runtime.image_metas():
-        if _strip(delivery_repo_name) in [_strip(r) for r in image.config.delivery.delivery_repo_names]:
-            return image.get_component_name()
-    return None
 
 
 def extras_bugs(bugs: type_bug_set) -> type_bug_set:

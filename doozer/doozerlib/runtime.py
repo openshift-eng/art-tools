@@ -270,7 +270,6 @@ class Runtime(GroupRuntime):
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
                 self.state = yaml.full_load(f)
-            self.state.update(state.TEMPLATE_BASE_STATE)
 
     def save_state(self):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
@@ -436,7 +435,7 @@ class Runtime(GroupRuntime):
             return
 
         # Read in the streams definition for this group if one exists
-        streams_data = self._build_data_loader.load_config("streams", self.group, replace_vars=replace_vars)
+        streams_data = self._build_data_loader.load_config("streams", default={}, replace_vars=replace_vars)
         if streams_data:
             org_stream_model = Model(dict_to_model=streams_data)
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
@@ -850,12 +849,15 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a list of architectures that are enabled globally in group.yml, for konflux.
         """
-        # For now, cli override (LIMIT_ARCHES) and arches_override in group config are not supported
-        arches = list(self.group_config.konflux.arches)
 
-        if not arches:
-            # Fall back to default arches param, if konflux_arches is missing
-            return list(self.arches)
+        if self.arches:
+            # CLI override takes precedence
+            arches = list(self.arches)
+
+        else:
+            # Use konflux arches if defined
+            arches = list(self.group_config.konflux.arches)
+
         return arches
 
     def get_product_config(self) -> Model:

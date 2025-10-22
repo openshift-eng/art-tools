@@ -42,6 +42,8 @@ class Jobs(Enum):
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
+    OADP = 'aos-cd-builds/build%2Foadp'
+    OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
 
 
 def get_jenkins_url():
@@ -597,20 +599,22 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
 
 
 def start_build_plashets(
-    version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
 ) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'RELEASE': release,
+        'ASSEMBLY': assembly,
+        'REPOS': ','.join(repos) if repos else '',
+        'DATA_PATH': data_path,
+        'DATA_GITREF': data_gitref,
+        'COPY_LINKS': copy_links,
+        'DRY_RUN': dry_run,
+    }
+
     return start_build(
         job=Jobs.BUILD_PLASHETS,
-        params={
-            'VERSION': version,
-            'RELEASE': release,
-            'ASSEMBLY': assembly,
-            'REPOS': ','.join(repos) if repos else '',
-            'DATA_PATH': data_path,
-            'DATA_GITREF': data_gitref,
-            'COPY_LINKS': copy_links,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
@@ -620,7 +624,9 @@ def start_build_fbc(
     assembly: str,
     operator_nvrs: list,
     dry_run: bool,
+    force_build: Optional[bool] = None,
     group: Optional[str] = None,
+    ocp_target_version: Optional[str] = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -631,9 +637,50 @@ def start_build_fbc(
     }
     if group:
         params['GROUP'] = group
+    if ocp_target_version:
+        params['OCP_TARGET_VERSION'] = ocp_target_version
+    if force_build:
+        params["FORCE_BUILD"] = force_build
 
     return start_build(
         job=Jobs.BUILD_FBC,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_oadp(
+    group: str,
+    assembly: str,
+    version: str,
+    image_list: list = None,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+        'VERSION': version,
+    }
+
+    # Build only changed images or none
+    if image_list:
+        params['IMAGE_LIST'] = ','.join(image_list)
+
+    return start_build(
+        job=Jobs.OADP,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+    }
+
+    return start_build(
+        job=Jobs.OADP_SCAN,
         params=params,
         **kwargs,
     )

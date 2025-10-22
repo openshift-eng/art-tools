@@ -14,7 +14,7 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
     async def test_build_plashets(self, mocked_rhcos, mocked_sync_for_ci, mocked_build_plashets, mocked_lm, *_):
         build_plashets_pipeline = BuildPlashetsPipeline(
             runtime=MagicMock(dry_run=False),
-            version='4.13',
+            group='openshift-4.13',
             release='bogus',
             assembly='stream',
             data_path='',
