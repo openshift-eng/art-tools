@@ -183,7 +183,15 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             2: [102],  # Tracker 2 → CVE-2022-2
         }
 
-        result = AttachCveFlaws.get_cve_component_mapping(
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
+        result = pipeline.get_cve_component_mapping(
             self.mock_runtime,
             cast(Iterable[Bug], flaw_bugs),
             cast(List[Bug], attached_tracker_bugs),
@@ -210,7 +218,15 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             }
             attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
 
-            result = AttachCveFlaws.get_cve_component_mapping(
+            pipeline = AttachCveFlaws(
+                self.mock_runtime,
+                advisory_id=0,
+                into_default_advisories=False,
+                default_advisory_type="",
+                output="json",
+                noop=False,
+            )
+            result = pipeline.get_cve_component_mapping(
                 self.mock_runtime,
                 cast(Iterable[Bug], flaw_bugs),
                 cast(List[Bug], attached_tracker_bugs),
@@ -230,7 +246,15 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         tracker_flaws = {
             1: [101, 102],  # 102 is not in flaw_bugs, so it gets ignored
         }
-        result = AttachCveFlaws.get_cve_component_mapping(
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
+        result = pipeline.get_cve_component_mapping(
             self.mock_runtime,
             cast(Iterable[Bug], flaw_bugs),
             cast(List[Bug], attached_tracker_bugs),
@@ -252,15 +276,23 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         tracker_flaws = {
             1: [101],
         }
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
         with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
-            AttachCveFlaws.get_cve_component_mapping(
+            pipeline.get_cve_component_mapping(
                 self.mock_runtime,
                 cast(Iterable[Bug], flaw_bugs_no_alias),
                 cast(List[Bug], attached_tracker_bugs),
                 cast(Dict[int, Iterable], tracker_flaws),
             )
         with self.assertRaisesRegex(ValueError, "Bug 101 should have exactly 1 CVE alias."):
-            AttachCveFlaws.get_cve_component_mapping(
+            pipeline.get_cve_component_mapping(
                 self.mock_runtime,
                 cast(Iterable[Bug], flaw_bugs_multiple_aliases),
                 cast(List[Bug], attached_tracker_bugs),
@@ -277,8 +309,16 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         tracker_flaws = {
             1: [101],
         }
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
         with self.assertRaisesRegex(ValueError, "Bug 1 doesn't have a valid whiteboard component."):
-            AttachCveFlaws.get_cve_component_mapping(
+            pipeline.get_cve_component_mapping(
                 self.mock_runtime,
                 cast(Iterable[Bug], flaw_bugs),
                 cast(List[Bug], attached_tracker_bugs),
