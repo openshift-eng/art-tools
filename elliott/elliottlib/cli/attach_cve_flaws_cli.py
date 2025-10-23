@@ -495,7 +495,7 @@ class AttachCveFlaws:
                 new_component = get_konflux_component_by_component(runtime, whiteboard_component)
                 if not new_component:
                     # Special case for builder containers: they should map to all components that use this builder
-                    if whiteboard_component.endswith("-builder-container") or "builder" in whiteboard_component:
+                    if whiteboard_component == "openshift-golang-builder-container":
                         # Check which components actually use the golang builder
                         self.logger.info(
                             f"Processing builder container CVE for '{whiteboard_component}' (golang builder)"
