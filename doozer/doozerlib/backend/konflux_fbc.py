@@ -14,6 +14,7 @@ from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Se
 
 import httpx
 import truststore
+from artcommonlib import exectools
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -520,6 +521,7 @@ class KonfluxFbcFragmentMerger:
         logger.info(f"Created component {comp_name} in application {app_name}")
 
         arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+
         created_plr = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
@@ -1181,7 +1183,39 @@ class KonfluxFbcBuilder:
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
-            arches = metadata.get_arches()
+            # If major_minor_override is present, get arches from the override group's konflux.arches config
+            if self.major_minor_override:
+                major, minor = self.major_minor_override
+                override_group = f"openshift-{major}.{minor}"
+                logger.info(
+                    "Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group
+                )
+
+                # Construct doozer command to read group config for konflux.arches
+                doozer_cmd = ['doozer', f'--group={override_group}', 'config:read-group', 'konflux.arches', '--yaml']
+
+                try:
+                    # Execute the command asynchronously
+                    _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
+                    if out.strip():
+                        # Parse the YAML output to get the arches list
+                        arches = yaml.load(out.strip())
+                        logger.info("Retrieved arches from group %s: %s", override_group, arches)
+                    else:
+                        logger.warning(
+                            "No konflux.arches found for group %s, falling back to metadata arches", override_group
+                        )
+                        arches = metadata.get_arches()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to get arches from group %s config: %s, falling back to metadata arches",
+                        override_group,
+                        e,
+                    )
+                    arches = metadata.get_arches()
+            else:
+                arches = metadata.get_arches()
+
             for attempt in range(1, retries + 1):
                 logger.info("Build attempt %d/%d", attempt, retries)
                 pipelinerun_info, url = await self._start_build(
