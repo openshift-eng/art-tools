@@ -63,8 +63,9 @@ class OadpScanPipeline:
         """
 
         if not self.runtime.dry_run:
-            if self.assembly != 'stream':
-                raise ValueError('non-stream assemblies are only allowed in dry-run mode')
+            # TODO: Uncomment after logging can support stream builds
+            # if self.assembly != 'stream':
+            #     raise ValueError('non-stream assemblies are only allowed in dry-run mode')
             if self.data_path != constants.OCP_BUILD_DATA_URL or self.data_gitref:
                 raise ValueError('Custom data paths can only be used in dry-run mode')
 
@@ -119,7 +120,7 @@ class OadpScanPipeline:
         self.logger.info('Triggering an OADP %s build', self.group)
         jenkins.start_oadp(
             group=self.group,
-            assembly='stream',
+            assembly=self.assembly,
             version=NON_OCP_OPERATOR_VERSIONS.get(self.group),
             image_list=image_list,
         )

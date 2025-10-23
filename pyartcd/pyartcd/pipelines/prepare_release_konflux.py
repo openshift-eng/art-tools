@@ -958,7 +958,11 @@ class PrepareReleaseKonfluxPipeline:
         source_project = _get_project(self.shipment_data_repo_push_url)
         target_project = _get_project(self.shipment_data_repo_pull_url)
 
-        mr_title = f"Draft: Shipment for {self.release_name}"
+        # Include shipping date in MR title if available
+        if self.release_date:
+            mr_title = f"Draft: Shipment for {self.release_name} (ship date: {self.release_date})"
+        else:
+            mr_title = f"Draft: Shipment for {self.release_name}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else commit_message
 
         if self.dry_run:

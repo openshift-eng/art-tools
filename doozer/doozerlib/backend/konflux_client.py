@@ -594,6 +594,11 @@ class KonfluxClient:
                         _modify_param(task["params"], "log-level", "debug")
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
+                case "sast-shell-check":
+                    if namespace == "art-logging-tenant" and "vector" in component_name:
+                        # For the component "vector" in the logging namepace, we need to set the TARGET_DIRS
+                        # https://gitlab.cee.redhat.com/openshift-logging/sustaining-eng/konflux-log-collection/-/merge_requests/67/diffs
+                        _modify_param(task["params"], "TARGET_DIRS", "./cluster-logging-operator")
                 case "clone-repository":
                     _modify_param(
                         task["params"],
