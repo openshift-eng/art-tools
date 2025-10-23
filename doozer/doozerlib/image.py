@@ -560,6 +560,7 @@ class ImageMetadata(Metadata):
     def calculate_config_digest(self, group_config, streams):
         ignore_keys = [
             "owners",
+            "okd",
             "scan_sources",
             "content.source.ci_alignment",
             "content.source.git",
