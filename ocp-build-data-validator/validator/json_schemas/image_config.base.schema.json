@@ -715,6 +715,17 @@
       "$ref": "#/properties/odcs"
     },
     "odcs-": {},
+    "okd": {
+      "description": "If present, this config is specific to OKD content overrides.",
+      "type": "object"
+    },
+    "okd!": {
+      "$ref": "#/properties/okd"
+    },
+    "okd?": {
+      "$ref": "#/properties/okd"
+    },
+    "okd-": {},
     "no_oit_comments": {
       "description": "Deprecated. Only used in 3.11 and 4.6",
       "type": "boolean"
