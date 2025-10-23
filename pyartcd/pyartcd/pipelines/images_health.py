@@ -102,7 +102,7 @@ class ImagesHealthPipeline:
             concern
             for concern in self.report
             if concern.get('group', '') == f'openshift-{version}'
-            and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED
+            and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED.value
         ]
 
         if not concerns:
