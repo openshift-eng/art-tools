@@ -426,7 +426,7 @@ class MetadataBase(object):
 
     async def get_latest_konflux_build(
         self,
-        default=None,
+        default=-1,
         assembly: Optional[str] = None,
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
         el_target: Optional[Union[int, str]] = None,
@@ -436,7 +436,7 @@ class MetadataBase(object):
         **kwargs,
     ) -> Optional[KonfluxBuildRecord]:
         """
-        :param default: the value to be returned when no build is found
+        :param default: the value to be returned when no build is found (if not specified, an exception will be thrown)
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
                          will be used. If runtime.assembly is also None, the search will return true latest.
                          If the assembly parameter is set to '', this search will also return true latest.
@@ -509,13 +509,14 @@ class MetadataBase(object):
                 )
 
         if not build_record:
-            self.logger.warning(
-                'No build found for %s in group and %s assembly %s',
-                self.distgit_key,
-                self.runtime.group,
-                self.runtime.assembly,
+            msg = (
+                f'No build found for {self.distgit_key} in group {self.runtime.group} '
+                f'and assembly {self.runtime.assembly}'
             )
-            return default
+            if default != -1:
+                self.logger.info(msg)
+                return default
+            raise IOError(msg)
         return build_record
 
     async def get_latest_brew_build_async(self, **kwargs):
