@@ -334,7 +334,7 @@ class SourceResolver:
         LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
-            out, _ = exectools.cmd_assert('git ls-remote --heads {} {}'.format(git_url, branch), retries=3)
+            out, _ = exectools.cmd_assert('git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3)
         except Exception as err:
             # We don't expect and exception if the branch does not exist; just an empty string
             LOGGER.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
