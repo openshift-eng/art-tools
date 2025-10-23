@@ -155,7 +155,7 @@ class KonfluxOcp4Pipeline:
             return [f'--{kind}={",".join(includes)}']
 
         elif build_strategy == BuildStrategy.EXCEPT:
-            return [f'--{kind}=', f'--exclude{",".join(excludes)}']
+            return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
     async def update_rebase_fail_counters(self, failed_images):
         if self.assembly == 'test':

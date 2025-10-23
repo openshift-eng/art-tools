@@ -738,11 +738,15 @@ class KonfluxFbcRebaser:
             bundle_with_skips = next(
                 (it for it in channel['entries'] if it.get('skips')), None
             )  # Find which bundle has the skips field
-            if bundle_with_skips:
+            if bundle_with_skips is not None:
                 # Then we move the skips field to the new bundle
                 # and add the bundle name of bundle_with_skips to the skips field
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
+            elif len(channel['entries']) == 1:
+                # In case the channel only contain one single entry, that bundle should
+                # become the only member of new-entry's `skip`.
+                skips = {channel['entries'][0]['name']}
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
