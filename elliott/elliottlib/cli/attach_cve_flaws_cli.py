@@ -338,8 +338,14 @@ class AttachCveFlaws:
                 release_notes.type = 'RHSA'
 
             # Add the CVE component mapping to the cve field
-            cve_component_mapping = self.get_cve_component_mapping(
-                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, attached_components, konflux=True
+            cve_component_mapping = AttachCveFlaws.get_cve_component_mapping(
+                self.runtime,
+                flaw_bugs,
+                tracker_bugs,
+                tracker_flaws,
+                attached_components,
+                konflux=True,
+                logger=self.logger,
             )
             release_notes.cves = [
                 CveAssociation(key=cve_id, component=component)
@@ -460,18 +466,22 @@ class AttachCveFlaws:
         self.logger.info(f'Attaching {len(flaw_ids)} flaw bugs')
         bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
+    @staticmethod
     def get_cve_component_mapping(
-        self,
         runtime: Runtime,
         flaw_bugs: Iterable[Bug],
         attached_tracker_bugs: List[Bug],
         tracker_flaws: Dict[int, Iterable],
         attached_components: Set = None,
         konflux: bool = False,
+        logger=None,
     ) -> Dict[str, Set[str]]:
         """
         Get a mapping of CVE IDs to component names based on the attached tracker bugs and flaw bugs.
         """
+
+        if logger is None:
+            logger = logging.getLogger(__name__)
 
         attached_components = attached_components if attached_components else set()
         cve_components_mapping: Dict[str, Set[str]] = {}
@@ -497,22 +507,18 @@ class AttachCveFlaws:
                     # Special case for builder containers: they should map to all components that use this builder
                     if whiteboard_component == "openshift-golang-builder-container":
                         # Check which components actually use the golang builder
-                        self.logger.info(
-                            f"Processing builder container CVE for '{whiteboard_component}' (golang builder)"
-                        )
+                        logger.info(f"Processing builder container CVE for '{whiteboard_component}' (golang builder)")
 
-                        self.logger.info(f"Total components in shipment: {len(attached_components)}")
+                        logger.info(f"Total components in shipment: {len(attached_components)}")
 
-                        components_using_builder = _get_components_using_builder(
-                            runtime, attached_components, self.logger
-                        )
+                        components_using_builder = _get_components_using_builder(runtime, attached_components, logger)
                         if components_using_builder:
-                            self.logger.info(
+                            logger.info(
                                 f"Found {len(components_using_builder)} components using golang builder: {sorted(components_using_builder)}"
                             )
                             component_names = components_using_builder
                         else:
-                            self.logger.warning(
+                            logger.warning(
                                 f"No components found using golang builder, falling back to all {len(attached_components)} components in shipment"
                             )
                             # Fallback to all components if we can't determine usage
@@ -543,13 +549,13 @@ class AttachCveFlaws:
                 cve_components_mapping.setdefault(cve, set()).update(component_names)
 
                 # Log the final CVE to component mapping
-                self.logger.info(
+                logger.info(
                     f"Mapped CVE {cve} (from tracker {tracker.id}) to {len(component_names)} components: {sorted(component_names)}"
                 )
 
-        self.logger.info(f"Final CVE component mapping: {len(cve_components_mapping)} CVEs mapped to components")
+        logger.info(f"Final CVE component mapping: {len(cve_components_mapping)} CVEs mapped to components")
         for cve, components in cve_components_mapping.items():
-            self.logger.info(f"  {cve} -> {len(components)} components: {sorted(components)}")
+            logger.info(f"  {cve} -> {len(components)} components: {sorted(components)}")
 
         return cve_components_mapping
 
@@ -563,8 +569,8 @@ class AttachCveFlaws:
         # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
         attached_builds = await self.errata_api.get_builds_flattened(advisory.errata_id)
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
-        cve_components_mapping = self.get_cve_component_mapping(
-            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+        cve_components_mapping = AttachCveFlaws.get_cve_component_mapping(
+            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components, logger=self.logger
         )
 
         await AsyncErrataUtils.associate_builds_with_cves(
