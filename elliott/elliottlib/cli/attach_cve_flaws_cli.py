@@ -46,6 +46,122 @@ def get_konflux_component_by_component(runtime: Runtime, component_name: str) ->
     return KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
 
 
+def _get_components_using_builder(runtime: Runtime, attached_components: Set[str], logger) -> Set[str]:
+    """
+    Find components that use the golang builder by checking their image configurations.
+
+    Args:
+        runtime: Runtime instance with image metadata
+        attached_components: Set of component names to filter from
+        logger: Logger instance for logging
+
+    Returns:
+        Set of component names that use the golang builder
+    """
+    if not runtime.image_metas():
+        logger.warning("No image metadata available for builder analysis")
+        return set()
+
+    matching_components = set()
+    components_using_builder = []  # For detailed logging
+    components_not_using_builder = []  # For detailed logging
+    components_filtered_out = []  # Components that use builder but not in shipment
+
+    logger.info(f"Analyzing {len(runtime.image_metas())} image metadata entries for golang builder usage")
+
+    # Get Konflux component names for all images that use the builder
+    for image_meta in runtime.image_metas():
+        image_name = image_meta.distgit_key
+
+        # Check if this image uses the golang builder in its configuration
+        if _image_uses_builder(image_meta, logger):
+            # Get the Konflux component name for this image
+            application = KonfluxImageBuilder.get_application_name(runtime.group)
+            konflux_component_name = KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
+
+            components_using_builder.append(f"{image_name} -> {konflux_component_name}")
+
+            # Only include if it's in the attached components
+            if konflux_component_name in attached_components:
+                matching_components.add(konflux_component_name)
+            else:
+                components_filtered_out.append(f"{image_name} -> {konflux_component_name}")
+        else:
+            components_not_using_builder.append(image_name)
+
+    # Log detailed analysis results
+    logger.info(f"Images using golang builder: {len(components_using_builder)} total")
+
+    if components_filtered_out:
+        logger.info(f"Images using golang builder but NOT in shipment ({len(components_filtered_out)} filtered out):")
+        for component in components_filtered_out:
+            logger.info(f"  - {component}")
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Images NOT using golang builder ({len(components_not_using_builder)} total):")
+        for component in components_not_using_builder[:10]:  # Limit to first 10 to avoid spam
+            logger.debug(f"  - {component}")
+        if len(components_not_using_builder) > 10:
+            logger.debug(f"  - ... and {len(components_not_using_builder) - 10} more")
+
+    logger.info(f"Final result: {len(matching_components)} components in shipment use golang builder")
+
+    return matching_components
+
+
+def _image_uses_builder(image_meta, logger) -> bool:
+    """
+    Check if an image metadata uses the golang builder.
+
+    Args:
+        image_meta: ImageMetadata instance
+        logger: Logger instance for logging
+
+    Returns:
+        True if the image uses the golang builder
+    """
+    try:
+        # Get the image configuration
+        config = image_meta.config
+        image_name = image_meta.distgit_key
+
+        # Check in the from.builder section for streams containing "golang"
+        from_streams = []
+        if 'from' in config and 'builder' in config['from']:
+            for builder_config in config['from']['builder']:
+                if isinstance(builder_config, dict) and 'stream' in builder_config:
+                    stream_name = builder_config['stream']
+                    from_streams.append(stream_name)
+                    # Check if the stream name contains "golang"
+                    if "golang" in stream_name:
+                        # Check if this image should be included based on for_release field
+                        # Include if for_release is not explicitly false
+                        for_release = config.get('for_release', True)  # Default to True if not specified
+                        if for_release is not False:
+                            logger.debug(
+                                f"Image '{image_name}' uses golang builder via from.builder stream: '{stream_name}' (for_release: {for_release})"
+                            )
+                            return True
+                        else:
+                            logger.debug(
+                                f"Image '{image_name}' uses golang builder but has for_release: false, excluding"
+                            )
+
+        # Log debug info if no matches found
+        if from_streams:
+            logger.debug(f"Image '{image_name}' has streams {from_streams} but none contain 'golang'")
+        elif 'from' in config:
+            logger.debug(f"Image '{image_name}' has from section but no valid builder streams")
+        else:
+            logger.debug(f"Image '{image_name}' has no from section in config")
+
+        return False
+    except Exception as e:
+        logger.debug(f"Error checking builder for image '{getattr(image_meta, 'distgit_key', 'unknown')}': {e}")
+        # If there's any error accessing the config, assume it doesn't use the builder
+        return False
+
+
 class AttachCveFlaws:
     def __init__(
         self,
@@ -136,7 +252,19 @@ class AttachCveFlaws:
         self.logger.info(f"Fetching shipment configs from merge request: {mr_url}")
 
         # Fetch the shipment configs from the merge request
-        release_notes = self.get_release_notes_from_mr(mr_url)
+        shipment_config = get_shipment_config_from_mr(mr_url, self.default_advisory_type)
+        if not shipment_config:
+            raise ValueError(f"No shipment config found for kind: {self.default_advisory_type}")
+
+        release_notes = shipment_config.shipment.data.releaseNotes
+        if not release_notes:
+            raise ValueError(f"No release notes found in shipment config for {self.default_advisory_type}")
+
+        # Extract component names from the shipment snapshot
+        attached_components = set()
+        if shipment_config.shipment.snapshot and shipment_config.shipment.snapshot.spec.components:
+            attached_components = {comp.name for comp in shipment_config.shipment.snapshot.spec.components}
+        self.logger.info(f"Found {len(attached_components)} components in shipment")
 
         # Fetch the bug IDs from the release notes
         bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
@@ -152,7 +280,7 @@ class AttachCveFlaws:
 
         # Update the release notes
         updated_release_notes = copy.deepcopy(release_notes)
-        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws, attached_components)
         if updated_release_notes == release_notes:
             self.logger.info("No changes made to the release notes")
             return None
@@ -197,6 +325,7 @@ class AttachCveFlaws:
         flaw_bugs: Iterable[Bug],
         tracker_bugs: List[Bug],
         tracker_flaws: Dict[int, Iterable],
+        attached_components: Set[str] = None,
     ):
         """
         Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
@@ -210,7 +339,7 @@ class AttachCveFlaws:
 
             # Add the CVE component mapping to the cve field
             cve_component_mapping = self.get_cve_component_mapping(
-                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, konflux=True
+                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, attached_components, konflux=True
             )
             release_notes.cves = [
                 CveAssociation(key=cve_id, component=component)
@@ -331,8 +460,8 @@ class AttachCveFlaws:
         self.logger.info(f'Attaching {len(flaw_ids)} flaw bugs')
         bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
-    @staticmethod
     def get_cve_component_mapping(
+        self,
         runtime: Runtime,
         flaw_bugs: Iterable[Bug],
         attached_tracker_bugs: List[Bug],
@@ -360,20 +489,48 @@ class AttachCveFlaws:
                     raise ValueError(f"Component {whiteboard_component} could not be translated")
                 whiteboard_component = new_component
 
+            component_names = None  # Initialize to ensure it's always defined
+
             if konflux:
                 new_component = get_konflux_component_by_component(runtime, whiteboard_component)
                 if not new_component:
-                    raise ValueError(f"Component {whiteboard_component} could not be translated")
-                whiteboard_component = new_component
+                    # Special case for builder containers: they should map to all components that use this builder
+                    if whiteboard_component == "openshift-golang-builder-container":
+                        # Check which components actually use the golang builder
+                        self.logger.info(
+                            f"Processing builder container CVE for '{whiteboard_component}' (golang builder)"
+                        )
 
-            if whiteboard_component == "rhcos":
-                # rhcos trackers are special, since they have per-architecture component names
-                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                # but the tracker bug has a generic "rhcos" component name
-                # so we need to associate this CVE with all per-architecture component names
-                component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
-            else:
-                component_names = {whiteboard_component}
+                        self.logger.info(f"Total components in shipment: {len(attached_components)}")
+
+                        components_using_builder = _get_components_using_builder(
+                            runtime, attached_components, self.logger
+                        )
+                        if components_using_builder:
+                            self.logger.info(
+                                f"Found {len(components_using_builder)} components using golang builder: {sorted(components_using_builder)}"
+                            )
+                            component_names = components_using_builder
+                        else:
+                            self.logger.warning(
+                                f"No components found using golang builder, falling back to all {len(attached_components)} components in shipment"
+                            )
+                            # Fallback to all components if we can't determine usage
+                            component_names = attached_components.copy()
+                    else:
+                        raise ValueError(f"Component {whiteboard_component} could not be translated")
+                else:
+                    whiteboard_component = new_component
+
+            if component_names is None:  # Only set if not already set for builder containers
+                if whiteboard_component == "rhcos":
+                    # rhcos trackers are special, since they have per-architecture component names
+                    # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
+                    # but the tracker bug has a generic "rhcos" component name
+                    # so we need to associate this CVE with all per-architecture component names
+                    component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
+                else:
+                    component_names = {whiteboard_component}
 
             flaw_id_bugs = {flaw_bug.id: flaw_bug for flaw_bug in flaw_bugs}
             for flaw_id in tracker_flaws[tracker.id]:
@@ -384,6 +541,15 @@ class AttachCveFlaws:
                     raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
                 cve = alias[0]
                 cve_components_mapping.setdefault(cve, set()).update(component_names)
+
+                # Log the final CVE to component mapping
+                self.logger.info(
+                    f"Mapped CVE {cve} (from tracker {tracker.id}) to {len(component_names)} components: {sorted(component_names)}"
+                )
+
+        self.logger.info(f"Final CVE component mapping: {len(cve_components_mapping)} CVEs mapped to components")
+        for cve, components in cve_components_mapping.items():
+            self.logger.info(f"  {cve} -> {len(components)} components: {sorted(components)}")
 
         return cve_components_mapping
 
