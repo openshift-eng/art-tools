@@ -211,9 +211,9 @@ class PrepareReleaseKonfluxPipeline:
         await self.check_blockers()
         err = None
         try:
-            await self.handle_jira_ticket()
             await self.prepare_et_advisories()
             await self.prepare_shipment()
+            await self.handle_jira_ticket()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
             err = ex
@@ -1361,6 +1361,7 @@ class PrepareReleaseKonfluxPipeline:
             if jira_issue and jira_issue.key:
                 self.logger.info("Release JIRA created: %s", jira_issue.permalink())
                 self.updated_assembly_group_config.release_jira = jira_issue.key
+                await self.create_update_build_data_pr()
 
     def get_jira_template_vars(self):
         nightlies = get_assembly_basis(self.releases_config, self.assembly).get("reference_releases", {}).values()
@@ -1372,6 +1373,9 @@ class PrepareReleaseKonfluxPipeline:
             "y": self.release_version[1],
             "z": self.release_version[2],
             "release_date": self.release_date,
+            "rhcos_advisory": self.updated_assembly_group_config.advisories['rhcos'],
+            "rpm_advisory": self.updated_assembly_group_config.advisories['rpm'],
+            "shipment_url": self.updated_assembly_group_config.shipment.url,
             "candidate_nightlies": candidate_nightlies,
         }
 
