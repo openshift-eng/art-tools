@@ -180,7 +180,7 @@ class KonfluxRebaser:
             # Push changes
             if push:
                 self._logger.info("Pushing changes to %s...", build_repo.url)
-                force = True if self._runtime.assembly != "stream" else False
+                force = (self._runtime.assembly != "stream") or (build_repo.url != build_repo.pull_url)
                 await build_repo.push(force=force)
 
             metadata.rebase_status = True
