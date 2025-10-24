@@ -23,6 +23,8 @@ from pyartcd.pipelines import (
     ocp4_konflux,
     ocp4_scan,
     ocp4_scan_konflux,
+    okd4,
+    okd_images_health,
     olm_bundle,
     olm_bundle_konflux,
     operator_sdk_sync,
