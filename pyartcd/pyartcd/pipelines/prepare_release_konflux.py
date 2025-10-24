@@ -327,6 +327,9 @@ class PrepareReleaseKonfluxPipeline:
         """
         SUPPORTED_IMPETUSES = {"rpm", "rhcos"}
         impetus_advisories = self.assembly_group_config.get("advisories", {}).copy()
+        if not impetus_advisories:
+            self.logger.warning("No advisories configured for assembly %s", self.assembly)
+            return
         if invalid := impetus_advisories.keys() - SUPPORTED_IMPETUSES:
             raise ValueError(f"Invalid advisory impetuses: {', '.join(invalid)}")
 
