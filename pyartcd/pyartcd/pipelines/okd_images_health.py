@@ -24,7 +24,7 @@ class ImagesHealthPipeline:
         self,
         runtime: Runtime,
         versions: str,
-        send_to_release_channel: bool,
+        send_to_release_channel: str,
         data_path: str,
         data_gitref: str,
         image_list: str,
@@ -48,6 +48,7 @@ class ImagesHealthPipeline:
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
         if self.send_to_release_channel:
+            self.slack_client.bind_channel(self.send_to_release_channel)
             for version in self.scanned_versions:
                 await self.notify_release_channel(version)
 
@@ -81,8 +82,6 @@ class ImagesHealthPipeline:
         self.scanned_versions.append(version)
 
     async def notify_release_channel(self, version):
-        self.slack_client.bind_channel('#art-okd-release')
-
         concerns = [concern for concern in self.report if concern.get('group', '') == f'openshift-{version}']
 
         if not concerns:
@@ -159,7 +158,7 @@ class ImagesHealthPipeline:
 
 @cli.command('okd-images-health')
 @click.option('--versions', required=False, default='', help='OCP versions to scan')
-@click.option('--send-to-release-channel', is_flag=True, help='If true, send output to #art-release-4-<version>')
+@click.option('--send-to-release-channel', default='#art-okd-release', help='If set, send output to the Slack channel')
 @click.option(
     '--data-path',
     required=False,
@@ -178,7 +177,7 @@ class ImagesHealthPipeline:
 async def okd_images_health(
     runtime: Runtime,
     versions: str,
-    send_to_release_channel: bool,
+    send_to_release_channel: str,
     data_path: str,
     data_gitref: str,
     image_list: str,
