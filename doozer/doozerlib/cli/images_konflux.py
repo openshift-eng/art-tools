@@ -16,6 +16,7 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, validate_build_priority
+from artcommonlib.variants import BuildVariant
 from opentelemetry import trace
 
 from doozerlib import constants
@@ -198,7 +199,7 @@ class KonfluxBuildCli:
         dry_run: bool,
         plr_template: str,
         build_priority: Optional[str],
-        okd: Optional[bool],
+        variant: BuildVariant,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -210,7 +211,7 @@ class KonfluxBuildCli:
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
-        self.okd = okd
+        self.variant = variant
 
         validate_build_priority(self.build_priority)
 
@@ -219,7 +220,7 @@ class KonfluxBuildCli:
         runtime = self.runtime
         runtime.initialize(mode='images', clone_distgits=False)
 
-        if self.okd:
+        if self.variant is BuildVariant.OKD:
             group_config = self.runtime.group_config.copy()
             if group_config['okd']:
                 LOGGER.info('Build images using OKD group configuration')
@@ -235,7 +236,7 @@ class KonfluxBuildCli:
         span.update_name(f"images:konflux:build.{len(metas)}metas")
         span.set_attribute("doozer.images.count", len(metas))
 
-        if self.okd:
+        if self.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             group = f'okd-{major}.{minor}'
         else:
@@ -308,7 +309,12 @@ class KonfluxBuildCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
-@click.option('--okd', default=False, is_flag=True, help='Build for OKD')
+@click.option(
+    '--variant',
+    type=click.Choice([v.value for v in BuildVariant]),
+    default=BuildVariant.OCP.value,
+    help='Build variant.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -322,7 +328,7 @@ async def images_konflux_build(
     plr_template: str,
     build_priority: Optional[str],
     network_mode: Optional[str],
-    okd: Optional[bool],
+    variant: str,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -338,7 +344,7 @@ async def images_konflux_build(
         dry_run=dry_run,
         plr_template=plr_template,
         build_priority=build_priority,
-        okd=okd,
+        variant=BuildVariant(variant),
     )
     await cli.run()
 

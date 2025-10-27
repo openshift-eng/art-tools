@@ -7,6 +7,7 @@ from enum import Enum
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
+from artcommonlib.variants import BuildVariant
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
@@ -57,7 +58,14 @@ class Concern:
 
 
 class ImagesHealthPipeline:
-    def __init__(self, runtime: Runtime, limit: int, group: str = None, assembly: str = None):
+    def __init__(
+        self,
+        runtime: Runtime,
+        limit: int,
+        group: str = None,
+        assembly: str = None,
+        variant: BuildVariant = BuildVariant.OCP,
+    ):
         self.runtime = runtime
         self.limit = limit
         self.start_search = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=DELTA_DAYS)
@@ -67,14 +75,23 @@ class ImagesHealthPipeline:
         # Set group and assembly overrides
         self.group = group or self.runtime.group_config.name  # default to runtime group
         self.assembly = assembly or 'stream'  # default to 'stream' assembly
+        self.variant = variant
 
     async def run(self):
         # Gather concerns for all images we build with Konflux
-        tasks = [
-            self.get_concerns(image_meta)
-            for image_meta in self.runtime.image_metas()
-            if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
-        ]
+        tasks = []
+
+        # Filter out images that are disabled for this variant
+        for image_meta in self.runtime.image_metas():
+            if self.variant is BuildVariant.OKD:
+                if image_meta.config.okd is not Missing and image_meta.config.okd.mode == 'disabled':
+                    self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
+                    continue
+            elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
+                self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
+                continue
+            tasks.append(self.get_concerns(image_meta))
+
         await asyncio.gather(*tasks)
 
         # We should now have a dict of qualified_key => [concern, ...]
@@ -192,8 +209,16 @@ class ImagesHealthPipeline:
 @click.option('--limit', default=LIMIT_BUILD_RESULTS, help='How far back in the database to search for builds')
 @click.option('--group', required=False, help='(Optional) override the group name from the config')
 @click.option('--assembly', required=False, help='(Optional) override the runtime assembly name')
+@click.option(
+    '--variant',
+    default=BuildVariant.OCP.value,
+    type=click.Choice([v.value for v in BuildVariant]),
+    help='Build variant.',
+)
 @click_coroutine
 @pass_runtime
-async def images_health(runtime, limit, group, assembly):
+async def images_health(runtime, limit, group, assembly, variant):
     runtime.initialize(clone_distgits=False, clone_source=False)
-    await ImagesHealthPipeline(runtime, limit, group, assembly).run()
+    await ImagesHealthPipeline(
+        runtime=runtime, limit=limit, group=group, assembly=assembly, variant=BuildVariant(variant)
+    ).run()
