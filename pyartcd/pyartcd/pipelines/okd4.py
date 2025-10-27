@@ -9,6 +9,7 @@ from typing import Optional
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.variants import BuildVariant
 
 from pyartcd import jenkins, locks
 from pyartcd import record as record_util
@@ -231,7 +232,7 @@ class KonfluxOkd4Pipeline:
         cmd.extend(
             [
                 'beta:images:konflux:build',
-                '--okd',
+                f'--variant={BuildVariant.OKD.value}',
                 '--network-mode=open',
                 '--konflux-namespace=ocp-art-tenant',
             ]
@@ -254,7 +255,7 @@ class KonfluxOkd4Pipeline:
 
         # Add build priority. Can be a str between "1" (highest priority) - "10" or "auto"
         LOGGER.info(f"Using build priority: {self.build_priority}")
-        cmd.extend(['--build-priority', self.build_priority, '--okd'])
+        cmd.extend(['--build-priority', self.build_priority])
 
         LOGGER.info('Running command: %s', ' '.join(cmd))
 
@@ -379,7 +380,7 @@ class KonfluxOkd4Pipeline:
     '--build-priority',
     type=str,
     metavar='PRIORITY',
-    default=10,
+    default='10',
     required=False,
     help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
 )

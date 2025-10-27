@@ -68,7 +68,7 @@ class ImagesHealthPipeline:
         if self.image_list:
             cmd.append(f'--images={",".join(self.image_list)}')
 
-        cmd.extend(['images:health', f'--group={OKD_GROUP_TEMPLATE.format(version)}'])
+        cmd.extend(['images:health', f'--group={OKD_GROUP_TEMPLATE.format(version)}', '--variant=okd'])
 
         if self.assembly:
             cmd.append(f'--assembly={self.assembly}')

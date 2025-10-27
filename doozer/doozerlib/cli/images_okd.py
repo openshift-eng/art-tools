@@ -27,6 +27,7 @@ from artcommonlib.util import (
     remove_prefix,
     split_git_url,
 )
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from github import Github, UnknownObjectException
 
@@ -108,7 +109,7 @@ class OkdRebaseCli:
             source_resolver=self.runtime.source_resolver,
             repo_type='unsigned',
             upcycle=self.upcycle,
-            okd=True,
+            variant=BuildVariant.OKD,
             image_repo=self.image_repo,
         )
 

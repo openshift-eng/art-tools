@@ -22,6 +22,7 @@ from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -77,7 +78,7 @@ class KonfluxRebaser:
         record_logger: Optional[RecordLogger] = None,
         source_modifier_factory=SourceModifierFactory(),
         logger: Optional[logging.Logger] = None,
-        okd: bool = False,
+        variant: BuildVariant = BuildVariant.OCP,
         image_repo: str = None,
     ) -> None:
         self._runtime = runtime
@@ -94,14 +95,12 @@ class KonfluxRebaser:
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self.image_repo = image_repo
         self.uuid_tag = ''
+        self.variant = variant
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
             self.konflux_db.bind(KonfluxBuildRecord)
-
-        self.okd = okd
-
-        if okd:
+        if self.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             self.group = f'okd-{major}.{minor}'
         else:
@@ -142,7 +141,7 @@ class KonfluxRebaser:
                     f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
                 )
 
-            if self.okd:
+            if self.variant is BuildVariant.OKD:
                 major, minor = self._runtime.get_major_minor_fields()
                 group = f'okd-{major}.{minor}'
             else:
@@ -245,7 +244,7 @@ class KonfluxRebaser:
         # Use a separate Dockerfile for konflux if required
         # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
         dockerfile_override = metadata.config.konflux.content.source.dockerfile
-        if dockerfile_override and not self.okd:
+        if dockerfile_override and self.variant is not BuildVariant.OKD:
             self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
             metadata.config.content.source.dockerfile = dockerfile_override
 
@@ -410,7 +409,7 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                if self.okd:
+                if self.variant is BuildVariant.OKD:
                     okd_alignment_config = parent_metadata.config.content.source.okd_alignment
                     if okd_alignment_config.resolve_as.stream:
                         stream_config = self._runtime.resolve_stream(okd_alignment_config.resolve_as.stream)
@@ -452,7 +451,7 @@ class KonfluxRebaser:
                 # "brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.22.5-202407301806.g4c8b32d.el9"
                 stream_image = stream_image.replace("openshift/golang-builder", "rh-osbs/openshift-golang-builder")
 
-        elif self.okd:
+        elif self.variant is BuildVariant.OKD:
             return stream_image
 
         if not self.should_match_upstream:
@@ -1024,8 +1023,7 @@ class KonfluxRebaser:
         self._add_build_repos(dfp, metadata, dest_dir)
 
         self._modify_cachito_commands(metadata, dfp)
-
-        if self.okd:
+        if self.variant is BuildVariant.OKD:
             self._apply_okd_labels(dfp)
 
         await self._reflow_labels(df_path)
@@ -1242,8 +1240,7 @@ class KonfluxRebaser:
 
         if network_mode != "hermetic":
             konflux_lines.append("USER 0")
-
-            if self.okd:
+            if self.variant is BuildVariant.OKD:
                 konflux_lines.append("RUN mkdir -p /tmp/art")
 
             else:
