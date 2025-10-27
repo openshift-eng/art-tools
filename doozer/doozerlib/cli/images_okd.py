@@ -1,10 +1,13 @@
+import asyncio
 import io
+import logging
 import os
 import pathlib
 import re
 import shutil
 import tempfile
 from collections import OrderedDict
+from copy import copy
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -17,14 +20,33 @@ from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import git_clone
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import convert_remote_git_to_ssh, download_file_from_github, remove_prefix, split_git_url
+from artcommonlib.util import (
+    convert_remote_git_to_ssh,
+    deep_merge,
+    download_file_from_github,
+    remove_prefix,
+    split_git_url,
+)
 from dockerfile_parse import DockerfileParser
 from github import Github, UnknownObjectException
 
-from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib import Runtime, constants
+from doozerlib.backend.rebaser import KonfluxRebaser
+from doozerlib.cli import (
+    cli,
+    click_coroutine,
+    option_commit_message,
+    option_push,
+    pass_runtime,
+    validate_semver_major_minor_patch,
+)
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import extract_version_fields, what_is_in_master
+
+OKD_DEFAULT_IMAGE_REPO = 'quay.io/okd/scos-content'
 
 
 class ImageCoordinate(NamedTuple):
@@ -49,6 +71,128 @@ def images_okd():
     Sub-verbs to managing the content of OKD builds.
     """
     pass
+
+
+class OkdRebaseCli:
+    def __init__(
+        self,
+        runtime: Runtime,
+        version: str,
+        release: str,
+        image_repo: str,
+        message: str,
+        push: bool,
+    ):
+        self.logger = logging.getLogger(__name__)
+        self.runtime = runtime
+        self.version = version
+        self.release = release
+        self.image_repo = image_repo
+        self.message = message
+        self.push = push
+        self.upcycle = runtime.upcycle
+
+    async def run(self):
+        self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+
+        group_config = self.runtime.group_config.copy()
+        if group_config.get('okd', None):
+            self.logger.info('Using OKD group configuration')
+            group_config = deep_merge(group_config, group_config['okd'])
+            self.runtime.group_config = Model(group_config)
+
+        base_dir = Path(self.runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_OKD_SOURCES)
+        rebaser = KonfluxRebaser(
+            runtime=self.runtime,
+            base_dir=base_dir,
+            source_resolver=self.runtime.source_resolver,
+            repo_type='unsigned',
+            upcycle=self.upcycle,
+            okd=True,
+            image_repo=self.image_repo,
+        )
+
+        metas = self.runtime.ordered_image_metas()
+        tasks = [self.rebase_image(image_meta, rebaser) for image_meta in metas]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Check rebase results, log errors if any in state.yml
+        failed_images = []
+        for index, result in enumerate(results):
+            if isinstance(result, Exception):
+                image_name = metas[index].distgit_key
+                failed_images.append(image_name)
+                self.logger.error(f"Failed to rebase {image_name}: {result}")
+        if failed_images:
+            self.runtime.state['images:okd:rebase'] = {'failed-images': failed_images}
+            raise DoozerFatalError(f"Failed to rebase images: {','.join(failed_images)}")
+        else:
+            self.logger.info("Rebase complete")
+
+    async def rebase_image(self, image_meta: ImageMetadata, rebaser: KonfluxRebaser):
+        image_meta.config = self.get_okd_image_config(image_meta)
+
+        if image_meta.config.mode == 'disabled':
+            # Raise an exception to be caught in okd4 pipeline; image will be removed from the building list.
+            raise ValueError('Image is disabled; skipping rebase')
+
+        await rebaser.rebase_to(
+            image_meta,
+            self.version,
+            self.release,
+            force_yum_updates=False,
+            commit_message=self.message,
+            push=self.push,
+        )
+
+    def get_okd_image_config(self, image_meta: ImageMetadata):
+        image_config = copy(image_meta.config)
+        image_config.enabled_repos = []
+
+        if image_config.okd is not Missing:
+            # Merge the rest of the config, with okd taking precedence
+            self.logger.info('Merging OKD configuration into image configuration for %s', image_meta.distgit_key)
+            image_config = Model(deep_merge(image_config.primitive(), image_meta.config.okd.primitive()))
+
+        return image_config
+
+
+@images_okd.command("rebase", short_help="Refresh a group's OKD source content.")
+@click.option(
+    "--version",
+    metavar='VERSION',
+    required=True,
+    callback=validate_semver_major_minor_patch,
+    help="Version string to populate in Dockerfiles.",
+)
+@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@click.option('--image-repo', default=KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@option_commit_message
+@option_push
+@pass_runtime
+@click_coroutine
+async def images_okd_rebase(
+    runtime: Runtime,
+    version: str,
+    release: str,
+    image_repo: str,
+    message: str,
+    push: bool,
+):
+    """
+    Refresh a group's konflux content from source content.
+    """
+
+    runtime.network_mode_override = 'open'  # OKD builds must be done in open mode.
+
+    await OkdRebaseCli(
+        runtime=runtime,
+        version=version,
+        release=release,
+        image_repo=image_repo,
+        message=message,
+        push=push,
+    ).run()
 
 
 def resolve_okd_from_stream(runtime, stream_name):

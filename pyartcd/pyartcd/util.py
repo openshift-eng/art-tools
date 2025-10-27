@@ -777,10 +777,16 @@ async def get_microshift_builds(group, assembly, env):
     return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]
 
 
-def mass_rebuild_score(version: str) -> int:
-    """For the ocp_version (e.g. `4.16`) return an integer score value
-    Higher the score, higher the priority
+def mass_rebuild_score(version: str, okd: bool = False) -> int:
     """
+    For the ocp_version (e.g. `4.16`) return an integer score value
+    Higher the score, higher the priority.
+    For OKD, the score is half that of OCP for the same version.
+    """
+
+    if okd:
+        return round(float(version) * 50)  # '4.16' -> 208
+
     return round(float(version) * 100)  # '4.16' -> 416
 
 
