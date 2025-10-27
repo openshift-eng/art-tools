@@ -176,7 +176,12 @@ async def olm_bundle_konflux(
         if operator_nvrs:
             runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
             # Check if this is an OADP, MTA, or MTC group and if OCP_TARGET_VERSIONS is configured
-            if group and (group.startswith("oadp-") or group.startswith("mta-") or group.startswith("mtc-")):
+            if group and (
+                group.startswith("oadp-")
+                or group.startswith("mta-")
+                or group.startswith("mtc-")
+                or group.startswith("logging-")
+            ):
                 runtime.logger.info(f'Group {group} matches OADP/MTA/MTC pattern, checking for OCP_TARGET_VERSIONS')
                 # Load group config to check for OCP_TARGET_VERSIONS
                 group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
