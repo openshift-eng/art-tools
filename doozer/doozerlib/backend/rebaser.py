@@ -1004,8 +1004,10 @@ class KonfluxRebaser:
             '__doozer_key': metadata.distgit_key,
             '__doozer_version': version,  # Useful when build variables are not being injected, but we still need "version" during the build.
             '__doozer_uuid_tag': f"{metadata.image_name_short}-{self.uuid_tag}",
-            'TAGS': 'scos',
         }
+        if self.variant is BuildVariant.OKD:
+            metadata_envs['TAGS'] = 'scos'
+
         if metadata.config.envs:
             # Allow environment variables to be specified in the ART image metadata
             metadata_envs.update(metadata.config.envs.primitive())
