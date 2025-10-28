@@ -31,6 +31,7 @@ class BuildOadpPipeline:
         data_path: str,
         skip_bundle_build: bool,
         kubeconfig: Optional[str] = None,
+        data_gitref: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -40,6 +41,7 @@ class BuildOadpPipeline:
         self.image_list = image_list
         self.skip_bundle_build = skip_bundle_build
         self.kubeconfig = kubeconfig
+        self.data_gitref = data_gitref
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -80,7 +82,7 @@ class BuildOadpPipeline:
                     group=self.group,
                     operator_nvrs=operator_nvrs,
                     doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
-                    doozer_data_gitref='',
+                    doozer_data_gitref=self.data_gitref or '',
                 )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
@@ -105,13 +107,18 @@ class BuildOadpPipeline:
 
         # Rebase OADP image
         self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
+
+        group_param = f"--group={self.group}"
+        if self.data_gitref:
+            group_param = f"--group={self.group}@{self.data_gitref}"
+
         rebase_cmd = [
             "doozer",
             f"--assembly={self.assembly}",
             f"--working-dir={self.runtime.doozer_working}",
             f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
             "--build-system=konflux",
-            f"--group={self.group}",
+            group_param,
             "--latest-parent-version",
             f"--images={self.image_list}",
             "beta:images:konflux:rebase",
@@ -133,7 +140,7 @@ class BuildOadpPipeline:
             f"--working-dir={self.runtime.doozer_working}",
             f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
             "--build-system=konflux",
-            f"--group={self.group}",
+            group_param,
             "--latest-parent-version",
             f"--images={self.image_list}",
             "beta:images:konflux:build",
@@ -222,6 +229,7 @@ class BuildOadpPipeline:
     default=None,
     help="Path to the Konflux kubeconfig file (optional)",
 )
+@click.option("--data-gitref", required=False, default='', help="Doozer data path git [branch / tag / sha] to use")
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @pass_runtime
 @click_coroutine
@@ -234,6 +242,7 @@ async def build_oadp(
     image_list: str,
     skip_bundle_build: bool,
     kubeconfig: Optional[str],
+    data_gitref: Optional[str],
     ignore_locks: bool,
 ):
     """Rebase and build OADP image for an assembly"""
@@ -247,6 +256,7 @@ async def build_oadp(
             data_path=data_path,
             skip_bundle_build=skip_bundle_build,
             kubeconfig=kubeconfig,
+            data_gitref=data_gitref,
         )
 
         lock_identifier = jenkins.get_build_path()
