@@ -153,18 +153,18 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
     @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
     @patch('random.randint')
     async def test_scan_task_bundle_changes_staggered_rebuild_triggers(
-        self, mock_randint, mock_add_change, mock_get_age, mock_get_current, mock_get_attestation
+        self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
     ):
         """Test that staggered rebuild logic triggers rebuild when random condition is met."""
         mock_get_attestation.return_value = self.sample_attestation
-        mock_get_current.return_value = self.current_task_bundles
         mock_get_age.return_value = 35  # 35 days old
         mock_randint.return_value = 1  # This should trigger rebuild
+
+        self.scanner.current_task_bundles = self.current_task_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
@@ -523,12 +523,11 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
     """Integration tests for the complete task bundle scanning workflow."""
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
     @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
     @patch('random.randint')
     async def test_full_workflow_rebuild_triggered(
-        self, mock_randint, mock_add_change, mock_get_age, mock_get_current, mock_get_attestation
+        self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
     ):
         """Test the complete workflow when a rebuild should be triggered."""
         # Setup test data
@@ -546,9 +545,9 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         current_bundles = {"git-clone": "new456"}  # Different SHA
 
         mock_get_attestation.return_value = attestation
-        mock_get_current.return_value = current_bundles
         mock_get_age.return_value = 35  # Old enough to trigger rebuild
         mock_randint.return_value = 1  # Will trigger rebuild
+        self.scanner.current_task_bundles = current_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
@@ -556,7 +555,6 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         mock_get_attestation.assert_called_once_with(
             self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
         )
-        mock_get_current.assert_called_once()
         mock_get_age.assert_called_once_with("git-clone", "old123")
 
         # Verify staggered rebuild logic
@@ -568,35 +566,18 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
     @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
-    async def test_full_workflow_no_rebuild_needed(
-        self, mock_add_change, mock_get_age, mock_get_current, mock_get_attestation
-    ):
+    async def test_full_workflow_no_rebuild_needed(self, mock_add_change, mock_get_age, mock_get_attestation):
         """Test the complete workflow when no rebuild is needed."""
         # Setup test data with matching SHAs
-        attestation = {
-            "predicate": {
-                "materials": [
-                    {
-                        "uri": "quay.io/konflux-ci/tekton-catalog/git-clone",
-                        "digest": {"sha256": "same123"},
-                    }
-                ]
-            }
-        }
-
         current_bundles = {"git-clone": "same123"}  # Same SHA
-
-        mock_get_attestation.return_value = attestation
-        mock_get_current.return_value = current_bundles
+        self.scanner.current_task_bundles = current_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
         # Verify early exit when SHAs match
         mock_get_attestation.assert_called_once()
-        mock_get_current.assert_called_once()
         mock_get_age.assert_not_called()  # Should not check age when SHAs match
         mock_add_change.assert_not_called()
 
