@@ -30,6 +30,7 @@ class BuildOadpPipeline:
         image_list: str,
         data_path: str,
         skip_bundle_build: bool,
+        skip_rebase: bool = False,
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
@@ -40,6 +41,7 @@ class BuildOadpPipeline:
         self.assembly = assembly
         self.image_list = image_list
         self.skip_bundle_build = skip_bundle_build
+        self.skip_rebase = skip_rebase
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
         self._logger = logger or runtime.logger
@@ -105,32 +107,36 @@ class BuildOadpPipeline:
         """Rebase and build OADP image"""
         release = default_release_suffix()
 
-        # Rebase OADP image
-        self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
-
         group_param = f"--group={self.group}"
         if self.data_gitref:
             group_param = f"--group={self.group}@{self.data_gitref}"
 
-        rebase_cmd = [
-            "doozer",
-            f"--assembly={self.assembly}",
-            f"--working-dir={self.runtime.doozer_working}",
-            f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-            "--build-system=konflux",
-            group_param,
-            "--latest-parent-version",
-            f"--images={self.image_list}",
-            "beta:images:konflux:rebase",
-            f"--version={self.version}",
-            f"--release={release}",
-            f"--message='Updating Dockerfile version and release {self.version}-{release}'",
-        ]
-        if not self.runtime.dry_run:
-            rebase_cmd.append("--push")
+        # Skip rebase if the flag is set
+        if self.skip_rebase:
+            self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
+        else:
+            # Rebase OADP image
+            self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
 
-        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
-        self._logger.info(f"Successfully rebased {self.image_list}")
+            rebase_cmd = [
+                "doozer",
+                f"--assembly={self.assembly}",
+                f"--working-dir={self.runtime.doozer_working}",
+                f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
+                "--build-system=konflux",
+                group_param,
+                "--latest-parent-version",
+                f"--images={self.image_list}",
+                "beta:images:konflux:rebase",
+                f"--version={self.version}",
+                f"--release={release}",
+                f"--message='Updating Dockerfile version and release {self.version}-{release}'",
+            ]
+            if not self.runtime.dry_run:
+                rebase_cmd.append("--push")
+
+            await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+            self._logger.info(f"Successfully rebased {self.image_list}")
 
         # Build OADP image
         self._logger.info(f"Building {self.image_list} image for assembly {self.assembly}")
@@ -223,6 +229,7 @@ class BuildOadpPipeline:
     help="List of images to build",
 )
 @click.option("--skip-bundle-build", is_flag=True, default=False, help="(For testing) Skip the bundle build step")
+@click.option("--skip-rebase", is_flag=True, default=False, help="(For testing) Skip the rebase step")
 @click.option(
     "--kubeconfig",
     metavar="KUBECONFIG_PATH",
@@ -241,6 +248,7 @@ async def build_oadp(
     assembly: str,
     image_list: str,
     skip_bundle_build: bool,
+    skip_rebase: bool,
     kubeconfig: Optional[str],
     data_gitref: Optional[str],
     ignore_locks: bool,
@@ -255,6 +263,7 @@ async def build_oadp(
             image_list=image_list,
             data_path=data_path,
             skip_bundle_build=skip_bundle_build,
+            skip_rebase=skip_rebase,
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
         )
