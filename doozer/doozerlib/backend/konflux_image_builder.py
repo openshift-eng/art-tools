@@ -172,7 +172,7 @@ class KonfluxImageBuilder:
             error = None
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
-                build_priority = util.get_konflux_build_priority(metadata=metadata)
+                build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
                 logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
             else:
                 # If it's a specific number (1-10), use it directly
@@ -364,7 +364,7 @@ class KonfluxImageBuilder:
         name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
         return name
 
-    def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
+    def _prefetch(self, metadata: ImageMetadata, group: str, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
         brew) to fetch packages and make it available to the build task (which ideally will be hermetic)
@@ -397,27 +397,29 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
-            if phase <= SoftwareLifecyclePhase.SIGNING:
-                enabled_repos = metadata.get_enabled_repos()
-                if enabled_repos:
-                    dnf_options = {}
-                    repos = metadata.runtime.repos
-                    building_arches = metadata.get_arches()
+            if group.startswith("openshift-"):
+                # For groups like oadp, mta, logging we should always use signed repos
+                phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
+                if phase <= SoftwareLifecyclePhase.SIGNING:
+                    enabled_repos = metadata.get_enabled_repos()
+                    if enabled_repos:
+                        dnf_options = {}
+                        repos = metadata.runtime.repos
+                        building_arches = metadata.get_arches()
 
-                    for repo_name in enabled_repos:
-                        repo = repos[repo_name]
-                        for arch in building_arches:
-                            content_set_id = repo.content_set(arch)
-                            if content_set_id is None:
-                                content_set_id = f'{repo_name}-{arch}'
+                        for repo_name in enabled_repos:
+                            repo = repos[repo_name]
+                            for arch in building_arches:
+                                content_set_id = repo.content_set(arch)
+                                if content_set_id is None:
+                                    content_set_id = f'{repo_name}-{arch}'
 
-                            dnf_options[content_set_id] = {"gpgcheck": "0"}
+                                dnf_options[content_set_id] = {"gpgcheck": "0"}
 
-                    data["options"] = {"dnf": dnf_options}
-                    logger.info(
-                        f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
-                    )
+                        data["options"] = {"dnf": dnf_options}
+                        logger.info(
+                            f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
+                        )
 
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
@@ -514,7 +516,7 @@ class KonfluxImageBuilder:
         # Check if hermetic builds need to be enabled
         hermetic = metadata.get_konflux_network_mode() == "hermetic"
 
-        prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
+        prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir, group=self._config.group_name)
 
         # Check if SAST tasks needs to be enabled
         # Image config value overrides group config value
