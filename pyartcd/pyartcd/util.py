@@ -721,6 +721,10 @@ async def get_signing_mode(
             group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref
         )
 
+    # For specific product groups, always use signed repos regardless of phase
+    if group and group.startswith(('oadp-', 'mta-', 'mtc-', 'logging-')):
+        return 'signed'
+
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
 

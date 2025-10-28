@@ -770,11 +770,12 @@ def infer_assembly_type(custom, assembly_name):
         return AssemblyTypes.STANDARD
 
 
-def get_konflux_build_priority(metadata):
+def get_konflux_build_priority(metadata, group):
     """
     Get the Konflux build priority based on the precedence rules.
 
     :param metadata: ImageMetadata object containing config and runtime info
+    :param group: doozer group, eg: openshift-4.15 / oadp-1.5
     :return: Priority value as string (1-10)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
@@ -793,7 +794,7 @@ def get_konflux_build_priority(metadata):
 
     # 3. Higher than default priority for main & pre-GA N-1 streams.
     phase = metadata.runtime.group_config.software_lifecycle.phase
-    if phase in ("pre-release", "signing"):
+    if group.startswith("openshift-") and phase in ("pre-release", "signing"):
         pre_release_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - 2))
         logger.info(f"Using phase-based priority for {metadata.distgit_key}: {pre_release_priority} (phase: {phase})")
         return pre_release_priority
