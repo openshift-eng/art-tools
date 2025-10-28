@@ -326,7 +326,7 @@ class KonfluxOcp4Pipeline:
 
         built_images = [entry['name'] for entry in record_log['image_build_konflux'] if not int(entry['status'])]
         failed_images = [entry['name'] for entry in record_log['image_build_konflux'] if int(entry['status'])]
-        if len(failed_images) <= 10:
+        if 1 <= len(failed_images) <= 10:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         else:
             jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
