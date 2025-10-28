@@ -94,6 +94,7 @@ class ConfigScanSources:
         self.changing_rpm_names = set()
         self.rhcos_status = []
         self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        self.current_task_bundles: Dict[str, str] = {}
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -112,6 +113,9 @@ class ConfigScanSources:
 
         # Find RPMs built by ART that need to be rebuilt
         await self.check_changing_rpms()
+
+        # Get current task bundle SHAs from GitHub
+        self.current_task_bundles = await self.get_current_task_bundle_shas()
 
         # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
         # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
@@ -1011,10 +1015,9 @@ class ConfigScanSources:
         self.logger.info(f'Found {len(task_bundles)} task bundles: {list(task_bundles.keys())}')
 
         # Get current task bundle SHAs from GitHub
-        self.logger.info('Fetching current task bundle SHAs from GitHub template')
-        current_task_bundles = await self.get_current_task_bundle_shas()
+        current_task_bundles = self.current_task_bundles
         if not current_task_bundles:
-            self.logger.warning('Could not fetch current task bundle SHAs from GitHub')
+            self.logger.warning('Current task bundle SHAs not available, skipping task bundle check')
             return
 
         self.logger.info(f'Retrieved {len(current_task_bundles)} current task bundles from GitHub')
