@@ -427,6 +427,9 @@ class KonfluxRebaser:
 
             return original_parent, False
         else:
+            if not self.image_repo:
+                raise ValueError("image_repo must be set to resolve member parents.")
+
             if parent_metadata.private_fix is None:
                 raise IOError(
                     f"Parent image {member} doesn't have .p? flag determined. "
