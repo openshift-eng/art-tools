@@ -585,7 +585,7 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
         self._logger.info(f"Building fbc for {operator_meta.name}...")
-        await builder.build(operator_meta)
+        await builder.build(operator_meta, operator_nvr=bundle_build.operator_nvr)
         return nvr
 
     async def run(self):
