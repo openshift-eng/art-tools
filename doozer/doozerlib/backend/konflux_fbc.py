@@ -1308,22 +1308,18 @@ class KonfluxFbcBuilder:
         additional_tags = []
         group_name = metadata.runtime.group
         if metadata.runtime.assembly == "stream":
-            if group_name.startswith("openshift-"):
-                product_name = "ocp"
-                version = group_name.removeprefix("openshift-")
-                delivery_repo_names = metadata.config.delivery.delivery_repo_names
-                for delivery_repo in delivery_repo_names:
-                    delivery_repo_name = delivery_repo.split('/')[-1]
+            delivery_repo_names = metadata.config.delivery.delivery_repo_names
+            for delivery_repo in delivery_repo_names:
+                delivery_repo_name = delivery_repo.split('/')[-1]
+                if group_name.startswith("openshift-"):
+                    product_name = "ocp"
+                    version = group_name.removeprefix("openshift-")
                     additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
-
-                # Add operator NVR tags for openshift- groups
-                if operator_nvr:
-                    additional_tags.append(f"operator_nvr__{operator_nvr}")
-            else:
-                # eg: oadp-1.5 / mta-1.2
-                delivery_repo_names = metadata.config.delivery.delivery_repo_names
-                for delivery_repo in delivery_repo_names:
-                    delivery_repo_name = delivery_repo.split('/')[-1]
+                    # Add operator NVR tag for openshift- groups
+                    if operator_nvr:
+                        additional_tags.append(f"operator_nvr__{operator_nvr}")
+                else:
+                    # eg: oadp-1.5 / mta-1.2
                     if self.major_minor_override:
                         tag_with_version = (
                             f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
@@ -1331,11 +1327,10 @@ class KonfluxFbcBuilder:
                         additional_tags.append(f"{tag_with_version}")
                         for commit in self.source_git_commits:
                             additional_tags.append(f"{tag_with_version}__{commit}")
-
-                # Add operator NVR tags for non-openshift groups
-                if self.major_minor_override and operator_nvr:
-                    version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
-                    additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
+                        # Add operator NVR tag for non-openshift groups
+                        if operator_nvr:
+                            version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
+                            additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
 
         if additional_tags:
             logger.info(
