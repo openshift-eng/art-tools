@@ -110,7 +110,7 @@ RUN rm -rf /tmp/art
 USER 2000
 # End Konflux-specific steps
 """
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
 
         self.assertEqual(dfp.content, expected)
@@ -175,7 +175,7 @@ RUN rm -rf /tmp/art
 USER 3000
 # End Konflux-specific steps
 """
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
 
         self.assertEqual(dfp.content, expected)
@@ -225,7 +225,7 @@ RUN commands
 
 USER 3000
 """
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
         dfp.content.strip()
         self.assertEqual(expected.strip(), dfp.content.strip())
@@ -276,7 +276,7 @@ RUN commands
 
 USER 3000
 """
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
         dfp.content.strip()
         self.maxDiff = None
@@ -338,7 +338,7 @@ RUN rm -rf /tmp/art
 USER 3000
 # End Konflux-specific steps
 """
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
 
         self.assertEqual(dfp.content.strip(), expected.strip())
@@ -349,7 +349,7 @@ USER 3000
         metadata.is_lockfile_generation_enabled.return_value = True
 
         mock_generator = AsyncMock()
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
 
@@ -364,7 +364,7 @@ USER 3000
         metadata.is_lockfile_generation_enabled.return_value = False
 
         mock_generator = AsyncMock()
-        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
         rebaser.rpm_lockfile_generator = mock_generator
         rebaser._logger = MagicMock()
 
