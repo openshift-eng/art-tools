@@ -1112,7 +1112,7 @@ class KonfluxFbcBuilder:
 
         return commits
 
-    async def build(self, metadata: ImageMetadata):
+    async def build(self, metadata: ImageMetadata, operator_nvr: Optional[str] = None):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         logger.info("Building FBC for %s", metadata.distgit_key)
@@ -1224,6 +1224,7 @@ class KonfluxFbcBuilder:
                     output_image=output_image,
                     arches=arches,
                     logger=logger,
+                    operator_nvr=operator_nvr,
                 )
                 pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
@@ -1277,6 +1278,7 @@ class KonfluxFbcBuilder:
         output_image: str,
         arches: Sequence[str],
         logger: logging.Logger,
+        operator_nvr: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not build_repo.commit_hash:
@@ -1306,20 +1308,18 @@ class KonfluxFbcBuilder:
         additional_tags = []
         group_name = metadata.runtime.group
         if metadata.runtime.assembly == "stream":
-            if group_name.startswith("openshift-"):
-                product_name = "ocp"
-                version = group_name.removeprefix("openshift-")
-            else:
-                # eg: oadp-1.5 / mta-1.2
-                parts = group_name.split("-", 1)
-                product_name = parts[0]
-                version = parts[1]
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
                 delivery_repo_name = delivery_repo.split('/')[-1]
                 if group_name.startswith("openshift-"):
+                    product_name = "ocp"
+                    version = group_name.removeprefix("openshift-")
                     additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
+                    # Add operator NVR tag for openshift- groups
+                    if operator_nvr:
+                        additional_tags.append(f"operator_nvr__{operator_nvr}")
                 else:
+                    # eg: oadp-1.5 / mta-1.2
                     if self.major_minor_override:
                         tag_with_version = (
                             f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
@@ -1327,6 +1327,10 @@ class KonfluxFbcBuilder:
                         additional_tags.append(f"{tag_with_version}")
                         for commit in self.source_git_commits:
                             additional_tags.append(f"{tag_with_version}__{commit}")
+                        # Add operator NVR tag for non-openshift groups
+                        if operator_nvr:
+                            version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
+                            additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
 
         if additional_tags:
             logger.info(
