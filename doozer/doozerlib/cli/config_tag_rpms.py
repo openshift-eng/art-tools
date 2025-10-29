@@ -210,7 +210,7 @@ class TagRPMsCli:
             rhcos_el_maj = int(self._runtime.group_config.vars.RHCOS_EL_MAJOR)
             rhcos_el_min = int(self._runtime.group_config.vars.RHCOS_EL_MINOR)
 
-            # this control was for versions < than 9.4 in the past. 
+            # this control was for versions < than 9.4 in the past.
             # As now we skip also kernel-rt for 4.12 (OCPBUGS-63597),
             # let's do only for 4.13 - 4.15 (RHEL9.2)
             if (rhcos_el_maj, rhcos_el_min) == (9, 2):
