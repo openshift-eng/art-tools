@@ -544,7 +544,7 @@ class UpdateGolangPipeline:
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
     def get_content_repo_url(self, el_v):
-        url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
+        url = 'https://download.devel.redhat.com/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
 
     def get_module_tag(self, nvr, el_v) -> str:
