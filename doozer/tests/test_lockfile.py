@@ -327,23 +327,13 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         self.path = Path('/tmp')
         self.filename = 'rpms.lock.yml'
 
-    def test_compute_hash_consistency(self):
-        rpms1 = {'b', 'a', 'c'}
-        rpms2 = {'a', 'b', 'c'}
-        hash1 = RPMLockfileGenerator._compute_hash(rpms1)
-        hash2 = RPMLockfileGenerator._compute_hash(rpms2)
-        self.assertEqual(hash1, hash2)
-
-    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
     @patch.object(RPMLockfileGenerator, '_write_yaml')
-    @patch('builtins.open', new_callable=mock_open, read_data='oldfingerprint')
-    @patch('pathlib.Path.exists', return_value=True)
-    async def test_generate_lockfile_skips_if_fingerprint_matches(
-        self, mock_exists, mock_file, mock_write_yaml, mock_get_lockfile
-    ):
-        fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
-        mock_file().read.return_value = fingerprint
-        mock_get_lockfile.return_value = "lockfile exists"  # Mock upstream lockfile exists
+    async def test_generate_lockfile_proceeds_when_conditions_met(self, mock_write_yaml):
+        """Test that lockfile generation proceeds when basic conditions are met"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -351,333 +341,22 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-
-        self.generator.builder.fetch_rpms_info = MagicMock()
+        mock_image_meta.get_arches.return_value = self.arches
 
         await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
 
-        self.generator.builder.fetch_rpms_info.assert_not_called()
-        mock_write_yaml.assert_not_called()
-        self.logger.info.assert_any_call("Lockfile exists upstream for test-image. Skipping lockfile generation.")
+        # Should always generate when conditions are met
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        mock_write_yaml.assert_called_once()
 
     @patch('builtins.open', new_callable=mock_open)
     @patch('pathlib.Path.exists', return_value=False)
-    async def test_generate_lockfile_writes_if_fingerprint_file_missing(self, mock_exists, mock_file):
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-
-        async def async_fetch_rpms_info(*args, **kwargs):
-            return {'x86_64': [dummy_rpm_info], 'aarch64': []}
-
-        self.generator.builder.fetch_rpms_info = async_fetch_rpms_info
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        written_content = "".join(call.args[0] for call in mock_file().write.call_args_list)
-        self.assertIn("packages", written_content)
-
-    @patch('builtins.open', new_callable=mock_open, read_data='differentfingerprint')
-    @patch('pathlib.Path.exists', return_value=True)
-    async def test_generate_lockfile_writes_if_fingerprint_differs(self, mock_exists, mock_file):
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-
-        async def async_fetch_rpms_info(*args, **kwargs):
-            return {'x86_64': [dummy_rpm_info], 'aarch64': []}
-
-        self.generator.builder.fetch_rpms_info = async_fetch_rpms_info
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        written_content = "".join(call.args[0] for call in mock_file().write.call_args_list)
-        self.assertIn("packages", written_content)
-
-    @patch('pathlib.Path.mkdir')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_write_yaml_creates_dirs_and_writes_file(self, mock_file, mock_mkdir):
-        data = {'key': 'value'}
-        output_path = Path('/some/path/file.yaml')
-        self.generator._write_yaml(data, output_path)
-
-        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        mock_file.assert_called_once_with(output_path, "w")
-
-        # Verify yaml.safe_dump called with data
-        handle = mock_file()
-        written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
-        # We cannot easily assert the YAML content here, but just ensure write was called
-        self.assertTrue(written_content or True)
-
-    @patch.object(RPMLockfileGenerator, '_write_yaml')
-    @patch('builtins.open', new_callable=mock_open, read_data='oldfingerprint')
-    @patch('pathlib.Path.exists', return_value=True)
-    async def test_generate_lockfile_force_skips_digest_check(self, mock_exists, mock_file, mock_write_yaml):
-        """Test that force=True skips digest checking and always generates lockfile"""
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-
-        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
-
-        # Create mock ImageMetadata with force enabled
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = True
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        # Should not read the digest file when force=True
-        mock_file().read.assert_not_called()
-        # Should generate lockfile regardless
-        self.generator.builder.fetch_rpms_info.assert_called_once()
-        mock_write_yaml.assert_called_once()
-        self.logger.info.assert_any_call("Force flag set for test-image. Regenerating lockfile without digest check.")
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch('doozerlib.lockfile.download_file_from_github')
-    @patch('os.environ.get')
-    async def test_get_digest_from_target_branch_not_found(self, mock_environ, mock_download, mock_tempfile):
-        """Test digest fetching when file doesn't exist in target branch"""
-        mock_runtime = MagicMock()
-        mock_runtime.group = "openshift-4.20"
-        mock_runtime.assembly = "test"
-
-        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
-
-        # Mock environment and download failure
-        mock_environ.return_value = "fake_token"
-        mock_download.side_effect = Exception("File not found")
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.config.content.source.git.url = "https://github.com/openshift/test-image"
-
-        digest_path = Path('/some/path/rpms.lock.yaml.digest')
-        result = await generator._get_digest_from_target_branch(digest_path, mock_image_meta)
-
-        self.assertIsNone(result)
-
-    async def test_get_digest_from_target_branch_no_runtime(self):
-        """Test digest fetching when no runtime is provided"""
-        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=None)
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-
-        digest_path = Path('/some/path/rpms.lock.yaml.digest')
-        result = await generator._get_digest_from_target_branch(digest_path, mock_image_meta)
-
-        self.assertIsNone(result)
-
-    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
-    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
-    @patch.object(RPMLockfileGenerator, '_write_yaml')
-    @patch('pathlib.Path.write_text')
-    @patch('pathlib.Path.exists', return_value=False)
-    async def test_generate_lockfile_uses_target_branch_digest(
-        self, mock_exists, mock_write_text, mock_write_yaml, mock_get_digest, mock_get_lockfile
-    ):
-        """Test that generate_lockfile downloads files from upstream when digest matches"""
-        fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
-        mock_lockfile_content = "lockfile: content"
-
-        # Mock target branch returning same fingerprint and lockfile content
-        mock_get_digest.return_value = fingerprint
-        mock_get_lockfile.return_value = mock_lockfile_content
-
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        # Should call target branch digest fetching (called twice - in should_generate and sync)
-        self.assertEqual(mock_get_digest.call_count, 2)
-        # Should call target branch lockfile fetching (called twice - in should_generate and sync)
-        self.assertEqual(mock_get_lockfile.call_count, 2)
-        # Should skip generation since fingerprints match
-        self.generator.builder.fetch_rpms_info.assert_not_called()
-        mock_write_yaml.assert_not_called()
-        # Should download both files
-        mock_write_text.assert_any_call(fingerprint)
-        mock_write_text.assert_any_call(mock_lockfile_content)
-        self.logger.info.assert_any_call("Found digest in target branch for test-image")
-        self.logger.info.assert_any_call("Downloaded digest file to {}".format(self.path / f'{self.filename}.digest'))
-        self.logger.info.assert_any_call(f"Downloaded lockfile to {self.path / self.filename}")
-
-    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
-    @patch.object(RPMLockfileGenerator, '_write_yaml')
-    @patch('pathlib.Path.exists', return_value=False)
-    async def test_generate_lockfile_regenerates_when_target_branch_digest_differs(
-        self, mock_exists, mock_write_yaml, mock_get_digest
-    ):
-        """Test that generate_lockfile regenerates when target branch digest differs"""
-        # Mock target branch returning different fingerprint
-        mock_get_digest.return_value = "differenthash"
-
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        # Should call target branch digest fetching
-        mock_get_digest.assert_called_once()
-        # Should generate since fingerprints differ
-        self.generator.builder.fetch_rpms_info.assert_called_once()
-        mock_write_yaml.assert_called_once()
-        self.logger.info.assert_any_call("Found digest in target branch for test-image")
-        self.logger.info.assert_any_call("RPM list changed for test-image. Regenerating lockfile.")
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch('doozerlib.lockfile.download_file_from_github')
-    @patch('os.environ.get')
-    async def test_get_lockfile_from_target_branch_not_found(self, mock_environ, mock_download, mock_tempfile):
-        """Test lockfile fetching when file doesn't exist in target branch"""
-        mock_runtime = MagicMock()
-        mock_runtime.group = "test-group"
-        mock_runtime.assembly = "test-assembly"
-        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=mock_runtime)
-
-        lockfile_path = Path('/some/path/rpms.lock.yaml')
-
-        # Mock environment and download failure
-        mock_environ.return_value = "fake_token"
-        mock_download.side_effect = Exception("File not found")
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.distgit_remote_url.return_value = "https://github.com/openshift/test-image"
-
-        result = await generator._get_lockfile_from_target_branch(lockfile_path, mock_image_meta)
-
-        self.assertIsNone(result)
-        self.logger.debug.assert_called()
-
-    async def test_get_lockfile_from_target_branch_no_runtime(self):
-        """Test lockfile fetching when no runtime is provided"""
-        generator = RPMLockfileGenerator(self.repos, self.logger, runtime=None)
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-
-        lockfile_path = Path('/some/path/rpms.lock.yaml')
-        result = await generator._get_lockfile_from_target_branch(lockfile_path, mock_image_meta)
-
-        self.assertIsNone(result)
-
-    @patch.object(RPMLockfileGenerator, '_get_lockfile_from_target_branch')
-    @patch.object(RPMLockfileGenerator, '_get_digest_from_target_branch')
-    @patch.object(RPMLockfileGenerator, '_write_yaml')
-    @patch('pathlib.Path.write_text')
-    @patch('pathlib.Path.exists', return_value=False)
-    async def test_generate_lockfile_handles_missing_upstream_lockfile(
-        self, mock_exists, mock_write_text, mock_write_yaml, mock_get_digest, mock_get_lockfile
-    ):
-        """Test that generate_lockfile regenerates when upstream lockfile is missing despite matching fingerprint"""
-        fingerprint = RPMLockfileGenerator._compute_hash(self.rpms)
-
-        # Mock target branch returning digest but no lockfile
-        mock_get_digest.return_value = fingerprint
-        mock_get_lockfile.return_value = None  # Lockfile not found upstream
-
-        dummy_rpm_info = MagicMock()
-        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
-        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
-
-        # Create mock ImageMetadata
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = self.repos_set
-        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.is_lockfile_force_enabled.return_value = False
-        mock_image_meta.get_arches.return_value = self.arches
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        # Should generate lockfile despite matching fingerprint because upstream lockfile is missing
-        self.generator.builder.fetch_rpms_info.assert_called_once()
-        mock_write_yaml.assert_called_once()
-        # Should write digest file
-        mock_write_text.assert_any_call(fingerprint)
-
-    async def test_generate_lockfile_skips_when_repositories_empty(self):
-        """Test that generate_lockfile skips when repositories set is empty"""
-        # Mock the fetch_rpms_info method to track if it's called
-        self.generator.builder.fetch_rpms_info = MagicMock()
-
-        # Create mock ImageMetadata with empty repos
-        mock_image_meta = MagicMock()
-        mock_image_meta.distgit_key = "test-image"
-        mock_image_meta.is_lockfile_generation_enabled.return_value = True
-        mock_image_meta.get_enabled_repos.return_value = set()
-
-        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
-
-        # Should skip generation due to empty repositories
-        self.generator.builder.fetch_rpms_info.assert_not_called()
-        self.logger.info.assert_called_with("Skipping lockfile generation for test-image: repositories set is empty")
-
-
-class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.repos = MagicMock()
-        self.logger = MagicMock()
-        self.generator = RPMLockfileGenerator(self.repos, self.logger)
-        self.base_dir = Path('/tmp/base')
-
     def create_mock_image_meta(
         self,
         distgit_key: str,
         enabled: bool = True,
         has_repos: bool = True,
         has_rpms: bool = True,
-        force: bool = False,
         arches: list = None,
     ):
         """Helper to create mock ImageMetadata with common configuration"""
@@ -686,7 +365,6 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = enabled
         mock_image_meta.get_enabled_repos.return_value = {'repo1', 'repo2'} if has_repos else set()
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value={'pkg1', 'pkg2'} if has_rpms else set())
-        mock_image_meta.is_lockfile_force_enabled.return_value = force
         mock_image_meta.get_arches.return_value = arches or ['x86_64', 'aarch64']
         return mock_image_meta
 
@@ -697,27 +375,37 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         mock_span.return_value = mock_span_obj
 
         # Create test images
-        image1 = self.create_mock_image_meta('image1', enabled=True, has_repos=True, has_rpms=True)
-        image2 = self.create_mock_image_meta('image2', enabled=False)  # Disabled
-        image3 = self.create_mock_image_meta('image3', enabled=True, has_repos=False)  # No repos
-        image4 = self.create_mock_image_meta('image4', enabled=True, has_repos=True, has_rpms=True, force=True)
+        image1 = self.create_mock_image_meta('image1')
+        image2 = self.create_mock_image_meta('image2')
+        image3 = self.create_mock_image_meta('image3')
+        image4 = self.create_mock_image_meta('image4')
 
-        # Mock digest check to return different fingerprints (needs generation)
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=AsyncMock(return_value="old_hash")):
-            with patch.object(self.generator, '_compute_hash', return_value="new_hash"):
-                with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
-                    await self.generator.ensure_repositories_loaded([image1, image2, image3, image4], self.base_dir)
+        # Configure which images need generation
+        image1.is_lockfile_generation_enabled.return_value = True
+        image1.get_enabled_repos.return_value = {'repo1', 'repo2'}
+        image1.get_lockfile_rpms_to_install = AsyncMock(return_value={'pkg1', 'pkg2'})
 
-                    # Should load repos for image1 and image4 (both need generation)
-                    # image2 disabled, image3 has no repos
-                    self.assertEqual(mock_load.call_count, 2)  # Once per architecture
+        image2.is_lockfile_generation_enabled.return_value = False  # Disabled
 
-                    # Verify telemetry attributes
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 4)
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.images_needing_generation", 2)
-                    mock_span_obj.set_attribute.assert_any_call(
-                        "lockfile.unique_repo_arch_pairs", 4
-                    )  # 2 repos * 2 arches
+        image3.is_lockfile_generation_enabled.return_value = True
+        image3.get_enabled_repos.return_value = set()  # No repos
+
+        image4.is_lockfile_generation_enabled.return_value = True
+        image4.get_enabled_repos.return_value = {'repo1', 'repo2'}
+        image4.get_lockfile_rpms_to_install = AsyncMock(return_value={'pkg1', 'pkg2'})
+
+        base_dir = Path('/tmp/base')
+        with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
+            await self.generator.ensure_repositories_loaded([image1, image2, image3, image4], base_dir)
+
+            # Should load repos for image1 and image4 (both need generation)
+            # image2 disabled, image3 has no repos
+            self.assertEqual(mock_load.call_count, 2)  # Once per architecture
+
+            # Verify telemetry attributes
+            mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 4)
+            mock_span_obj.set_attribute.assert_any_call("lockfile.images_needing_generation", 2)
+            mock_span_obj.set_attribute.assert_any_call("lockfile.unique_repo_arch_pairs", 4)  # 2 repos * 2 arches
 
     @patch('opentelemetry.trace.get_current_span')
     async def test_ensure_repositories_loaded_no_images_need_generation(self, mock_span):
@@ -725,46 +413,24 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         mock_span_obj = MagicMock()
         mock_span.return_value = mock_span_obj
 
-        image1 = self.create_mock_image_meta('image1', enabled=True, has_repos=True, has_rpms=True)
-        image2 = self.create_mock_image_meta('image2', enabled=True, has_repos=True, has_rpms=True)
+        image1 = self.create_mock_image_meta('image1')
+        image2 = self.create_mock_image_meta('image2')
 
-        # Mock digest check to return same fingerprints and lockfile exists upstream (no generation needed)
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=AsyncMock(return_value="same_hash")):
-            with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
-                with patch.object(
-                    self.generator, '_get_lockfile_from_target_branch', new=AsyncMock(return_value="lockfile exists")
-                ):
-                    with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
-                        await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
+        # Mock images that don't need lockfile generation (disabled)
+        image1.is_lockfile_generation_enabled.return_value = False
+        image2.is_lockfile_generation_enabled.return_value = False
 
-                        # Should not load any repos
-                        mock_load.assert_not_called()
+        base_dir = Path('/tmp/base')
+        with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
+            await self.generator.ensure_repositories_loaded([image1, image2], base_dir)
 
-                    # Verify telemetry
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 2)
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.images_needing_generation", 0)
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.unique_repo_arch_pairs", 0)
+            # Should not load any repos since images don't need generation
+            mock_load.assert_not_called()
 
-    @patch('opentelemetry.trace.get_current_span')
-    async def test_ensure_repositories_loaded_force_flag_behavior(self, mock_span):
-        """Test that force flag bypasses digest check and loads repositories"""
-        mock_span_obj = MagicMock()
-        mock_span.return_value = mock_span_obj
-
-        image1 = self.create_mock_image_meta('image1', enabled=True, has_repos=True, has_rpms=True, force=True)
-
-        # Even with same digest, force should cause generation
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=AsyncMock(return_value="same_hash")):
-            with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
-                with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
-                    await self.generator.ensure_repositories_loaded([image1], self.base_dir)
-
-                    # Should load repos due to force flag
-                    self.assertEqual(mock_load.call_count, 2)  # Once per architecture
-
-                    # Verify telemetry
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 1)
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.images_needing_generation", 1)
+        # Verify telemetry
+        mock_span_obj.set_attribute.assert_any_call("lockfile.total_images", 2)
+        mock_span_obj.set_attribute.assert_any_call("lockfile.images_needing_generation", 0)
+        mock_span_obj.set_attribute.assert_any_call("lockfile.unique_repo_arch_pairs", 0)
 
     @patch('opentelemetry.trace.get_current_span')
     async def test_ensure_repositories_loaded_unique_repo_arch_combinations(self, mock_span):
@@ -782,56 +448,46 @@ class TestEnsureRepositoriesLoaded(unittest.IsolatedAsyncioTestCase):
         image3 = self.create_mock_image_meta('image3', arches=['x86_64', 'aarch64'])
         image3.get_enabled_repos.return_value = {'repo2'}
 
-        # Mock digest check to need generation
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=AsyncMock(return_value="old_hash")):
-            with patch.object(self.generator, '_compute_hash', return_value="new_hash"):
-                with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
-                    await self.generator.ensure_repositories_loaded([image1, image2, image3], self.base_dir)
+        # All images need generation
+        base_dir = Path('/tmp/base')
+        with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()) as mock_load:
+            await self.generator.ensure_repositories_loaded([image1, image2, image3], base_dir)
 
-                    # Should call _load_repos for each unique architecture
-                    # x86_64: repos {repo1, repo2} | aarch64: repos {repo1, repo2, repo3}
-                    self.assertEqual(mock_load.call_count, 2)
+            # Should call _load_repos for each unique architecture
+            # x86_64: repos {repo1, repo2} | aarch64: repos {repo1, repo2, repo3}
+            self.assertEqual(mock_load.call_count, 2)
 
-                    # Verify the correct repo sets were loaded
-                    call_args = mock_load.call_args_list
-                    x86_64_call = next(call for call in call_args if call[0][1] == 'x86_64')
-                    aarch64_call = next(call for call in call_args if call[0][1] == 'aarch64')
+            # Verify the correct repo sets were loaded
+            call_args = mock_load.call_args_list
+            x86_64_call = next(call for call in call_args if call[0][1] == 'x86_64')
+            aarch64_call = next(call for call in call_args if call[0][1] == 'aarch64')
 
-                    self.assertEqual(x86_64_call[0][0], {'repo1', 'repo2'})
-                    self.assertEqual(aarch64_call[0][0], {'repo1', 'repo2', 'repo3'})
+            self.assertEqual(x86_64_call[0][0], {'repo1', 'repo2'})
+            self.assertEqual(aarch64_call[0][0], {'repo1', 'repo2', 'repo3'})
 
-                    # Total unique pairs: repo1-x86_64, repo2-x86_64, repo1-aarch64, repo2-aarch64, repo3-aarch64 = 5
-                    mock_span_obj.set_attribute.assert_any_call("lockfile.unique_repo_arch_pairs", 5)
+            # Total unique pairs: repo1-x86_64, repo2-x86_64, repo1-aarch64, repo2-aarch64, repo3-aarch64 = 5
+            mock_span_obj.set_attribute.assert_any_call("lockfile.unique_repo_arch_pairs", 5)
 
     async def test_ensure_repositories_loaded_logs_image_decisions(self):
         """Test that image decisions are properly logged"""
-        image1 = self.create_mock_image_meta('needs-generation', enabled=True, has_repos=True, has_rpms=True)
-        image2 = self.create_mock_image_meta('skips-generation', enabled=True, has_repos=True, has_rpms=True)
+        base_dir = Path('/tmp/base')
 
-        # Mock different digest results
-        async def mock_digest_check(digest_path, image_meta):
-            if image_meta.distgit_key == 'needs-generation':
-                return "old_hash"
-            return "same_hash"
+        image1 = self.create_mock_image_meta('needs-generation')
+        image2 = self.create_mock_image_meta('skips-generation')
 
-        # Mock lockfile check to return existing lockfile for skipping image
-        async def mock_lockfile_check(lockfile_path, image_meta):
-            if image_meta.distgit_key == 'skips-generation':
-                return "lockfile exists"
-            return None
+        # Mock one image that needs generation and one that doesn't
+        image1.is_lockfile_generation_enabled.return_value = True
+        image1.get_enabled_repos.return_value = {'repo1', 'repo2'}
+        image1.get_lockfile_rpms_to_install = AsyncMock(return_value={'pkg1', 'pkg2'})
 
-        with patch.object(self.generator, '_get_digest_from_target_branch', new=mock_digest_check):
-            with patch.object(self.generator, '_get_lockfile_from_target_branch', new=mock_lockfile_check):
-                with patch.object(self.generator, '_compute_hash', return_value="same_hash"):
-                    with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()):
-                        await self.generator.ensure_repositories_loaded([image1, image2], self.base_dir)
+        image2.is_lockfile_generation_enabled.return_value = False  # Skip generation
 
-                        # Verify logging
-                        self.logger.info.assert_any_call("Image needs-generation needs lockfile generation")
-                        self.logger.info.assert_any_call(
-                            "Image skips-generation skipping lockfile generation (digest unchanged)"
-                        )
-                    self.logger.info.assert_any_call("Loading repositories for 1 images needing lockfile generation")
+        with patch.object(self.generator.builder, '_load_repos', new=AsyncMock()):
+            await self.generator.ensure_repositories_loaded([image1, image2], base_dir)
+
+            # Verify logging
+            self.logger.info.assert_any_call("Image needs-generation needs lockfile generation")
+            self.logger.info.assert_any_call("Image skips-generation skipping lockfile generation")
 
 
 class TestArtifactInfo(unittest.TestCase):
