@@ -84,7 +84,7 @@ class KonfluxRebaseCli:
             repo_type=self.repo_type,
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
-            image_repo=self.image_type,
+            image_repo=self.image_repo,
         )
 
         await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
