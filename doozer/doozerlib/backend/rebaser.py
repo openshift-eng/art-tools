@@ -79,7 +79,7 @@ class KonfluxRebaser:
         source_modifier_factory=SourceModifierFactory(),
         logger: Optional[logging.Logger] = None,
         variant: BuildVariant = BuildVariant.OCP,
-        image_repo: str = None,
+        image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
