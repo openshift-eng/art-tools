@@ -8,14 +8,15 @@ from itertools import chain
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 
 import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import get_build_system
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME, GOLANG_RPM_PACKAGE_NAME
 from artcommonlib.format_util import green_prefix, green_print, red_prefix
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from errata_tool import Erratum
@@ -476,12 +477,12 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> 
     return go_nvr_map
 
 
-def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) -> dict[str, set[tuple[str, str, str]]]:
     """
     :param nvrs: a list of tuples containing (name, version, release) in order
     :param logger: logger
 
-    :return: a dict mapping go version string to a list of nvrs built from that go version
+    :return: a dict mapping go version string to a set of nvrs built from that go version
     """
     konflux_db = KonfluxDb()
     konflux_db.bind(KonfluxBuildRecord)
@@ -492,16 +493,39 @@ def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) 
         lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
     ).result()
 
-    go_nvr_map = {}
-    for build in all_build_objs:
+    return get_golang_container_nvrs_for_konflux_record(cast(list[KonfluxBuildRecord], all_build_objs), logger)
+
+
+def get_golang_container_nvrs_for_konflux_record(
+    build_objs: Iterable[KonfluxBuildRecord], logger
+) -> dict[str, set[tuple[str, str, str]]]:
+    """
+    :param build_objs: a list of konflux build records
+    :param logger: logger
+
+    :return: a dict mapping go version string to a set of nvrs built from that go version
+    """
+    go_nvr_map: dict[str, set[tuple[str, str, str]]] = {}
+    for build in build_objs:
+        nvr_dict = parse_nvr(build.nvr)
+        nvr = (nvr_dict['name'], nvr_dict['version'], nvr_dict['release'])
         go_version = None
-        nvr = build.nvr
-        name = parse_nvr(nvr)['name']
-        if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
-            # this assumes golang builder for image is still in brew
-            go_version = golang_builder_version(nvr, logger)
-            if not go_version:
-                raise ValueError(f'Cannot find go version for {name}')
+        # The golang-builder container needs special handling,
+        # because we need to look at included golang rpms instead of parent images.
+        # Unlike `get_golang_container_nvrs_brew`, we don't accept 'go-toolset*' containers
+        # because they don't exist in KonfluxDB.
+        if build.name == GOLANG_BUILDER_IMAGE_NAME:
+            go_package = next(
+                (
+                    pkg_nvr
+                    for pkg in build.installed_packages
+                    if (pkg_nvr := parse_nvr(pkg))['name'] == GOLANG_RPM_PACKAGE_NAME
+                ),
+                None,
+            )
+            if not go_package:
+                raise ValueError(f'Cannot find go version for {build.nvr}')
+            go_version = f"{go_package['version']}-{go_package['release']}"
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
