@@ -8,6 +8,7 @@ from typing import List
 
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildRecord,
@@ -167,8 +168,14 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
-        major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        # Use group name format for non-openshift groups, ose format for openshift groups
+        if self.runtime.group.startswith("openshift-"):
+            major, minor = self.runtime.get_major_minor()
+            snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        else:
+            # Replace dots with dashes for non-openshift groups (e.g., oadp-1.5 -> oadp-1-5)
+            group_name_safe = self.runtime.group.replace(".", "-")
+            snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster
@@ -310,8 +317,7 @@ def snapshot_cli():
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be determined based on group name.',
 )
 @click.option(
     '--pull-secret',
@@ -359,13 +365,33 @@ async def new_snapshot_cli(
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
 
+    # Determine kubeconfig based on group if not provided
     if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        # Determine the appropriate environment variable based on group prefix
+        kubeconfig_env_var = None
+        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+            if runtime.group.startswith(prefix):
+                kubeconfig_env_var = env_var
+                break
 
-    if not konflux_kubeconfig:
-        LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
-        )
+        if kubeconfig_env_var:
+            konflux_kubeconfig = os.environ.get(kubeconfig_env_var)
+
+        if not konflux_kubeconfig:
+            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            LOGGER.info(
+                f"--konflux-kubeconfig and kubeconfig env vars are not set. Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in"
+            )
+
+    # Determine namespace based on group if not provided
+    if not konflux_namespace:
+        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+            if runtime.group.startswith(prefix):
+                konflux_namespace = namespace
+                break
+
+        if not konflux_namespace:
+            konflux_namespace = KONFLUX_DEFAULT_NAMESPACE
 
     if builds_file:
         if builds_file == "-":
@@ -487,8 +513,7 @@ class GetSnapshotCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be determined based on group name.',
 )
 @click.option(
     '--pull-secret',
@@ -516,13 +541,33 @@ async def get_snapshot_cli(
     \b
     $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
+    # Determine kubeconfig based on group if not provided
     if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        # Determine the appropriate environment variable based on group prefix
+        kubeconfig_env_var = None
+        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+            if runtime.group.startswith(prefix):
+                kubeconfig_env_var = env_var
+                break
 
-    if not konflux_kubeconfig:
-        LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
-        )
+        if kubeconfig_env_var:
+            konflux_kubeconfig = os.environ.get(kubeconfig_env_var)
+
+        if not konflux_kubeconfig:
+            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            LOGGER.info(
+                f"--konflux-kubeconfig and kubeconfig env vars are not set. Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in"
+            )
+
+    # Determine namespace based on group if not provided
+    if not konflux_namespace:
+        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+            if runtime.group.startswith(prefix):
+                konflux_namespace = namespace
+                break
+
+        if not konflux_namespace:
+            konflux_namespace = KONFLUX_DEFAULT_NAMESPACE
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,
