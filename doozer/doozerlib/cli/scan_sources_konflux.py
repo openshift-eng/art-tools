@@ -98,6 +98,11 @@ class ConfigScanSources:
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
+        """
+        Coordinate the full scan workflow to detect RPM, image, task-bundle, and RHCOS changes and produce a report.
+        
+        Performs a sequence of high-level operations: optionally attempts to rebase public upstream into the private openshift-priv repository (when rebase is enabled and allowed for the runtime version); conditionally gathers ART RPM build information and checks for changing RPMs (skipped for the "openshift-4.21" group); fetches current task-bundle SHAs from GitHub; builds an image dependency tree and scans images level-by-level; optionally detects RHCOS status when a CI kubeconfig is provided and the runtime group is openshift-*; and finally generates and prints the consolidated report.
+        """
         if self.rebase_priv:
             major, minor = self.runtime.get_major_minor_fields()
             version = f'{major}.{minor}'
@@ -419,6 +424,14 @@ class ConfigScanSources:
 
     @skip_check_if_changing
     async def scan_image(self, image_meta: ImageMetadata):
+        """
+        Perform a full set of checks to determine whether an image requires rebuilding.
+        
+        Runs a sequence of scans for the given image metadata (architectures, network mode/attestation, upstream commit alignment, configuration drift, dependency rebase times, builder image changes, RPM and extra-package changes where applicable, and task-bundle currency). When a condition indicating a rebuild is detected, the function records a rebuild hint and may mark the image (and its descendants) as changing.
+        
+        Parameters:
+            image_meta (ImageMetadata): Metadata for the image to inspect; used to locate latest build records, configuration, dependencies, and related build artifacts.
+        """
         self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
         if image_meta.config.konflux is not Missing:
             image_meta.config = Model(deep_merge(image_meta.config.primitive(), image_meta.config.konflux.primitive()))
