@@ -574,6 +574,43 @@ class TestLocalDevelopment(IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     @patch("elliottlib.cli.snapshot_cli.KonfluxClient.from_kubeconfig")
+    async def test_create_snapshot_handles_cluster_failure_gracefully(self, mock_konflux_client_init):
+        """Test that CreateSnapshotCli handles cluster creation failures gracefully"""
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        # Mock _create to raise an exception (simulating cluster access failure)
+        mock_konflux_client._create = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        konflux_config = {
+            'namespace': 'test-namespace',
+            'kubeconfig': None,  # No kubeconfig - using current context
+            'context': None,
+        }
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=konflux_config,
+            image_repo_pull_secret='/tmp/pull-secret',
+            builds=['test-build-1.0.0-1'],
+            dry_run=False,  # Not dry-run mode - should attempt actual creation
+        )
+
+        # Mock the methods to return some test data
+        cli.fetch_build_records = AsyncMock(return_value=[])
+        cli.get_pullspecs = AsyncMock(return_value=[])
+        cli.new_snapshots = AsyncMock(return_value=[{'metadata': {'name': 'test-snapshot'}}])
+
+        # Should raise a RuntimeError with helpful message
+        with self.assertRaises(RuntimeError) as context:
+            await cli.run()
+
+        error_msg = str(context.exception)
+        self.assertIn("Failed to create snapshots in the cluster using current oc context", error_msg)
+        self.assertIn("Connection refused", error_msg)
+        self.assertIn("Make sure you're connected to the right cluster", error_msg)
+
+    @patch("elliottlib.cli.snapshot_cli.KonfluxClient.from_kubeconfig")
     async def test_get_snapshot_handles_no_kubeconfig_gracefully(self, mock_konflux_client_init):
         """Test that GetSnapshotCli handles missing kubeconfig gracefully for local development"""
         mock_konflux_client = AsyncMock()

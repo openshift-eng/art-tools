@@ -308,12 +308,19 @@ class CreateSnapshotCli:
             return snapshot_objs
         else:
             # TODO: `_create` is a private method, should be replaced with a public method in the future
-            snapshot_objs = await asyncio.gather(
-                *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
-            )
-            snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
-            LOGGER.info("Created Konflux Snapshot(s): %s", ", ".join(snapshot_urls))
-            return snapshot_objs
+            try:
+                snapshot_objs = await asyncio.gather(
+                    *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
+                )
+                snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
+                LOGGER.info("Created Konflux Snapshot(s): %s", ", ".join(snapshot_urls))
+                return snapshot_objs
+            except Exception as e:
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                raise RuntimeError(
+                    f"Failed to create snapshots in the cluster using {kubeconfig_msg}. "
+                    f"Error: {e}. Make sure you're connected to the right cluster and have proper permissions."
+                ) from e
 
     @staticmethod
     async def get_pullspecs(pullspecs: list, image_repo_pull_secret: str):
