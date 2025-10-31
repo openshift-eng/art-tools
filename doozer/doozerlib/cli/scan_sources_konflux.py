@@ -125,7 +125,11 @@ class ConfigScanSources:
             await self.scan_images(self.image_tree[level])
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
-        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-"):
+        if (
+            self.ci_kubeconfig
+            and self.runtime.group.startswith("openshift-")
+            and self.runtime.group != 'openshift-4.21'
+        ):
             await self.detect_rhcos_status()
 
         # Print the output report
