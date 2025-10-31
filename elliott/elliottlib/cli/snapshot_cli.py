@@ -213,8 +213,6 @@ def _resolve_konflux_namespace(runtime: Runtime, provided_namespace: str | None 
     if provided_namespace:
         return provided_namespace
 
-    matched_prefix = None
-
     # Sort by prefix length descending to prefer longest matches first
     try:
         sorted_mappings = sorted(GROUP_NAMESPACE_MAP.items(), key=lambda x: len(x[0]), reverse=True)
@@ -364,7 +362,7 @@ class CreateSnapshotCli:
                 # in a couple of weeks
                 try:
                     await self.konflux_client.get_component__caching(comp_name, strict=True)
-                except Exception as e:
+                except Exception:
                     if isinstance(record, KonfluxBuildRecord):
                         comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
                         await self.konflux_client.get_component__caching(comp_name, strict=True)
