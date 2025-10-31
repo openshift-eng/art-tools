@@ -682,7 +682,7 @@ class GenPayloadCli:
                 image_meta = build_inspector.get_image_meta()
                 if self.runtime.build_system == 'brew':
                     non_latest_rpms = await build_inspector.find_non_latest_rpms()
-                else:  # konflux
+                elif self.runtime.group != 'openshift-4.21':  # TODO to be reverted
                     non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
 
                 for arch, non_latest_rpms in non_latest_rpms.items():
