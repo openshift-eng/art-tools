@@ -534,6 +534,75 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
             self.assertEqual(matched_namespace, "special")
 
 
+class TestLocalDevelopment(IsolatedAsyncioTestCase):
+    """Test cases for local development scenarios"""
+
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.runtime.konflux_db = MagicMock()  # Not None
+        self.runtime.group = "test-group"
+        self.runtime.get_major_minor.return_value = (4, 18)  # Mock version numbers
+
+    @patch("elliottlib.cli.snapshot_cli.KonfluxClient.from_kubeconfig")
+    async def test_create_snapshot_handles_no_kubeconfig_gracefully(self, mock_konflux_client_init):
+        """Test that CreateSnapshotCli handles missing kubeconfig gracefully for local development"""
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        konflux_config = {
+            'namespace': 'test-namespace',
+            'kubeconfig': None,  # No kubeconfig
+            'context': None,
+        }
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=konflux_config,
+            image_repo_pull_secret='/tmp/pull-secret',
+            builds=['test-build-1.0.0-1'],
+            dry_run=True,
+        )
+
+        # Mock the methods to avoid actual DB/network calls
+        cli.fetch_build_records = AsyncMock(return_value=[])
+        cli.get_pullspecs = AsyncMock(return_value=[])
+        cli.new_snapshots = AsyncMock(return_value=[])
+
+        # Should not raise an exception
+        result = await cli.run()
+        self.assertEqual(result, [])
+
+    @patch("elliottlib.cli.snapshot_cli.KonfluxClient.from_kubeconfig")
+    async def test_get_snapshot_handles_no_kubeconfig_gracefully(self, mock_konflux_client_init):
+        """Test that GetSnapshotCli handles missing kubeconfig gracefully for local development"""
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        konflux_config = {
+            'namespace': 'test-namespace',
+            'kubeconfig': None,  # No kubeconfig
+            'context': None,
+        }
+
+        cli = GetSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=konflux_config,
+            image_repo_pull_secret='/tmp/pull-secret',
+            for_fbc=False,
+            dry_run=True,
+            snapshot='test-snapshot',
+        )
+
+        # Should not raise an exception during initialization phase
+        # (dry_run=True will skip actual operations)
+        result = await cli.run()
+        # In dry_run mode, it returns a mock NVR
+        self.assertIsInstance(result, list)
+        self.assertTrue(len(result) > 0)
+
+
 class TestHelperFunctions(IsolatedAsyncioTestCase):
     """Test cases for helper functions that were extracted from duplicate code"""
 
