@@ -132,7 +132,7 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[s
     return nvr_record_map
 
 
-def _resolve_konflux_kubeconfig(runtime: Runtime, provided_kubeconfig: str = None) -> str:
+def _resolve_konflux_kubeconfig(runtime: Runtime, provided_kubeconfig: str | None = None) -> str | None:
     """
     Resolve the Konflux kubeconfig path based on group-specific mappings.
 
@@ -171,7 +171,7 @@ def _resolve_konflux_kubeconfig(runtime: Runtime, provided_kubeconfig: str = Non
                     LOGGER.warning(
                         f"Environment variable {kubeconfig_env_var} is not set for group '{runtime.group}' (matched prefix: '{matched_prefix}')"
                     )
-            except (KeyError, AttributeError) as e:
+            except AttributeError as e:
                 LOGGER.warning(
                     f"Error accessing environment variable {kubeconfig_env_var} for group '{runtime.group}': {e}"
                 )
@@ -192,14 +192,14 @@ def _resolve_konflux_kubeconfig(runtime: Runtime, provided_kubeconfig: str = Non
             f"Error processing kubeconfig mappings for group '{runtime.group}': {e}. Will rely on oc being logged in."
         )
         return None
-    except Exception as e:
+    except Exception:
         LOGGER.exception(
             f"Unexpected error determining kubeconfig for group '{runtime.group}'. Will rely on oc being logged in."
         )
         return None
 
 
-def _resolve_konflux_namespace(runtime: Runtime, provided_namespace: str = None) -> str:
+def _resolve_konflux_namespace(runtime: Runtime, provided_namespace: str | None = None) -> str:
     """
     Resolve the Konflux namespace based on group-specific mappings.
 
@@ -234,7 +234,7 @@ def _resolve_konflux_namespace(runtime: Runtime, provided_namespace: str = None)
             f"Error processing namespace mappings for group '{runtime.group}': {e}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
         )
         return KONFLUX_DEFAULT_NAMESPACE
-    except Exception as e:
+    except Exception:
         LOGGER.exception(
             f"Unexpected error determining namespace for group '{runtime.group}'. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
         )
@@ -285,7 +285,7 @@ class CreateSnapshotCli:
                 raise RuntimeError(
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
-                )
+                ) from None
             except Exception as e:
                 kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
                 LOGGER.warning(
@@ -379,7 +379,7 @@ class CreateSnapshotCli:
                     else:
                         # fbc component name is determined from the image it builds for, which is not stored in the DB
                         # rather than hack something up, let it fail for now
-                        raise e
+                        raise
 
             source_url = record.rebase_repo_url
             revision = record.rebase_commitish
@@ -612,7 +612,7 @@ class GetSnapshotCli:
                 raise RuntimeError(
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
-                )
+                ) from None
             except Exception as e:
                 kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
                 LOGGER.warning(
