@@ -112,7 +112,7 @@ class TestImageSchema(unittest.TestCase):
                 'mode': 'enabled',
                 'cachi2': {
                     'enabled': True,
-                    'lockfile': {'enabled': True, 'force': False, 'rpms': ['package1', 'package2', 'package3']},
+                    'lockfile': {'enabled': True, 'rpms': ['package1', 'package2', 'package3']},
                 },
             },
         }
@@ -170,27 +170,6 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
 
-    def test_validate_with_valid_konflux_cachi2_lockfile_force(self):
-        """Test valid konflux.cachi2.lockfile.force configuration"""
-        valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {'cachi2': {'lockfile': {'force': False}}},
-        }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
-
-    def test_validate_with_invalid_konflux_cachi2_lockfile_force(self):
-        """Test invalid konflux.cachi2.lockfile.force type"""
-        invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'lockfile': {'force': 'not-a-boolean'}}},
-        }
-        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
-
     def test_validate_with_valid_konflux_cachi2_lockfile_inspect_parent_true(self):
         """Test valid konflux.cachi2.lockfile.inspect_parent = true"""
         valid_data = {
@@ -245,7 +224,7 @@ class TestImageSchema(unittest.TestCase):
             'konflux': {
                 'mode': 'enabled',
                 'cachito': {'mode': 'emulation'},
-                'cachi2': {'enabled': True, 'lockfile': {'enabled': True, 'force': False, 'rpms': ['rpm1', 'rpm2']}},
+                'cachi2': {'enabled': True, 'lockfile': {'enabled': True, 'rpms': ['rpm1', 'rpm2']}},
             },
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
