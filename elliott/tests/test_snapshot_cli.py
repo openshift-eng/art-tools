@@ -322,7 +322,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         """Test snapshot naming for openshift groups"""
         self.runtime.group = "openshift-4.18"
         self.runtime.get_major_minor.return_value = (4, 18)
-        
+
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
         mock_konflux_client_init.return_value = mock_konflux_client
@@ -338,7 +338,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         # Test the snapshot naming logic directly
         build_records = []
         snapshots = await cli.new_snapshots(build_records)
-        
+
         # For openshift groups, should use ose-{major}-{minor}-{timestamp} format
         # Since there are no build records, no snapshots will be created, but we can test the naming logic
         # by checking that the method completes without error and the naming logic is correct
@@ -349,7 +349,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
         """Test snapshot naming for oadp groups"""
         self.runtime.group = "oadp-1.5"
-        
+
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
         mock_konflux_client_init.return_value = mock_konflux_client
@@ -364,7 +364,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
         build_records = []
         snapshots = await cli.new_snapshots(build_records)
-        
+
         # For non-openshift groups, should use {normalized_group}-{timestamp} format
         # Since there are no build records, no snapshots will be created
         self.assertEqual(snapshots, [])
@@ -374,7 +374,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_complex_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
         """Test snapshot naming for complex group names"""
         self.runtime.group = "Test_Group-1.5"
-        
+
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
         mock_konflux_client_init.return_value = mock_konflux_client
@@ -406,11 +406,11 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
         build_records = [mock_build_record]
         snapshots = await cli.new_snapshots(build_records)
-        
+
         # Should create one snapshot with normalized group name
         self.assertEqual(len(snapshots), 1)
         snapshot = snapshots[0]
-        
+
         # Check that the snapshot name uses the normalized group name
         # "Test_Group-1.5" should become "test-group-1-5-20251031141128-1"
         expected_name_prefix = "test-group-1-5-20251031141128"
@@ -421,7 +421,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_simple_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
         """Test snapshot naming for simple oadp group"""
         self.runtime.group = "oadp-1.5"
-        
+
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
         mock_konflux_client_init.return_value = mock_konflux_client
@@ -453,11 +453,11 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
         build_records = [mock_build_record]
         snapshots = await cli.new_snapshots(build_records)
-        
+
         # Should create one snapshot with normalized group name
         self.assertEqual(len(snapshots), 1)
         snapshot = snapshots[0]
-        
+
         # Check that the snapshot name uses the normalized group name
         # "oadp-1.5" should become "oadp-1-5-20251031141128-1"
         expected_name_prefix = "oadp-1-5-20251031141128"
@@ -475,10 +475,10 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
             "openshift-priv-": "private-namespace",
             "oadp-": "oadp-namespace",
         }
-        
+
         # Sort by prefix length descending (longest first)
         sorted_mappings = sorted(test_mappings.items(), key=lambda x: len(x[0]), reverse=True)
-        
+
         # Test that "openshift-priv-4.18" matches the longer prefix
         group = "openshift-priv-4.18"
         matched_namespace = None
@@ -486,9 +486,9 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
             if group.startswith(prefix):
                 matched_namespace = namespace
                 break
-        
+
         self.assertEqual(matched_namespace, "private-namespace")
-        
+
         # Test that "openshift-4.18" matches the shorter prefix
         group = "openshift-4.18"
         matched_namespace = None
@@ -496,7 +496,7 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
             if group.startswith(prefix):
                 matched_namespace = namespace
                 break
-        
+
         self.assertEqual(matched_namespace, "default-namespace")
 
     def test_prefix_order_independence(self):
@@ -507,15 +507,15 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
             "openshift-priv-": "private",
             "openshift-special-": "special",
         }
-        
+
         mappings_order_2 = {
             "openshift-special-": "special",
-            "openshift-": "default", 
+            "openshift-": "default",
             "openshift-priv-": "private",
         }
-        
+
         test_group = "openshift-special-4.18"
-        
+
         # Test both orders produce the same result
         for mappings in [mappings_order_1, mappings_order_2]:
             sorted_mappings = sorted(mappings.items(), key=lambda x: len(x[0]), reverse=True)
@@ -524,5 +524,5 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
                 if test_group.startswith(prefix):
                     matched_namespace = namespace
                     break
-            
+
             self.assertEqual(matched_namespace, "special")

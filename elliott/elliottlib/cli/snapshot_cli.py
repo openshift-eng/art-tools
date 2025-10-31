@@ -42,38 +42,38 @@ LOGGER = logutil.get_logger(__name__)
 def normalize_group_name_for_k8s(group_name: str) -> str:
     """
     Normalize a group name to comply with Kubernetes DNS label rules.
-    
+
     Kubernetes DNS label rules:
     - Must be lowercase alphanumeric or '-'
     - Must start and end with alphanumeric character
     - Cannot be longer than 63 characters
     - Cannot have consecutive '-'
-    
+
     Args:
         group_name: The group name to normalize (e.g., "Test_Group-1.5")
-        
+
     Returns:
         Normalized group name (e.g., "test-group-1-5")
     """
     if not group_name:
         return ""
-    
+
     # Convert to lowercase
     normalized = group_name.lower()
-    
+
     # Replace dots and any non-alphanumeric characters (except '-') with '-'
     normalized = re.sub(r'[^a-z0-9\-]', '-', normalized)
-    
+
     # Collapse consecutive '-' into a single '-'
     normalized = re.sub(r'-+', '-', normalized)
-    
+
     # Trim leading/trailing non-alphanumeric characters (including '-')
     normalized = re.sub(r'^[^a-z0-9]+|[^a-z0-9]+$', '', normalized)
-    
+
     # Ensure it starts and ends with alphanumeric if not empty
     if normalized and (normalized.startswith('-') or normalized.endswith('-')):
         normalized = re.sub(r'^-+|-+$', '', normalized)
-    
+
     # Truncate to 63 characters if needed (leave room for timestamp suffix)
     # Reserve space for timestamp format like "-20251031141128-1" (18 chars)
     max_group_length = 63 - 18 - 1  # -1 for the connecting dash
@@ -81,7 +81,7 @@ def normalize_group_name_for_k8s(group_name: str) -> str:
         normalized = normalized[:max_group_length]
         # Ensure we don't end with a dash after truncation
         normalized = normalized.rstrip('-')
-    
+
     return normalized
 
 
