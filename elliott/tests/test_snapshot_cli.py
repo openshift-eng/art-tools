@@ -469,6 +469,44 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         expected_name_prefix = "oadp-1-5-20251031141128"
         self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
 
+    @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_invalid_group_raises_error(self, mock_konflux_client_init, _mock_timestamp):
+        """Test that group names that normalize to empty string raise ValueError"""
+        self.runtime.group = "_..-__"  # This normalizes to empty string
+
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=["test-component-v1.0.0-1"],
+            dry_run=self.dry_run,
+        )
+
+        # Mock a build record to trigger the snapshot creation logic
+        mock_build_record = Mock()
+        mock_build_record.get_konflux_application_name.return_value = "test-app"
+        mock_build_record.get_konflux_component_name.return_value = "test-component"
+        mock_build_record.rebase_repo_url = "https://github.com/test/repo"
+        mock_build_record.rebase_commitish = "abc123"
+        mock_build_record.image_tag = "sha256:digest"
+        mock_build_record.image_pullspec = "registry/image@sha256:digest"
+        mock_build_record.name = "test-component"
+
+        build_records = [mock_build_record]
+
+        # Should raise ValueError with clear message
+        with self.assertRaises(ValueError) as context:
+            await cli.new_snapshots(build_records)
+
+        error_msg = str(context.exception)
+        self.assertIn("Group name '_..-__' produces invalid normalized name", error_msg)
+        self.assertIn("Kubernetes snapshot", error_msg)
+
 
 class TestPrefixMatching(IsolatedAsyncioTestCase):
     """Test cases for prefix matching behavior in group-based configuration resolution"""

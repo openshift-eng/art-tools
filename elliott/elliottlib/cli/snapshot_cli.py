@@ -352,6 +352,10 @@ class CreateSnapshotCli:
         else:
             # Normalize group name to comply with Kubernetes DNS label rules
             group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
+            if not group_name_safe:
+                raise ValueError(
+                    f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+                )
             snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
