@@ -108,11 +108,12 @@ class ConfigScanSources:
             else:
                 self.rebase_into_priv()
 
-        # Gather latest builds for ART-managed RPMs
-        await self.find_latest_rpms_builds()
+        if self.runtime.group != "openshift-4.21":
+            # Gather latest builds for ART-managed RPMs
+            await self.find_latest_rpms_builds()
 
-        # Find RPMs built by ART that need to be rebuilt
-        await self.check_changing_rpms()
+            # Find RPMs built by ART that need to be rebuilt
+            await self.check_changing_rpms()
 
         # Get current task bundle SHAs from GitHub
         self.current_task_bundles = await self.get_current_task_bundle_shas()
@@ -449,11 +450,12 @@ class ConfigScanSources:
         # Check for changes in builders
         await self.scan_builders_changes(image_meta)
 
-        # Check for RPM changes
-        await self.scan_rpm_changes(image_meta)
+        if self.runtime.group != "openshift-4.21":
+            # Check for RPM changes
+            await self.scan_rpm_changes(image_meta)
 
-        # Check for changes in extra packages
-        await self.scan_extra_packages(image_meta)
+            # Check for changes in extra packages
+            await self.scan_extra_packages(image_meta)
 
         # Check for outdated task bundles
         await self.scan_task_bundle_changes(image_meta)
