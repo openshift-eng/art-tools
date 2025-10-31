@@ -2013,6 +2013,13 @@ class KonfluxRebaser:
                     if merge_env_line:
                         await df.write(f'{merge_env_line}\n')
 
+                if line.startswith('COPY . .') and 'KUBE_GIT_VERSION' in env_vars_from_source:
+                    # https://issues.redhat.com/browse/OCPBUGS-63749
+                    # Go mod will only record a module's version based on tags. To make sure that
+                    # kube-apiserver shows up with the proper go module version, we tag directly
+                    # after copying .git.
+                    await df.write('RUN [ -n "$KUBE_GIT_VERSION" ] && git tag -f "$KUBE_GIT_VERSION" || true\n')
+
     @staticmethod
     @start_as_current_span_async(TRACER, "rebase.reflow_labels")
     async def _reflow_labels(df_path: Path):
