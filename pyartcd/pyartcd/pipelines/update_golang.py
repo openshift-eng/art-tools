@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import List
+from typing import List, cast
 
 import click
 import koji
@@ -257,16 +257,18 @@ class UpdateGolangPipeline:
 
         _LOGGER.info("Updating streams.yml with found builder images")
         await self._slack_client.say_in_thread(f"new golang builders available {', '.join(builder_nvrs.values())}")
-        await self.update_golang_streams(go_version, builder_nvrs)
 
-        await move_golang_bugs(
-            ocp_version=self.ocp_version,
-            cves=self.cves,
-            nvrs=self.go_nvrs if self.cves else None,
-            components=[GOLANG_BUILDER_CVE_COMPONENT],
-            force_update_tracker=self.force_update_tracker,
-            dry_run=self.dry_run,
-        )
+        # FIXME: yuxzhu: for testing
+        # await self.update_golang_streams(go_version, builder_nvrs)
+
+        # await move_golang_bugs(
+        #     ocp_version=self.ocp_version,
+        #     cves=self.cves,
+        #     nvrs=self.go_nvrs if self.cves else None,
+        #     components=[GOLANG_BUILDER_CVE_COMPONENT],
+        #     force_update_tracker=self.force_update_tracker,
+        #     dry_run=self.dry_run,
+        # )
         await self._slack_client.say_in_thread(f":white_check_mark: Updating golang for {self.ocp_version} complete.")
 
     async def process_build(self, el_v, nvr):
@@ -326,7 +328,10 @@ class UpdateGolangPipeline:
             )
             if builds:
                 build = builds[0]
-                go_nvr_map = elliottutil.get_golang_container_nvrs(
+                # yuxzhu: `elliottutil.get_golang_container_nvrs` uses p-flag to determine the build system.
+                # However, our existing golang-builders may not have p-flags.
+                # Here we are safe to looking at only Brew builds.
+                go_nvr_map = elliottutil.get_golang_container_nvrs_brew(
                     [(build['name'], build['version'], build['release'])],
                     _LOGGER,
                 )  # {'1.20.12-2.el9_3': {('openshift-golang-builder-container', 'v1.20.12',
@@ -337,38 +342,47 @@ class UpdateGolangPipeline:
                     builder_nvrs[el_v] = build['nvr']
         return builder_nvrs
 
-    async def get_existing_builders_konflux(self, el_nvr_map, go_version):
+    async def get_existing_builders_konflux(self, el_nvr_map: dict[int, str], go_version: str):
         """
         Check if openshift-golang-builder builds exist in Konflux for the provided compiler builds.
         Similar to get_existing_builders but queries KonfluxDb instead of Brew.
         """
-        group = f'openshift-{self.ocp_version}'
+        # group = f'openshift-{self.ocp_version}'
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
         builder_nvrs = {}
-        for el_v, go_nvr in el_nvr_map.items():
-            # Search for latest successful build for this component and el_target
-            # TODO: This is not assembly-aware.
-            build_record = await self.konflux_db.get_latest_build(
-                name=GOLANG_BUILDER_IMAGE_NAME,
-                group=group,
-                outcome=KonfluxBuildOutcome.SUCCESS,
-                el_target=f'el{el_v}',
-                artifact_type=ArtifactType.IMAGE,
-                engine=Engine.KONFLUX,
+        extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
+        build_records = await asyncio.gather(
+            *(
+                anext(
+                    self.konflux_db.search_builds_by_fields(
+                        where={
+                            "name": GOLANG_BUILDER_IMAGE_NAME,
+                            "el_target": f'el{el_v}',
+                            "artifact_type": str(ArtifactType.IMAGE),
+                            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+                        },
+                        extra_patterns=extra_patterns,
+                        limit=1,
+                    ),
+                    None,
+                )
+                for el_v in el_nvr_map
             )
-
-            if build_record:
-                # Verify this build was built with the correct golang version
-                nvr_tuple = (build_record.name, build_record.version, build_record.release)
-                go_nvr_map = elliottutil.get_golang_container_nvrs([nvr_tuple], _LOGGER)
-
-                if go_nvr_map:
-                    builder_go_vr = list(go_nvr_map.keys())[0]
-                    if builder_go_vr in go_nvr:
-                        _LOGGER.info(f"Found existing builder image in Konflux: {build_record.nvr} built with {go_nvr}")
-                        builder_nvrs[el_v] = build_record.nvr
-
+        )
+        found_records = {
+            el_v: cast(KonfluxBuildRecord, build_record)
+            for el_v, build_record in zip(el_nvr_map, build_records)
+            if build_record
+        }
+        go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(found_records.values(), _LOGGER)
+        for builder_go_vr, nvrs in go_nvr_map.items():
+            for el_v, go_nvr in el_nvr_map.items():
+                if builder_go_vr in go_nvr:
+                    for nvr in nvrs:
+                        nvr_str = f"{nvr[0]}-{nvr[1]}-{nvr[2]}"
+                        _LOGGER.info(f"Found existing builder image in Konflux: {nvr_str} built with {go_nvr}")
+                        builder_nvrs[el_v] = nvr_str
         return builder_nvrs
 
     async def update_golang_streams(self, go_version, builder_nvrs):
