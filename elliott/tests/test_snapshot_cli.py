@@ -3,7 +3,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
-from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli, normalize_group_name_for_k8s
+from elliottlib.cli.snapshot_cli import (
+    CreateSnapshotCli,
+    GetSnapshotCli,
+    _resolve_konflux_kubeconfig,
+    _resolve_konflux_namespace,
+    normalize_group_name_for_k8s,
+)
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
@@ -318,7 +324,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
-    async def test_openshift_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
+    async def test_openshift_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for openshift groups"""
         self.runtime.group = "openshift-4.18"
         self.runtime.get_major_minor.return_value = (4, 18)
@@ -346,7 +352,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
-    async def test_oadp_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
+    async def test_oadp_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for oadp groups"""
         self.runtime.group = "oadp-1.5"
 
@@ -371,7 +377,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
-    async def test_complex_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
+    async def test_complex_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for complex group names"""
         self.runtime.group = "Test_Group-1.5"
 
@@ -418,7 +424,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
-    async def test_oadp_simple_group_snapshot_name(self, mock_konflux_client_init, mock_timestamp):
+    async def test_oadp_simple_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for simple oadp group"""
         self.runtime.group = "oadp-1.5"
 
@@ -526,3 +532,66 @@ class TestPrefixMatching(IsolatedAsyncioTestCase):
                     break
 
             self.assertEqual(matched_namespace, "special")
+
+
+class TestHelperFunctions(IsolatedAsyncioTestCase):
+    """Test cases for helper functions that were extracted from duplicate code"""
+
+    def setUp(self):
+        self.runtime = MagicMock()
+
+    @patch.dict('os.environ', {'OADP_KONFLUX_SA_KUBECONFIG': '/path/to/oadp/kubeconfig'})
+    def test_resolve_konflux_kubeconfig_with_group_mapping(self):
+        """Test kubeconfig resolution with group-based environment variable"""
+        self.runtime.group = "oadp-1.5"
+
+        result = _resolve_konflux_kubeconfig(self.runtime)
+        self.assertEqual(result, '/path/to/oadp/kubeconfig')
+
+    def test_resolve_konflux_kubeconfig_with_provided_config(self):
+        """Test that provided kubeconfig takes precedence"""
+        self.runtime.group = "oadp-1.5"
+        provided_config = "/explicit/path/to/kubeconfig"
+
+        result = _resolve_konflux_kubeconfig(self.runtime, provided_config)
+        self.assertEqual(result, provided_config)
+
+    @patch.dict('os.environ', {}, clear=True)
+    def test_resolve_konflux_kubeconfig_no_env_var(self):
+        """Test kubeconfig resolution when environment variable is not set"""
+        self.runtime.group = "oadp-1.5"
+
+        result = _resolve_konflux_kubeconfig(self.runtime)
+        self.assertIsNone(result)
+
+    def test_resolve_konflux_namespace_with_group_mapping(self):
+        """Test namespace resolution with group-based mapping"""
+        self.runtime.group = "oadp-1.5"
+
+        result = _resolve_konflux_namespace(self.runtime)
+        self.assertEqual(result, "art-oadp-tenant")
+
+    def test_resolve_konflux_namespace_with_provided_namespace(self):
+        """Test that provided namespace takes precedence"""
+        self.runtime.group = "oadp-1.5"
+        provided_namespace = "explicit-namespace"
+
+        result = _resolve_konflux_namespace(self.runtime, provided_namespace)
+        self.assertEqual(result, provided_namespace)
+
+    def test_resolve_konflux_namespace_no_mapping_uses_default(self):
+        """Test namespace resolution falls back to default when no mapping found"""
+        self.runtime.group = "unknown-group"
+
+        result = _resolve_konflux_namespace(self.runtime)
+        self.assertEqual(result, "ocp-art-tenant")  # KONFLUX_DEFAULT_NAMESPACE
+
+    def test_resolve_konflux_namespace_longest_prefix_wins(self):
+        """Test that longest prefix wins in namespace resolution"""
+        # Test a group that could match multiple prefixes
+        self.runtime.group = "openshift-priv-4.18"
+
+        # This should match "openshift-" prefix and return "ocp-art-tenant"
+        # In real scenario with "openshift-priv-" it would match that longer prefix first
+        result = _resolve_konflux_namespace(self.runtime)
+        self.assertEqual(result, "ocp-art-tenant")
