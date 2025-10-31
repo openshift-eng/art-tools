@@ -543,6 +543,12 @@ class MetadataBase(object):
             return self.get_latest_brew_build(**kwargs)
 
         elif self.runtime.build_system == 'konflux':
+            # Ensure get_latest_konflux_build() raises IOError when no default specified,
+            # matching get_latest_brew_build() behavior
+            default = kwargs.get('default', -1)
+            if default == -1:
+                kwargs['strict'] = True
+
             basis_event = self.runtime.assembly_basis_event
             if basis_event:
                 kwargs['completed_before'] = basis_event
