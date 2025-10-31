@@ -774,30 +774,13 @@ class ConfigScanSources:
         If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
         """
 
-        # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
-        # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
-        # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
-        # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
-        # so an option might be to store this information in Redis
-        nvr_timestamp = isolate_timestamp_in_release(builder_build_nvr)
-        if nvr_timestamp:
-            start_search = datetime.strptime(nvr_timestamp, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-        else:
-            # Default search window: last 365 days
-            self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
-            start_search = datetime.now(tz=timezone.utc) - timedelta(days=365)
-
-        build = await anext(
-            self.runtime.konflux_db.search_builds_by_fields(
-                start_search=start_search,
-                where={
-                    'nvr': builder_build_nvr,
-                    'group': self.runtime.group,
-                    'assembly': self.runtime.assembly,
-                },
-                limit=1,
-            ),
-            None,
+        # Look for the build record in Konflux DB using optimized NVR lookup.
+        # The cache-first approach with exponential windows handles time-based search automatically,
+        # eliminating the need to extract timestamps from NVRs or specify search windows.
+        build = await self.runtime.konflux_db.get_latest_build(
+            nvr=builder_build_nvr,
+            group=self.runtime.group,
+            assembly=self.runtime.assembly,
         )
         if build:
             return build.start_time
