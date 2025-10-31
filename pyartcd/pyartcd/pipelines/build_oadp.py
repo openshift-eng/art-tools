@@ -8,6 +8,7 @@ from typing import Optional
 import click
 from artcommonlib import exectools
 from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
+from artcommonlib.konflux.utils import resolve_konflux_kubeconfig, resolve_konflux_namespace
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, locks
@@ -154,29 +155,17 @@ class BuildOadpPipeline:
             "--build-priority=1",
         ]
 
-        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
-            if self.group.startswith(prefix):
-                build_cmd.append(f"--konflux-namespace={namespace}")
-                break
+        # Resolve namespace using utility function
+        namespace = resolve_konflux_namespace(self.group)
+        build_cmd.append(f"--konflux-namespace={namespace}")
 
-        # Use kubeconfig from CLI parameter or tenant-specific environment variable
-        kubeconfig = self.kubeconfig
+        # Use kubeconfig from CLI parameter or resolve from group-specific environment variable
+        kubeconfig = resolve_konflux_kubeconfig(self.group, self.kubeconfig)
         if not kubeconfig:
-            # Determine the appropriate environment variable based on group prefix
-            kubeconfig_env_var = None
-            for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
-                if self.group.startswith(prefix):
-                    kubeconfig_env_var = env_var
-                    break
-
-            if kubeconfig_env_var:
-                kubeconfig = os.environ.get(kubeconfig_env_var)
-
-            if not kubeconfig:
-                available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
-                raise ValueError(
-                    f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
-                )
+            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            raise ValueError(
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+            )
 
         build_cmd.extend(
             [

@@ -8,6 +8,7 @@ from typing import List
 
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildRecord,
@@ -16,13 +17,17 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.konflux.utils import (
+    normalize_group_name_for_k8s,
+    resolve_konflux_kubeconfig,
+    resolve_konflux_namespace,
+)
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.util import oc_image_info_for_arch_async
 from kubernetes.dynamic import exceptions
 from kubernetes.dynamic.resource import ResourceInstance
@@ -119,30 +124,57 @@ class CreateSnapshotCli:
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
-        # Ensure the Snapshot CRD is accessible
-        try:
-            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
-        except exceptions.ResourceNotFoundError:
-            raise RuntimeError(
-                f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?"
-            )
+        # Ensure the Snapshot CRD is accessible (skip in dry-run mode)
+        if not self.dry_run:
+            try:
+                await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+                if self.konflux_config['kubeconfig']:
+                    LOGGER.info("Successfully verified cluster access using provided kubeconfig")
+                else:
+                    LOGGER.info("Successfully verified cluster access using current oc context")
+            except exceptions.ResourceNotFoundError:
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                raise RuntimeError(
+                    f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
+                    f"Make sure you're connected to the right cluster."
+                ) from None
+            except Exception as e:
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                LOGGER.exception(
+                    f"Could not verify cluster access using {kubeconfig_msg}: {e}. "
+                    f"Proceeding anyway - operations may fail if cluster is not accessible."
+                )
+        else:
+            LOGGER.info("Dry-run mode - skipping cluster connectivity check")
 
         build_records: list[KonfluxRecord] = await self.fetch_build_records()
 
-        # make sure pullspec is live for each build
-        await self.get_pullspecs([b.image_pullspec for b in build_records], self.image_repo_pull_secret)
+        # make sure pullspec is live for each build (skip in dry-run mode)
+        if not self.dry_run:
+            await self.get_pullspecs([b.image_pullspec for b in build_records], self.image_repo_pull_secret)
 
         snapshot_objs = await self.new_snapshots(build_records)
-        # TODO: `_create` is a private method, should be replaced with a public method in the future
-        snapshot_objs = await asyncio.gather(
-            *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
-        )
-        snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
+
         if self.dry_run:
+            # In dry-run mode, just generate URLs for logging without creating snapshots
+            snapshot_urls = [f"[DRY-RUN] {obj['metadata']['name']}" for obj in snapshot_objs]
             LOGGER.info("[DRY-RUN] Would have created Konflux Snapshots: %s", ", ".join(snapshot_urls))
-        else:
+            return snapshot_objs
+
+        # TODO: `_create` is a private method, should be replaced with a public method in the future
+        try:
+            snapshot_objs = await asyncio.gather(
+                *(self.konflux_client._create(snapshot_obj) for snapshot_obj in snapshot_objs)
+            )
+            snapshot_urls = [self.konflux_client.resource_url(snapshot_obj) for snapshot_obj in snapshot_objs]
             LOGGER.info("Created Konflux Snapshot(s): %s", ", ".join(snapshot_urls))
-        return snapshot_objs
+            return snapshot_objs
+        except Exception as e:
+            kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+            raise RuntimeError(
+                f"Failed to create snapshots in the cluster using {kubeconfig_msg}. "
+                f"Error: {e}. Make sure you're connected to the right cluster and have proper permissions."
+            ) from e
 
     @staticmethod
     async def get_pullspecs(pullspecs: list, image_repo_pull_secret: str):
@@ -167,38 +199,50 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
-        major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        # Use group name format for non-openshift groups, ose format for openshift groups
+        if self.runtime.group.startswith("openshift-"):
+            major, minor = self.runtime.get_major_minor()
+            snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        else:
+            # Normalize group name to comply with Kubernetes DNS label rules
+            group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
+            if not group_name_safe:
+                raise ValueError(
+                    f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+                )
+            snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
-            # get application name and make sure it exists in cluster
+            # get application name and make sure it exists in cluster (skip in dry-run mode)
             app_name = record.get_konflux_application_name()
-            await self.konflux_client.get_application__caching(app_name, strict=True)
+            if not self.dry_run:
+                await self.konflux_client.get_application__caching(app_name, strict=True)
 
-            # get component name and make sure it exists in cluster
+            # get component name and make sure it exists in cluster (skip in dry-run mode)
             comp_name = record.get_konflux_component_name()
 
-            # if not found, fallback to getting it from the record's Builder class
-            # TODO: (2025-07-16) now that we have started storing component name in DB, we can remove this fallback
-            # in a couple of weeks
-            try:
-                await self.konflux_client.get_component__caching(comp_name, strict=True)
-            except Exception as e:
-                if isinstance(record, KonfluxBuildRecord):
-                    comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
+            if not self.dry_run:
+                # if not found, fallback to getting it from the record's Builder class
+                # TODO: (2025-07-16) now that we have started storing component name in DB, we can remove this fallback
+                # in a couple of weeks
+                try:
                     await self.konflux_client.get_component__caching(comp_name, strict=True)
-                elif isinstance(record, KonfluxBundleBuildRecord):
-                    comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
-                    try:
+                except exceptions.NotFoundError:
+                    if isinstance(record, KonfluxBuildRecord):
+                        comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
                         await self.konflux_client.get_component__caching(comp_name, strict=True)
-                    except Exception:
-                        # if we still can't find the component, use the old component name
-                        comp_name = KonfluxOlmBundleBuilder.get_old_component_name(app_name, record.name)
-                        await self.konflux_client.get_component__caching(comp_name, strict=True)
-                else:
-                    # fbc component name is determined from the image it builds for, which is not stored in the DB
-                    # rather than hack something up, let it fail for now
-                    raise e
+                    elif isinstance(record, KonfluxBundleBuildRecord):
+                        comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
+                        try:
+                            await self.konflux_client.get_component__caching(comp_name, strict=True)
+                        except exceptions.NotFoundError:
+                            # if we still can't find the component, use the old component name
+                            comp_name = KonfluxOlmBundleBuilder.get_old_component_name(app_name, record.name)
+                            await self.konflux_client.get_component__caching(comp_name, strict=True)
+                    else:
+                        # fbc component name is determined from the image it builds for, which is not stored in the DB
+                        # rather than hack something up, let it fail for now
+                        raise
 
             source_url = record.rebase_repo_url
             revision = record.rebase_commitish
@@ -300,7 +344,9 @@ def snapshot_cli():
     "new", short_help="Create new Konflux Snapshot(s) in the given namespace for the given builds (NVRs)"
 )
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+    '--konflux-kubeconfig',
+    metavar='PATH',
+    help='Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).',
 )
 @click.option(
     '--konflux-context',
@@ -310,8 +356,7 @@ def snapshot_cli():
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
 @click.option(
     '--pull-secret',
@@ -359,13 +404,9 @@ async def new_snapshot_cli(
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
 
-    if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-
-    if not konflux_kubeconfig:
-        LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
-        )
+    # Resolve kubeconfig and namespace using helper functions
+    konflux_kubeconfig = resolve_konflux_kubeconfig(runtime.group, konflux_kubeconfig)
+    konflux_namespace = resolve_konflux_namespace(runtime.group, konflux_namespace)
 
     if builds_file:
         if builds_file == "-":
@@ -387,7 +428,9 @@ async def new_snapshot_cli(
         job_url=job_url,
     )
     snapshots = await pipeline.run()
-    yaml.dump_all([snapshot.to_dict() for snapshot in snapshots], sys.stdout)
+    # Handle both dict objects (dry-run) and ResourceInstance objects (actual creation)
+    snapshot_dicts = [snapshot if isinstance(snapshot, dict) else snapshot.to_dict() for snapshot in snapshots]
+    yaml.dump_all(snapshot_dicts, sys.stdout)
 
 
 class GetSnapshotCli:
@@ -419,13 +462,28 @@ class GetSnapshotCli:
         if self.runtime.konflux_db is None:
             raise RuntimeError('Konflux DB is not initialized')
 
-        # Ensure the Snapshot CRD is accessible
-        try:
-            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
-        except exceptions.ResourceNotFoundError:
-            raise RuntimeError(
-                f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?"
-            )
+        # Ensure the Snapshot CRD is accessible (skip in dry-run mode)
+        if not self.dry_run:
+            try:
+                await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+                if self.konflux_config['kubeconfig']:
+                    LOGGER.info("Successfully verified cluster access using provided kubeconfig")
+                else:
+                    LOGGER.info("Successfully verified cluster access using current oc context")
+            except exceptions.ResourceNotFoundError:
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                raise RuntimeError(
+                    f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
+                    f"Make sure you're connected to the right cluster."
+                ) from None
+            except Exception as e:
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                LOGGER.exception(
+                    f"Could not verify cluster access using {kubeconfig_msg}: {e}. "
+                    f"Proceeding anyway - operations may fail if cluster is not accessible."
+                )
+        else:
+            LOGGER.info("Dry-run mode - skipping cluster connectivity check")
 
         snapshot_obj = await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
         nvrs = await self.extract_nvrs_from_snapshot(snapshot_obj)
@@ -477,7 +535,9 @@ class GetSnapshotCli:
 
 @snapshot_cli.command("get", short_help="Get NVRs from a Konflux Snapshot")
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+    '--konflux-kubeconfig',
+    metavar='PATH',
+    help='Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).',
 )
 @click.option(
     '--konflux-context',
@@ -487,8 +547,7 @@ class GetSnapshotCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
 @click.option(
     '--pull-secret',
@@ -516,13 +575,9 @@ async def get_snapshot_cli(
     \b
     $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
-    if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-
-    if not konflux_kubeconfig:
-        LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
-        )
+    # Resolve kubeconfig and namespace using helper functions
+    konflux_kubeconfig = resolve_konflux_kubeconfig(runtime.group, konflux_kubeconfig)
+    konflux_namespace = resolve_konflux_namespace(runtime.group, konflux_namespace)
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,

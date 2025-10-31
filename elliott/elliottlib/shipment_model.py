@@ -76,10 +76,10 @@ class ReleaseNotes(StrictBaseModel):
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
     live_id: int = None
-    synopsis: str
-    topic: str
-    description: str
-    solution: str
+    synopsis: str = None
+    topic: str = None
+    description: str = None
+    solution: str = None
     issues: Optional[Issues] = None
     cves: Optional[List[CveAssociation]] = None
     references: Optional[List[str]] = None
@@ -88,7 +88,7 @@ class ReleaseNotes(StrictBaseModel):
     # configure them to be LiteralScalarString
     @field_serializer('topic', 'solution', 'description')
     def serialize_text_fields(self, field: str, _info):
-        if '\n' in field:
+        if field and '\n' in field:
             return scalarstring.LiteralScalarString(field)
         return field
 

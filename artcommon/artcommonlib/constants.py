@@ -70,3 +70,6 @@ GROUP_KUBECONFIG_MAP = {
     "logging-": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "openshift-": "KONFLUX_SA_KUBECONFIG",
 }
+
+# Default namespace for Konflux operations
+KONFLUX_DEFAULT_NAMESPACE = "ocp-art-tenant"

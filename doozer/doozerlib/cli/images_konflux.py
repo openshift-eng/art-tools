@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -285,7 +286,7 @@ class KonfluxBuildCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
@@ -570,7 +571,7 @@ class KonfluxBundleCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
