@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-08-12 02:38 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-11-01 04:51 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -217,9 +217,16 @@
           "type": "string"
         },
         "live_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
-          "title": "Live Id",
-          "type": "integer"
+          "title": "Live Id"
         },
         "synopsis": {
           "title": "Synopsis",

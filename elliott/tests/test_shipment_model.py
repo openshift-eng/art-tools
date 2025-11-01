@@ -101,14 +101,14 @@ class TestShipmentModel(unittest.TestCase):
         self.assertIsNone(shipment.data)
 
     def test_fbc_shipment_validation_unhappy_path(self):
-        """Test that FBC shipment with data.releaseNotes fails validation"""
+        """Test that FBC shipment with data.releaseNotes can be created but validation happens at application level"""
         shipment_data = self._create_base_shipment_data(fbc=True)
         shipment_data.update(self._create_release_notes_data())
 
-        with self.assertRaises(ValueError) as context:
-            Shipment(**shipment_data)
-
-        self.assertIn("FBC shipment is not expected to have data.releaseNotes defined", str(context.exception))
+        # Model creation should succeed - validation is now at application level
+        shipment = Shipment(**shipment_data)
+        self.assertTrue(shipment.metadata.fbc)
+        self.assertIsNotNone(shipment.data)
 
     def test_regular_shipment_validation_happy_path(self):
         """Test that regular shipment with data.releaseNotes passes validation"""
@@ -121,14 +121,39 @@ class TestShipmentModel(unittest.TestCase):
         self.assertIsNotNone(shipment.data.releaseNotes)
 
     def test_regular_shipment_validation_unhappy_path(self):
-        """Test that regular shipment without data.releaseNotes fails validation"""
+        """Test that OpenShift shipment without data.releaseNotes can be created but validation happens at application level"""
         shipment_data = self._create_base_shipment_data(fbc=False)
-        # Regular shipment should have data.releaseNotes - this should fail
+        # Use an OpenShift group to trigger the validation
+        shipment_data["metadata"]["group"] = "openshift-4.18"
+        # Regular OpenShift shipment should have data.releaseNotes - model creation should succeed
 
-        with self.assertRaises(ValueError) as context:
-            Shipment(**shipment_data)
+        shipment = Shipment(**shipment_data)
+        self.assertFalse(shipment.metadata.fbc)
+        self.assertEqual(shipment.metadata.group, "openshift-4.18")
+        self.assertIsNone(shipment.data)  # No releaseNotes, but model creation succeeds
 
-        self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
+    def test_non_openshift_shipment_validation_happy_path(self):
+        """Test that non-OpenShift shipment without data.releaseNotes passes validation"""
+        shipment_data = self._create_base_shipment_data(fbc=False)
+        # Use a non-OpenShift group (e.g., OADP) - should not require releaseNotes
+        shipment_data["metadata"]["group"] = "oadp-1.5"
+
+        shipment = Shipment(**shipment_data)
+        self.assertFalse(shipment.metadata.fbc)
+        self.assertIsNone(shipment.data)  # No releaseNotes required for non-OpenShift groups
+
+    def test_openshift_shipment_missing_live_id_validation(self):
+        """Test that OpenShift shipment with missing live_id can be created but validation happens at application level"""
+        shipment_data = self._create_base_shipment_data(fbc=False)
+        shipment_data.update(self._create_release_notes_data())
+        # Use an OpenShift group and remove live_id
+        shipment_data["metadata"]["group"] = "openshift-4.18"
+        shipment_data["data"]["releaseNotes"]["live_id"] = None
+
+        # Model creation should succeed - validation is now at application level
+        shipment = Shipment(**shipment_data)
+        self.assertEqual(shipment.metadata.group, "openshift-4.18")
+        self.assertIsNone(shipment.data.releaseNotes.live_id)
 
     def test_snapshot_application_match_happy_path(self):
         """Test that shipment with matching snapshot application passes validation"""
@@ -139,17 +164,14 @@ class TestShipmentModel(unittest.TestCase):
         self.assertEqual(shipment.metadata.application, shipment.snapshot.spec.application)
 
     def test_snapshot_application_match_unhappy_path(self):
-        """Test that shipment with non-matching snapshot application fails validation"""
+        """Test that shipment with non-matching snapshot application can be created but validation happens at application level"""
         shipment_data = self._create_base_shipment_data(fbc=True, application="test-app")
         shipment_data.update(self._create_snapshot_data(application="different-app"))
 
-        with self.assertRaises(ValueError) as context:
-            Shipment(**shipment_data)
-
-        self.assertIn(
-            "shipment.snapshot.spec.application=different-app is expected to be the same as shipment.metadata.application=test-app",
-            str(context.exception),
-        )
+        # Model creation should succeed - validation is now at application level
+        shipment = Shipment(**shipment_data)
+        self.assertEqual(shipment.metadata.application, "test-app")
+        self.assertEqual(shipment.snapshot.spec.application, "different-app")
 
 
 if __name__ == "__main__":

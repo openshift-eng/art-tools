@@ -95,6 +95,9 @@ class CreateReleaseCli:
                 f"same as runtime.assembly={self.runtime.assembly}"
             )
 
+        # Shipment validation
+        self._validate_shipment_requirements(config.shipment)
+
         # Ensure CRDs are accessible
         try:
             await self.konflux_client._get_api(API_VERSION, KIND_APPLICATION)
@@ -247,6 +250,37 @@ class CreateReleaseCli:
 
         return release_obj
 
+    def _validate_shipment_requirements(self, shipment: Shipment) -> None:
+        """Validate shipment requirements based on group and type"""
+        meta = shipment.metadata
+
+        # FBC validation (applies to all groups)
+        release_notes_present = shipment.data and shipment.data.releaseNotes
+        if meta.fbc and release_notes_present:
+            raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
+
+        # OpenShift-specific validation
+        if meta.group.startswith('openshift-'):
+            # For non-FBC OpenShift shipments, require releaseNotes
+            if not meta.fbc:
+                if not shipment.data or not shipment.data.releaseNotes:
+                    raise ValueError('OpenShift shipments require data.releaseNotes to be defined')
+
+                # Check required fields in releaseNotes
+                release_notes = shipment.data.releaseNotes
+                required_fields = ['synopsis', 'topic', 'description', 'solution', 'live_id']
+                missing_fields = [field for field in required_fields if not getattr(release_notes, field)]
+                if missing_fields:
+                    raise ValueError(
+                        f'OpenShift shipments require the following releaseNotes fields: {", ".join(missing_fields)}'
+                    )
+
+        # Snapshot application validation (applies to all groups)
+        if shipment.snapshot and shipment.snapshot.spec.application != meta.application:
+            raise ValueError(
+                f'shipment.snapshot.spec.application={shipment.snapshot.spec.application} is expected to be the same as shipment.metadata.application={meta.application}'
+            )
+
     def get_annotations(self) -> dict:
         annotations = {
             "art.redhat.com/assembly": self.runtime.assembly,
@@ -339,12 +373,34 @@ async def new_release_cli(
     release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
     if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        # Try group-specific kubeconfig environment variable first
+        from artcommonlib.constants import GROUP_KUBECONFIG_MAP
+
+        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
+            if runtime.group.startswith(prefix):
+                konflux_kubeconfig = os.environ.get(env_var)
+                if konflux_kubeconfig:
+                    LOGGER.info(f"Using kubeconfig from {env_var} environment variable for group {runtime.group}")
+                break
+
+        # Fall back to default if no group-specific config found
+        if not konflux_kubeconfig:
+            konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
         LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+            "--konflux-kubeconfig and group-specific kubeconfig env vars are not set. Will rely on oc being logged in"
         )
+
+    # Deduce namespace based on group if not explicitly provided
+    if konflux_namespace == KONFLUX_DEFAULT_NAMESPACE:
+        from artcommonlib.constants import GROUP_NAMESPACE_MAP
+
+        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
+            if runtime.group.startswith(prefix):
+                konflux_namespace = namespace
+                LOGGER.info(f"Using namespace {namespace} for group {runtime.group}")
+                break
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,

@@ -303,6 +303,9 @@ class Runtime(GroupRuntime):
         strict_mode = True
         if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
             strict_mode = False
+        # For non-OpenShift groups, don't enforce strict assembly basis checking
+        if not self.group.startswith('openshift-'):
+            strict_mode = False
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
         self.assembly_basis_event = assembly_basis_event(
             self.get_releases_config(), self.assembly, strict=strict_mode, build_system=self.build_system

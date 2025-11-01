@@ -601,7 +601,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
+        self.assertIn("OpenShift shipments require data.releaseNotes to be defined", str(context.exception))
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -647,6 +647,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
+                        live_id=123456,
                         synopsis="Red Hat Openshift Test Release",
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",
