@@ -21,7 +21,7 @@ import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
-from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
@@ -566,10 +566,7 @@ class PrepareReleaseKonfluxPipeline:
         image_builds = kind_to_builds['image'] + kind_to_builds['extras']
         kdb = KonfluxDb()
         kdb.bind(KonfluxBundleBuildRecord)
-        tasks = [
-            anext(kdb.search_builds_by_fields(where={"nvr": build, "outcome": "success"}, limit=1), None)
-            for build in olm_builds
-        ]
+        tasks = [kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS) for build in olm_builds]
         olm_records = await asyncio.gather(*tasks)
         missing_references = []
         for record in filter(None, olm_records):
