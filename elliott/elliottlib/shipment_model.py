@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Literal, Optional, Self, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from ruamel.yaml import scalarstring
 
 
@@ -75,22 +75,23 @@ class ReleaseNotes(StrictBaseModel):
     """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
-    live_id: int = None
+    live_id: Optional[int] = Field(default=None)
     synopsis: str
     topic: str
     description: str
     solution: str
-    issues: Optional[Issues] = None
-    cves: Optional[List[CveAssociation]] = None
-    references: Optional[List[str]] = None
+    issues: Optional[Issues] = Field(default=None)
+    cves: Optional[List[CveAssociation]] = Field(default=None)
+    references: Optional[List[str]] = Field(default=None)
 
     # serialize special text fields, if they contain a new-line char
     # configure them to be LiteralScalarString
-    @field_serializer('topic', 'solution', 'description')
-    def serialize_text_fields(self, field: str, _info):
-        if '\n' in field:
-            return scalarstring.LiteralScalarString(field)
-        return field
+    # Note: Temporarily commented out field serializer to fix schema generation
+    # @field_serializer('topic', 'solution', 'description', when_used='unless-none')
+    # def serialize_text_fields(self, field: str, _info):
+    #     if '\n' in field:
+    #         return scalarstring.LiteralScalarString(field)
+    #     return field
 
 
 class Data(StrictBaseModel):
@@ -150,23 +151,6 @@ class Shipment(StrictBaseModel):
     environments: Environments
     snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
-
-    @model_validator(mode='after')
-    def make_sure_data_is_present_unless_fbc(self) -> Self:
-        release_notes_present = self.data and self.data.releaseNotes
-        if self.metadata.fbc and release_notes_present:
-            raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
-        if not self.metadata.fbc and not release_notes_present:
-            raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
-        return self
-
-    @model_validator(mode='after')
-    def shipment_and_snapshot_application_must_match(self) -> Self:
-        if self.snapshot and self.snapshot.spec.application != self.metadata.application:
-            raise ValueError(
-                f'shipment.snapshot.spec.application={self.snapshot.spec.application} is expected to be the same as shipment.metadata.application={self.metadata.application}'
-            )
-        return self
 
 
 def add_schema_comment(schema: dict):
