@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import json
@@ -13,6 +14,12 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+)
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
@@ -394,14 +401,40 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         # Some images also have their own upstream information. This allows them to
         # be mirrored out into upstream, optionally transformed, and made available as builder images for
         # other images without being in streams.yml.
+
+        # Bind Konflux DB to the KonfluxBuildRecord table if using Konflux build system
+        if runtime.build_system == 'konflux':
+            runtime.konflux_db.bind(KonfluxBuildRecord)
+
         for image_meta in runtime.ordered_image_metas():
             if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
                 upstream_entry = Model(
                     dict_to_model=image_meta.config.content.source.ci_alignment.primitive()
                 )  # Make a copy
-                upstream_entry['image'] = (
-                    image_meta.pull_url()
-                )  # Make the image metadata entry match what would exist in streams.yml.
+
+                # Determine which build system to use for getting the image pullspec
+                if runtime.build_system == 'konflux':
+                    # Get the pullspec from Konflux DB
+                    async def get_konflux_pullspec():
+                        build = await runtime.konflux_db.get_latest_build(
+                            name=image_meta.distgit_key,
+                            group=runtime.group,
+                            assembly=runtime.assembly,
+                            artifact_type=ArtifactType.IMAGE,
+                            engine=Engine.KONFLUX,
+                            outcome=KonfluxBuildOutcome.SUCCESS,
+                        )
+                        if not build:
+                            raise IOError(
+                                f'No Konflux build found for {image_meta.distgit_key} in group {runtime.group}'
+                            )
+                        return build.image_pullspec
+
+                    upstream_entry['image'] = asyncio.run(get_konflux_pullspec())
+                else:
+                    # Use Brew pullspec (existing behavior)
+                    upstream_entry['image'] = image_meta.pull_url()
+
                 if upstream_entry.final_user is Missing:
                     upstream_entry.final_user = image_meta.config.final_stage_user
                 upstreaming_entries[image_meta.distgit_key] = upstream_entry
