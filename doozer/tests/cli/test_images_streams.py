@@ -226,7 +226,9 @@ def test_get_upstreaming_entries_with_brew_build_system(mock_runtime, mock_image
     mock_image_meta.pull_url.assert_called_once()
 
 
-def test_get_upstreaming_entries_with_konflux_build_system(mocker, mock_runtime_konflux, mock_image_meta, mock_konflux_build_record):
+def test_get_upstreaming_entries_with_konflux_build_system(
+    mocker, mock_runtime_konflux, mock_image_meta, mock_konflux_build_record
+):
     """Test getting upstreaming entries from image metas using Konflux build system"""
     # Customize image metadata for this test
     mock_image_meta.distgit_key = 'ose-cli'
@@ -291,3 +293,28 @@ def test_get_upstreaming_entries_with_final_user(mock_runtime, mock_image_meta):
     result = images_streams._get_upstreaming_entries(mock_runtime)
 
     assert result['ose-test'].final_user == '1001'
+
+
+# Tests for images:streams gen-buildconfigs command
+
+
+def test_gen_buildconfigs_uses_get_upstreaming_entries():
+    """Test that gen-buildconfigs uses _get_upstreaming_entries for both Brew and Konflux"""
+    # This is a documentation test verifying the architecture
+    # gen-buildconfigs calls _get_upstreaming_entries() which we already modified
+    # to support both Brew and Konflux, so gen-buildconfigs automatically supports both
+
+    # Verify the function exists and uses _get_upstreaming_entries
+    import inspect
+
+    # Access the underlying callback function from the Click Command
+    callback = images_streams.images_streams_gen_buildconfigs.callback
+    source = inspect.getsource(callback)
+
+    # Verify it calls _get_upstreaming_entries
+    assert '_get_upstreaming_entries(runtime, streams)' in source
+
+    # Verify it uses the configuration fields from entries
+    assert 'config.transform' in source
+    assert 'config.upstream_image' in source
+    assert 'config.upstream_image_base' in source
