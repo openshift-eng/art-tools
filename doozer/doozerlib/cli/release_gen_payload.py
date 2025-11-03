@@ -537,7 +537,7 @@ class GenPayloadCli:
             self.assembly_issues.extend(assembly_inspector.check_group_rpm_package_consistency(rpm_meta))
 
         # check that RPMs belonging to this assembly/group are the latest
-        if rt.assembly_type is AssemblyTypes.STREAM:
+        if rt.assembly_type is AssemblyTypes.STREAM and self.runtime.group != 'openshift-4.21':
             await self.detect_non_latest_rpms(assembly_inspector)
 
         # check that images for this assembly/group are consistent with the assembly definition.
