@@ -685,10 +685,10 @@ class GenPayloadCli:
                 else:  # konflux
                     non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
 
-                for arch, non_latest_rpms in non_latest_rpms.items():
+                for arch, arch_non_latest_rpms in non_latest_rpms.items():
                     # This could indicate an issue with scan-sources or that an image is no longer successfully building
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
-                    for installed_nevra, newest_nevra, repo in non_latest_rpms:
+                    for installed_nevra, newest_nevra, repo in arch_non_latest_rpms:
                         nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
                         rpm_name = parse_nvr(nevr)['name']
                         is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)

@@ -312,7 +312,7 @@ class BuildRecordInspector(ABC):
         pass
 
     @abstractmethod
-    def find_non_latest_rpms(self, *_):
+    async def find_non_latest_rpms(self, *_):
         pass
 
     @abstractmethod
