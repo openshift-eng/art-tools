@@ -23,6 +23,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.backend.pipelinerun_utils import ContainerInfo, PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
@@ -121,12 +122,10 @@ class KonfluxImageBuilder:
                         f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
                     )
 
-                dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
-                    {
-                        "group": self._config.group_name,
-                        "assembly_name": metadata.runtime.assembly,
-                        "distgit_key": metadata.distgit_key,
-                    }
+                dest_branch = KonfluxRebaser.construct_dest_branch(
+                    group=self._config.group_name,
+                    assembly_name=metadata.runtime.assembly,
+                    distgit_key=metadata.distgit_key,
                 )
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
