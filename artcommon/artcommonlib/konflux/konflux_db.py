@@ -192,15 +192,15 @@ class BuildCache:
             # Filter builds by criteria
             for build in builds:  # Already sorted newest first
                 # Apply filters
-                if outcome is not None and build.outcome != str(outcome):
+                if outcome is not None and build.outcome != outcome:
                     continue
                 if assembly is not None and build.assembly != assembly:
                     continue
                 if el_target is not None and build.el_target != el_target:
                     continue
-                if artifact_type is not None and build.artifact_type != str(artifact_type):
+                if artifact_type is not None and build.artifact_type != artifact_type:
                     continue
-                if engine is not None and build.engine != str(engine):
+                if engine is not None and build.engine != engine:
                     continue
                 if embargoed is not None and build.embargoed != embargoed:
                     continue
@@ -283,17 +283,34 @@ class BuildCache:
 
 
 class KonfluxDb:
+    # Class-level singleton cache shared across all KonfluxDb instances
+    _shared_cache: typing.Optional[BuildCache] = None
+    _cache_lock = threading.RLock()
+    _group_loading_events: typing.Dict[str, asyncio.Event] = {}  # Per-group events for coordinating lazy-load
+
     def __init__(self, enable_cache: bool = True, cache_days: int = 30):
         """
         Initialize KonfluxDb client.
 
-        :param enable_cache: If True, enable the build cache. Default True.
+        All instances share a single global cache for efficiency. The cache is created
+        on first instantiation with enable_cache=True.
+
+        :param enable_cache: If True, enable the shared build cache. Default True.
         :param cache_days: Number of days of recent builds to cache per group. Default 30.
+                          Only used when creating the cache for the first time.
         """
         self.logger = logging.getLogger(__name__)
         self.bq_client = bigquery.BigQueryClient()
         self.record_cls = None
-        self.cache = BuildCache(cache_days=cache_days) if enable_cache else None
+
+        # Initialize shared cache on first use
+        with KonfluxDb._cache_lock:
+            if enable_cache and KonfluxDb._shared_cache is None:
+                KonfluxDb._shared_cache = BuildCache(cache_days=cache_days)
+                self.logger.debug(f"Initialized shared BuildCache with {cache_days} day window")
+
+        # Reference the shared cache (or None if caching disabled)
+        self.cache = KonfluxDb._shared_cache if enable_cache else None
 
     def bind(self, record_cls: typing.Type[KonfluxRecord]):
         """
@@ -311,28 +328,57 @@ class KonfluxDb:
         Lazy-load cache for group if not already loaded.
 
         Automatically loads the last N days of builds for the group on first access.
+        Uses per-group async events to coordinate concurrent load attempts - only one
+        coroutine will actually load while others wait for it to complete.
 
         :param group: Group name (e.g., 'openshift-4.18')
         """
         if not self.cache:
             return
 
+        # Quick check - if already loaded, return immediately
         if self.cache.is_group_loaded(group):
             self.logger.debug(f"Cache already loaded for group '{group}'")
             return
 
-        self.logger.info(f"Lazy-loading cache for group '{group}' (last {self.cache._cache_days} days)...")
+        # Get or create an event for this group (thread-safe)
+        with KonfluxDb._cache_lock:
+            if group not in KonfluxDb._group_loading_events:
+                # Create new event for this group
+                event = asyncio.Event()
+                KonfluxDb._group_loading_events[group] = event
+                should_load = True
+            else:
+                # Another coroutine is already loading
+                event = KonfluxDb._group_loading_events[group]
+                should_load = False
 
-        # Build query for last N days of builds in this group
-        start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
-        where_clauses = [
-            Column('group', String) == group,
-            Column('start_time', DateTime) >= start_time,
-        ]
+        if not should_load:
+            # Wait for the other coroutine to finish loading
+            self.logger.debug(f"Waiting for another coroutine to load group '{group}'...")
+            await event.wait()
+            self.logger.debug(f"Cache loaded for group '{group}' by another coroutine")
+            return
 
-        order_by_clause = Column('start_time', quote=True).desc()
-
+        # We're the one who will load
         try:
+            # Double-check after getting permission - might have been loaded while we waited
+            if self.cache.is_group_loaded(group):
+                self.logger.debug(f"Cache already loaded for group '{group}' (loaded while acquiring event)")
+                event.set()  # Signal any waiters
+                return
+
+            self.logger.info(f"Lazy-loading cache for group '{group}' (last {self.cache._cache_days} days)...")
+
+            # Build query for last N days of builds in this group
+            start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
+            where_clauses = [
+                Column('group', String) == group,
+                Column('start_time', DateTime) >= start_time,
+            ]
+
+            order_by_clause = Column('start_time', quote=True).desc()
+
             # Execute single large query
             rows = await self.bq_client.select(
                 where_clauses=where_clauses,
@@ -340,7 +386,7 @@ class KonfluxDb:
                 limit=None,  # Get all results
             )
 
-            # Load all rows into cache
+            # Load all rows into cache (thread-safe operation)
             builds = [self.from_result_row(row) for row in rows]
             self.cache.add_builds(builds, group)
 
@@ -349,6 +395,9 @@ class KonfluxDb:
         except Exception as e:
             self.logger.error(f"Failed to load cache for group '{group}': {e}")
             raise
+        finally:
+            # Signal completion to any waiting coroutines
+            event.set()
 
     def cache_stats(self, group: typing.Optional[str] = None) -> dict:
         """
@@ -363,6 +412,22 @@ class KonfluxDb:
         stats = self.cache.stats(group=group)
         stats['enabled'] = True
         return stats
+
+    @classmethod
+    def clear_shared_cache(cls, group: typing.Optional[str] = None):
+        """
+        Clear the shared cache across all KonfluxDb instances.
+
+        :param group: Optional group to clear. If None, clears all groups.
+        """
+        with cls._cache_lock:
+            if cls._shared_cache:
+                cls._shared_cache.clear(group=group)
+            # Clear loading events for the group(s) being cleared
+            if group:
+                cls._group_loading_events.pop(group, None)
+            else:
+                cls._group_loading_events.clear()
 
     def generate_build_schema(self):
         """

@@ -18,9 +18,16 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
     @patch('os.environ', {'GOOGLE_APPLICATION_CREDENTIALS': ''})
     @patch('artcommonlib.bigquery.bigquery.Client')
     def setUp(self, _):
+        # Clear the shared cache before each test to ensure test isolation
+        KonfluxDb.clear_shared_cache()
+
         self.db = KonfluxDb()
         self.db.bind(KonfluxBuildRecord)
         self.db.bq_client._table_ref = constants.BUILDS_TABLE_ID
+
+    def tearDown(self):
+        # Clear the shared cache after each test to ensure test isolation
+        KonfluxDb.clear_shared_cache()
 
     @patch('artcommonlib.bigquery.BigQueryClient.query')
     def test_add_builds(self, query_mock):
