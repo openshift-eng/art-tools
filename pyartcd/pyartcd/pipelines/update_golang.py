@@ -160,7 +160,7 @@ class UpdateGolangPipeline:
         self,
         runtime: Runtime,
         ocp_version: str,
-        cves: List[str],
+        cves: List[str] | None,
         force_update_tracker: bool,
         go_nvrs: List[str],
         art_jira: str,
@@ -168,6 +168,7 @@ class UpdateGolangPipeline:
         scratch: bool = False,
         force_image_build: bool = False,
         build_system: str = 'brew',
+        kubeconfig: str | None = None,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -184,6 +185,11 @@ class UpdateGolangPipeline:
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
+
+        # Get kubeconfig from environment variable if not provided
+        if not kubeconfig:
+            kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        self.kubeconfig = kubeconfig
 
         self.github_token = os.environ.get('GITHUB_TOKEN')
         if not self.github_token:
@@ -361,6 +367,7 @@ class UpdateGolangPipeline:
                             "el_target": f'el{el_v}',
                             "artifact_type": str(ArtifactType.IMAGE),
                             "outcome": str(KonfluxBuildOutcome.SUCCESS),
+                            "engine": str(Engine.KONFLUX),
                         },
                         extra_patterns=extra_patterns,
                         limit=1,
@@ -609,6 +616,8 @@ class UpdateGolangPipeline:
             "beta:images:konflux:build",
             f"--konflux-namespace={konflux_namespace}",
         ]
+        if self.kubeconfig:
+            cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
@@ -701,6 +710,7 @@ class UpdateGolangPipeline:
     default='brew',
     help='Build system to use for golang-builder images (brew or konflux). Defaults to brew for backward compatibility.',
 )
+@click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -715,19 +725,19 @@ async def update_golang(
     go_nvrs: List[str],
     force_image_build: bool,
     build_system: str,
+    kubeconfig: str,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
-    if cves:
-        cves = cves.split(',')
-    if force_update_tracker and not cves:
+    cves_list = cves.split(',') if cves else None
+    if force_update_tracker and not cves_list:
         raise ValueError('CVEs must be provided with --force-update-tracker')
 
     await UpdateGolangPipeline(
         runtime,
         ocp_version,
-        cves,
+        cves_list,
         force_update_tracker,
         go_nvrs,
         art_jira,
@@ -735,4 +745,5 @@ async def update_golang(
         scratch,
         force_image_build,
         build_system,
+        kubeconfig,
     ).run()
