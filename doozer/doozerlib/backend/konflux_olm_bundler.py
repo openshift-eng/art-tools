@@ -859,7 +859,7 @@ class KonfluxOlmBundleBuilder:
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)
             db.add_build(build_record)
-            logger.info(f'Konflux build info stored successfully with status {outcome}')
+            logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
 
         except Exception:
             logger.exception('Failed writing record to the konflux DB')
