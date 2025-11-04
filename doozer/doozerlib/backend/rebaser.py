@@ -1179,8 +1179,9 @@ class KonfluxRebaser:
 
             # The value we will set REMOTE_SOURCES_DIR to.
             remote_source_dir_env = '/tmp/art/cachito-emulation'
-            pkg_managers = metadata.config.content.source.pkg_managers.primitive()
-
+            pkg_managers = []
+            if metadata.config.content.source.pkg_managers is not Missing:
+                pkg_managers = metadata.config.content.source.pkg_managers.primitive()
             if "npm" in pkg_managers:
                 flag = False
                 for npm_entry in metadata.config.cachito.packages.npm:
