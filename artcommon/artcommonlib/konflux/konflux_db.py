@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxRecord
+from artcommonlib.util import extract_group_from_nvr
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 from sqlalchemy.sql import text
@@ -22,24 +23,6 @@ SCHEMA_LEVEL = 1
 # Exponential search windows: 7, 14, 28, 56, 112, 224, 448 days
 # Doubles each time, covers ~15 months maximum
 EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
-
-
-def extract_group_from_nvr(nvr: str) -> typing.Optional[str]:
-    """
-    Extract the group from an NVR by matching -vMAJOR.MINOR pattern.
-
-    Example NVR: "ose-azure-file-csi-driver-container-v4.13.0-202409181807.p0.g15e6f80.assembly.stream.el8"
-    Returns: "openshift-4.13"
-
-    :param nvr: Build NVR string
-    :return: Group string like "openshift-4.13" or None if pattern not found
-    """
-    # Match -vMAJOR.MINOR pattern (e.g., -v4.13, -v4.18)
-    match = re.search(r'-v(\d+)\.(\d+)\.', nvr)
-    if match:
-        major, minor = match.groups()
-        return f"openshift-{major}.{minor}"
-    return None
 
 
 class BuildCache:
@@ -73,10 +56,11 @@ class BuildCache:
 
     def add_builds(self, builds: typing.List[KonfluxRecord], group: typing.Optional[str] = None):
         """
-        Add multiple builds to cache. Determines group from first build's .group attribute if not provided.
+        Add multiple builds to cache. All builds must be from the same group.
 
-        :param builds: List of KonfluxBuildRecord objects to cache
+        :param builds: List of KonfluxBuildRecord objects to cache (all must have same group)
         :param group: Optional group name (e.g., 'openshift-4.18'). If not provided, uses builds[0].group
+        :raises ValueError: If builds are from different groups or group cannot be determined
         """
         if not builds:
             return
@@ -85,8 +69,14 @@ class BuildCache:
         if not group:
             group = builds[0].group
             if not group:
-                self.logger.warning("Cannot add builds to cache: no group provided and builds[0].group is None")
-                return
+                raise ValueError("Cannot add builds to cache: no group provided and builds[0].group is None")
+
+        # Verify all builds are from the same group
+        mismatched_builds = [(build.nvr, build.group) for build in builds if build.group and build.group != group]
+        if mismatched_builds:
+            raise ValueError(
+                f"All builds must be from group '{group}'. Found builds from different groups: {mismatched_builds}"
+            )
 
         with self._lock:
             self._ensure_group(group)
@@ -153,11 +143,11 @@ class BuildCache:
         self,
         name: str,
         group: str,
-        outcome: typing.Optional[KonfluxBuildOutcome] = None,
+        outcome: typing.Optional[typing.Union[KonfluxBuildOutcome, str]] = None,
         assembly: typing.Optional[str] = None,
         el_target: typing.Optional[str] = None,
-        artifact_type: typing.Optional[ArtifactType] = None,
-        engine: typing.Optional[Engine] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
         embargoed: typing.Optional[bool] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
@@ -167,19 +157,27 @@ class BuildCache:
 
         :param name: Component name
         :param group: Group name (required)
-        :param outcome: Filter by outcome (success/failure)
+        :param outcome: Filter by outcome (success/failure) - accepts enum or string
         :param assembly: Filter by assembly
         :param el_target: Filter by el_target (e.g., 'el8', 'el9')
-        :param artifact_type: Filter by artifact type (rpm/image)
-        :param engine: Filter by engine (brew/konflux)
+        :param artifact_type: Filter by artifact type (rpm/image) - accepts enum or string
+        :param engine: Filter by engine (brew/konflux) - accepts enum or string
         :param embargoed: Filter by embargoed status
         :return: Latest matching build or None
         """
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
+
         with self._lock:
             # Check if group cached
             if group not in self._groups:
                 self._cache_misses += 1
-                self.logger.debug(f"Cache MISS: Group {group} not cached")
+                self.logger.warning(f"Cache MISS: Group {group} not cached")
                 return None
 
             group_cache = self._groups[group]
@@ -341,38 +339,39 @@ class KonfluxDb:
             self.logger.debug(f"Cache already loaded for group '{group}'")
             return
 
-        # Get or create an event for this group (thread-safe)
-        with KonfluxDb._cache_lock:
-            if group not in KonfluxDb._group_loading_events:
-                # Create new event for this group
-                event = asyncio.Event()
-                KonfluxDb._group_loading_events[group] = event
-                should_load = True
-            else:
-                # Another coroutine is already loading
-                event = KonfluxDb._group_loading_events[group]
-                should_load = False
+        while True:
+            # Quick check - if already loaded, return immediately
+            if self.cache.is_group_loaded(group):
+                self.logger.debug(f"Cache already loaded for group '{group}'")
+                return
+            # Get or create an event for this group (thread-safe)
+            with KonfluxDb._cache_lock:
+                if group not in KonfluxDb._group_loading_events:
+                    # Create new event for this group
+                    event = asyncio.Event()
+                    KonfluxDb._group_loading_events[group] = event
+                    should_load = True
+                else:
+                    # Another coroutine is already loading
+                    event = KonfluxDb._group_loading_events[group]
+                    should_load = False
 
-        if not should_load:
-            # Wait for the other coroutine to finish loading
-            self.logger.debug(f"Waiting for another coroutine to load group '{group}'...")
-            await event.wait()
-            self.logger.debug(f"Cache loaded for group '{group}' by another coroutine")
-            return
+            if not should_load:
+                # Wait for the other coroutine to finish loading
+                self.logger.debug(f"Waiting for another coroutine to load group '{group}'...")
+                await event.wait()
+                continue
+            else:
+                break
 
         # We're the one who will load
         try:
-            # Double-check after getting permission - might have been loaded while we waited
-            if self.cache.is_group_loaded(group):
-                self.logger.debug(f"Cache already loaded for group '{group}' (loaded while acquiring event)")
-                event.set()  # Signal any waiters
-                return
-
             self.logger.info(f"Lazy-loading cache for group '{group}' (last {self.cache._cache_days} days)...")
 
             # Build query for last N days of builds in this group
             start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
             where_clauses = [
+                Column('outcome', String).in_(['success', 'failure']),
                 Column('group', String) == group,
                 Column('start_time', DateTime) >= start_time,
             ]
@@ -398,6 +397,8 @@ class KonfluxDb:
         finally:
             # Signal completion to any waiting coroutines
             event.set()
+            with KonfluxDb._cache_lock:
+                del KonfluxDb._group_loading_events[group]
 
     def cache_stats(self, group: typing.Optional[str] = None) -> dict:
         """
@@ -552,6 +553,11 @@ class KonfluxDb:
         base_clauses = []
         where = where or {}
 
+        # Normalize enum values in where dict - convert enums to strings for SQL comparison
+        where = {
+            k: str(v) if isinstance(v, (KonfluxBuildOutcome, ArtifactType, Engine)) else v for k, v in where.items()
+        }
+
         # Unless otherwise specified, only look for builds in 'success' or 'failure' state
         if 'outcome' not in where:
             base_clauses.append(Column('outcome', String).in_(['success', 'failure']))
@@ -642,11 +648,11 @@ class KonfluxDb:
         self,
         names: typing.List[str],
         group: str,
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         assembly: str = 'stream',
         el_target: typing.Optional[str] = None,
-        artifact_type: typing.Optional[ArtifactType] = None,
-        engine: typing.Optional[Engine] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
         completed_before: typing.Optional[datetime] = None,
         embargoed: bool = None,
         extra_patterns: dict = {},
@@ -655,6 +661,14 @@ class KonfluxDb:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
         """
+
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
 
         return await asyncio.gather(
             *[
@@ -680,11 +694,11 @@ class KonfluxDb:
         name: typing.Optional[str] = None,
         nvr: typing.Optional[str] = None,
         group: typing.Optional[str] = None,
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         assembly: typing.Optional[str] = None,
         el_target: typing.Optional[str] = None,
-        artifact_type: typing.Optional[ArtifactType] = None,
-        engine: typing.Optional[Engine] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
         completed_before: typing.Optional[datetime] = None,
         embargoed: typing.Optional[bool] = None,
         extra_patterns: dict = {},
@@ -720,6 +734,14 @@ class KonfluxDb:
             raise ValueError("Must provide either 'name' or 'nvr' parameter")
         if name and not group:
             raise ValueError("Must provide 'group' when searching by name")
+
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
 
         # Extract group from NVR if nvr is provided but group is not
         if nvr and not group:
@@ -783,8 +805,8 @@ class KonfluxDb:
             extra_patterns=extra_patterns,
         )
 
-        # Always update cache (even if use_cache=False)
-        if result and self.cache and result.group:
+        # Update cache only if use_cache=True
+        if result and self.cache and result.group and use_cache:
             self.cache.add_builds([result], result.group)
 
         if not result and strict:
@@ -922,7 +944,10 @@ class KonfluxDb:
             raise
 
     async def get_build_record_by_nvr(
-        self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True
+        self,
+        nvr: str,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
+        strict: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """Get a build record by NVR.
 
@@ -941,7 +966,7 @@ class KonfluxDb:
     async def get_build_records_by_nvrs(
         self,
         nvrs: typing.Sequence[str],
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         strict: bool = True,
     ) -> list[KonfluxRecord | None]:

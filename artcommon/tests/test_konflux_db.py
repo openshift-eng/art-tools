@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import constants
 from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
     Engine,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -47,6 +48,45 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         asyncio.run(self.db.add_builds([build for _ in range(10)]))
         self.assertEqual(query_mock.call_count, 10)
+
+    def test_add_builds_cache_validation(self):
+        """Test that cache.add_builds validates all builds are from the same group"""
+        cache = self.db.cache
+
+        # Test 1: All builds from same group - should succeed
+        builds_same_group = [
+            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.18'),
+            KonfluxBuildRecord(name='build2', version='2.0', release='2.el8', group='openshift-4.18'),
+            KonfluxBuildRecord(name='build3', version='3.0', release='3.el8', group='openshift-4.18'),
+        ]
+        cache.add_builds(builds_same_group)  # Should not raise
+
+        # Test 2: Builds from different groups - should raise ValueError
+        builds_mixed_groups = [
+            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.18'),
+            KonfluxBuildRecord(name='build2', version='2.0', release='2.el8', group='openshift-4.17'),
+            KonfluxBuildRecord(name='build3', version='3.0', release='3.el8', group='openshift-4.18'),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            cache.add_builds(builds_mixed_groups)
+        self.assertIn("All builds must be from group 'openshift-4.18'", str(ctx.exception))
+        self.assertIn("openshift-4.17", str(ctx.exception))
+
+        # Test 3: No group provided and first build has no group - should raise ValueError
+        builds_no_group = [
+            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group=None),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            cache.add_builds(builds_no_group)
+        self.assertIn("no group provided and builds[0].group is None", str(ctx.exception))
+
+        # Test 4: Explicit group parameter overrides build.group - validates against explicit group
+        builds_with_explicit_group = [
+            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.17'),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            cache.add_builds(builds_with_explicit_group, group='openshift-4.18')
+        self.assertIn("All builds must be from group 'openshift-4.18'", str(ctx.exception))
 
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
@@ -605,3 +645,32 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         self.assertEqual(build.nvr, nvr)
         get_latest_build_mock.assert_called_once_with(nvr=nvr, outcome=KonfluxBuildOutcome.SUCCESS, strict=True)
+
+    def test_get_latest_build_with_string_enums(self):
+        """Test that string enum parameters can be converted to enums for cache comparisons"""
+        # This tests the critical fix: elliott CLI passes enum parameters as strings (e.g., 'konflux', 'success'),
+        # and get_latest_build()/get_latest_builds()/cache.get_by_name() must convert them to enums
+        # for proper cache comparisons. The type hints now reflect this: Union[EnumType, str].
+
+        # Verify string-to-enum conversion works correctly
+        test_cases = [
+            ('success', KonfluxBuildOutcome.SUCCESS),
+            ('failure', KonfluxBuildOutcome.FAILURE),
+            ('konflux', Engine.KONFLUX),
+            ('brew', Engine.BREW),
+            ('image', ArtifactType.IMAGE),
+            ('rpm', ArtifactType.RPM),
+        ]
+
+        for string_val, expected_enum in test_cases:
+            if isinstance(expected_enum, KonfluxBuildOutcome):
+                result = KonfluxBuildOutcome(string_val)
+            elif isinstance(expected_enum, Engine):
+                result = Engine(string_val)
+            elif isinstance(expected_enum, ArtifactType):
+                result = ArtifactType(string_val)
+
+            self.assertEqual(result, expected_enum, f"String '{string_val}' should convert to {expected_enum}")
+
+            # Verify enum equality works (critical for cache lookups)
+            self.assertTrue(result == expected_enum, f"Converted enum {result} should equal {expected_enum}")
