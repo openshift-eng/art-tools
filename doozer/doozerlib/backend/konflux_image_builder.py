@@ -754,7 +754,7 @@ class KonfluxImageBuilder:
 
         build_record = KonfluxBuildRecord(**build_record_params)
         metadata.runtime.konflux_db.add_build(build_record)
-        logger.info(f'Konflux build info stored successfully with status {outcome}')
+        logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
 
         try:
             taskrun_db_client = bigquery.BigQueryClient()
