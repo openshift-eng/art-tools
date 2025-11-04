@@ -24,7 +24,7 @@ from ghapi.all import GhApi
 from github import Github, GithubException
 from ruamel.yaml import YAML
 
-from pyartcd import jenkins
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import GITHUB_OWNER
 from pyartcd.git import GitRepository
@@ -169,6 +169,8 @@ class UpdateGolangPipeline:
         force_image_build: bool = False,
         build_system: str = 'brew',
         kubeconfig: str | None = None,
+        data_path: str | None = None,
+        data_gitref: str | None = None,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -182,6 +184,8 @@ class UpdateGolangPipeline:
         self.build_system = build_system
         self.koji_session = koji.ClientSession(BREW_HUB)  # Always needed for RPM builds
         self.tag_builds = tag_builds
+        self.data_path = data_path
+        self.data_gitref = data_gitref
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -538,21 +542,29 @@ class UpdateGolangPipeline:
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
         branch = self.get_golang_branch(el_v, go_version)
+        if self.data_gitref:
+            branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group",
-            branch,
-            "images:rebase",
-            "--version",
-            version,
-            "--release",
-            release,
-            "--message",
-            f"bumping to {version}-{release}",
         ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(
+            [
+                "--group",
+                branch,
+                "images:rebase",
+                "--version",
+                version,
+                "--release",
+                release,
+                "--message",
+                f"bumping to {version}-{release}",
+            ]
+        )
         if not self.dry_run:
             cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
@@ -560,16 +572,24 @@ class UpdateGolangPipeline:
     async def _build(self, el_v, go_version):
         _LOGGER.info("Building...")
         branch = self.get_golang_branch(el_v, go_version)
+        if self.data_gitref:
+            branch += f'@{self.data_gitref}'
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group",
-            branch,
-            "images:build",
-            "--repo-type",
-            "unsigned",
-            "--push-to-defaults",
         ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(
+            [
+                "--group",
+                branch,
+                "images:build",
+                "--repo-type",
+                "unsigned",
+                "--push-to-defaults",
+            ]
+        )
         if self.dry_run:
             cmd.append("--dry-run")
         if self.scratch:
@@ -584,21 +604,29 @@ class UpdateGolangPipeline:
         """Rebase golang-builder image for Konflux"""
         _LOGGER.info("Rebasing for Konflux...")
         branch = self.get_golang_branch(el_v, go_version)
+        if self.data_gitref:
+            branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group",
-            branch,
-            "beta:images:konflux:rebase",
-            "--version",
-            version,
-            "--release",
-            release,
-            "--message",
-            f"bumping to {version}-{release}",
         ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(
+            [
+                "--group",
+                branch,
+                "beta:images:konflux:rebase",
+                "--version",
+                version,
+                "--release",
+                release,
+                "--message",
+                f"bumping to {version}-{release}",
+            ]
+        )
         if not self.dry_run:
             cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
@@ -607,15 +635,23 @@ class UpdateGolangPipeline:
         """Build golang-builder image on Konflux"""
         _LOGGER.info("Building on Konflux...")
         branch = self.get_golang_branch(el_v, go_version)
+        if self.data_gitref:
+            branch += f'@{self.data_gitref}'
         konflux_namespace = GROUP_NAMESPACE_MAP["openshift-"]
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group",
-            branch,
-            "beta:images:konflux:build",
-            f"--konflux-namespace={konflux_namespace}",
         ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(
+            [
+                "--group",
+                branch,
+                "beta:images:konflux:build",
+                f"--konflux-namespace={konflux_namespace}",
+            ]
+        )
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.dry_run:
@@ -711,6 +747,13 @@ class UpdateGolangPipeline:
     help='Build system to use for golang-builder images (brew or konflux). Defaults to brew for backward compatibility.',
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
+@click.option(
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
+    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+)
+@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -726,6 +769,8 @@ async def update_golang(
     force_image_build: bool,
     build_system: str,
     kubeconfig: str,
+    data_path: str,
+    data_gitref: str,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -746,4 +791,6 @@ async def update_golang(
         force_image_build,
         build_system,
         kubeconfig,
+        data_path,
+        data_gitref,
     ).run()
