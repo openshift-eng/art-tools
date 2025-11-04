@@ -61,19 +61,18 @@ def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
 async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     if not is_latest_build(ocp_version, el_v, nvr, koji_session):
         return False
-    # FIXME: yuxzhu for tesint
-    # # If regen repo has been run this would take a few seconds
-    # # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
-    # build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    # cmd = f'brew wait-repo {build_tag} --build {nvr} --request --timeout=1'
-    # rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
-    # if rc != 0:
-    #     _LOGGER.info(
-    #         f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
-    #         'make the build available.'
-    #     )
-    #     return False
-    # _LOGGER.info(f'{nvr} is available in {build_tag}')
+    # If regen repo has been run this would take a few seconds
+    # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
+    build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
+    cmd = f'brew wait-repo {build_tag} --build {nvr} --request --timeout=1'
+    rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
+    if rc != 0:
+        _LOGGER.info(
+            f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
+            'make the build available.'
+        )
+        return False
+    _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
 
 
@@ -123,9 +122,9 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
 
 async def move_golang_bugs(
     ocp_version: str,
-    cves: List[str] = None,
-    nvrs: List[str] = None,
-    components: List[str] = None,
+    cves: list[str] | None = None,
+    nvrs: list[str] | None = None,
+    components: list[str] | None = None,
     force_update_tracker: bool = False,
     dry_run: bool = False,
 ):
@@ -245,7 +244,7 @@ class UpdateGolangPipeline:
                 f"Builder images are missing for rhel versions: {missing_in}. "
                 "Verifying builder branches are updated for building"
             )
-            # FIXME: yuxzhu: Broken
+            # FIXME: yuxzhu: already broken
             # for el_v in missing_in:
             #     self.verify_golang_builder_repo(el_v, go_version)
 
@@ -268,17 +267,16 @@ class UpdateGolangPipeline:
         _LOGGER.info("Updating streams.yml with found builder images")
         await self._slack_client.say_in_thread(f"new golang builders available {', '.join(builder_nvrs.values())}")
 
-        # FIXME: yuxzhu: for testing
-        # await self.update_golang_streams(go_version, builder_nvrs)
+        await self.update_golang_streams(go_version, builder_nvrs)
 
-        # await move_golang_bugs(
-        #     ocp_version=self.ocp_version,
-        #     cves=self.cves,
-        #     nvrs=self.go_nvrs if self.cves else None,
-        #     components=[GOLANG_BUILDER_CVE_COMPONENT],
-        #     force_update_tracker=self.force_update_tracker,
-        #     dry_run=self.dry_run,
-        # )
+        await move_golang_bugs(
+            ocp_version=self.ocp_version,
+            cves=self.cves,
+            nvrs=self.go_nvrs if self.cves else None,
+            components=[GOLANG_BUILDER_CVE_COMPONENT],
+            force_update_tracker=self.force_update_tracker,
+            dry_run=self.dry_run,
+        )
         await self._slack_client.say_in_thread(f":white_check_mark: Updating golang for {self.ocp_version} complete.")
 
     async def process_build(self, el_v, nvr):
@@ -338,7 +336,7 @@ class UpdateGolangPipeline:
             )
             if builds:
                 build = builds[0]
-                # yuxzhu: `elliottutil.get_golang_container_nvrs` uses p-flag to determine the build system.
+                # `elliottutil.get_golang_container_nvrs` uses p-flag to determine the build system.
                 # However, our existing golang-builders may not have p-flags.
                 # Here we are safe to looking at only Brew builds.
                 go_nvr_map = elliottutil.get_golang_container_nvrs_brew(
@@ -404,6 +402,15 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
+
+        def get_pullspec(parsed_nvr):
+            """Generate the complete pullspec based on build system"""
+            if self.build_system == 'brew':
+                return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+            else:  # konflux
+                # TODO: This is temporary. In the future we need a location to share with multiple teams.
+                return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
@@ -454,7 +461,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
                 latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                new_latest_go = get_pullspec(parsed_nvr)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
@@ -467,7 +474,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
-                new_previous_go = f'{previous_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                new_previous_go = get_pullspec(parsed_nvr)
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
                         info['image'] = new_previous_go
@@ -483,7 +490,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                new_latest_go = get_pullspec(parsed_nvr)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
