@@ -819,11 +819,12 @@ class KonfluxRebaser:
             visibility = BuildVisibility.PRIVATE if private_fix else BuildVisibility.PUBLIC
             pval = get_visibility_suffix('konflux', visibility)
             sb.write(f'.{pval}')
-
-        elif self._runtime.group_config.public_upstreams:
-            raise ValueError(
-                f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}"
-            )
+        else:
+            if self._runtime.group_config.public_upstreams:
+                raise ValueError(
+                    f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}"
+                )
+            sb.write(input_release)
 
         if source and source.commit_hash:
             sb.write(".g")
