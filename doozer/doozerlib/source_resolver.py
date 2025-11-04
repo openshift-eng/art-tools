@@ -428,21 +428,19 @@ class SourceResolver:
     @staticmethod
     def get_public_upstream(remote_git: str, public_upstreams: ListModel) -> Tuple[str, Optional[str], bool]:
         """
-        Some upstream repo are private in order to allow CVE workflows. While we
-        may want to build from a private upstream, we don't necessarily want to confuse
-        end-users by referencing it in our public facing image labels / etc.
-        In group.yaml, you can specify a mapping in "public_upstreams". It
-        represents private_url_prefix => public_url_prefix. Remote URLs passed to this
-        method which contain one of the private url prefixes will be translated
-        into a new string with the public prefix in its place. If there is not
-        applicable mapping, the incoming url will still be normalized into https.
-        :param remote_git: The URL to analyze for private repo patterns.
-        :param public_upstreams: The public upstream configuration from group.yaml.
-        :return: tuple (url, branch, has_public_upstream)
-            - url: An https normalized remote address with private repo information replaced. If there is no
-                   applicable private repo replacement, remote_git will be returned (normalized to https).
-            - branch: Optional public branch name if the public upstream source use a different branch name from the private upstream.
-            - has_public_upstream: True if the public upstream source is found in the public_upstreams mapping.
+        Map a private remote Git URL to a public upstream URL and branch when a matching mapping is configured.
+        
+        Normalizes the provided remote_git to an HTTPS URL and, if public_upstreams contains a longest-matching private prefix, replaces that prefix with the configured public prefix. For non-"openshift" public organizations, the function will also remove an organization prefix from the repository name when the repo name begins with "<public_org>-". If no mapping applies, the normalized HTTPS URL is returned unchanged.
+        
+        Parameters:
+            remote_git (str): The remote Git URL to normalize and translate.
+            public_upstreams (ListModel): A sequence of mappings from private to public upstreams, where each item provides keys "private", "public", and optionally "public_branch".
+        
+        Returns:
+            (url, branch, has_public_upstream): 
+                url (str): HTTPS-normalized remote URL with a private prefix replaced by the public prefix when a mapping matches.
+                branch (Optional[str]): Public branch name from the mapping when provided, otherwise `None`.
+                has_public_upstream (bool): `True` if a public upstream mapping was applied, `False` otherwise.
         """
         remote_https = art_util.convert_remote_git_to_https(remote_git)
 
