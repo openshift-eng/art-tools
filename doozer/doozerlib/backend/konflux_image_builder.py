@@ -427,7 +427,7 @@ class KonfluxImageBuilder:
             logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
 
         artifact_lockfile_enabled = metadata.is_artifact_lockfile_enabled()
-        if network_mode == "hermetic" and artifact_lockfile_enabled:
+        if artifact_lockfile_enabled:
             artifact_lockfile_path = metadata.config.konflux.cachi2.artifact_lockfile.get("path", ".")
             artifact_data = {
                 "type": "generic",
