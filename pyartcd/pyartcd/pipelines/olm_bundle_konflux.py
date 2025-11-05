@@ -101,7 +101,9 @@ async def olm_bundle_konflux(
         cmd.append('--force')
 
     # Load group config to get product information
-    group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
+    group_config = await load_group_config(
+        group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+    )
     product = group_config.get('product', 'ocp')
 
     # Set namespace based on product
@@ -176,7 +178,9 @@ async def olm_bundle_konflux(
             ):
                 runtime.logger.info(f'Group {group} matches OADP/MTA/MTC pattern, checking for OCP_TARGET_VERSIONS')
                 # Load group config to check for OCP_TARGET_VERSIONS
-                group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
+                group_config = await load_group_config(
+                    group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+                )
 
                 # Check if OCP_TARGET_VERSIONS is defined in group config
                 ocp_target_versions = group_config.get("OCP_TARGET_VERSIONS")

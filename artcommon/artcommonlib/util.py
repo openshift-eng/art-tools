@@ -683,8 +683,7 @@ def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Opt
         if kubeconfig:
             KONFLUX_LOGGER.info(f"Using kubeconfig from {env_var} for product '{product}'")
             return kubeconfig
-        else:
-            KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
+        KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
     else:
         KONFLUX_LOGGER.warning(
             f"No kubeconfig mapping found for product '{product}'. Available products: {list(PRODUCT_KUBECONFIG_MAP.keys())}"
@@ -716,8 +715,8 @@ def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optio
     if namespace:
         KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for product '{product}'")
         return namespace
-    else:
-        KONFLUX_LOGGER.warning(
-            f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
-        )
-        return KONFLUX_DEFAULT_NAMESPACE
+
+    KONFLUX_LOGGER.warning(
+        f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
+    )
+    return KONFLUX_DEFAULT_NAMESPACE

@@ -71,6 +71,23 @@ class CreateReleaseCli:
         self.force = force
         self.kind = kind
 
+    @staticmethod
+    def _validate_release_notes_for_openshift(group: str, release_notes):
+        """Validate that release notes fields are non-empty for openshift- groups."""
+        if not group.startswith("openshift-"):
+            return
+
+        if not (release_notes and hasattr(release_notes, '__dict__')):
+            return
+
+        required_fields = ['synopsis', 'topic', 'description', 'solution']
+        empty_fields = [field for field in required_fields if not getattr(release_notes, field, '').strip()]
+
+        if empty_fields:
+            raise ValueError(
+                f"For openshift- groups, the following releaseNotes fields cannot be empty: {', '.join(empty_fields)}"
+            )
+
     async def run(self) -> Optional[ResourceInstance]:
         self.runtime.initialize(build_system='konflux', with_shipment=True)
 
@@ -101,16 +118,9 @@ class CreateReleaseCli:
                 f"same as runtime.assembly={self.runtime.assembly}"
             )
 
-        # For openshift- groups, enforce that release notes fields are not empty
-        # since their values are defined in a Release. For other groups, like oadp-
-        # there are defined in the ReleasePlanAdmission and hence does not require to be set here
-        if self.runtime.group.startswith("openshift-") and config.shipment.data and config.shipment.data.releaseNotes:
-            release_notes = config.shipment.data.releaseNotes
-            required_fields = ['synopsis', 'topic', 'description', 'solution']
-            for field_name in required_fields:
-                field_value = getattr(release_notes, field_name)
-                if not field_value or not field_value.strip():
-                    raise ValueError(f"For openshift- groups, releaseNotes.{field_name} cannot be empty")
+        # Validate release notes for openshift- groups
+        if config.shipment.data and config.shipment.data.releaseNotes:
+            self._validate_release_notes_for_openshift(self.runtime.group, config.shipment.data.releaseNotes)
 
         # Ensure CRDs are accessible
         try:

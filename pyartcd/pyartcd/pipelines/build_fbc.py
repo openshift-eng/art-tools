@@ -122,7 +122,9 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
         # Load group config to get product information
         group = f"openshift-{self.version}" if not self.group else self.group
-        group_config = await load_group_config(group=group, assembly=self.assembly)
+        group_config = await load_group_config(
+            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
+        )
         product = group_config.get('product', 'ocp')
 
         # Set namespace based on product

@@ -157,7 +157,10 @@ class BuildOadpPipeline:
 
         # Load group config to get product information
         group_config = await load_group_config(
-            group=self.group, assembly=self.assembly, doozer_data_path=self._doozer_env_vars['DOOZER_DATA_PATH']
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=self._doozer_env_vars['DOOZER_DATA_PATH'],
+            doozer_data_gitref=self.data_gitref,
         )
         product = group_config.get('product', 'ocp')
 
