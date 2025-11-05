@@ -81,7 +81,7 @@ class CreateReleaseCli:
             return
 
         required_fields = ['synopsis', 'topic', 'description', 'solution']
-        empty_fields = [field for field in required_fields if not getattr(release_notes, field, '').strip()]
+        empty_fields = [field for field in required_fields if not (getattr(release_notes, field, None) or '').strip()]
 
         if empty_fields:
             raise ValueError(
