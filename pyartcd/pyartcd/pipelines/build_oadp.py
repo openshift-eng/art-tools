@@ -8,7 +8,7 @@ from typing import Optional
 import click
 from artcommonlib import exectools
 from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
-from artcommonlib.konflux.utils import resolve_konflux_kubeconfig, resolve_konflux_namespace
+from artcommonlib.util import resolve_konflux_kubeconfig, resolve_konflux_namespace
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, locks

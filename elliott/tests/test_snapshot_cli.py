@@ -1,12 +1,12 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
-from artcommonlib.konflux.utils import (
+from artcommonlib.model import Model
+from artcommonlib.util import (
     normalize_group_name_for_k8s,
     resolve_konflux_kubeconfig,
     resolve_konflux_namespace,
 )
-from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from elliottlib.cli.snapshot_cli import (
     CreateSnapshotCli,

@@ -17,13 +17,14 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.konflux.utils import (
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import (
+    get_utc_now_formatted_str,
+    new_roundtrip_yaml_handler,
     normalize_group_name_for_k8s,
     resolve_konflux_kubeconfig,
     resolve_konflux_namespace,
 )
-from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder

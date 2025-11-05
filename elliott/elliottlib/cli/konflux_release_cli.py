@@ -6,8 +6,12 @@ from typing import Optional
 import click
 from artcommonlib import logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from artcommonlib.konflux.utils import resolve_konflux_kubeconfig, resolve_konflux_namespace
-from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
+from artcommonlib.util import (
+    get_utc_now_formatted_str,
+    new_roundtrip_yaml_handler,
+    resolve_konflux_kubeconfig,
+    resolve_konflux_namespace,
+)
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     KIND_APPLICATION,
