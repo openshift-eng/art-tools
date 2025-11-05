@@ -139,10 +139,10 @@ class CreateSnapshotCli:
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
                 ) from None
-            except Exception as e:
+            except Exception:
                 kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
                 LOGGER.exception(
-                    f"Could not verify cluster access using {kubeconfig_msg}: {e}. "
+                    f"Could not verify cluster access using {kubeconfig_msg}. "
                     f"Proceeding anyway - operations may fail if cluster is not accessible."
                 )
         else:
@@ -477,10 +477,10 @@ class GetSnapshotCli:
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
                 ) from None
-            except Exception as e:
+            except Exception:
                 kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
                 LOGGER.exception(
-                    f"Could not verify cluster access using {kubeconfig_msg}: {e}. "
+                    f"Could not verify cluster access using {kubeconfig_msg}. "
                     f"Proceeding anyway - operations may fail if cluster is not accessible."
                 )
         else:

@@ -691,20 +691,15 @@ def resolve_konflux_kubeconfig(group: str, provided_kubeconfig: Optional[str] = 
                 break
 
         if kubeconfig_env_var:
-            try:
-                kubeconfig = os.environ.get(kubeconfig_env_var)
-                if kubeconfig:
-                    KONFLUX_LOGGER.info(
-                        f"Using kubeconfig from {kubeconfig_env_var} for group '{group}' (matched prefix: '{matched_prefix}')"
-                    )
-                    return kubeconfig
-                else:
-                    KONFLUX_LOGGER.warning(
-                        f"Environment variable {kubeconfig_env_var} is not set for group '{group}' (matched prefix: '{matched_prefix}')"
-                    )
-            except AttributeError as e:
+            kubeconfig = os.environ.get(kubeconfig_env_var)
+            if kubeconfig:
+                KONFLUX_LOGGER.info(
+                    f"Using kubeconfig from {kubeconfig_env_var} for group '{group}' (matched prefix: '{matched_prefix}')"
+                )
+                return kubeconfig
+            else:
                 KONFLUX_LOGGER.warning(
-                    f"Error accessing environment variable {kubeconfig_env_var} for group '{group}': {e}"
+                    f"Environment variable {kubeconfig_env_var} is not set for group '{group}' (matched prefix: '{matched_prefix}')"
                 )
         else:
             KONFLUX_LOGGER.warning(

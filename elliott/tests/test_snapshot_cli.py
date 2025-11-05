@@ -513,65 +513,41 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 class TestPrefixMatching(IsolatedAsyncioTestCase):
     """Test cases for prefix matching behavior in group-based configuration resolution"""
 
-    def test_longest_prefix_wins(self):
+    @patch('artcommonlib.util.GROUP_NAMESPACE_MAP')
+    def test_longest_prefix_wins(self, mock_group_namespace_map):
         """Test that longest prefixes are matched first"""
-        # Simulate a case where we have both "openshift-" and "openshift-priv-" prefixes
-        test_mappings = {
-            "openshift-": "default-namespace",
-            "openshift-priv-": "private-namespace",
-            "oadp-": "oadp-namespace",
-        }
+        from artcommonlib.util import resolve_konflux_namespace
 
-        # Sort by prefix length descending (longest first)
-        sorted_mappings = sorted(test_mappings.items(), key=lambda x: len(x[0]), reverse=True)
+        # Simulate a case where we have both "openshift-" and "openshift-priv-" prefixes
+        mock_group_namespace_map.items.return_value = [
+            ("openshift-", "default-namespace"),
+            ("openshift-priv-", "private-namespace"),
+            ("oadp-", "oadp-namespace"),
+        ]
 
         # Test that "openshift-priv-4.18" matches the longer prefix
-        group = "openshift-priv-4.18"
-        matched_namespace = None
-        for prefix, namespace in sorted_mappings:
-            if group.startswith(prefix):
-                matched_namespace = namespace
-                break
-
-        self.assertEqual(matched_namespace, "private-namespace")
+        result = resolve_konflux_namespace("openshift-priv-4.18")
+        self.assertEqual(result, "private-namespace")
 
         # Test that "openshift-4.18" matches the shorter prefix
-        group = "openshift-4.18"
-        matched_namespace = None
-        for prefix, namespace in sorted_mappings:
-            if group.startswith(prefix):
-                matched_namespace = namespace
-                break
+        result = resolve_konflux_namespace("openshift-4.18")
+        self.assertEqual(result, "default-namespace")
 
-        self.assertEqual(matched_namespace, "default-namespace")
-
-    def test_prefix_order_independence(self):
+    @patch('artcommonlib.util.GROUP_NAMESPACE_MAP')
+    def test_prefix_order_independence(self, mock_group_namespace_map):
         """Test that prefix matching works regardless of input order"""
-        # Test mappings in different orders
-        mappings_order_1 = {
-            "openshift-": "default",
-            "openshift-priv-": "private",
-            "openshift-special-": "special",
-        }
+        from artcommonlib.util import resolve_konflux_namespace
 
-        mappings_order_2 = {
-            "openshift-special-": "special",
-            "openshift-": "default",
-            "openshift-priv-": "private",
-        }
+        # Test mappings in different orders - the resolver should handle this correctly
+        mock_group_namespace_map.items.return_value = [
+            ("openshift-special-", "special"),
+            ("openshift-", "default"),
+            ("openshift-priv-", "private"),
+        ]
 
         test_group = "openshift-special-4.18"
-
-        # Test both orders produce the same result
-        for mappings in [mappings_order_1, mappings_order_2]:
-            sorted_mappings = sorted(mappings.items(), key=lambda x: len(x[0]), reverse=True)
-            matched_namespace = None
-            for prefix, namespace in sorted_mappings:
-                if test_group.startswith(prefix):
-                    matched_namespace = namespace
-                    break
-
-            self.assertEqual(matched_namespace, "special")
+        result = resolve_konflux_namespace(test_group)
+        self.assertEqual(result, "special")
 
 
 class TestLocalDevelopment(IsolatedAsyncioTestCase):
