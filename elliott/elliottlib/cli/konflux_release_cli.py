@@ -9,8 +9,8 @@ from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
-    resolve_konflux_kubeconfig,
-    resolve_konflux_namespace,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import (
     API_VERSION,
@@ -355,8 +355,8 @@ async def new_release_cli(
     release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
     # Resolve kubeconfig and namespace using utility functions
-    resolved_kubeconfig = resolve_konflux_kubeconfig(runtime.group, konflux_kubeconfig)
-    resolved_namespace = resolve_konflux_namespace(runtime.group, konflux_namespace)
+    resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
         'kubeconfig': resolved_kubeconfig,

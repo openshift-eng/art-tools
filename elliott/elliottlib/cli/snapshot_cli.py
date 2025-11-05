@@ -8,7 +8,6 @@ from typing import List
 
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildRecord,
@@ -22,8 +21,8 @@ from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
     normalize_group_name_for_k8s,
-    resolve_konflux_kubeconfig,
-    resolve_konflux_namespace,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
@@ -406,8 +405,8 @@ async def new_snapshot_cli(
         raise click.BadParameter("Use only one of --build or --builds-file")
 
     # Resolve kubeconfig and namespace using helper functions
-    konflux_kubeconfig = resolve_konflux_kubeconfig(runtime.group, konflux_kubeconfig)
-    konflux_namespace = resolve_konflux_namespace(runtime.group, konflux_namespace)
+    konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    konflux_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     if builds_file:
         if builds_file == "-":
@@ -577,8 +576,8 @@ async def get_snapshot_cli(
     $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
     # Resolve kubeconfig and namespace using helper functions
-    konflux_kubeconfig = resolve_konflux_kubeconfig(runtime.group, konflux_kubeconfig)
-    konflux_namespace = resolve_konflux_namespace(runtime.group, konflux_namespace)
+    konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    konflux_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,

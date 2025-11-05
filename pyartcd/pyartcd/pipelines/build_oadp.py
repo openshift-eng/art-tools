@@ -7,8 +7,8 @@ from typing import Optional
 
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
-from artcommonlib.util import resolve_konflux_kubeconfig, resolve_konflux_namespace
+from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, locks
@@ -16,7 +16,7 @@ from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix
+from pyartcd.util import default_release_suffix, load_group_config
 
 
 class BuildOadpPipeline:
@@ -155,14 +155,20 @@ class BuildOadpPipeline:
             "--build-priority=1",
         ]
 
-        # Resolve namespace using utility function
-        namespace = resolve_konflux_namespace(self.group)
+        # Load group config to get product information
+        group_config = await load_group_config(
+            group=self.group, assembly=self.assembly, doozer_data_path=self._doozer_env_vars['DOOZER_DATA_PATH']
+        )
+        product = group_config.get('product', 'ocp')
+
+        # Resolve namespace using product-based utility function
+        namespace = resolve_konflux_namespace_by_product(product)
         build_cmd.append(f"--konflux-namespace={namespace}")
 
-        # Use kubeconfig from CLI parameter or resolve from group-specific environment variable
-        kubeconfig = resolve_konflux_kubeconfig(self.group, self.kubeconfig)
+        # Use kubeconfig from CLI parameter or resolve from product-specific environment variable
+        kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
         if not kubeconfig:
-            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
+            available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
             raise ValueError(
                 f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
             )

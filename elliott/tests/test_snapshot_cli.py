@@ -4,8 +4,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 from artcommonlib.model import Model
 from artcommonlib.util import (
     normalize_group_name_for_k8s,
-    resolve_konflux_kubeconfig,
-    resolve_konflux_namespace,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from elliottlib.cli.snapshot_cli import (
@@ -510,44 +510,34 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         self.assertIn("Kubernetes snapshot", error_msg)
 
 
-class TestPrefixMatching(IsolatedAsyncioTestCase):
-    """Test cases for prefix matching behavior in group-based configuration resolution"""
+class TestProductBasedResolution(IsolatedAsyncioTestCase):
+    """Test cases for product-based configuration resolution"""
 
-    @patch('artcommonlib.util.GROUP_NAMESPACE_MAP')
-    def test_longest_prefix_wins(self, mock_group_namespace_map):
-        """Test that longest prefixes are matched first"""
-        from artcommonlib.util import resolve_konflux_namespace
+    def test_product_namespace_resolution(self):
+        """Test product-based namespace resolution"""
 
-        # Simulate a case where we have both "openshift-" and "openshift-priv-" prefixes
-        mock_group_namespace_map.items.return_value = [
-            ("openshift-", "default-namespace"),
-            ("openshift-priv-", "private-namespace"),
-            ("oadp-", "oadp-namespace"),
-        ]
+        # Test known products
+        self.assertEqual(resolve_konflux_namespace_by_product("oadp"), "art-oadp-tenant")
+        self.assertEqual(resolve_konflux_namespace_by_product("mta"), "art-mta-tenant")
+        self.assertEqual(resolve_konflux_namespace_by_product("rhmtc"), "art-mtc-tenant")
+        self.assertEqual(resolve_konflux_namespace_by_product("logging"), "art-logging-tenant")
+        self.assertEqual(resolve_konflux_namespace_by_product("ocp"), "ocp-art-tenant")
 
-        # Test that "openshift-priv-4.18" matches the longer prefix
-        result = resolve_konflux_namespace("openshift-priv-4.18")
-        self.assertEqual(result, "private-namespace")
+        # Test unknown product falls back to default
+        self.assertEqual(resolve_konflux_namespace_by_product("unknown"), "ocp-art-tenant")
 
-        # Test that "openshift-4.18" matches the shorter prefix
-        result = resolve_konflux_namespace("openshift-4.18")
-        self.assertEqual(result, "default-namespace")
+        # Test provided namespace takes precedence
+        self.assertEqual(resolve_konflux_namespace_by_product("oadp", "custom-namespace"), "custom-namespace")
 
-    @patch('artcommonlib.util.GROUP_NAMESPACE_MAP')
-    def test_prefix_order_independence(self, mock_group_namespace_map):
-        """Test that prefix matching works regardless of input order"""
-        from artcommonlib.util import resolve_konflux_namespace
+    def test_product_kubeconfig_resolution(self):
+        """Test product-based kubeconfig resolution"""
 
-        # Test mappings in different orders - the resolver should handle this correctly
-        mock_group_namespace_map.items.return_value = [
-            ("openshift-special-", "special"),
-            ("openshift-", "default"),
-            ("openshift-priv-", "private"),
-        ]
+        # Test provided kubeconfig takes precedence
+        self.assertEqual(resolve_konflux_kubeconfig_by_product("oadp", "/custom/path"), "/custom/path")
 
-        test_group = "openshift-special-4.18"
-        result = resolve_konflux_namespace(test_group)
-        self.assertEqual(result, "special")
+        # Test without environment variables (should return None)
+        self.assertIsNone(resolve_konflux_kubeconfig_by_product("oadp"))
+        self.assertIsNone(resolve_konflux_kubeconfig_by_product("unknown"))
 
 
 class TestLocalDevelopment(IsolatedAsyncioTestCase):
@@ -656,64 +646,5 @@ class TestLocalDevelopment(IsolatedAsyncioTestCase):
         self.assertTrue(len(result) > 0)
 
 
-class TestHelperFunctions(IsolatedAsyncioTestCase):
-    """Test cases for helper functions that were extracted from duplicate code"""
-
-    def setUp(self):
-        self.runtime = MagicMock()
-
-    @patch.dict('os.environ', {'OADP_KONFLUX_SA_KUBECONFIG': '/path/to/oadp/kubeconfig'})
-    def test_resolve_konflux_kubeconfig_with_group_mapping(self):
-        """Test kubeconfig resolution with group-based environment variable"""
-        self.runtime.group = "oadp-1.5"
-
-        result = resolve_konflux_kubeconfig(self.runtime.group)
-        self.assertEqual(result, '/path/to/oadp/kubeconfig')
-
-    def test_resolve_konflux_kubeconfig_with_provided_config(self):
-        """Test that provided kubeconfig takes precedence"""
-        self.runtime.group = "oadp-1.5"
-        provided_config = "/explicit/path/to/kubeconfig"
-
-        result = resolve_konflux_kubeconfig(self.runtime.group, provided_config)
-        self.assertEqual(result, provided_config)
-
-    @patch.dict('os.environ', {}, clear=True)
-    def test_resolve_konflux_kubeconfig_no_env_var(self):
-        """Test kubeconfig resolution when environment variable is not set"""
-        self.runtime.group = "oadp-1.5"
-
-        result = resolve_konflux_kubeconfig(self.runtime.group)
-        self.assertIsNone(result)
-
-    def test_resolve_konflux_namespace_with_group_mapping(self):
-        """Test namespace resolution with group-based mapping"""
-        self.runtime.group = "oadp-1.5"
-
-        result = resolve_konflux_namespace(self.runtime.group)
-        self.assertEqual(result, "art-oadp-tenant")
-
-    def test_resolve_konflux_namespace_with_provided_namespace(self):
-        """Test that provided namespace takes precedence"""
-        self.runtime.group = "oadp-1.5"
-        provided_namespace = "explicit-namespace"
-
-        result = resolve_konflux_namespace(self.runtime.group, provided_namespace)
-        self.assertEqual(result, provided_namespace)
-
-    def test_resolve_konflux_namespace_no_mapping_uses_default(self):
-        """Test namespace resolution falls back to default when no mapping found"""
-        self.runtime.group = "unknown-group"
-
-        result = resolve_konflux_namespace(self.runtime.group)
-        self.assertEqual(result, "ocp-art-tenant")  # KONFLUX_DEFAULT_NAMESPACE
-
-    def test_resolve_konflux_namespace_longest_prefix_wins(self):
-        """Test that longest prefix wins in namespace resolution"""
-        # Test a group that could match multiple prefixes
-        self.runtime.group = "openshift-priv-4.18"
-
-        # This should match "openshift-" prefix and return "ocp-art-tenant"
-        # In real scenario with "openshift-priv-" it would match that longer prefix first
-        result = resolve_konflux_namespace(self.runtime.group)
-        self.assertEqual(result, "ocp-art-tenant")
+# TestHelperFunctions removed - legacy group-based resolver functions no longer exist
+# Tests for product-based resolvers are in TestProductBasedResolution class above

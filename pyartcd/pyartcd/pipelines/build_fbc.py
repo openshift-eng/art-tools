@@ -6,13 +6,15 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
+from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 
 
 class BuildFbcPipeline:
@@ -118,31 +120,22 @@ class BuildFbcPipeline:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        # Set namespace based on group prefix
+        # Load group config to get product information
         group = f"openshift-{self.version}" if not self.group else self.group
-        for prefix, namespace in GROUP_NAMESPACE_MAP.items():
-            if group.startswith(prefix):
-                doozer_opts.extend(['--konflux-namespace', namespace])
-                break
+        group_config = await load_group_config(group=group, assembly=self.assembly)
+        product = group_config.get('product', 'ocp')
 
-        # Use kubeconfig from CLI parameter or tenant-specific environment variable
-        final_kubeconfig = self.kubeconfig
+        # Set namespace based on product
+        namespace = resolve_konflux_namespace_by_product(product)
+        doozer_opts.extend(['--konflux-namespace', namespace])
+
+        # Use kubeconfig from CLI parameter or product-specific environment variable
+        final_kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
         if not final_kubeconfig:
-            # Determine the appropriate environment variable based on group prefix
-            kubeconfig_env_var = None
-            for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
-                if group.startswith(prefix):
-                    kubeconfig_env_var = env_var
-                    break
-
-            if kubeconfig_env_var:
-                final_kubeconfig = os.environ.get(kubeconfig_env_var)
-
-            if not final_kubeconfig:
-                available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
-                raise ValueError(
-                    f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
-                )
+            available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+            raise ValueError(
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+            )
 
         doozer_opts.extend(['--konflux-kubeconfig', final_kubeconfig])
         if self.plr_template:

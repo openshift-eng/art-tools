@@ -16,9 +16,9 @@ import requests
 import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
-    GROUP_KUBECONFIG_MAP,
-    GROUP_NAMESPACE_MAP,
     KONFLUX_DEFAULT_NAMESPACE,
+    PRODUCT_KUBECONFIG_MAP,
+    PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
 )
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
@@ -663,12 +663,12 @@ def normalize_group_name_for_k8s(group_name: str) -> str:
     return normalized
 
 
-def resolve_konflux_kubeconfig(group: str, provided_kubeconfig: Optional[str] = None) -> Optional[str]:
+def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Optional[str] = None) -> Optional[str]:
     """
-    Resolve the Konflux kubeconfig path based on group-specific mappings.
+    Resolve the Konflux kubeconfig path based on product type.
 
     Args:
-        group: The group name (e.g., "openshift-4.17", "oadp-1.5")
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
         provided_kubeconfig: Explicitly provided kubeconfig path (takes precedence)
 
     Returns:
@@ -677,60 +677,33 @@ def resolve_konflux_kubeconfig(group: str, provided_kubeconfig: Optional[str] = 
     if provided_kubeconfig:
         return provided_kubeconfig
 
-    kubeconfig_env_var = None
-    matched_prefix = None
-
-    # Find matching prefix for kubeconfig environment variable
-    # Sort by prefix length descending to prefer longest matches first
-    try:
-        sorted_mappings = sorted(GROUP_KUBECONFIG_MAP.items(), key=lambda x: len(x[0]), reverse=True)
-        for prefix, env_var in sorted_mappings:
-            if group.startswith(prefix):
-                kubeconfig_env_var = env_var
-                matched_prefix = prefix
-                break
-
-        if kubeconfig_env_var:
-            kubeconfig = os.environ.get(kubeconfig_env_var)
-            if kubeconfig:
-                KONFLUX_LOGGER.info(
-                    f"Using kubeconfig from {kubeconfig_env_var} for group '{group}' (matched prefix: '{matched_prefix}')"
-                )
-                return kubeconfig
-
-            KONFLUX_LOGGER.warning(
-                f"Environment variable {kubeconfig_env_var} is not set for group '{group}' (matched prefix: '{matched_prefix}')"
-            )
+    env_var = PRODUCT_KUBECONFIG_MAP.get(product)
+    if env_var:
+        kubeconfig = os.environ.get(env_var)
+        if kubeconfig:
+            KONFLUX_LOGGER.info(f"Using kubeconfig from {env_var} for product '{product}'")
+            return kubeconfig
         else:
-            KONFLUX_LOGGER.warning(
-                f"No kubeconfig mapping found for group '{group}'. Available mappings: {dict(GROUP_KUBECONFIG_MAP)}"
-            )
-
-        available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
-        KONFLUX_LOGGER.info(
-            f"No kubeconfig specified via --konflux-kubeconfig or environment variables. "
-            f"Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in to the cluster."
-        )
-        return None
-
-    except (AttributeError, TypeError) as e:
+            KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
+    else:
         KONFLUX_LOGGER.warning(
-            f"Error processing kubeconfig mappings for group '{group}': {e}. Will rely on oc being logged in."
+            f"No kubeconfig mapping found for product '{product}'. Available products: {list(PRODUCT_KUBECONFIG_MAP.keys())}"
         )
-        return None
-    except Exception:
-        KONFLUX_LOGGER.exception(
-            f"Unexpected error determining kubeconfig for group '{group}'. Will rely on oc being logged in."
-        )
-        return None
+
+    available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+    KONFLUX_LOGGER.info(
+        f"No kubeconfig specified for product '{product}'. "
+        f"Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in to the cluster."
+    )
+    return None
 
 
-def resolve_konflux_namespace(group: str, provided_namespace: Optional[str] = None) -> str:
+def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optional[str] = None) -> str:
     """
-    Resolve the Konflux namespace based on group-specific mappings.
+    Resolve the Konflux namespace based on product type.
 
     Args:
-        group: The group name (e.g., "openshift-4.17", "oadp-1.5")
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
         provided_namespace: Explicitly provided namespace (takes precedence)
 
     Returns:
@@ -739,27 +712,12 @@ def resolve_konflux_namespace(group: str, provided_namespace: Optional[str] = No
     if provided_namespace:
         return provided_namespace
 
-    # Sort by prefix length descending to prefer longest matches first
-    try:
-        sorted_mappings = sorted(GROUP_NAMESPACE_MAP.items(), key=lambda x: len(x[0]), reverse=True)
-        for prefix, namespace in sorted_mappings:
-            if group.startswith(prefix):
-                KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for group '{group}' (matched prefix: '{prefix}')")
-                return namespace
-
-        # No mapping found - use default
+    namespace = PRODUCT_NAMESPACE_MAP.get(product)
+    if namespace:
+        KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for product '{product}'")
+        return namespace
+    else:
         KONFLUX_LOGGER.warning(
-            f"No namespace mapping found for group '{group}'. Available mappings: {dict(GROUP_NAMESPACE_MAP)}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
-        )
-        return KONFLUX_DEFAULT_NAMESPACE
-
-    except (AttributeError, TypeError) as e:
-        KONFLUX_LOGGER.warning(
-            f"Error processing namespace mappings for group '{group}': {e}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
-        )
-        return KONFLUX_DEFAULT_NAMESPACE
-    except Exception:
-        KONFLUX_LOGGER.exception(
-            f"Unexpected error determining namespace for group '{group}'. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
+            f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
         )
         return KONFLUX_DEFAULT_NAMESPACE

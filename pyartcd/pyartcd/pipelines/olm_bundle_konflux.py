@@ -5,7 +5,8 @@ from pathlib import Path
 import click
 from aioredlock import LockError
 from artcommonlib import exectools
-from artcommonlib.constants import GROUP_KUBECONFIG_MAP, GROUP_NAMESPACE_MAP
+from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -99,30 +100,21 @@ async def olm_bundle_konflux(
     if force:
         cmd.append('--force')
 
-    # Set namespace based on group prefix
-    for prefix, namespace in GROUP_NAMESPACE_MAP.items():
-        if group.startswith(prefix):
-            cmd.extend(['--konflux-namespace', namespace])
-            break
+    # Load group config to get product information
+    group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=data_path)
+    product = group_config.get('product', 'ocp')
 
-    # Use kubeconfig from CLI parameter or tenant-specific environment variable
-    final_kubeconfig = kubeconfig
+    # Set namespace based on product
+    namespace = resolve_konflux_namespace_by_product(product)
+    cmd.extend(['--konflux-namespace', namespace])
+
+    # Use kubeconfig from CLI parameter or product-specific environment variable
+    final_kubeconfig = resolve_konflux_kubeconfig_by_product(product, kubeconfig)
     if not final_kubeconfig:
-        # Determine the appropriate environment variable based on group prefix
-        kubeconfig_env_var = None
-        for prefix, env_var in GROUP_KUBECONFIG_MAP.items():
-            if group.startswith(prefix):
-                kubeconfig_env_var = env_var
-                break
-
-        if kubeconfig_env_var:
-            final_kubeconfig = os.environ.get(kubeconfig_env_var)
-
-        if not final_kubeconfig:
-            available_env_vars = list(GROUP_KUBECONFIG_MAP.values())
-            raise ValueError(
-                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
-            )
+        available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+        raise ValueError(
+            f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+        )
 
     cmd.extend(['--konflux-kubeconfig', final_kubeconfig])
     if plr_template:
