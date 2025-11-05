@@ -238,11 +238,8 @@ def test_get_upstreaming_entries_with_konflux_build_system(
         'mirror': True,
     }
 
-    # Setup async mock for get_latest_build
-    async def mock_get_latest_build(*args, **kwargs):
-        return mock_konflux_build_record
-
-    mock_runtime_konflux.konflux_db.get_latest_build = mocker.AsyncMock(side_effect=mock_get_latest_build)
+    # Mock pull_url to return the Konflux pullspec
+    mock_image_meta.pull_url.return_value = 'quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123'
     mock_runtime_konflux.ordered_image_metas.return_value = [mock_image_meta]
 
     result = images_streams._get_upstreaming_entries(mock_runtime_konflux)
@@ -251,16 +248,8 @@ def test_get_upstreaming_entries_with_konflux_build_system(
     assert 'ose-cli' in result
     assert result['ose-cli']['image'] == 'quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123'
 
-    # Verify Konflux DB was bound and queried
-    mock_runtime_konflux.konflux_db.bind.assert_called_once_with(KonfluxBuildRecord)
-    mock_runtime_konflux.konflux_db.get_latest_build.assert_called_once_with(
-        name='ose-cli',
-        group='openshift-4.17',
-        assembly='stream',
-        artifact_type=ArtifactType.IMAGE,
-        engine=Engine.KONFLUX,
-        outcome=KonfluxBuildOutcome.SUCCESS,
-    )
+    # Verify pull_url was called
+    mock_image_meta.pull_url.assert_called_once()
 
 
 def test_get_upstreaming_entries_konflux_build_not_found(mocker, mock_runtime_konflux, mock_image_meta):
@@ -272,11 +261,8 @@ def test_get_upstreaming_entries_konflux_build_not_found(mocker, mock_runtime_ko
         'upstream_image': 'registry.ci.openshift.org/ocp/4.17:missing'
     }
 
-    # Mock Konflux DB returning None (no build found)
-    async def mock_get_latest_build(*args, **kwargs):
-        return None
-
-    mock_runtime_konflux.konflux_db.get_latest_build = mocker.AsyncMock(side_effect=mock_get_latest_build)
+    # Mock pull_url to raise IOError (as it would when no build is found)
+    mock_image_meta.pull_url.side_effect = IOError('No Konflux build found for ose-missing in group openshift-4.17')
     mock_runtime_konflux.ordered_image_metas.return_value = [mock_image_meta]
 
     with pytest.raises(IOError, match='No Konflux build found for ose-missing'):
