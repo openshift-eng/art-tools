@@ -697,10 +697,10 @@ def resolve_konflux_kubeconfig(group: str, provided_kubeconfig: Optional[str] = 
                     f"Using kubeconfig from {kubeconfig_env_var} for group '{group}' (matched prefix: '{matched_prefix}')"
                 )
                 return kubeconfig
-            else:
-                KONFLUX_LOGGER.warning(
-                    f"Environment variable {kubeconfig_env_var} is not set for group '{group}' (matched prefix: '{matched_prefix}')"
-                )
+
+            KONFLUX_LOGGER.warning(
+                f"Environment variable {kubeconfig_env_var} is not set for group '{group}' (matched prefix: '{matched_prefix}')"
+            )
         else:
             KONFLUX_LOGGER.warning(
                 f"No kubeconfig mapping found for group '{group}'. Available mappings: {dict(GROUP_KUBECONFIG_MAP)}"
