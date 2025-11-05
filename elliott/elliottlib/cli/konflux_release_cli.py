@@ -89,8 +89,6 @@ class CreateReleaseCli:
             )
 
     async def run(self) -> Optional[ResourceInstance]:
-        self.runtime.initialize(build_system='konflux', with_shipment=True)
-
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
         if not config_raw:
@@ -364,6 +362,9 @@ async def new_release_cli(
     "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@add_4.18.2_test_release"
     release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux', with_shipment=True)
+
     # Resolve kubeconfig and namespace using utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
     resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)

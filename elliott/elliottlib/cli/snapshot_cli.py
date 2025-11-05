@@ -120,7 +120,6 @@ class CreateSnapshotCli:
         self.konflux_client.verify_connection()
 
     async def run(self):
-        self.runtime.initialize(build_system='konflux', mode='images')
         if self.runtime.konflux_db is None:
             raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
@@ -404,6 +403,9 @@ async def new_snapshot_cli(
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
 
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux', mode='images')
+
     # Resolve kubeconfig and namespace using helper functions
     konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
     konflux_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
@@ -458,7 +460,6 @@ class GetSnapshotCli:
         self.konflux_client.verify_connection()
 
     async def run(self):
-        self.runtime.initialize()
         if self.runtime.konflux_db is None:
             raise RuntimeError('Konflux DB is not initialized')
 
@@ -575,6 +576,9 @@ async def get_snapshot_cli(
     \b
     $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize()
+
     # Resolve kubeconfig and namespace using helper functions
     konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
     konflux_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
