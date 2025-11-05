@@ -204,7 +204,7 @@ class KonfluxOlmBundleRebaser:
         # Read image references from the operator's image-references file
         image_references = {}
         refs_path = operator_bundle_dir / "image-references"
-        if metadata.runtime.group.startswith("oadp-") or metadata.runtime.group.startswith("logging-"):
+        if not metadata.runtime.group.startswith("openshift-"):
             refs_path = operator_manifests_dir / "../image-references"
         if refs_path.exists():
             async with aiofiles.open(refs_path, 'r') as f:
@@ -358,7 +358,7 @@ class KonfluxOlmBundleRebaser:
                 if self._group_config.operator_image_ref_mode == 'manifest-list'
                 else image_info['contentDigest']
             )
-            if metadata.runtime.group.startswith("oadp-") or metadata.runtime.group.startswith("logging-"):
+            if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
             else:
                 new_namespace = 'openshift4' if namespace == csv_namespace else namespace
