@@ -274,6 +274,9 @@ class Repo(object):
         if not section_name:  # If the caller has not specified a name, use group.yml name.
             section_name = self.name
 
+        # Get baseurl once and reuse it
+        baseurl_value = self.baseurl(repotype, arch)
+
         result = '[{}]\n'.format(section_name)
 
         # Sort keys so they are always in the same order, makes unit
@@ -287,7 +290,7 @@ class Repo(object):
 
             line = '{} = {}\n'
             if k == 'baseurl':
-                line = line.format(k, self.baseurl(repotype, arch))
+                line = line.format(k, baseurl_value)
             elif k == 'name':
                 line = line.format(k, section_name)
             elif k == 'extra_options':
@@ -320,7 +323,7 @@ class Repo(object):
             # This key will bed used only if gpgcheck=1
             result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
 
-        if 'ocp-artifacts' in self.baseurl(repotype, arch) and konflux:
+        if konflux and 'ocp-artifacts' in baseurl_value or 'download.devel.redhat.com/' in baseurl_value:
             result += f'sslcacert = {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}/{KONFLUX_REPO_CA_BUNDLE_FILENAME}\n'
 
         result += '\n'

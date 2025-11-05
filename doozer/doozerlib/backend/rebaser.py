@@ -106,6 +106,21 @@ class KonfluxRebaser:
         else:
             self.group = runtime.group
 
+    @staticmethod
+    def construct_dest_branch(group: str, assembly_name: Optional[str], distgit_key: str) -> str:
+        """
+        Construct the destination branch name for Konflux builds.
+
+        :param group: The group name (e.g., 'openshift-4.17', 'okd-4.17')
+        :param assembly_name: The assembly name (e.g., 'stream', '4.17.1'). If None, assemblies are disabled.
+        :param distgit_key: The distgit key for the image
+        :return: The constructed branch name
+        """
+        if assembly_name is None:
+            # Assemblies are disabled, use simplified format
+            return f"art-{group}-dgk-{distgit_key}"
+        return f"art-{group}-assembly-{assembly_name}-dgk-{distgit_key}"
+
     @start_as_current_span_async(TRACER, "rebase.rebase_to")
     async def rebase_to(
         self,
@@ -147,12 +162,10 @@ class KonfluxRebaser:
             else:
                 group = self._runtime.group
 
-            dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
-                {
-                    "group": group,
-                    "assembly_name": self._runtime.assembly,
-                    "distgit_key": metadata.distgit_key,
-                }
+            dest_branch = self.construct_dest_branch(
+                group=group,
+                assembly_name=self._runtime.assembly,
+                distgit_key=metadata.distgit_key,
             )
 
             self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
@@ -806,11 +819,12 @@ class KonfluxRebaser:
             visibility = BuildVisibility.PRIVATE if private_fix else BuildVisibility.PUBLIC
             pval = get_visibility_suffix('konflux', visibility)
             sb.write(f'.{pval}')
-
-        elif self._runtime.group_config.public_upstreams:
-            raise ValueError(
-                f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}"
-            )
+        else:
+            if self._runtime.group_config.public_upstreams:
+                raise ValueError(
+                    f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}"
+                )
+            sb.write(input_release)
 
         if source and source.commit_hash:
             sb.write(".g")
@@ -1166,8 +1180,9 @@ class KonfluxRebaser:
 
             # The value we will set REMOTE_SOURCES_DIR to.
             remote_source_dir_env = '/tmp/art/cachito-emulation'
-            pkg_managers = metadata.config.content.source.pkg_managers.primitive()
-
+            pkg_managers = []
+            if metadata.config.content.source.pkg_managers is not Missing:
+                pkg_managers = metadata.config.content.source.pkg_managers.primitive()
             if "npm" in pkg_managers:
                 flag = False
                 for npm_entry in metadata.config.cachito.packages.npm:

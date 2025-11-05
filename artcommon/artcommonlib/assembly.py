@@ -128,8 +128,9 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
     The key may refer to a list or dict (set default value appropriately).
     """
     if not assembly or not isinstance(releases_config, Model):
-        return Missing
-    key_struct = assembly_field(releases_config.primitive(), assembly, key, default)
+        key_struct = default
+    else:
+        key_struct = assembly_field(releases_config.primitive(), assembly, key, default)
     if isinstance(default, dict):
         return Model(dict_to_model=key_struct)
     elif isinstance(default, list):

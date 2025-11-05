@@ -4,6 +4,7 @@ import logging
 import os
 import pprint
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import ContainerInfo, PipelineRunInfo
+from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
@@ -121,12 +123,10 @@ class KonfluxImageBuilder:
                         f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
                     )
 
-                dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
-                    {
-                        "group": self._config.group_name,
-                        "assembly_name": metadata.runtime.assembly,
-                        "distgit_key": metadata.distgit_key,
-                    }
+                dest_branch = KonfluxRebaser.construct_dest_branch(
+                    group=self._config.group_name,
+                    assembly_name=metadata.runtime.assembly,
+                    distgit_key=metadata.distgit_key,
                 )
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
@@ -427,7 +427,7 @@ class KonfluxImageBuilder:
             logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
 
         artifact_lockfile_enabled = metadata.is_artifact_lockfile_enabled()
-        if network_mode == "hermetic" and artifact_lockfile_enabled:
+        if artifact_lockfile_enabled:
             artifact_lockfile_path = metadata.config.konflux.cachi2.artifact_lockfile.get("path", ".")
             artifact_data = {
                 "type": "generic",
@@ -682,7 +682,11 @@ class KonfluxImageBuilder:
         pipelinerun_dict = pipelinerun_info.to_dict()
         pipelinerun_name = pipelinerun_info.name
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
-        pipelinerun_uid = pipelinerun_dict['metadata']['uid']
+        if self._config.dry_run:
+            # Mock uid for dry-run mode with zero UUID
+            pipelinerun_uid = str(uuid.UUID(int=0))
+        else:
+            pipelinerun_uid = pipelinerun_dict['metadata']['uid']
         build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
         build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
 

@@ -49,6 +49,11 @@ KONFLUX_ART_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-ima
 
 KONFLUX_DEFAULT_BUILD_PRIORITY = 5
 
+# Golang builder image metadata key
+GOLANG_BUILDER_IMAGE_NAME = 'openshift-golang-builder'
+# Golang rpm package name
+GOLANG_RPM_PACKAGE_NAME = 'golang'
+
 # Tenant mappings for OADP/MTA/MTC/Logging builds
 GROUP_NAMESPACE_MAP = {
     "oadp-": "art-oadp-tenant",
