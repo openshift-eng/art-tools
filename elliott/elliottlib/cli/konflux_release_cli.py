@@ -89,7 +89,9 @@ class CreateReleaseCli:
             )
 
     async def run(self) -> Optional[ResourceInstance]:
-        self.runtime.initialize(build_system='konflux', with_shipment=True)
+        # Initialize runtime if not already initialized (for direct class usage in tests)
+        if not getattr(self.runtime, 'initialized', False):
+            self.runtime.initialize(build_system='konflux', with_shipment=True)
 
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
