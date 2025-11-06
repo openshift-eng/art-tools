@@ -1,5 +1,6 @@
 .PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall
 
+
 venv:
 	uv venv --python 3.11
 	# Install base requirements files first to ensure all runtime dependencies are available
