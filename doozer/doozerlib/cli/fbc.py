@@ -379,7 +379,7 @@ async def fbc_merge(
     If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux', mode='images')
+    runtime.initialize(build_system='konflux', config_only=True)
 
     # Resolve kubeconfig and namespace using product-based utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
