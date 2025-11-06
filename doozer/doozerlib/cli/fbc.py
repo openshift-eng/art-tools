@@ -16,6 +16,10 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.util import (
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
@@ -192,7 +196,7 @@ class FbcMergeCli:
         runtime: Runtime,
         konflux_kubeconfig: Optional[str],
         konflux_context: Optional[str],
-        konflux_namespace: str,
+        konflux_namespace: Optional[str],
         dry_run: bool,
         fragments: Tuple[str, ...],
         dest_dir: Optional[str],
@@ -231,9 +235,10 @@ class FbcMergeCli:
         return json.loads(out)["Tags"]
 
     async def run(self):
-        # Initialize runtime
+        # Initialize runtime if not already initialized
         runtime = self.runtime
-        runtime.initialize(mode="none", clone_distgits=False, config_only=True)
+        if not getattr(runtime, 'initialized', False):
+            runtime.initialize(mode="none", clone_distgits=False, config_only=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if self.major_minor:
             try:
@@ -315,8 +320,7 @@ class FbcMergeCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
@@ -356,7 +360,7 @@ async def fbc_merge(
     runtime: Runtime,
     konflux_kubeconfig: Optional[str],
     konflux_context: Optional[str],
-    konflux_namespace: str,
+    konflux_namespace: Optional[str],
     fragments: Tuple[str, ...],
     message: str,
     dry_run: bool,
@@ -374,6 +378,13 @@ async def fbc_merge(
 
     If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux', mode='images')
+
+    # Resolve kubeconfig and namespace using product-based utility functions
+    resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
+
     cli = FbcMergeCli(
         runtime=runtime,
         fragments=fragments,
@@ -383,9 +394,9 @@ async def fbc_merge(
         fbc_branch=fbc_branch,
         dest_dir=dest_dir,
         registry_auth=registry_auth,
-        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_kubeconfig=resolved_kubeconfig,
         konflux_context=konflux_context,
-        konflux_namespace=konflux_namespace,
+        konflux_namespace=resolved_namespace,
         skip_checks=skip_checks,
         plr_template=plr_template,
         target_index=target_index,
