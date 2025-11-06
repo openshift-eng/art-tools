@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -314,7 +315,7 @@ class FbcMergeCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
@@ -718,7 +719,7 @@ class FbcRebaseAndBuildCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')

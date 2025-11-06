@@ -5,9 +5,14 @@ from unittest.mock import AsyncMock, patch
 
 import yaml
 from artcommonlib import build_util, release_util, util
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
-from artcommonlib.util import deep_merge, isolate_major_minor_in_group
+from artcommonlib.util import (
+    deep_merge,
+    isolate_major_minor_in_group,
+    normalize_group_name_for_k8s,
+)
 
 
 class TestUtil(unittest.TestCase):
@@ -305,3 +310,64 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         actual = release_util.isolate_timestamp_in_release("")
         expected = None
         self.assertEqual(actual, expected)
+
+
+class TestNormalizeGroupNameForK8s(unittest.TestCase):
+    """Test cases for normalize_group_name_for_k8s function"""
+
+    def test_simple_oadp_group(self):
+        """Test simple oadp group name normalization"""
+        result = normalize_group_name_for_k8s("oadp-1.5")
+        self.assertEqual(result, "oadp-1-5")
+
+    def test_complex_group_name(self):
+        """Test complex group name with mixed case, underscores, and dots"""
+        result = normalize_group_name_for_k8s("Test_Group-1.5")
+        self.assertEqual(result, "test-group-1-5")
+
+    def test_empty_string(self):
+        """Test empty string input"""
+        result = normalize_group_name_for_k8s("")
+        self.assertEqual(result, "")
+
+    def test_consecutive_dashes(self):
+        """Test collapse of consecutive dashes"""
+        result = normalize_group_name_for_k8s("test--group---name")
+        self.assertEqual(result, "test-group-name")
+
+    def test_leading_trailing_special_chars(self):
+        """Test trimming of leading/trailing non-alphanumeric characters"""
+        result = normalize_group_name_for_k8s("-_test.group_-")
+        self.assertEqual(result, "test-group")
+
+    def test_only_special_chars(self):
+        """Test string with only special characters"""
+        result = normalize_group_name_for_k8s("_..-__")
+        self.assertEqual(result, "")
+
+    def test_mixed_alphanumeric_special(self):
+        """Test mixed alphanumeric and special characters"""
+        result = normalize_group_name_for_k8s("test@group#1.2$name")
+        self.assertEqual(result, "test-group-1-2-name")
+
+    def test_long_group_name_truncation(self):
+        """Test truncation of very long group names"""
+        long_name = "a" * 100  # 100 character string
+        result = normalize_group_name_for_k8s(long_name)
+        # Should be truncated to leave room for timestamp (max 63 - 18 - 1 = 44 chars)
+        self.assertLessEqual(len(result), 44)
+        self.assertTrue(result.startswith("a"))
+
+    def test_uppercase_conversion(self):
+        """Test uppercase to lowercase conversion"""
+        result = normalize_group_name_for_k8s("OADP-1.5")
+        self.assertEqual(result, "oadp-1-5")
+
+    def test_numeric_group(self):
+        """Test group name with numbers"""
+        result = normalize_group_name_for_k8s("group123-4.56")
+        self.assertEqual(result, "group123-4-56")
+
+
+# Legacy group-based resolver tests removed - functions no longer exist
+# Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()

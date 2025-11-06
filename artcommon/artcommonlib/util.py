@@ -14,7 +14,13 @@ from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 import aiohttp
 import requests
 import requests_gssapi
-from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib import logutil
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_NAMESPACE,
+    PRODUCT_KUBECONFIG_MAP,
+    PRODUCT_NAMESPACE_MAP,
+    RELEASE_SCHEDULES,
+)
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
 from ruamel.yaml import YAML
@@ -22,6 +28,7 @@ from semver import VersionInfo
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
+KONFLUX_LOGGER = logutil.get_logger(__name__)
 
 
 def get_utc_now_formatted_str(microseconds: bool = False):
@@ -612,3 +619,104 @@ def validate_build_priority(build_priority):
         if "invalid literal" in str(e):
             raise ValueError(f"Build priority must be 'auto' or a number between 1-10, got: {build_priority}")
         raise
+
+
+def normalize_group_name_for_k8s(group_name: str) -> str:
+    """
+    Normalize a group name to comply with Kubernetes DNS label rules.
+
+    Kubernetes DNS label rules:
+    - Must be lowercase alphanumeric or '-'
+    - Must start and end with alphanumeric character
+    - Cannot be longer than 63 characters
+    - Cannot have consecutive '-'
+
+    Args:
+        group_name: The group name to normalize (e.g., "Test_Group-1.5")
+
+    Returns:
+        Normalized group name (e.g., "test-group-1-5")
+    """
+    if not group_name:
+        return ""
+
+    # Convert to lowercase
+    normalized = group_name.lower()
+
+    # Replace dots and any non-alphanumeric characters (except '-') with '-'
+    normalized = re.sub(r'[^a-z0-9\-]', '-', normalized)
+
+    # Collapse consecutive '-' into a single '-'
+    normalized = re.sub(r'-+', '-', normalized)
+
+    # Trim leading/trailing non-alphanumeric characters (including '-')
+    normalized = re.sub(r'^[^a-z0-9]+|[^a-z0-9]+$', '', normalized)
+
+    # Truncate to 63 characters if needed (leave room for timestamp suffix)
+    # Reserve space for timestamp format like "-20251031141128-1" (18 chars)
+    max_group_length = 63 - 18 - 1  # -1 for the connecting dash
+    if len(normalized) > max_group_length:
+        normalized = normalized[:max_group_length]
+        # Ensure we don't end with a dash after truncation
+        normalized = normalized.rstrip('-')
+
+    return normalized
+
+
+def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve the Konflux kubeconfig path based on product type.
+
+    Args:
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
+        provided_kubeconfig: Explicitly provided kubeconfig path (takes precedence)
+
+    Returns:
+        Resolved kubeconfig path or None to rely on oc login
+    """
+    if provided_kubeconfig:
+        return provided_kubeconfig
+
+    env_var = PRODUCT_KUBECONFIG_MAP.get(product)
+    if env_var:
+        kubeconfig = os.environ.get(env_var)
+        if kubeconfig:
+            KONFLUX_LOGGER.info(f"Using kubeconfig from {env_var} for product '{product}'")
+            return kubeconfig
+        KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
+    else:
+        KONFLUX_LOGGER.warning(
+            f"No kubeconfig mapping found for product '{product}'. Available products: {list(PRODUCT_KUBECONFIG_MAP.keys())}"
+        )
+
+    available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+    KONFLUX_LOGGER.info(
+        f"No kubeconfig specified for product '{product}'. "
+        f"Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in to the cluster."
+    )
+    return None
+
+
+def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optional[str] = None) -> str:
+    """
+    Resolve the Konflux namespace based on product type.
+
+    Args:
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
+        provided_namespace: Explicitly provided namespace (takes precedence)
+
+    Returns:
+        Resolved namespace (guaranteed to return a valid namespace)
+    """
+    if provided_namespace:
+        return provided_namespace
+
+    namespace = PRODUCT_NAMESPACE_MAP.get(product)
+    if namespace:
+        KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for product '{product}'")
+        return namespace
+
+    KONFLUX_LOGGER.warning(
+        f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
+    )
+    return KONFLUX_DEFAULT_NAMESPACE

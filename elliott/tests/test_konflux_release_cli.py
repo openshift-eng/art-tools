@@ -162,6 +162,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.runtime.group = "openshift-4.18"
         self.runtime.product = "ocp"
         self.runtime.assembly = "4.18.2"
+        self.runtime.initialized = False  # Ensure initialization guard works
         self.runtime.get_major_minor.return_value = (4, 18)
         self.runtime.shipment_gitdata = MagicMock()
 

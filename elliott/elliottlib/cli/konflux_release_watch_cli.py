@@ -4,9 +4,9 @@ from datetime import timedelta
 
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.util import KubeCondition, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli

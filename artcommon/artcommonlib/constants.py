@@ -54,19 +54,22 @@ GOLANG_BUILDER_IMAGE_NAME = 'openshift-golang-builder'
 # Golang rpm package name
 GOLANG_RPM_PACKAGE_NAME = 'golang'
 
-# Tenant mappings for OADP/MTA/MTC/Logging builds
-GROUP_NAMESPACE_MAP = {
-    "oadp-": "art-oadp-tenant",
-    "mta-": "art-mta-tenant",
-    "mtc-": "art-mtc-tenant",
-    "logging-": "art-logging-tenant",
-    "openshift-": "ocp-art-tenant",
+# Product-based mappings for Konflux tenant namespaces and kubeconfigs
+PRODUCT_NAMESPACE_MAP = {
+    "oadp": "art-oadp-tenant",
+    "mta": "art-mta-tenant",
+    "rhmtc": "art-mtc-tenant",
+    "logging": "art-logging-tenant",
+    "ocp": "ocp-art-tenant",
 }
 
-GROUP_KUBECONFIG_MAP = {
-    "oadp-": "OADP_KONFLUX_SA_KUBECONFIG",
-    "mta-": "MTA_KONFLUX_SA_KUBECONFIG",
-    "mtc-": "MTC_KONFLUX_SA_KUBECONFIG",
-    "logging-": "LOGGING_KONFLUX_SA_KUBECONFIG",
-    "openshift-": "KONFLUX_SA_KUBECONFIG",
+PRODUCT_KUBECONFIG_MAP = {
+    "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
+    "mta": "MTA_KONFLUX_SA_KUBECONFIG",
+    "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
+    "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
+    "ocp": "KONFLUX_SA_KUBECONFIG",
 }
+
+# Default namespace for Konflux operations
+KONFLUX_DEFAULT_NAMESPACE = "ocp-art-tenant"

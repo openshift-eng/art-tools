@@ -12,6 +12,7 @@ import aiohttp
 import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from async_lru import alru_cache
 from doozerlib import constants
 from doozerlib.backend.konflux_watcher import KonfluxWatcher
@@ -790,7 +791,7 @@ class KonfluxClient:
         kind = resource_dict.get('kind', '').lower()
         metadata = resource_dict.get('metadata', {})
         name = metadata.get('name', '')
-        namespace = metadata.get('namespace') or constants.KONFLUX_DEFAULT_NAMESPACE
+        namespace = metadata.get('namespace') or KONFLUX_DEFAULT_NAMESPACE
         labels = metadata.get('labels', {})
         application = labels.get("appstudio.openshift.io/application", "unknown-application")
         return f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/{application}/{kind}s/{name}"

@@ -8,10 +8,10 @@ from typing import Dict, List, Tuple
 
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, get_build_records_by_nvrs

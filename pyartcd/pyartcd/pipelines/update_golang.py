@@ -11,7 +11,7 @@ import click
 import koji
 from artcommonlib import exectools
 from artcommonlib.brew import BuildStates
-from artcommonlib.constants import BREW_HUB, GOLANG_BUILDER_IMAGE_NAME, GROUP_NAMESPACE_MAP
+from artcommonlib.constants import BREW_HUB, GOLANG_BUILDER_IMAGE_NAME, PRODUCT_NAMESPACE_MAP
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -644,7 +644,7 @@ class UpdateGolangPipeline:
         branch = self.get_golang_branch(el_v, go_version)
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
-        konflux_namespace = GROUP_NAMESPACE_MAP["openshift-"]
+        konflux_namespace = PRODUCT_NAMESPACE_MAP["ocp"]
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
