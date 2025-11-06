@@ -5,7 +5,12 @@ from datetime import timedelta
 import click
 from artcommonlib import logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from artcommonlib.util import KubeCondition, new_roundtrip_yaml_handler
+from artcommonlib.util import (
+    KubeCondition,
+    new_roundtrip_yaml_handler,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from doozerlib.backend.konflux_client import KonfluxClient
 
 from elliottlib.cli.common import click_coroutine
@@ -38,7 +43,10 @@ class WatchReleaseCli:
         :return: A tuple of (success: bool, release_obj: dict)
         """
 
-        self.runtime.initialize(no_group=True, build_system='konflux')
+        # Initialize runtime if not already initialized (for direct class usage in tests)
+        if not getattr(self.runtime, 'initialized', False):
+            self.runtime.initialize(no_group=True, build_system='konflux')
+
         release_obj = await self.konflux_client.wait_for_release(
             self.release, overall_timeout_timedelta=timedelta(hours=self.timeout)
         )
@@ -76,8 +84,7 @@ class WatchReleaseCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
 @click.option(
     '--timeout',
@@ -106,17 +113,16 @@ async def watch_release_cli(
 
     $ elliott release watch ose-4-18-stage-202503131819 --konflux-namespace ocp-art-tenant
     """
-    if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux')
 
-    if not konflux_kubeconfig:
-        LOGGER.info(
-            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
-        )
+    # Resolve kubeconfig and namespace using product-based utility functions
+    resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
-        'kubeconfig': konflux_kubeconfig,
-        'namespace': konflux_namespace,
+        'kubeconfig': resolved_kubeconfig,
+        'namespace': resolved_namespace,
         'context': konflux_context,
     }
 
