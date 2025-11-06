@@ -152,6 +152,7 @@ class Runtime(GroupRuntime):
 
         self._remove_tmp_working_dir = False
         self._group_config = None
+        self.product = None
 
         self.cwd = os.getcwd()
 
@@ -413,6 +414,7 @@ class Runtime(GroupRuntime):
                 f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
                 "may have copied this group without updating group.yml (make sure to check branch)"
             )
+        self.product = self.group_config.product or "ocp"
 
         self.hotfix = (
             False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
