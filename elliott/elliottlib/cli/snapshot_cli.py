@@ -404,7 +404,7 @@ async def new_snapshot_cli(
         raise click.BadParameter("Use only one of --build or --builds-file")
 
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux', config_only=True)
+    runtime.initialize(build_system='konflux')
 
     # Resolve kubeconfig and namespace using helper functions
     konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
