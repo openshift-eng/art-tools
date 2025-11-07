@@ -156,7 +156,8 @@ class Shipment(StrictBaseModel):
         release_notes_present = self.data and self.data.releaseNotes
         if self.metadata.fbc and release_notes_present:
             raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
-        if not self.metadata.fbc and not release_notes_present:
+        # Only require releaseNotes for OpenShift products (groups starting with 'openshift-')
+        if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith('openshift-'):
             raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
         return self
 
