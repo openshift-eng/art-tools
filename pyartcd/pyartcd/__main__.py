@@ -34,6 +34,7 @@ from pyartcd.pipelines import (
     quay_doomsday_backup,
     rebuild,
     rebuild_golang_rpms,
+    release_from_fbc,
     review_cvp,
     scan_fips,
     scan_for_kernel_bugs,
