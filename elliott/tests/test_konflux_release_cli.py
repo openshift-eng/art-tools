@@ -603,7 +603,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "A regular shipment for OpenShift products is expected to have data.releaseNotes defined",
+            "A regular shipment is expected to have data.releaseNotes defined",
             str(context.exception),
         )
 
