@@ -931,17 +931,20 @@ class KonfluxFbcRebaser:
                 "namespace": "openshift-marketplace",
             },
             "spec": {
-                "imageDigestMirrors": [
-                    {
-                        "source": dest_repos[sha],
-                        "mirrors": [
-                            source_repo,
-                        ],
-                    }
-                    # If source is same as destination, we don't need to add an IDMS mapping
-                    for sha, source_repo in source_repos.items()
-                    if sha in dest_repos and source_repo != dest_repos[sha]
-                ],
+                "imageDigestMirrors": sorted(
+                    [
+                        {
+                            "source": dest_repos[sha],
+                            "mirrors": [
+                                source_repo,
+                            ],
+                        }
+                        # If source is same as destination, we don't need to add an IDMS mapping
+                        for sha, source_repo in source_repos.items()
+                        if sha in dest_repos and source_repo != dest_repos[sha]
+                    ],
+                    key=lambda x: x["source"],
+                ),
             },
         }
         return image_digest_mirror_set
