@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from io import StringIO
@@ -86,16 +87,13 @@ class ReleaseFromFbcPipeline:
             product = 'ocp'  # Default product, will be overridden once actual product is loaded
             shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(product)
 
-        # Store the initial shipment path
-        self.initial_shipment_path = shipment_path
-
         # Setup shipment repo configuration
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
             shipment_data_repo_url
         )
         self.shipment_data_repo = GitRepository(Path(shipment_path), self.dry_run)
 
-        # Base elliott command
+        # Base elliott command template (shipment-path will be added dynamically)
         self._elliott_base_command = [
             'elliott',
             f'--group={group}',
@@ -104,8 +102,7 @@ class ReleaseFromFbcPipeline:
             f'--working-dir={self.elliott_working_dir}',
         ]
 
-        # Add shipment path (always set now, either provided or default)
-        self._elliott_base_command.append(f'--shipment-path={shipment_path}')
+        self._current_shipment_path = shipment_path
 
     def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
         """
@@ -144,6 +141,14 @@ class ReleaseFromFbcPipeline:
         gl.auth()
         return gl
 
+    def _get_gitlab_project(self, url: str):
+        """
+        Get GitLab project from URL.
+        """
+        parsed_url = urlparse(url)
+        project_path = parsed_url.path.strip('/').removesuffix('.git')
+        return self._gitlab.projects.get(project_path)
+
     def check_env_vars(self):
         """
         Check required environment variables for MR creation.
@@ -162,12 +167,8 @@ class ReleaseFromFbcPipeline:
         """
         self.working_dir.mkdir(parents=True, exist_ok=True)
         if self.elliott_working_dir.exists():
-            import shutil
-
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         if self.create_mr and self._shipment_data_repo_dir.exists():
-            import shutil
-
             shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
 
     async def setup_shipment_repo(self):
@@ -192,14 +193,10 @@ class ReleaseFromFbcPipeline:
         try:
             # Use doozer command to read group config product field
             doozer_cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
-            self.logger.debug(f"Running command: {' '.join(doozer_cmd)}")
 
             _, product_output, _ = await exectools.cmd_gather_async(doozer_cmd)
             # Clean up the output - remove all whitespace (including newlines)
             product = product_output.strip()
-
-            self.logger.debug(f"Raw doozer output: {repr(product_output)}")
-            self.logger.debug(f"Cleaned product: {repr(product)}")
 
             if product and product != 'None' and product != 'null':
                 self.logger.info(f"Loaded product from group config: {product}")
@@ -230,8 +227,6 @@ class ReleaseFromFbcPipeline:
             labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
             nvr = labels.get('com.redhat.art.nvr')
 
-            self.logger.debug(f"FBC image labels - com.redhat.art.nvr: {nvr}")
-
             if nvr:
                 self.logger.info(f"✓ Extracted FBC NVR: {nvr}")
                 return nvr
@@ -257,20 +252,13 @@ class ReleaseFromFbcPipeline:
 
             if component_name.endswith('-fbc'):
                 categorized["fbc"].append(nvr)
-                self.logger.debug(f"FBC build: {nvr}")
             else:
                 # All other builds are considered image builds for simplicity
                 categorized["image"].append(nvr)
-                self.logger.debug(f"Image build: {nvr}")
 
         self.logger.info("Categorization results:")
         self.logger.info(f"  • Image builds: {len(categorized['image'])}")
         self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
-
-        if categorized["image"]:
-            self.logger.debug(f"Image builds: {categorized['image']}")
-        if categorized["fbc"]:
-            self.logger.debug(f"FBC builds: {categorized['fbc']}")
 
         return categorized
 
@@ -283,7 +271,6 @@ class ReleaseFromFbcPipeline:
             return None
 
         self.logger.info(f"Creating Konflux snapshot for {len(builds)} builds...")
-        self.logger.debug(f"Builds: {builds}")
 
         # store builds in a temporary file, each nvr string in a new line
         with tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_file:
@@ -292,10 +279,9 @@ class ReleaseFromFbcPipeline:
             temp_file.flush()
             temp_file_path = temp_file.name
 
-        self.logger.debug(f"Created temporary builds file: {temp_file_path}")
-
         # now call elliott snapshot new -f <temp_file_path>
         snapshot_cmd = self._elliott_base_command + [
+            f"--shipment-path={self._current_shipment_path}",
             "snapshot",
             "new",
             f"--builds-file={temp_file_path}",
@@ -304,21 +290,16 @@ class ReleaseFromFbcPipeline:
         konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         if konflux_art_images_auth_file:
             snapshot_cmd.append(f"--pull-secret={konflux_art_images_auth_file}")
-            self.logger.debug("Using KONFLUX_ART_IMAGES_AUTH_FILE for pull secret")
-        else:
-            self.logger.debug("No KONFLUX_ART_IMAGES_AUTH_FILE provided")
 
         try:
             self.logger.info(f"Running elliott snapshot command: {' '.join(snapshot_cmd)}")
             stdout, _ = exectools.cmd_assert(snapshot_cmd)
-            self.logger.debug(f"Elliott snapshot output: {stdout}")
         except Exception as e:
             self.logger.exception(f"Failed to create snapshot: {e}")
             raise
         finally:
             # remove the temporary file
             os.unlink(temp_file_path)
-            self.logger.debug(f"Cleaned up temporary file: {temp_file_path}")
 
         # parse the output of the snapshot new command, it should be valid yaml
         try:
@@ -360,10 +341,11 @@ class ReleaseFromFbcPipeline:
             try:
                 config_path = self.shipment_data_repo._directory / "config.yaml"
                 if config_path.exists():
-                    import yaml
-
                     with open(config_path, 'r') as f:
-                        shipment_config = yaml.safe_load(f) or {}
+                        # Use yaml.safe_load from stdlib for reading config
+                        import yaml as stdlib_yaml
+
+                        shipment_config = stdlib_yaml.safe_load(f) or {}
 
                     application = snapshot.spec.application if snapshot else "default-app"
                     app_env_config = (
@@ -371,7 +353,6 @@ class ReleaseFromFbcPipeline:
                     )
                     stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
                     prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
-                    self.logger.debug(f"Read environment config for {application}: stage={stage_rpa}, prod={prod_rpa}")
             except Exception as e:
                 self.logger.warning(f"Failed to read shipment config, using defaults: {e}")
 
@@ -408,13 +389,8 @@ class ReleaseFromFbcPipeline:
         if not updated:
             raise ValueError("Failed to update shipment data repo. Please investigate.")
 
-        def _get_project(url):
-            parsed_url = urlparse(url)
-            project_path = parsed_url.path.strip('/').removesuffix('.git')
-            return self._gitlab.projects.get(project_path)
-
-        source_project = _get_project(self.shipment_data_repo_push_url)
-        target_project = _get_project(self.shipment_data_repo_pull_url)
+        source_project = self._get_gitlab_project(self.shipment_data_repo_push_url)
+        target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
         # Create MR title and description
         mr_title = f"Shipment for {self.assembly} (non-OpenShift product)"
@@ -454,29 +430,42 @@ class ReleaseFromFbcPipeline:
         timestamp = branch.split("-")[-1]
 
         for advisory_kind, shipment_config in shipments_by_kind.items():
-            # Use improved naming: for FBC shipments use counter format, for image use simple format
-            if advisory_kind.startswith('fbc'):
-                # Extract counter from advisory_kind (e.g., 'fbc01' -> '01')
-                counter = advisory_kind[3:]  # Remove 'fbc' prefix
-                filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
-            else:
-                filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
-            product = shipment_config.shipment.metadata.product
-            group = shipment_config.shipment.metadata.group
-            application = shipment_config.shipment.metadata.application
-            relative_target_dir = Path("shipment") / product / group / application / env
-            target_dir = self.shipment_data_repo._directory / relative_target_dir
-            target_dir.mkdir(parents=True, exist_ok=True)
-            filepath = relative_target_dir / filename
-            self.logger.info("Updating shipment file: %s", filename)
-            shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
-            out = StringIO()
-            yaml.dump(shipment_dump, out)
-            await self.shipment_data_repo.write_file(filepath, out.getvalue())
+            filepath = await self._write_shipment_file(advisory_kind, shipment_config, env, timestamp)
+            self.logger.info("Updating shipment file: %s", filepath)
 
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
+
+    async def _write_shipment_file(
+        self, advisory_kind: str, shipment_config: ShipmentConfig, env: str, timestamp: str
+    ) -> str:
+        """
+        Common logic for writing a single shipment file.
+        Returns the filepath where the file was written.
+        """
+        # Use improved naming: for FBC shipments use counter format, for image use simple format
+        if advisory_kind.startswith('fbc'):
+            # Extract counter from advisory_kind (e.g., 'fbc01' -> '01')
+            counter = advisory_kind[3:]  # Remove 'fbc' prefix
+            filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
+        else:
+            filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
+
+        product = shipment_config.shipment.metadata.product
+        group = shipment_config.shipment.metadata.group
+        application = shipment_config.shipment.metadata.application
+        relative_target_dir = Path("shipment") / product / group / application / env
+        target_dir = self.shipment_data_repo._directory / relative_target_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filepath = relative_target_dir / filename
+
+        shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
+        out = StringIO()
+        yaml.dump(shipment_dump, out)
+        await self.shipment_data_repo.write_file(filepath, out.getvalue())
+
+        return str(filepath)
 
     async def write_shipment_files_locally(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, timestamp: str
@@ -487,26 +476,7 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Writing {len(shipments_by_kind)} shipment files to local repository...")
 
         for advisory_kind, shipment_config in shipments_by_kind.items():
-            # Use same naming logic as update_shipment_data
-            if advisory_kind.startswith('fbc'):
-                counter = advisory_kind[3:]  # Remove 'fbc' prefix
-                filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
-            else:
-                filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
-
-            product = shipment_config.shipment.metadata.product
-            group = shipment_config.shipment.metadata.group
-            application = shipment_config.shipment.metadata.application
-            relative_target_dir = Path("shipment") / product / group / application / env
-            target_dir = self.shipment_data_repo._directory / relative_target_dir
-            target_dir.mkdir(parents=True, exist_ok=True)
-            filepath = relative_target_dir / filename
-
-            self.logger.info(f"Writing shipment file: {filepath}")
-            shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
-            out = StringIO()
-            yaml.dump(shipment_dump, out)
-            await self.shipment_data_repo.write_file(filepath, out.getvalue())
+            filepath = await self._write_shipment_file(advisory_kind, shipment_config, env, timestamp)
             self.logger.info(f"Created shipment file: {filepath}")
 
     async def validate_fbc_related_images(self, fbc_pullspecs: List[str]) -> List[str]:
@@ -516,13 +486,14 @@ class ReleaseFromFbcPipeline:
         """
         self.logger.info(f"Validating that all {len(fbc_pullspecs)} FBC builds have the same related images...")
 
-        # Extract related images from each FBC
-        fbc_related_images = {}
-        for fbc_pullspec in fbc_pullspecs:
-            self.logger.debug(f"Extracting related images from: {fbc_pullspec}")
+        # Extract related images from each FBC concurrently
+        async def extract_and_sort_nvrs(fbc_pullspec):
             related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec)
-            fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
-            self.logger.debug(f"Found {len(related_nvrs)} related images for {fbc_pullspec}")
+            return fbc_pullspec, sorted(related_nvrs)
+
+        # Run all extractions concurrently
+        extraction_results = await asyncio.gather(*[extract_and_sort_nvrs(fbc) for fbc in fbc_pullspecs])
+        fbc_related_images = dict(extraction_results)
 
         # Compare related images across all FBCs
         reference_fbc = fbc_pullspecs[0]
@@ -563,7 +534,7 @@ class ReleaseFromFbcPipeline:
         Execute the simplified FBC release workflow for non-OpenShift products.
         """
         self.logger.info(f"Starting FBC-based release workflow for {self.assembly} (non-OpenShift product)")
-        self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs: {self.fbc_pullspecs}")
+        self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
 
         # Initialize environment and repositories
         self.check_env_vars()
@@ -587,12 +558,8 @@ class ReleaseFromFbcPipeline:
             # Re-create the shipment repository with correct path
             self.shipment_data_repo = GitRepository(Path(correct_shipment_path), self.dry_run)
 
-            # Update the elliott command with the correct shipment path
-            # Remove the old shipment-path argument and add the new one
-            self._elliott_base_command = [
-                cmd for cmd in self._elliott_base_command if not cmd.startswith('--shipment-path=')
-            ]
-            self._elliott_base_command.append(f'--shipment-path={correct_shipment_path}')
+            # Update the current shipment path
+            self._current_shipment_path = correct_shipment_path
 
             # Re-setup shipment repo if MR creation is requested
             if self.create_mr:
@@ -602,16 +569,13 @@ class ReleaseFromFbcPipeline:
         related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 
         # Extract FBC NVRs from each FBC pullspec
-        fbc_nvrs = []
-        for fbc_pullspec in self.fbc_pullspecs:
-            fbc_nvr = self.extract_fbc_nvr(fbc_pullspec)
-            if fbc_nvr:
-                fbc_nvrs.append(fbc_nvr)
-                self.logger.info(f"Added FBC NVR to build list: {fbc_nvr}")
-            else:
-                self.logger.warning(f"Could not extract FBC NVR from {fbc_pullspec}")
+        fbc_nvrs = [
+            nvr for fbc_pullspec in self.fbc_pullspecs if (nvr := self.extract_fbc_nvr(fbc_pullspec)) is not None
+        ]
 
-        if not fbc_nvrs:
+        if fbc_nvrs:
+            self.logger.info(f"✓ Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
+        else:
             self.logger.warning("Could not extract any FBC NVRs - FBC shipments will not be created")
 
         # Combine related images with FBC NVRs
