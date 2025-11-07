@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -384,7 +383,7 @@ class ReleaseFromFbcPipeline:
         await self.shipment_data_repo.create_branch(source_branch)
 
         # Update shipment data repo with shipment configs
-        commit_message = f"Add shipment configurations for {self.assembly} (non-OpenShift product)"
+        commit_message = f"Add shipment configurations for {self.product} {self.assembly}"
         updated = await self.update_shipment_data(shipments_by_kind, env, commit_message, source_branch)
         if not updated:
             raise ValueError("Failed to update shipment data repo. Please investigate.")
@@ -393,7 +392,7 @@ class ReleaseFromFbcPipeline:
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
         # Create MR title and description
-        mr_title = f"Shipment for {self.assembly} (non-OpenShift product)"
+        mr_title = f"Shipment for {self.product} {self.assembly}"
         mr_description = f"Shipment files created for {self.assembly} using release-from-fbc command"
 
         if self.dry_run:
@@ -486,14 +485,11 @@ class ReleaseFromFbcPipeline:
         """
         self.logger.info(f"Validating that all {len(fbc_pullspecs)} FBC builds have the same related images...")
 
-        # Extract related images from each FBC concurrently
-        async def extract_and_sort_nvrs(fbc_pullspec):
+        # Extract related images from each FBC sequentially to avoid temp directory conflicts
+        fbc_related_images = {}
+        for fbc_pullspec in fbc_pullspecs:
             related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec)
-            return fbc_pullspec, sorted(related_nvrs)
-
-        # Run all extractions concurrently
-        extraction_results = await asyncio.gather(*[extract_and_sort_nvrs(fbc) for fbc in fbc_pullspecs])
-        fbc_related_images = dict(extraction_results)
+            fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
 
         # Compare related images across all FBCs
         reference_fbc = fbc_pullspecs[0]
@@ -533,7 +529,7 @@ class ReleaseFromFbcPipeline:
         """
         Execute the simplified FBC release workflow for non-OpenShift products.
         """
-        self.logger.info(f"Starting FBC-based release workflow for {self.assembly} (non-OpenShift product)")
+        self.logger.info(f"Starting FBC-based release workflow for {self.assembly}")
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
 
         # Initialize environment and repositories
@@ -544,6 +540,7 @@ class ReleaseFromFbcPipeline:
 
         # Load product from group configuration
         self.product = await self._load_product_from_group_config()
+        self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
         # Recompute shipment repository with correct product if default was used
         if self.shipment_path_was_defaulted:
@@ -632,7 +629,7 @@ class ReleaseFromFbcPipeline:
                     self.logger.info("Continuing with local files only")
 
         # Generate completion message
-        completion_msg = f"FBC-based release workflow completed for non-OpenShift product. Created {len(shipments_by_kind)} shipment files in repository: {self.shipment_data_repo._directory}"
+        completion_msg = f"FBC-based release workflow completed for {self.product} {self.assembly}. Created {len(shipments_by_kind)} shipment files in repository: {self.shipment_data_repo._directory}"
 
         if self.shipment_mr_url:
             completion_msg += f". MR: {self.shipment_mr_url}"
