@@ -121,14 +121,27 @@ class TestShipmentModel(unittest.TestCase):
         self.assertIsNotNone(shipment.data.releaseNotes)
 
     def test_regular_shipment_validation_unhappy_path(self):
-        """Test that regular shipment without data.releaseNotes fails validation"""
+        """Test that regular OpenShift shipment without data.releaseNotes fails validation"""
+        # Use an OpenShift group to trigger the validation
         shipment_data = self._create_base_shipment_data(fbc=False)
-        # Regular shipment should have data.releaseNotes - this should fail
+        shipment_data["metadata"]["group"] = "openshift-4.17"
+        # Regular OpenShift shipment should have data.releaseNotes - this should fail
 
         with self.assertRaises(ValueError) as context:
             Shipment(**shipment_data)
 
         self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
+
+    def test_non_openshift_shipment_validation_happy_path(self):
+        """Test that non-OpenShift shipment without data.releaseNotes passes validation"""
+        # Non-OpenShift products should not require data.releaseNotes
+        shipment_data = self._create_base_shipment_data(fbc=False)
+        shipment_data["metadata"]["group"] = "oadp-1.3"  # Non-OpenShift group
+
+        shipment = Shipment(**shipment_data)
+        self.assertFalse(shipment.metadata.fbc)
+        self.assertEqual(shipment.metadata.group, "oadp-1.3")
+        # Should pass validation without releaseNotes
 
     def test_snapshot_application_match_happy_path(self):
         """Test that shipment with matching snapshot application passes validation"""
