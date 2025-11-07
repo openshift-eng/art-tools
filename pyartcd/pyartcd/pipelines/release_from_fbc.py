@@ -75,12 +75,19 @@ class ReleaseFromFbcPipeline:
         self.gitlab_token = None
         self.shipment_mr_url = None
 
+        # Product configuration - initialized to None, will be loaded from group config in run()
+        self.product = None
+
         # Set default shipment_path if not provided, using same logic as elliott
+        self.shipment_path_was_defaulted = not shipment_path
         if not shipment_path:
             # For non-OpenShift products, default to 'ocp' product for shipment data
             # This will be resolved to the actual product URL later in the pipeline
             product = 'ocp'  # Default product, will be overridden once actual product is loaded
             shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(product)
+
+        # Store the initial shipment path
+        self.initial_shipment_path = shipment_path
 
         # Setup shipment repo configuration
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
@@ -104,9 +111,8 @@ class ReleaseFromFbcPipeline:
         """
         Determine shipment data repository URLs for pull and push operations.
         """
-        # For non-OpenShift products, we need to determine the appropriate product name
-        # Default to 'ocp' but could be extended to support other products
-        product = 'ocp'  # This could be made configurable in the future
+        # Use the actual product if available, otherwise default to 'ocp'
+        product = getattr(self, 'product', 'ocp')
 
         shipment_data_repo_pull_url = (
             shipment_data_repo_url
@@ -234,7 +240,7 @@ class ReleaseFromFbcPipeline:
                 return None
 
         except Exception as e:
-            self.logger.error(f"✗ Failed to get image info for FBC {fbc_pullspec}: {e}")
+            self.logger.exception(f"✗ Failed to get image info for FBC {fbc_pullspec}: {e}")
             return None
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
@@ -307,7 +313,7 @@ class ReleaseFromFbcPipeline:
             stdout, _ = exectools.cmd_assert(snapshot_cmd)
             self.logger.debug(f"Elliott snapshot output: {stdout}")
         except Exception as e:
-            self.logger.error(f"Failed to create snapshot: {e}")
+            self.logger.exception(f"Failed to create snapshot: {e}")
             raise
         finally:
             # remove the temporary file
@@ -320,7 +326,7 @@ class ReleaseFromFbcPipeline:
             self.logger.info("✓ Successfully created Konflux snapshot")
             return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=sorted(builds))
         except Exception as e:
-            self.logger.error(f"Failed to parse elliott snapshot output: {e}")
+            self.logger.exception(f"Failed to parse elliott snapshot output: {e}")
             self.logger.debug(f"Raw output was: {stdout}")
             raise
 
@@ -328,6 +334,13 @@ class ReleaseFromFbcPipeline:
         """
         Create a shipment configuration for the given kind and snapshot.
         """
+        # Guard: ensure product is initialized
+        if self.product is None:
+            raise RuntimeError(
+                "Product is not initialized. Please call run() first to load the product from group configuration, "
+                "or ensure self.product is set before calling create_shipment_config()."
+            )
+
         self.logger.info(f"Creating shipment config for {kind}...")
 
         # Create metadata - only set fbc=True for actual FBC catalog files
@@ -441,7 +454,13 @@ class ReleaseFromFbcPipeline:
         timestamp = branch.split("-")[-1]
 
         for advisory_kind, shipment_config in shipments_by_kind.items():
-            filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
+            # Use improved naming: for FBC shipments use counter format, for image use simple format
+            if advisory_kind.startswith('fbc'):
+                # Extract counter from advisory_kind (e.g., 'fbc01' -> '01')
+                counter = advisory_kind[3:]  # Remove 'fbc' prefix
+                filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
+            else:
+                filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
             product = shipment_config.shipment.metadata.product
             group = shipment_config.shipment.metadata.group
             application = shipment_config.shipment.metadata.application
@@ -458,6 +477,37 @@ class ReleaseFromFbcPipeline:
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
+
+    async def write_shipment_files_locally(
+        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, timestamp: str
+    ):
+        """
+        Write shipment files to the local repository without creating MR.
+        """
+        self.logger.info(f"Writing {len(shipments_by_kind)} shipment files to local repository...")
+
+        for advisory_kind, shipment_config in shipments_by_kind.items():
+            # Use same naming logic as update_shipment_data
+            if advisory_kind.startswith('fbc'):
+                counter = advisory_kind[3:]  # Remove 'fbc' prefix
+                filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
+            else:
+                filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
+
+            product = shipment_config.shipment.metadata.product
+            group = shipment_config.shipment.metadata.group
+            application = shipment_config.shipment.metadata.application
+            relative_target_dir = Path("shipment") / product / group / application / env
+            target_dir = self.shipment_data_repo._directory / relative_target_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+            filepath = relative_target_dir / filename
+
+            self.logger.info(f"Writing shipment file: {filepath}")
+            shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
+            out = StringIO()
+            yaml.dump(shipment_dump, out)
+            await self.shipment_data_repo.write_file(filepath, out.getvalue())
+            self.logger.info(f"Created shipment file: {filepath}")
 
     async def validate_fbc_related_images(self, fbc_pullspecs: List[str]) -> List[str]:
         """
@@ -524,6 +574,30 @@ class ReleaseFromFbcPipeline:
         # Load product from group configuration
         self.product = await self._load_product_from_group_config()
 
+        # Recompute shipment repository with correct product if default was used
+        if self.shipment_path_was_defaulted:
+            self.logger.info(f"Updating shipment repository to use product '{self.product}' instead of default 'ocp'")
+            correct_shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+
+            # Update shipment_data_repo_urls with correct product
+            self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
+                None  # Use None to force using the correct product-based URL
+            )
+
+            # Re-create the shipment repository with correct path
+            self.shipment_data_repo = GitRepository(Path(correct_shipment_path), self.dry_run)
+
+            # Update the elliott command with the correct shipment path
+            # Remove the old shipment-path argument and add the new one
+            self._elliott_base_command = [
+                cmd for cmd in self._elliott_base_command if not cmd.startswith('--shipment-path=')
+            ]
+            self._elliott_base_command.append(f'--shipment-path={correct_shipment_path}')
+
+            # Re-setup shipment repo if MR creation is requested
+            if self.create_mr:
+                await self.setup_shipment_repo()
+
         # Validate that all FBC builds have the same related images
         related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 
@@ -568,55 +642,19 @@ class ReleaseFromFbcPipeline:
             shipment_config = self.create_shipment_config('image', image_snapshot)
             shipments_by_kind['image'] = shipment_config
 
-            # Write image shipment file
-            filename = f"{self.assembly}.image.{timestamp}.yaml"
-            shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
-
-            # Write to shipment repository
-            product = shipment_config.shipment.metadata.product
-            group = shipment_config.shipment.metadata.group
-            application = shipment_config.shipment.metadata.application
-            env = "prod"  # Default environment
-            relative_target_dir = Path("shipment") / product / group / application / env
-            target_dir = self.shipment_data_repo._directory / relative_target_dir
-            target_dir.mkdir(parents=True, exist_ok=True)
-            filepath = relative_target_dir / filename
-
-            self.logger.info(f"Writing image shipment file to repository: {filepath}")
-            out = StringIO()
-            yaml.dump(shipment_dump, out)
-            await self.shipment_data_repo.write_file(filepath, out.getvalue())
-            self.logger.info(f"Created image shipment in repository: {filepath}")
-
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
         for fbc_nvr, fbc_snapshot in fbc_snapshots.items():
             if fbc_snapshot:
                 shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
-                shipment_kind = f"fbc-{fbc_nvr}"
+                # Use counter-based key for unique naming
+                shipment_kind = f"fbc{fbc_counter:02d}"
                 shipments_by_kind[shipment_kind] = shipment_config
-
-                # Write FBC shipment file with simple incremental counter
-                filename = f"{self.assembly}.fbc.{timestamp}{fbc_counter:02d}.yaml"
-                shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
-
-                # Write to shipment repository
-                product = shipment_config.shipment.metadata.product
-                group = shipment_config.shipment.metadata.group
-                application = shipment_config.shipment.metadata.application
-                env = "prod"  # Default environment
-                relative_target_dir = Path("shipment") / product / group / application / env
-                target_dir = self.shipment_data_repo._directory / relative_target_dir
-                target_dir.mkdir(parents=True, exist_ok=True)
-                filepath = relative_target_dir / filename
-
-                self.logger.info(f"Writing FBC shipment file to repository: {filepath}")
-                out = StringIO()
-                yaml.dump(shipment_dump, out)
-                await self.shipment_data_repo.write_file(filepath, out.getvalue())
-                self.logger.info(f"Created FBC shipment for {fbc_nvr} in repository: {filepath}")
-
                 fbc_counter += 1
+
+        # Write shipment files to local repository
+        if shipments_by_kind:
+            await self.write_shipment_files_locally(shipments_by_kind, "prod", timestamp)
 
         # Create MR if requested
         if self.create_mr and shipments_by_kind:
@@ -625,7 +663,7 @@ class ReleaseFromFbcPipeline:
                 if mr_url:
                     self.logger.info(f"Created shipment MR: {mr_url}")
             except Exception as e:
-                self.logger.error(f"Failed to create MR: {e}")
+                self.logger.exception(f"Failed to create MR: {e}")
                 if not self.dry_run:
                     self.logger.info("Continuing with local files only")
 
