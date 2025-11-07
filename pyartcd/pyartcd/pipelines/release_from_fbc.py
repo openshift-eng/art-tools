@@ -75,9 +75,12 @@ class ReleaseFromFbcPipeline:
         self.gitlab_token = None
         self.shipment_mr_url = None
 
-        # Require shipment_path for this pipeline
+        # Set default shipment_path if not provided, using same logic as elliott
         if not shipment_path:
-            raise ValueError("--shipment-path is required for the release-from-fbc pipeline")
+            # For non-OpenShift products, default to 'ocp' product for shipment data
+            # This will be resolved to the actual product URL later in the pipeline
+            product = 'ocp'  # Default product, will be overridden once actual product is loaded
+            shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(product)
 
         # Setup shipment repo configuration
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
@@ -94,9 +97,8 @@ class ReleaseFromFbcPipeline:
             f'--working-dir={self.elliott_working_dir}',
         ]
 
-        # Add shipment path if provided
-        if shipment_path:
-            self._elliott_base_command.append(f'--shipment-path={shipment_path}')
+        # Add shipment path (always set now, either provided or default)
+        self._elliott_base_command.append(f'--shipment-path={shipment_path}')
 
     def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
         """
@@ -666,7 +668,7 @@ class ReleaseFromFbcPipeline:
 )
 @click.option(
     '--shipment-path',
-    help='Path to shipment data repository for elliott commands. If not provided, will use default shipment data URL.',
+    help='Path to shipment data repository for elliott commands. Defaults to OCP shipment data repository URL.',
 )
 @pass_runtime
 @click_coroutine
@@ -689,12 +691,19 @@ async def release_from_fbc(
     Note: For OpenShift releases, use the prepare-release-konflux command instead.
     
     \b
-    # Create shipment files with existing shipment repository:
+    # Create shipment files using default OCP shipment repository:
+    $ artcd release-from-fbc \\
+        --group oadp-1.5 \\
+        --assembly 1.5.3 \\
+        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444
+    
+    \b
+    # Create shipment files with custom shipment repository:
     $ artcd release-from-fbc \\
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
-        --shipment-path /path/to/ocp-shipment-data
+        --shipment-path /path/to/custom-shipment-data
     
     \b
     # Create shipment files and MR (requires GITLAB_TOKEN env var):
@@ -702,8 +711,7 @@ async def release_from_fbc(
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
-        --create-mr \\
-        --shipment-path /path/to/ocp-shipment-data
+        --create-mr
     """
     # Parse comma-separated FBC pullspecs
     fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]

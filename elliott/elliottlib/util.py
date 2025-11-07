@@ -754,7 +754,12 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
             # Step 1: Discover attached artifacts using ORAS
             logger.info("Discovering attached artifacts...")
             discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
-            _, discover_output, _ = await exectools.cmd_gather_async(discover_cmd)
+            rc, discover_output, discover_stderr = await exectools.cmd_gather_async(discover_cmd)
+
+            if rc != 0:
+                raise RuntimeError(
+                    f"ORAS discover command failed: {' '.join(discover_cmd)}\nReturn code: {rc}\nStdout: {discover_output}\nStderr: {discover_stderr}"
+                )
 
             # Parse JSON and extract digest for the attached artifact
             discover_data = json.loads(discover_output)
@@ -808,7 +813,12 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
             artifact_pullspec = f"{base_pullspec}@{digest}"
             pull_cmd = ['oras', 'pull', artifact_pullspec]
             logger.info(f"Pulling from: {artifact_pullspec}")
-            await exectools.cmd_gather_async(pull_cmd)
+            rc, pull_output, pull_stderr = await exectools.cmd_gather_async(pull_cmd)
+
+            if rc != 0:
+                raise RuntimeError(
+                    f"ORAS pull command failed: {' '.join(pull_cmd)}\nReturn code: {rc}\nStdout: {pull_output}\nStderr: {pull_stderr}"
+                )
 
             # Step 3: Read and process the catalog file
             pulled_files = os.listdir('.')
