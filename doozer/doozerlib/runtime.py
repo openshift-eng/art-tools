@@ -443,7 +443,11 @@ class Runtime(GroupRuntime):
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
 
         strict_mode = True
-        if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
+        if (
+            self.assembly_type == AssemblyTypes.STREAM
+            or not self.assembly
+            or self.assembly in ['stream', 'test', 'microshift']
+        ):
             strict_mode = False
 
         self.assembly_basis_event = assembly_basis_event(
