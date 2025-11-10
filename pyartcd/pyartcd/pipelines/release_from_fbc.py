@@ -12,13 +12,9 @@ from urllib.parse import urlparse
 import click
 import gitlab
 from artcommonlib import exectools
-from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP, SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import (
-    new_roundtrip_yaml_handler,
-    resolve_konflux_kubeconfig_by_product,
-    resolve_konflux_namespace_by_product,
-)
+from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
     ComponentSource,
     Data,
@@ -60,7 +56,6 @@ class ReleaseFromFbcPipeline:
         create_mr: bool = False,
         shipment_data_repo_url: Optional[str] = None,
         shipment_path: Optional[str] = None,
-        kubeconfig: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -69,7 +64,6 @@ class ReleaseFromFbcPipeline:
         self.fbc_pullspecs = fbc_pullspecs
         self.create_mr = create_mr
         self.dry_run = self.runtime.dry_run
-        self.kubeconfig = kubeconfig
 
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
@@ -226,9 +220,10 @@ class ReleaseFromFbcPipeline:
         try:
             oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
 
-            # Add kubeconfig if available
-            if self.kubeconfig:
-                oc_cmd.extend(['--kubeconfig', self.kubeconfig])
+            # Add registry config for authentication if available
+            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            if konflux_art_images_auth_file:
+                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
 
             image_info_output, _ = exectools.cmd_assert(oc_cmd)
             image_info = json.loads(image_info_output)
@@ -680,12 +675,6 @@ class ReleaseFromFbcPipeline:
     '--shipment-path',
     help='Path to shipment data repository for elliott commands. Defaults to OCP shipment data repository URL.',
 )
-@click.option(
-    '--kubeconfig',
-    metavar='KUBECONFIG_PATH',
-    default=None,
-    help='Path to the kubeconfig file for oc commands (optional)',
-)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -696,7 +685,6 @@ async def release_from_fbc(
     create_mr: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
-    kubeconfig: Optional[str],
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
@@ -744,7 +732,6 @@ async def release_from_fbc(
         create_mr=create_mr,
         shipment_data_repo_url=shipment_data_repo_url,
         shipment_path=shipment_path,
-        kubeconfig=kubeconfig,
     )
 
     await pipeline.run()

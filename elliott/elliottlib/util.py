@@ -911,6 +911,11 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     logger.debug(f"Running oc image info for: {image_url}")
                     oc_cmd = ['oc', 'image', 'info', image_url, '--filter-by-os', 'amd64', '-o', 'json']
 
+                    # Add registry config for authentication if available
+                    konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+                    if konflux_art_images_auth_file:
+                        oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+
                     _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd)
                     image_info = json.loads(image_info_output)
 
