@@ -34,7 +34,7 @@ BUNDLES_TABLE_ID = 'bundles'
 FBCS_TABLE_ID = 'fbcs'
 TASKRUN_TABLE_ID = 'taskruns'
 
-SHIPMENT_DATA_URL_TEMPLATE = "https://gitlab.cee.redhat.com/hybrid-platforms/art/{}-shipment-data"
+SHIPMENT_DATA_URL_TEMPLATE = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data"
 
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'

@@ -89,8 +89,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.build_data_repo_pull_url, constants.OCP_BUILD_DATA_URL)
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, constants.OCP_BUILD_DATA_URL)
-        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
-        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE)
+        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE)
 
     def test_init_with_custom_urls(self):
         pipeline = PrepareReleaseKonfluxPipeline(

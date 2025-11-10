@@ -166,11 +166,11 @@ class PrepareReleaseKonfluxPipeline:
         shipment_data_repo_pull_url = (
             shipment_data_repo_url
             or self.runtime.config.get("shipment_config", {}).get("shipment_data_url")
-            or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+            or SHIPMENT_DATA_URL_TEMPLATE
         )
-        shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
-            "shipment_data_push_url"
-        ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+        shipment_data_repo_push_url = (
+            self.runtime.config.get("shipment_config", {}).get("shipment_data_push_url") or SHIPMENT_DATA_URL_TEMPLATE
+        )
         return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
     @cached_property

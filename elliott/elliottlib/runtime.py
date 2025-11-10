@@ -427,7 +427,7 @@ class Runtime(GroupRuntime):
 
     def resolve_shipment_metadata(self, strict=True):
         if strict and not self.shipment_path:
-            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE
 
         if self.shipment_path:
             shipment_path, commitish = self.shipment_path, "main"
