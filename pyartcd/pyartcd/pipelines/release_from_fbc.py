@@ -111,7 +111,9 @@ class ReleaseFromFbcPipeline:
             or SHIPMENT_DATA_URL_TEMPLATE
         )
         shipment_data_repo_push_url = (
-            self.runtime.config.get("shipment_config", {}).get("shipment_data_push_url") or SHIPMENT_DATA_URL_TEMPLATE
+            shipment_data_repo_url
+            or self.runtime.config.get("shipment_config", {}).get("shipment_data_push_url")
+            or SHIPMENT_DATA_URL_TEMPLATE
         )
         return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
@@ -405,7 +407,7 @@ class ReleaseFromFbcPipeline:
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
         # Create MR title and description
-        mr_title = f"Shipment for {self.product} {self.assembly}"
+        mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Shipment files created for {self.assembly} using release-from-fbc command"
 
         if self.dry_run:
