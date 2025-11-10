@@ -89,9 +89,10 @@ class ReleaseFromFbcPipeline:
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
             shipment_data_repo_url
         )
-        self.shipment_data_repo = GitRepository(Path(shipment_path), self.dry_run)
+        # GitRepository expects a local filesystem path, not a URL
+        self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
 
-        # Base elliott command template (shipment-path will be added dynamically)
+        # Base elliott command template
         self._elliott_base_command = [
             'elliott',
             f'--group={group}',
@@ -99,8 +100,6 @@ class ReleaseFromFbcPipeline:
             '--build-system=konflux',
             f'--working-dir={self.elliott_working_dir}',
         ]
-
-        self._current_shipment_path = shipment_path
 
     def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
         """
@@ -122,10 +121,25 @@ class ReleaseFromFbcPipeline:
         Create a basic auth URL with the given token.
         """
         parsed_url = urlparse(url)
-        scheme = parsed_url.scheme
-        rest_of_the_url = url[len(scheme + "://") :]
+        scheme = parsed_url.scheme or "https"
+        netloc = parsed_url.netloc
+        path = parsed_url.path
+        params = parsed_url.params
+        query = parsed_url.query
+        fragment = parsed_url.fragment
+
+        # Construct the URL parts
+        url_parts = [path]
+        if params:
+            url_parts.append(f";{params}")
+        if query:
+            url_parts.append(f"?{query}")
+        if fragment:
+            url_parts.append(f"#{fragment}")
+
+        rest_of_url = "".join(url_parts)
         # Use oauth2 as placeholder username and token as password
-        return f'https://oauth2:{token}@{rest_of_the_url}'
+        return f'{scheme}://oauth2:{token}@{netloc}{rest_of_url}'
 
     @property
     def _gitlab(self) -> gitlab.Gitlab:
@@ -587,7 +601,7 @@ class ReleaseFromFbcPipeline:
 
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
-        for fbc_nvr, fbc_snapshot in fbc_snapshots.items():
+        for _, fbc_snapshot in fbc_snapshots.items():
             if fbc_snapshot:
                 shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
                 # Use counter-based key for unique naming
