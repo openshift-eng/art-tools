@@ -747,14 +747,11 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        original_cwd = os.getcwd()
         try:
-            os.chdir(temp_dir)
-
             # Step 1: Discover attached artifacts using ORAS
             logger.info("Discovering attached artifacts...")
             discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
-            rc, discover_output, discover_stderr = await exectools.cmd_gather_async(discover_cmd)
+            rc, discover_output, discover_stderr = await exectools.cmd_gather_async(discover_cmd, cwd=temp_dir)
 
             if rc != 0:
                 raise RuntimeError(
@@ -813,7 +810,7 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
             artifact_pullspec = f"{base_pullspec}@{digest}"
             pull_cmd = ['oras', 'pull', artifact_pullspec]
             logger.info(f"Pulling from: {artifact_pullspec}")
-            rc, pull_output, pull_stderr = await exectools.cmd_gather_async(pull_cmd)
+            rc, pull_output, pull_stderr = await exectools.cmd_gather_async(pull_cmd, cwd=temp_dir)
 
             if rc != 0:
                 raise RuntimeError(
@@ -821,21 +818,22 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                 )
 
             # Step 3: Read and process the catalog file
-            pulled_files = os.listdir('.')
+            pulled_files = os.listdir(temp_dir)
             logger.info(f"Files found in pulled artifact: {pulled_files}")
 
             # Debug: Show the contents of each file for analysis
             for file in pulled_files:
                 if file.endswith('.json'):
                     logger.debug(f"Contents of {file}:")
-                    with open(file, 'r') as f:
+                    with open(os.path.join(temp_dir, file), 'r') as f:
                         content = f.read()
                         logger.debug(f"{file}: {content[:200]}...")  # First 200 chars
 
             related_images = []
-            if os.path.exists('related-images.json'):
+            related_images_path = os.path.join(temp_dir, 'related-images.json')
+            if os.path.exists(related_images_path):
                 logger.info("Reading related-images.json...")
-                with open('related-images.json', 'r') as f:
+                with open(related_images_path, 'r') as f:
                     raw_images = json.load(f)
 
                 logger.info(f"Found {len(raw_images)} images in related-images.json")
@@ -845,8 +843,6 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     if 'registry.redhat.io/oadp/' in img_url:
                         # Apply the same transformation as the sed command:
                         # s|registry\.redhat\.io/oadp/[^@]*|quay.io/redhat-user-workloads/ocp-art-tenant/art-images|g
-                        import re
-
                         transformed_url = re.sub(
                             r'registry\.redhat\.io/oadp/[^@]*',
                             'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
@@ -866,15 +862,15 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     logger.info(f"{i:2d}. {img}")
                 logger.info("=== END TRANSFORMED PULL SPECS ===")
 
-            elif os.path.exists('catalog.json'):
-                logger.warning(
-                    "related-images.json not found, falling back to catalog.json (this may extract many images)"
-                )
-                # Keep the existing catalog.json logic as fallback but warn about it
-                with open('catalog.json', 'r') as f:
-                    catalog_content = f.read()
-
-                import re
+            else:
+                catalog_json_path = os.path.join(temp_dir, 'catalog.json')
+                if os.path.exists(catalog_json_path):
+                    logger.warning(
+                        "related-images.json not found, falling back to catalog.json (this may extract many images)"
+                    )
+                    # Keep the existing catalog.json logic as fallback but warn about it
+                    with open(catalog_json_path, 'r') as f:
+                        catalog_content = f.read()
 
                 registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
                 found_images = re.findall(registry_pattern, catalog_content)
@@ -891,12 +887,12 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     else:
                         related_images.append(img_url)
 
-                related_images = list(set(related_images))
-                logger.warning(f"Extracted {len(related_images)} unique images from catalog.json")
-            else:
-                raise RuntimeError(
-                    f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
-                )
+                    related_images = list(set(related_images))
+                    logger.warning(f"Extracted {len(related_images)} unique images from catalog.json")
+                else:
+                    raise RuntimeError(
+                        f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
+                    )
 
             if not related_images:
                 logger.error("No image URLs found in catalog file")
@@ -916,7 +912,7 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     if konflux_art_images_auth_file:
                         oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
 
-                    _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd)
+                    _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd, cwd=temp_dir)
                     image_info = json.loads(image_info_output)
 
                     # Extract labels
@@ -951,8 +947,6 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     return (image_url, "", error_msg)
 
             # Run all oc image info commands in parallel
-            import asyncio
-
             tasks = [extract_nvr_from_image(image_url) for image_url in related_images]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -988,8 +982,8 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                     f"Failed to extract NVRs from all {len(related_images)} images. Check logs for details."
                 )
 
-        finally:
-            os.chdir(original_cwd)
+        except Exception:
+            raise
 
     logger.info(f"Extracted {len(nvrs)} NVRs from FBC image")
     return nvrs

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import click
 import gitlab
+import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.rpm_utils import parse_nvr
@@ -286,7 +287,6 @@ class ReleaseFromFbcPipeline:
 
         # now call elliott snapshot new -f <temp_file_path>
         snapshot_cmd = self._elliott_base_command + [
-            f"--shipment-path={self._current_shipment_path}",
             "snapshot",
             "new",
             f"--builds-file={temp_file_path}",
@@ -348,8 +348,6 @@ class ReleaseFromFbcPipeline:
                 if config_path.exists():
                     with open(config_path, 'r') as f:
                         # Use yaml.safe_load from stdlib for reading config
-                        import yaml as stdlib_yaml
-
                         shipment_config = stdlib_yaml.safe_load(f) or {}
 
                     application = snapshot.spec.application if snapshot else "default-app"
@@ -673,7 +671,7 @@ class ReleaseFromFbcPipeline:
 )
 @click.option(
     '--shipment-path',
-    help='Path to shipment data repository for elliott commands. Defaults to OCP shipment data repository URL.',
+    help='Path to shipment data repository for elliott commands. If not provided, defaults to the product-specific shipment data URL after loading product from group config.',
 )
 @pass_runtime
 @click_coroutine
