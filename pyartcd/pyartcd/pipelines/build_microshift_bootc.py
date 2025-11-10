@@ -105,12 +105,12 @@ class BuildMicroShiftBootcPipeline:
         self._shipment_data_repo_dir = self._working_dir / "shipment-data-push"
 
         # Setup shipment data repo URLs
-        self.shipment_data_repo_pull_url = self.runtime.config.get("shipment_config", {}).get(
-            "shipment_data_url"
-        ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
-        self.shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
-            "shipment_data_push_url"
-        ) or SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+        self.shipment_data_repo_pull_url = (
+            self.runtime.config.get("shipment_config", {}).get("shipment_data_url") or SHIPMENT_DATA_URL_TEMPLATE
+        )
+        self.shipment_data_repo_push_url = (
+            self.runtime.config.get("shipment_config", {}).get("shipment_data_push_url") or SHIPMENT_DATA_URL_TEMPLATE
+        )
 
         # Initialize GitRepository for shipment data (will be setup later if needed)
         self.shipment_data_repo = None
