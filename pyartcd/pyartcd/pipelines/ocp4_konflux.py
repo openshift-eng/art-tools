@@ -124,6 +124,7 @@ class KonfluxOcp4Pipeline:
         self.rpm_list = [rpm.strip() for rpm in rpm_list.split(',')] if rpm_list else []
 
         self.group_images = []
+        self.rebase_failures = []
 
         self.slack_client = runtime.new_slack_client()
 
@@ -264,6 +265,9 @@ class KonfluxOcp4Pipeline:
             else:  # strategy = EXCLUDE
                 # Append failed images to excluded ones
                 self.build_plan.images_excluded.extend(failed_images)
+
+            # Track rebase failures for later steps
+            self.rebase_failures = failed_images
 
     async def build_images(self):
         if not self.building_images():
@@ -558,6 +562,10 @@ class KonfluxOcp4Pipeline:
                 self.runtime.cleanup_sources('konflux_build_sources'),
             ]
         )
+
+        # If any image failed to rebase, raise an exception to make the pipeline unstable
+        if self.rebase_failures:
+            raise RuntimeError(f'Following images failed to rebase: {",".join(self.rebase_failures)}')
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
