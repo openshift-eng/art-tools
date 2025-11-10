@@ -82,10 +82,8 @@ class ReleaseFromFbcPipeline:
         # Set default shipment_path if not provided, using same logic as elliott
         self.shipment_path_was_defaulted = not shipment_path
         if not shipment_path:
-            # For non-OpenShift products, default to 'ocp' product for shipment data
-            # This will be resolved to the actual product URL later in the pipeline
-            product = 'ocp'  # Default product, will be overridden once actual product is loaded
-            shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(product)
+            # For non-OpenShift products, use default shipment data repository
+            shipment_path = SHIPMENT_DATA_URL_TEMPLATE
 
         # Setup shipment repo configuration
         self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
@@ -114,11 +112,11 @@ class ReleaseFromFbcPipeline:
         shipment_data_repo_pull_url = (
             shipment_data_repo_url
             or self.runtime.config.get("shipment_config", {}).get("shipment_data_url")
-            or SHIPMENT_DATA_URL_TEMPLATE.format(product)
+            or SHIPMENT_DATA_URL_TEMPLATE
         )
         shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
             "shipment_data_push_url"
-        ) or SHIPMENT_DATA_URL_TEMPLATE.format(product)
+        ) or SHIPMENT_DATA_URL_TEMPLATE
         return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
     @staticmethod
@@ -546,25 +544,8 @@ class ReleaseFromFbcPipeline:
         self.product = await self._load_product_from_group_config()
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
-        # Recompute shipment repository with correct product if default was used
-        if self.shipment_path_was_defaulted:
-            self.logger.info(f"Updating shipment repository to use product '{self.product}' instead of default 'ocp'")
-            correct_shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
-
-            # Update shipment_data_repo_urls with correct product
-            self.shipment_data_repo_pull_url, self.shipment_data_repo_push_url = self._shipment_data_repo_vars(
-                None  # Use None to force using the correct product-based URL
-            )
-
-            # Re-create the shipment repository with correct path
-            self.shipment_data_repo = GitRepository(Path(correct_shipment_path), self.dry_run)
-
-            # Update the current shipment path
-            self._current_shipment_path = correct_shipment_path
-
-            # Re-setup shipment repo if MR creation is requested
-            if self.create_mr:
-                await self.setup_shipment_repo()
+        # Note: All products use the same shipment data repository
+        # No need to update shipment repository based on product
 
         # Validate that all FBC builds have the same related images
         related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
@@ -671,7 +652,7 @@ class ReleaseFromFbcPipeline:
 )
 @click.option(
     '--shipment-path',
-    help='Path to shipment data repository for elliott commands. If not provided, defaults to the product-specific shipment data URL after loading product from group config.',
+    help='Path to shipment data repository for elliott commands. If not provided, defaults to the OCP shipment data repository URL.',
 )
 @pass_runtime
 @click_coroutine
