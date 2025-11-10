@@ -106,17 +106,14 @@ class ReleaseFromFbcPipeline:
         """
         Determine shipment data repository URLs for pull and push operations.
         """
-        # Use the actual product if available, otherwise default to 'ocp'
-        product = getattr(self, 'product', 'ocp')
-
         shipment_data_repo_pull_url = (
             shipment_data_repo_url
             or self.runtime.config.get("shipment_config", {}).get("shipment_data_url")
             or SHIPMENT_DATA_URL_TEMPLATE
         )
-        shipment_data_repo_push_url = self.runtime.config.get("shipment_config", {}).get(
-            "shipment_data_push_url"
-        ) or SHIPMENT_DATA_URL_TEMPLATE
+        shipment_data_repo_push_url = (
+            self.runtime.config.get("shipment_config", {}).get("shipment_data_push_url") or SHIPMENT_DATA_URL_TEMPLATE
+        )
         return shipment_data_repo_pull_url, shipment_data_repo_push_url
 
     @staticmethod
