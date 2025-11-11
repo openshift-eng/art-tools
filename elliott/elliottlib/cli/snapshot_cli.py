@@ -198,18 +198,13 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
-        # Use group name format for non-openshift groups, ose format for openshift groups
-        if self.runtime.group.startswith("openshift-"):
-            major, minor = self.runtime.get_major_minor()
-            snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
-        else:
-            # Normalize group name to comply with Kubernetes DNS label rules
-            group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
-            if not group_name_safe:
-                raise ValueError(
-                    f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
-                )
-            snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
+        # Normalize group name to comply with Kubernetes DNS label rules
+        group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
+        if not group_name_safe:
+            raise ValueError(
+                f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+            )
+        snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster (skip in dry-run mode)

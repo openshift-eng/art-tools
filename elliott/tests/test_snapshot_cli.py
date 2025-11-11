@@ -18,6 +18,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.18"
+        self.runtime.product = "ocp"
         self.konflux_config = dict(
             namespace="test-namespace",
             kubeconfig="/path/to/kubeconfig",
@@ -100,7 +101,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             'test.appstudio.openshift.io/type': 'override',
                             'appstudio.openshift.io/application': 'fbc-openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp-1',
+                        'name': 'openshift-4-18-timestamp-1',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
@@ -124,7 +125,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             'test.appstudio.openshift.io/type': 'override',
                             'appstudio.openshift.io/application': 'openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp-2',
+                        'name': 'openshift-4-18-timestamp-2',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
@@ -176,6 +177,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         self.major = 4
         self.minor = 18
         self.runtime.group = f"openshift-{self.major}.{self.minor}"
+        self.runtime.product = "ocp"
         self.konflux_config = dict(
             namespace="test-namespace",
             kubeconfig="/path/to/kubeconfig",
@@ -209,7 +211,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
                 'labels': {
                     'test.appstudio.openshift.io/type': 'override',
                 },
-                'name': 'ose-4-18-timestamp',
+                'name': 'openshift-4-18-timestamp',
                 'namespace': 'test-namespace',
             },
             'spec': {
@@ -357,6 +359,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for oadp groups"""
         self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -382,6 +385,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_complex_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for complex group names"""
         self.runtime.group = "Test_Group-1.5"
+        self.runtime.product = "mta"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -429,6 +433,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_simple_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for simple oadp group"""
         self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -476,6 +481,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_invalid_group_raises_error(self, mock_konflux_client_init, _mock_timestamp):
         """Test that group names that normalize to empty string raise ValueError"""
         self.runtime.group = "_..-__"  # This normalizes to empty string
+        self.runtime.product = "mta"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
