@@ -238,7 +238,7 @@ class FbcMergeCli:
         # Initialize runtime if not already initialized
         runtime = self.runtime
         if not getattr(runtime, 'initialized', False):
-            runtime.initialize(mode="none", clone_distgits=False, config_only=True)
+            runtime.initialize(mode="images", clone_distgits=False, config_only=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if self.major_minor:
             try:
@@ -275,6 +275,36 @@ class FbcMergeCli:
             if not matching_tags:
                 raise IOError("No matching tags found")
             LOGGER.info("Found %s matching tags: %s", len(matching_tags), matching_tags)
+            # Get all operators with bundles (enabled images with update-csv config)
+            # This matches the logic in olm_bundle.py:list_olm_operators
+            operators_with_bundles = [
+                image.get_component_name()
+                for image in runtime.ordered_image_metas()
+                if image.enabled and image.config.get('update-csv') is not Missing
+            ]
+
+            if operators_with_bundles:
+                # Check if each operator name is contained in any of the matching_tags
+                # Tag format: ocp__{major}.{minor}__{operator_name} or similar
+                # We check if operator name is a substring of any tag
+                missing_operators = []
+                for operator_name in operators_with_bundles:
+                    if not any(operator_name in tag for tag in matching_tags):
+                        missing_operators.append(operator_name)
+
+                if missing_operators:
+                    error_msg = (
+                        f"The following operators with bundles are missing from matching tags: {sorted(missing_operators)}\n"
+                        f"Operators with bundles in this release: {sorted(operators_with_bundles)}\n"
+                        f"Matching tags: {sorted(matching_tags)}"
+                    )
+                    LOGGER.error(error_msg)
+                    raise IOError(error_msg)
+                else:
+                    LOGGER.info(
+                        "All operators with bundles in this release are present in matching tags (%s operators)",
+                        len(operators_with_bundles),
+                    )
             fragments = [f"{self.DEFAULT_STAGE_FBC_REPO}:{tag}" for tag in matching_tags]
 
         merger = KonfluxFbcFragmentMerger(
