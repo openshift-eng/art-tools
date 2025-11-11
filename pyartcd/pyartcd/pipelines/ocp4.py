@@ -509,7 +509,7 @@ class Ocp4Pipeline:
 
         if len(failed_images) <= 10:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
-        else:
+        elif len(failed_images) > 10:
             jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
 
         self.runtime.logger.warning('Failed images: %s', ', '.join(failed_images))
