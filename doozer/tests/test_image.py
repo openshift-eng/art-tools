@@ -575,12 +575,15 @@ class TestImageInspector(IsolatedAsyncioTestCase):
         brew_build_inspector = mock.MagicMock(autospec=build_info.BrewBuildRecordInspector)
         get_build_id.return_value = 12345
         brew_build_inspector.get_build_id.return_value = 12345
-        get_image_meta.return_value = mock.MagicMock(
+        mock_meta = mock.MagicMock(
             autospec=image.ImageMetadata,
             config={
                 "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
             },
         )
+        mock_meta.get_enabled_repos.return_value = {"rhel-8-baseos-rpms", "rhel-8-appstream-rpms"}
+        mock_meta.runtime = runtime
+        get_image_meta.return_value = mock_meta
         image_arch.return_value = "x86_64"
         get_repodata_threadsafe.return_value = Repodata(
             name='rhel-8-appstream-rpms',

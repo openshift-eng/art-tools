@@ -186,8 +186,9 @@ class RpmInfoCollector:
         if already_loaded:
             self.logger.info(f"Repos already loaded, skipping: {', '.join(sorted(already_loaded))} for arch {arch}")
 
-        enabled_repos = {r.name for r in self.repos.values() if r.enabled}
-        repos_to_fetch = sorted(enabled_repos | set(not_yet_loaded))
+        # Only fetch repos that are BOTH globally enabled AND requested (and not already loaded)
+        globally_enabled = {r.name for r in self.repos.values() if r.enabled}
+        repos_to_fetch = sorted((globally_enabled & requested_repos) - already_loaded)
 
         if not repos_to_fetch:
             self.logger.info("No new repos to load.")

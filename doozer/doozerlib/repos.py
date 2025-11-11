@@ -537,8 +537,12 @@ class Repos(object):
         if missing_repos:
             raise ValueError(f"enabled_repos references undefined repo(s): {missing_repos}")
         result = {}
-        globally_enabled_repos = {r.name for r in self._repos.values() if r.enabled}
-        shipping_repos = (set(globally_enabled_repos) | set(enabled_repos)) - set(non_shipping_repos)
+        # A repo is enabled only if BOTH enabled in group.yml AND listed in enabled_repos
+        if enabled_repos:
+            globally_enabled_repos = {r.name for r in self._repos.values() if r.enabled}
+            shipping_repos = (globally_enabled_repos & set(enabled_repos)) - set(non_shipping_repos)
+        else:
+            shipping_repos = set()
         for a in sorted(self._arches):
             content_sets = []
             for r in shipping_repos:
