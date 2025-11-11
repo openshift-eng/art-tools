@@ -84,11 +84,6 @@ class Repo(object):
                     baseurl_dict[arch] = template.substitute(vars_dict)
 
                 conf['baseurl'] = baseurl_dict
-
-            # Set default enabled if not specified
-            if 'enabled' not in conf:
-                conf['enabled'] = 1 if not repo_config.disabled else 0
-
             repo_dict['conf'] = conf
 
         # Handle external type repos (existing logic)
@@ -131,8 +126,6 @@ class Repo(object):
         # fill out default conf values
         conf = self._data.conf
         conf.name = conf.get('name', name)
-        conf.enabled = conf.get('enabled', None)
-        self.enabled = conf.enabled == 1
         self.gpgcheck = gpgcheck
 
         def pkgs_to_list(pkgs_str):
@@ -178,7 +171,19 @@ class Repo(object):
     @property
     def enabled(self):
         """Allows access via repo.enabled"""
-        return self._data.conf.enabled == 1
+        val = self._data.conf.enabled
+        if isinstance(val, str):
+            val = val.lower()
+            if val in ('true', 'yes'):
+                return True
+            if val in ('false', 'no'):
+                return False
+            raise ValueError(f"Invalid enabled option {val}")
+        if val in (Missing, 1, True):
+            return True
+        if val in (0, False):
+            return False
+        raise ValueError(f"Invalid enabled option {val}")
 
     @property
     def arches(self):
