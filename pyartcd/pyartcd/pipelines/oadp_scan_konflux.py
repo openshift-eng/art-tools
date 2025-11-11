@@ -115,7 +115,7 @@ class OadpScanPipeline:
         # Update build description
         jenkins.update_description(f'Changed {len(image_list)} OADP images<br/>')
 
-        # Trigger OADP build (version will be read from group config in build_oadp job)
+        # Trigger OADP build
         self.logger.info('Triggering an OADP %s build', self.group)
         jenkins.start_oadp(
             group=self.group,
