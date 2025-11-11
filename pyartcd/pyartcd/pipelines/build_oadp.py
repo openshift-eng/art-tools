@@ -26,7 +26,7 @@ class BuildOadpPipeline:
         self,
         runtime: Runtime,
         group: str,
-        version: str,
+        version: Optional[str],
         assembly: str,
         image_list: str,
         data_path: str,
@@ -101,6 +101,19 @@ class BuildOadpPipeline:
 
     async def run(self):
         """Run the OADP rebase and build pipeline"""
+        # Load version from group config if not provided
+        if not self.version:
+            group_config = await load_group_config(
+                group=self.group,
+                assembly=self.assembly,
+                doozer_data_path=self._doozer_env_vars.get('DOOZER_DATA_PATH'),
+                doozer_data_gitref=self.data_gitref,
+            )
+            self.version = group_config.get('version')
+            if not self.version:
+                raise ValueError(f"No version found in group config for {self.group}")
+            self._logger.info(f"Using version {self.version} from group config")
+
         await self._rebase_and_build()
         self.trigger_bundle_build()
 
@@ -212,8 +225,8 @@ class BuildOadpPipeline:
 @click.option(
     "--version",
     metavar='NAME',
-    required=True,
-    help="OADP version",
+    required=False,
+    help="OADP version (if not provided, will be read from group config)",
 )
 @click.option(
     "--assembly",
@@ -242,7 +255,7 @@ async def build_oadp(
     runtime: Runtime,
     data_path: str,
     group: str,
-    version: str,
+    version: Optional[str],
     assembly: str,
     image_list: str,
     skip_bundle_build: bool,

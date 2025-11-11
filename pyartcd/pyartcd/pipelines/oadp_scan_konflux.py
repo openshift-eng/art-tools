@@ -5,7 +5,6 @@ import os
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.constants import NON_OCP_OPERATOR_VERSIONS
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -116,12 +115,11 @@ class OadpScanPipeline:
         # Update build description
         jenkins.update_description(f'Changed {len(image_list)} OADP images<br/>')
 
-        # Trigger OADP build
+        # Trigger OADP build (version will be read from group config in build_oadp job)
         self.logger.info('Triggering an OADP %s build', self.group)
         jenkins.start_oadp(
             group=self.group,
             assembly=self.assembly,
-            version=NON_OCP_OPERATOR_VERSIONS.get(self.group),
             image_list=image_list,
         )
 
