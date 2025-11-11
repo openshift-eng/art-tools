@@ -285,13 +285,11 @@ class FbcMergeCli:
             ]
 
             if operators_with_bundles:
-                # Check if each operator name is contained in any of the matching_tags
-                # Tag format: ocp__{major}.{minor}__{operator_name} or similar
-                # We check if operator name is a substring of any tag
-                missing_operators = []
-                for operator_name in operators_with_bundles:
-                    if not any(operator_name in tag for tag in matching_tags):
-                        missing_operators.append(operator_name)
+                # Extract operator names from matching_tags (format: ocp__{major}.{minor}__{operator_name})
+                prefix_len = len(prefix)
+                operators_in_tags = {tag[prefix_len:] for tag in matching_tags}
+                # Find missing operators
+                missing_operators = set(operators_with_bundles) - operators_in_tags
 
                 if missing_operators:
                     error_msg = (
