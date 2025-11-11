@@ -480,25 +480,34 @@ class Repos(object):
         """Mainly for debugging to dump a dict representation of the collection"""
         return str(self._repos)
 
-    def repo_file(self, repo_type, enabled_repos=[], arch=None, konflux=False):
+    def repo_file(self, repo_type, enabled_repos=[], arch=None, konflux=False, omit_disabled_repos=True):
         """
-        Returns a str defining a list of repo configuration secions for a yum configuration file.
+        Returns a str defining a list of repo configuration sections for a yum configuration file.
         :param repo_type: Whether to prefer signed or unsigned repos.
-        :param enabled_repos: A list of group.yml repo names which should be enabled. If a repo is enabled==1
-            in group.yml, that setting takes precedence over this list. If not enabled==1 in group.yml and not
-            found in this list, the repo will be returned as enabled==0. If '*' is included in the list,
-            all repos will be enabled.
+        :param enabled_repos: A list of group.yml repo names which should be enabled. A repo is considered
+            enabled only if it is both enabled in group.yml AND listed in this parameter. An empty list
+            means all repos are disabled.
         :param arch: The architecture for which this repository should be generated. If None, all architectures
             will be included in the returned str.
+        :param konflux: Whether to generate Konflux-specific repo configuration.
+        :param omit_disabled_repos: If True, disabled repos will be omitted from the generated repo file.
+            If False, disabled repos will be included with enabled=0 and a warning will be printed.
         """
 
         result = ''
         for r in self._repos.values():
-            enabled = r.enabled  # If enabled in group.yml, it will always be enabled.
-            if enabled_repos and (r.name in enabled_repos or '*' in enabled_repos):
-                enabled = True
+            # A repo is enabled only if BOTH conditions are true:
+            # 1. enabled in group.yml (r.enabled)
+            # 2. listed in enabled_repos
+            enabled = r.enabled and r.name in enabled_repos
+
             if not enabled:
-                continue
+                if omit_disabled_repos:
+                    # Skip disabled repos
+                    continue
+                else:
+                    # Include disabled repo with enabled=0 and print warning
+                    LOGGER.warning(f"Repository '{r.name}' is disabled but included in repo file")
 
             if arch:  # Generating a single arch?
                 # Just use the configured name for the set. This behavior needs to be preserved to
