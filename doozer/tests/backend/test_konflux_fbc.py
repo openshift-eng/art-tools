@@ -509,6 +509,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
                 {
                     "name": "test-bundle-name.1.2.3",
+                    "replaces": "test-bundle-name.1.0.0",
                     "skipRange": ">=4.8.0 <4.17.0",
                     "skips": [
                         "test-bundle-name.0.0.9",
