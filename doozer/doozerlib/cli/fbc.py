@@ -238,7 +238,7 @@ class FbcMergeCli:
     async def run(self):
         # Initialize runtime if not already initialized
         runtime = self.runtime
-        if not getattr(runtime, 'initialized', False):
+        if not getattr(runtime, 'initialized', False) or getattr(runtime, 'mode', None) != 'images':
             runtime.initialize(mode="images", clone_distgits=False, config_only=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if self.major_minor:
