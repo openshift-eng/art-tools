@@ -16,6 +16,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Missing
 from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
