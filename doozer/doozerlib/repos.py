@@ -384,15 +384,6 @@ class Repo(object):
             lock.release()
 
 
-# base empty repo section for disabling repos in Dockerfiles
-EMPTY_REPO = """
-[{0}]
-baseurl = http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/AtomicOpenShift_Empty/
-enabled = 1
-gpgcheck = 0
-name = {0}
-"""
-
 # Base header for all content_sets.yml output
 CONTENT_SETS = """
 # This file is managed by the doozer build tool: https://github.com/openshift-eng/doozer,
@@ -489,7 +480,7 @@ class Repos(object):
         """Mainly for debugging to dump a dict representation of the collection"""
         return str(self._repos)
 
-    def repo_file(self, repo_type, enabled_repos=[], empty_repos=[], arch=None, konflux=False):
+    def repo_file(self, repo_type, enabled_repos=[], arch=None, konflux=False):
         """
         Returns a str defining a list of repo configuration secions for a yum configuration file.
         :param repo_type: Whether to prefer signed or unsigned repos.
@@ -497,7 +488,6 @@ class Repos(object):
             in group.yml, that setting takes precedence over this list. If not enabled==1 in group.yml and not
             found in this list, the repo will be returned as enabled==0. If '*' is included in the list,
             all repos will be enabled.
-        :param empty_repos: A list of repo names to return defined as no-op yum repos.
         :param arch: The architecture for which this repository should be generated. If None, all architectures
             will be included in the returned str.
         """
@@ -521,9 +511,6 @@ class Repos(object):
                     result += r.conf_section(
                         repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux
                     )
-
-        for er in empty_repos:
-            result += EMPTY_REPO.format(er)
 
         return result
 
