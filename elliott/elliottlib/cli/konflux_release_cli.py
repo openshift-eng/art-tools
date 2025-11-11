@@ -178,9 +178,8 @@ class CreateReleaseCli:
         return created_release
 
     def get_object_name(self) -> str:
-        major, minor = self.runtime.get_major_minor()
         assembly_str = self.runtime.assembly.replace(".", "-")
-        return f"ose-{major}-{minor}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
+        return f"{self.runtime.product}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """

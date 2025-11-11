@@ -244,7 +244,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-prod-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-prod-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -271,7 +271,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-prod-4-18-2-image-timestamp',
+                'name': 'ocp-prod-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
@@ -403,7 +403,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-stage-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-stage-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -430,7 +430,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-stage-4-18-2-image-timestamp',
+                'name': 'ocp-stage-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
