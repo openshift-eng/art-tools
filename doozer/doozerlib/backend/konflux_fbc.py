@@ -753,7 +753,7 @@ class KonfluxFbcRebaser:
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
             replaces = None
-            if self.group.startswith(('oadp-', 'mta-', 'logging-')):
+            if not self.group.startswith('openshift-'):
                 # Find the current head - the entry that is not replaced by any other entry
                 bundle_with_replaces = [it for it in channel['entries']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
