@@ -4,11 +4,15 @@ import json
 import os
 import threading
 import time
-from typing import Dict, List, cast
+from string import Template
+from typing import Dict, List, Optional, Union, cast
 
 import requests
 import yaml
 from artcommonlib import logutil
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import Repo as RepoConf
+from artcommonlib.config.repo import RepoList
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 
@@ -27,10 +31,96 @@ class Repo(object):
     """Represents a single yum repository and provides sane ways to
     access each property based on the arch or repo type."""
 
-    def __init__(self, name, data, valid_arches, gpgcheck=True):
+    @staticmethod
+    def from_repo_config(
+        repo_config: RepoConf,
+        valid_arches: List[str],
+        gpgcheck: bool = True,
+        plashet_config: Optional[PlashetConfig] = None,
+        template_vars: Optional[Dict[str, str]] = None,
+    ) -> 'Repo':
+        """
+        Create a Repo instance from a new-style RepoConf (Pydantic model).
+
+        :param repo_config: New-style RepoConf Pydantic model
+        :param valid_arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        :param plashet_config: Global plashet configuration (required for plashet type repos)
+        :param template_vars: Additional template variables for URL substitution (e.g., {'slug': 'el9-embargoed'})
+        :return: Repo instance
+        """
+        # Convert new-style RepoConf to old-style dict
+        repo_dict = {}
+        arches = list(valid_arches)
+
+        # Handle plashet type repos
+        if repo_config.type == 'plashet':
+            if not plashet_config:
+                raise ValueError(f"Repo '{repo_config.name}' is of type 'plashet' but no plashet_config was provided")
+            if not repo_config.plashet:
+                raise ValueError(f"Repo '{repo_config.name}' doesn't have required key `plashet`.")
+
+            if plashet_arches := repo_config.plashet.arches or plashet_config.arches:
+                plashet_arches = set(plashet_arches)
+                arches = [arch for arch in arches if arch in plashet_arches]
+
+            vars_dict = {}
+            if template_vars:
+                vars_dict.update(template_vars)
+
+            # Build conf dict with baseurl for each architecture
+            conf = repo_config.conf.copy() if repo_config.conf else {}
+
+            # If baseurl is not provided in repo config, construct it from plashet config
+            if 'baseurl' not in conf or not conf['baseurl']:
+                vars_dict['slug'] = repo_config.plashet.slug or repo_config.name
+                baseurl_dict = {}
+
+                for arch in arches:
+                    vars_dict['arch'] = arch
+
+                    # Use string.Template to substitute variables in download_url
+                    template = Template(plashet_config.download_url)
+                    baseurl_dict[arch] = template.substitute(vars_dict)
+
+                conf['baseurl'] = baseurl_dict
+
+            # Set default enabled if not specified
+            if 'enabled' not in conf:
+                conf['enabled'] = 1 if not repo_config.disabled else 0
+
+            repo_dict['conf'] = conf
+
+        # Handle external type repos (existing logic)
+        elif repo_config.type == 'external':
+            if repo_config.conf:
+                repo_dict['conf'] = repo_config.conf
+        else:
+            raise ValueError(f"Unsupported repo type: {repo_config.type}")
+
+        # Add content_set if present
+        if repo_config.content_set:
+            repo_dict['content_set'] = repo_config.content_set.model_dump(exclude_none=True)
+
+        # Add reposync if present
+        if repo_config.reposync:
+            repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
+
+        return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
+
+    def __init__(self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True):
+        """
+        Initialize a Repo instance.
+
+        :param name: Repository name
+        :param data: Repository configuration as old-style dict with 'conf' and 'content_set' keys
+        :param valid_arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        """
         self.name = name
         self._valid_arches = valid_arches
         self._invalid_cs_arches = set()
+
         self._data = Model(data)
         for req in ['conf', 'content_set']:
             if req not in self._data:
@@ -331,15 +421,55 @@ class Repos(object):
     automatic content_set and repo conf file generation.
     """
 
-    def __init__(self, repos: Dict[str, Dict], arches: List[str], gpgcheck=True):
+    def __init__(
+        self,
+        repos: Union[Dict[str, Dict], RepoList],
+        arches: List[str],
+        gpgcheck=True,
+        plashet_config: Optional[PlashetConfig] = None,
+        template_vars: Optional[Dict[str, str]] = None,
+    ):
+        """
+        Initialize Repos collection.
+
+        :param repos: Repository configuration (old-style dict or new-style RepoList)
+        :param arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        :param plashet_config: Global plashet configuration (required for plashet type repos)
+        :param template_vars: Additional template variables for URL substitution
+        """
         self._arches = arches
         self._repos: Dict[str, Repo] = {}
         repotypes = []
         names = []
-        for name, repo in repos.items():
-            names.append(name)
-            self._repos[name] = Repo(name, repo, self._arches, gpgcheck=gpgcheck)
-            repotypes.extend(self._repos[name].repotypes)
+
+        # Handle both old-style dict and new-style RepoList
+        if isinstance(repos, RepoList):
+            # New-style RepoList: process both external and plashet repos
+            for repo_config in repos.root:
+                if repo_config.disabled:
+                    continue
+                # Skip repos that are neither external nor plashet
+                if repo_config.type not in ['external', 'plashet']:
+                    continue
+
+                # Use static method to convert new-style RepoConf to Repo instance
+                names.append(repo_config.name)
+                self._repos[repo_config.name] = Repo.from_repo_config(
+                    repo_config,
+                    self._arches,
+                    gpgcheck=gpgcheck,
+                    plashet_config=plashet_config,
+                    template_vars=template_vars,
+                )
+                repotypes.extend(self._repos[repo_config.name].repotypes)
+        else:
+            # Old-style dict: pass directly to Repo constructor
+            for name, repo in repos.items():
+                names.append(name)
+                self._repos[name] = Repo(name, repo, self._arches, gpgcheck=gpgcheck)
+                repotypes.extend(self._repos[name].repotypes)
+
         self.names = tuple(names)
         self.repotypes = list(set(repotypes))  # leave only unique values
 
