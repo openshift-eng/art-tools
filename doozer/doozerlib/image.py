@@ -892,10 +892,22 @@ class ImageMetadata(Metadata):
         """
         Get enabled repositories for lockfile generation.
 
+        A repo is considered enabled only if it is BOTH:
+        1. Enabled in group.yml (Repo.enabled == True)
+        2. Listed in this image's enabled_repos config
+
         Returns:
             set[str]: Repository names enabled for this image
         """
-        return set(self.config.get("enabled_repos", []))
+        image_enabled_repos = set(self.config.get("enabled_repos", []))
+        if not image_enabled_repos:
+            return set()
+
+        # Get globally enabled repos from group config
+        globally_enabled = {r.name for r in self.runtime.repos.values() if r.enabled}
+
+        # Return intersection - repos must be enabled in BOTH places
+        return globally_enabled & image_enabled_repos
 
     def is_artifact_lockfile_enabled(self) -> bool:
         """
