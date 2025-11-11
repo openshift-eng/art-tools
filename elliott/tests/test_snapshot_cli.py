@@ -18,6 +18,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.18"
+        self.runtime.product = "ocp"
+        self.runtime.assembly = "4.18.0"
         self.konflux_config = dict(
             namespace="test-namespace",
             kubeconfig="/path/to/kubeconfig",
@@ -100,7 +102,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             'test.appstudio.openshift.io/type': 'override',
                             'appstudio.openshift.io/application': 'fbc-openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp-1',
+                        'name': 'ocp-4-18-0-timestamp-1',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
@@ -124,7 +126,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             'test.appstudio.openshift.io/type': 'override',
                             'appstudio.openshift.io/application': 'openshift-4-18',
                         },
-                        'name': 'ose-4-18-timestamp-2',
+                        'name': 'ocp-4-18-0-timestamp-2',
                         'namespace': 'test-namespace',
                     },
                     'spec': {
@@ -176,6 +178,8 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         self.major = 4
         self.minor = 18
         self.runtime.group = f"openshift-{self.major}.{self.minor}"
+        self.runtime.product = "ocp"
+        self.runtime.assembly = "4.18.0"
         self.konflux_config = dict(
             namespace="test-namespace",
             kubeconfig="/path/to/kubeconfig",
@@ -209,7 +213,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
                 'labels': {
                     'test.appstudio.openshift.io/type': 'override',
                 },
-                'name': 'ose-4-18-timestamp',
+                'name': 'ocp-4-18-0-timestamp',
                 'namespace': 'test-namespace',
             },
             'spec': {
@@ -329,6 +333,8 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_openshift_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for openshift groups"""
         self.runtime.group = "openshift-4.18"
+        self.runtime.product = "ocp"
+        self.runtime.assembly = "4.18.0"
         self.runtime.get_major_minor.return_value = (4, 18)
 
         mock_konflux_client = AsyncMock()
@@ -347,7 +353,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         build_records = []
         snapshots = await cli.new_snapshots(build_records)
 
-        # For openshift groups, should use ose-{major}-{minor}-{timestamp} format
+        # For all products, should use {product}-{assembly}-{timestamp} format
         # Since there are no build records, no snapshots will be created, but we can test the naming logic
         # by checking that the method completes without error and the naming logic is correct
         self.assertEqual(snapshots, [])
@@ -357,6 +363,8 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for oadp groups"""
         self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
+        self.runtime.assembly = "1.5.0"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -373,7 +381,7 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         build_records = []
         snapshots = await cli.new_snapshots(build_records)
 
-        # For non-openshift groups, should use {normalized_group}-{timestamp} format
+        # For all products, should use {product}-{assembly}-{timestamp} format
         # Since there are no build records, no snapshots will be created
         self.assertEqual(snapshots, [])
 
@@ -382,6 +390,8 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_complex_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for complex group names"""
         self.runtime.group = "Test_Group-1.5"
+        self.runtime.product = "testproduct"
+        self.runtime.assembly = "1.0.0"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -415,13 +425,13 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         build_records = [mock_build_record]
         snapshots = await cli.new_snapshots(build_records)
 
-        # Should create one snapshot with normalized group name
+        # Should create one snapshot with normalized group name and assembly
         self.assertEqual(len(snapshots), 1)
         snapshot = snapshots[0]
 
-        # Check that the snapshot name uses the normalized group name
-        # "Test_Group-1.5" should become "test-group-1-5-20251031141128-1"
-        expected_name_prefix = "test-group-1-5-20251031141128"
+        # Check that the snapshot name uses the unified pattern
+        # product "testproduct" and "1.0.0" assembly should become "testproduct-1-0-0-20251031141128-1"
+        expected_name_prefix = "testproduct-1-0-0-20251031141128"
         self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
@@ -429,6 +439,8 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
     async def test_oadp_simple_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):
         """Test snapshot naming for simple oadp group"""
         self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
+        self.runtime.assembly = "1.5.0"
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -462,20 +474,71 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         build_records = [mock_build_record]
         snapshots = await cli.new_snapshots(build_records)
 
-        # Should create one snapshot with normalized group name
+        # Should create one snapshot with normalized group name and assembly
         self.assertEqual(len(snapshots), 1)
         snapshot = snapshots[0]
 
-        # Check that the snapshot name uses the normalized group name
-        # "oadp-1.5" should become "oadp-1-5-20251031141128-1"
-        expected_name_prefix = "oadp-1-5-20251031141128"
+        # Check that the snapshot name uses the unified pattern
+        # product "oadp" and "1.5.0" assembly should become "oadp-1-5-0-20251031141128-1"
+        expected_name_prefix = "oadp-1-5-0-20251031141128"
         self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
 
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
-    async def test_invalid_group_raises_error(self, mock_konflux_client_init, _mock_timestamp):
-        """Test that group names that normalize to empty string raise ValueError"""
-        self.runtime.group = "_..-__"  # This normalizes to empty string
+    async def test_non_openshift_assembly_with_dots(self, mock_konflux_client_init, _mock_timestamp):
+        """Test snapshot naming for non-openshift groups with assembly containing dots"""
+        self.runtime.group = "mtc-1.7"
+        self.runtime.product = "rhmtc"
+        self.runtime.assembly = "1.7.1"
+
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        # Mock a build record to actually create a snapshot
+        mock_build_record = Mock()
+        mock_build_record.get_konflux_application_name.return_value = "mtc-app"
+        mock_build_record.get_konflux_component_name.return_value = "mtc-component"
+        mock_build_record.rebase_repo_url = "https://github.com/mtc/repo"
+        mock_build_record.rebase_commitish = "abc123"
+        mock_build_record.image_tag = "sha256:mtcdigest"
+        mock_build_record.image_pullspec = "registry/mtc@sha256:mtcdigest"
+        mock_build_record.name = "mtc-operator"
+
+        # Mock the konflux client methods
+        mock_konflux_client.get_application__caching = AsyncMock()
+        mock_konflux_client.get_component__caching = AsyncMock()
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=["mtc-operator-v1.7.1-1"],
+            dry_run=self.dry_run,
+        )
+
+        # Mock runtime.image_map for the image metadata lookup
+        self.runtime.image_map = {}
+
+        build_records = [mock_build_record]
+        snapshots = await cli.new_snapshots(build_records)
+
+        # Should create one snapshot with normalized group name and assembly
+        self.assertEqual(len(snapshots), 1)
+        snapshot = snapshots[0]
+
+        # Check that the snapshot name uses the unified pattern
+        # product "rhmtc" and "1.7.1" assembly should become "rhmtc-1-7-1-20251031141128-1"
+        expected_name_prefix = "rhmtc-1-7-1-20251031141128"
+        self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
+
+    @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_invalid_assembly_raises_error(self, mock_konflux_client_init, _mock_timestamp):
+        """Test that assembly names that normalize to empty string raise ValueError"""
+        self.runtime.group = "mtc-1.7"
+        self.runtime.product = "rhmtc"
+        self.runtime.assembly = "_..-__"  # This normalizes to empty string
 
         mock_konflux_client = AsyncMock()
         mock_konflux_client.verify_connection = Mock(return_value=True)
@@ -501,13 +564,111 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
 
         build_records = [mock_build_record]
 
-        # Should raise ValueError with clear message
+        # Should raise ValueError with clear message about assembly
         with self.assertRaises(ValueError) as context:
             await cli.new_snapshots(build_records)
 
         error_msg = str(context.exception)
-        self.assertIn("Group name '_..-__' produces invalid normalized name", error_msg)
+        self.assertIn("Assembly name '_..-__' produces invalid normalized name", error_msg)
         self.assertIn("Kubernetes snapshot", error_msg)
+
+    @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_stream_assembly_openshift_group(self, mock_konflux_client_init, _mock_timestamp):
+        """Test snapshot naming for openshift groups with stream assembly"""
+        self.runtime.group = "openshift-4.15"
+        self.runtime.product = "ocp"
+        self.runtime.assembly = "stream"
+
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        # Mock a build record to actually create a snapshot
+        mock_build_record = Mock()
+        mock_build_record.get_konflux_application_name.return_value = "openshift-4-15"
+        mock_build_record.get_konflux_component_name.return_value = "ose-4-15-component"
+        mock_build_record.rebase_repo_url = "https://github.com/openshift/repo"
+        mock_build_record.rebase_commitish = "abc123"
+        mock_build_record.image_tag = "sha256:digest"
+        mock_build_record.image_pullspec = "registry/openshift@sha256:digest"
+        mock_build_record.name = "test-component"
+
+        # Mock the konflux client methods
+        mock_konflux_client.get_application__caching = AsyncMock()
+        mock_konflux_client.get_component__caching = AsyncMock()
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=["test-component-v4.15.0-1"],
+            dry_run=self.dry_run,
+        )
+
+        # Mock runtime.image_map for the image metadata lookup
+        self.runtime.image_map = {}
+
+        build_records = [mock_build_record]
+        snapshots = await cli.new_snapshots(build_records)
+
+        # Should create one snapshot with group-based naming for stream assembly
+        self.assertEqual(len(snapshots), 1)
+        snapshot = snapshots[0]
+
+        # Check that the snapshot name uses group version for stream assembly
+        # "openshift-4.15" group with "stream" assembly should become "ocp-4-15-20251031141128-1"
+        expected_name_prefix = "ocp-4-15-20251031141128"
+        self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
+
+    @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_stream_assembly_oadp_group(self, mock_konflux_client_init, _mock_timestamp):
+        """Test snapshot naming for oadp groups with stream assembly"""
+        self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
+        self.runtime.assembly = "stream"
+
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        # Mock a build record to actually create a snapshot
+        mock_build_record = Mock()
+        mock_build_record.get_konflux_application_name.return_value = "oadp-1-5"
+        mock_build_record.get_konflux_component_name.return_value = "oadp-operator"
+        mock_build_record.rebase_repo_url = "https://github.com/oadp/repo"
+        mock_build_record.rebase_commitish = "def456"
+        mock_build_record.image_tag = "sha256:oadpdigest"
+        mock_build_record.image_pullspec = "registry/oadp@sha256:oadpdigest"
+        mock_build_record.name = "oadp-operator"
+
+        # Mock the konflux client methods
+        mock_konflux_client.get_application__caching = AsyncMock()
+        mock_konflux_client.get_component__caching = AsyncMock()
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=["oadp-operator-v1.5.0-1"],
+            dry_run=self.dry_run,
+        )
+
+        # Mock runtime.image_map for the image metadata lookup
+        self.runtime.image_map = {}
+
+        build_records = [mock_build_record]
+        snapshots = await cli.new_snapshots(build_records)
+
+        # Should create one snapshot with group-based naming for stream assembly
+        self.assertEqual(len(snapshots), 1)
+        snapshot = snapshots[0]
+
+        # Check that the snapshot name uses group version for stream assembly
+        # "oadp-1.5" group with "stream" assembly should become "oadp-1-5-20251031141128-1"
+        expected_name_prefix = "oadp-1-5-20251031141128"
+        self.assertTrue(snapshot["metadata"]["name"].startswith(expected_name_prefix))
 
 
 class TestProductBasedResolution(IsolatedAsyncioTestCase):

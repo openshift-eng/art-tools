@@ -244,7 +244,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-prod-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-4-18-2-prod-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -271,7 +271,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-prod-4-18-2-image-timestamp',
+                'name': 'ocp-4-18-2-prod-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
@@ -403,7 +403,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-stage-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-4-18-2-stage-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -430,7 +430,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-stage-4-18-2-image-timestamp',
+                'name': 'ocp-4-18-2-stage-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
@@ -684,3 +684,329 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         # assert that release did not get created
         self.assertEqual(self.konflux_client._create.call_count, 0)
+
+
+class TestNonOpenshiftReleaseNaming(IsolatedAsyncioTestCase):
+    """Test cases for non-openshift release naming with assembly normalization"""
+
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
+        self.runtime.assembly = "1.5.0"
+        self.runtime.initialized = False
+        self.runtime.shipment_gitdata = MagicMock()
+
+        self.dry_run = False
+        self.konflux_config = dict(
+            namespace="test-namespace",
+            kubeconfig="/path/to/kubeconfig",
+            context=None,
+        )
+
+        self.config_path = "shipment/oadp/oadp-1.5/oadp-1-5/1.5.0.202503210000.yml"
+        self.release_env = "prod"
+        self.image_repo_pull_secret = {}
+
+        self.konflux_client = AsyncMock()
+        self.konflux_client.verify_connection = MagicMock(return_value=True)
+        self.konflux_client.resource_url = MagicMock()
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_oadp_release_naming(self, mock_runtime, mock_konflux_client_init, _):
+        """Test release naming for oadp groups with assembly"""
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment_config = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="oadp",
+                    application="oadp-1-5",
+                    group="oadp-1.5",
+                    assembly="1.5.0",
+                    fbc=False,
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="oadp-stage-rp"),
+                    prod=ShipmentEnv(releasePlan="oadp-prod-rp"),
+                ),
+                snapshot=Snapshot(
+                    nvrs=["oadp-operator-v1.5.0-1"],
+                    spec=SnapshotSpec(
+                        application="oadp-1-5",
+                        components=[
+                            SnapshotComponent(
+                                name="oadp-operator",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/oadp-operator.git", revision="abc123")
+                                ),
+                                containerImage="registry/oadp@sha256:digest",
+                            ),
+                        ],
+                    ),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=123456,
+                        synopsis="OADP Test Release",
+                        topic="Topic for OADP test release.",
+                        description="Description for OADP test release.",
+                        solution="Solution for OADP test release.",
+                    ),
+                ),
+            ),
+        )
+        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
+
+        # Mock API queries
+        self.konflux_client._get_api.return_value = MagicMock()
+        self.konflux_client._get.return_value = MagicMock()
+
+        # Mock snapshot creation - should use normalized naming
+        created_snapshot_name = "oadp-1-5-0-prod-image-timestamp"
+        created_snapshot = MagicMock()
+        created_snapshot.metadata.name = created_snapshot_name
+
+        expected_snapshot = {
+            "apiVersion": API_VERSION,
+            "kind": "Snapshot",
+            "metadata": {
+                "name": created_snapshot_name,
+                "namespace": self.konflux_config['namespace'],
+                "labels": {
+                    "test.appstudio.openshift.io/type": "override",
+                    "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
+                },
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": self.release_env,
+                    "art.redhat.com/kind": "image",
+                },
+            },
+            "spec": shipment_config.shipment.snapshot.spec.model_dump(exclude_none=True),
+        }
+
+        expected_release = {
+            "apiVersion": API_VERSION,
+            "kind": KIND_RELEASE,
+            'metadata': {
+                'name': 'oadp-1-5-0-prod-image-timestamp',
+                'namespace': self.konflux_config['namespace'],
+                'labels': {'appstudio.openshift.io/application': 'oadp-1-5'},
+                "annotations": {
+                    "art.redhat.com/assembly": self.runtime.assembly,
+                    "art.redhat.com/env": self.release_env,
+                    "art.redhat.com/kind": "image",
+                },
+            },
+            'spec': {
+                'releasePlan': shipment_config.shipment.environments.prod.releasePlan,
+                'snapshot': created_snapshot_name,
+                'data': {
+                    'releaseNotes': {
+                        'type': shipment_config.shipment.data.releaseNotes.type,
+                        'live_id': shipment_config.shipment.data.releaseNotes.live_id,
+                        'synopsis': shipment_config.shipment.data.releaseNotes.synopsis,
+                        'topic': shipment_config.shipment.data.releaseNotes.topic,
+                        'description': shipment_config.shipment.data.releaseNotes.description,
+                        'solution': shipment_config.shipment.data.releaseNotes.solution,
+                    },
+                },
+            },
+        }
+
+        created_release = Model(expected_release)
+        self.konflux_client._create.side_effect = [
+            created_snapshot,
+            created_release,
+        ]
+        self.konflux_client.resource_url.return_value = f"https://cluster/api/snapshot/{created_snapshot_name}"
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        result = await cli.run()
+
+        # Verify snapshot and release were created with normalized names
+        expected_calls = [
+            ((expected_snapshot,), {}),
+            ((expected_release,), {}),
+        ]
+        self.assertEqual(len(self.konflux_client._create.call_args_list), 2)
+        self.assertEqual(
+            self.konflux_client._create.call_args_list[0], expected_calls[0], "Snapshot resources do not match"
+        )
+        self.assertEqual(
+            self.konflux_client._create.call_args_list[1], expected_calls[1], "Release resources do not match"
+        )
+
+        # Check result
+        self.assertEqual(result, created_release)
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_mtc_release_naming_with_dots(self, mock_runtime, mock_konflux_client_init, _):
+        """Test release naming for mtc groups with assembly containing dots"""
+        self.runtime.group = "mtc-1.7"
+        self.runtime.product = "rhmtc"
+        self.runtime.assembly = "1.7.1"
+
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment_config = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="rhmtc",
+                    application="mtc-1-7",
+                    group="mtc-1.7",
+                    assembly="1.7.1",
+                    fbc=False,
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="mtc-stage-rp"),
+                    prod=ShipmentEnv(releasePlan="mtc-prod-rp"),
+                ),
+                snapshot=Snapshot(
+                    nvrs=["mtc-operator-v1.7.1-1"],
+                    spec=SnapshotSpec(
+                        application="mtc-1-7",
+                        components=[
+                            SnapshotComponent(
+                                name="mtc-operator",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/mtc-operator.git", revision="def456")
+                                ),
+                                containerImage="registry/mtc@sha256:digest",
+                            ),
+                        ],
+                    ),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=789012,
+                        synopsis="MTC Test Release",
+                        topic="Topic for MTC test release.",
+                        description="Description for MTC test release.",
+                        solution="Solution for MTC test release.",
+                    ),
+                ),
+            ),
+        )
+        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
+
+        # Mock API queries
+        self.konflux_client._get_api.return_value = MagicMock()
+        self.konflux_client._get.return_value = MagicMock()
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path="shipment/mtc/mtc-1.7/mtc-1-7/1.7.1.202503210000.yml",
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Test the get_object_name method directly
+        object_name = cli.get_object_name()
+
+        # Should normalize assembly "1.7.1" for product "rhmtc"
+        # Expected: "rhmtc-1-7-1-prod-image-timestamp"
+        expected_name = "rhmtc-1-7-1-prod-image-timestamp"
+        self.assertEqual(object_name, expected_name)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_invalid_assembly_name_raises_error(self, mock_konflux_client_init):
+        """Test that invalid assembly names raise ValueError in get_object_name"""
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        self.runtime.group = "oadp-1.5"
+        self.runtime.assembly = "_..-__"  # This normalizes to empty string
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        with self.assertRaises(ValueError) as context:
+            cli.get_object_name()
+
+        error_msg = str(context.exception)
+        self.assertIn("Assembly name '_..-__' produces invalid normalized name", error_msg)
+        self.assertIn("Kubernetes release", error_msg)
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_stream_assembly_openshift_group(self, mock_konflux_client_init, _mock_timestamp):
+        """Test release naming for openshift groups with stream assembly"""
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        self.runtime.group = "openshift-4.15"
+        self.runtime.product = "ocp"
+        self.runtime.assembly = "stream"
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Test the get_object_name method directly
+        object_name = cli.get_object_name()
+
+        # Should use group version for stream assembly
+        # Expected: "ocp-4-15-prod-image-timestamp"
+        expected_name = "ocp-4-15-prod-image-timestamp"
+        self.assertEqual(object_name, expected_name)
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_stream_assembly_oadp_group(self, mock_konflux_client_init, _mock_timestamp):
+        """Test release naming for oadp groups with stream assembly"""
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        self.runtime.group = "oadp-1.5"
+        self.runtime.product = "oadp"
+        self.runtime.assembly = "stream"
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Test the get_object_name method directly
+        object_name = cli.get_object_name()
+
+        # Should use group version for stream assembly
+        # Expected: "oadp-1-5-prod-image-timestamp"
+        expected_name = "oadp-1-5-prod-image-timestamp"
+        self.assertEqual(object_name, expected_name)

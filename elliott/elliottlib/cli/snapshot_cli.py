@@ -198,18 +198,38 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
-        # Use group name format for non-openshift groups, ose format for openshift groups
-        if self.runtime.group.startswith("openshift-"):
-            major, minor = self.runtime.get_major_minor()
-            snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
+        # Use unified naming pattern for all products: {product_name}-{assembly_name}-{timestamp}
+        product_name = self.runtime.product
+
+        # Special case: if assembly is "stream", use normalized group name
+        if self.runtime.assembly == "stream":
+            # Extract version part from group name (e.g., "openshift-4.12" -> "4-12", "oadp-1.5" -> "1-5")
+            if self.runtime.group.startswith("openshift-"):
+                # For openshift groups: "openshift-4.12" -> "4-12"
+                version_part = self.runtime.group.replace("openshift-", "").replace(".", "-")
+            else:
+                # For other groups: "oadp-1.5" -> "1-5"
+                # Split on the first dash and take everything after it
+                parts = self.runtime.group.split("-", 1)
+                if len(parts) > 1:
+                    version_part = parts[1].replace(".", "-")
+                else:
+                    # Fallback to the full group name normalized
+                    version_part = normalize_group_name_for_k8s(self.runtime.group)
+                    if not version_part:
+                        raise ValueError(
+                            f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+                        )
+            assembly_name_safe = version_part
         else:
-            # Normalize group name to comply with Kubernetes DNS label rules
-            group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
-            if not group_name_safe:
+            # Normalize assembly name to comply with Kubernetes DNS label rules
+            assembly_name_safe = normalize_group_name_for_k8s(self.runtime.assembly)
+            if not assembly_name_safe:
                 raise ValueError(
-                    f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+                    f"Assembly name '{self.runtime.assembly}' produces invalid normalized name for Kubernetes snapshot"
                 )
-            snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
+
+        snapshot_name = f"{product_name}-{assembly_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster (skip in dry-run mode)

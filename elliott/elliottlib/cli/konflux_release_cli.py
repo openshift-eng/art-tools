@@ -9,6 +9,7 @@ from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
+    normalize_group_name_for_k8s,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
@@ -178,9 +179,38 @@ class CreateReleaseCli:
         return created_release
 
     def get_object_name(self) -> str:
-        major, minor = self.runtime.get_major_minor()
-        assembly_str = self.runtime.assembly.replace(".", "-")
-        return f"ose-{major}-{minor}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
+        # Use unified naming pattern for all products: {product_name}-{assembly_name}-{env}-{kind}-{timestamp}
+        product_name = self.runtime.product
+
+        # Special case: if assembly is "stream", use normalized group name
+        if self.runtime.assembly == "stream":
+            # Extract version part from group name (e.g., "openshift-4.12" -> "4-12", "oadp-1.5" -> "1-5")
+            if self.runtime.group.startswith("openshift-"):
+                # For openshift groups: "openshift-4.12" -> "4-12"
+                version_part = self.runtime.group.replace("openshift-", "").replace(".", "-")
+            else:
+                # For other groups: "oadp-1.5" -> "1-5"
+                # Split on the first dash and take everything after it
+                parts = self.runtime.group.split("-", 1)
+                if len(parts) > 1:
+                    version_part = parts[1].replace(".", "-")
+                else:
+                    # Fallback to the full group name normalized
+                    version_part = normalize_group_name_for_k8s(self.runtime.group)
+                    if not version_part:
+                        raise ValueError(
+                            f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes release"
+                        )
+            assembly_name_safe = version_part
+        else:
+            # Normalize assembly name to comply with Kubernetes DNS label rules
+            assembly_name_safe = normalize_group_name_for_k8s(self.runtime.assembly)
+            if not assembly_name_safe:
+                raise ValueError(
+                    f"Assembly name '{self.runtime.assembly}' produces invalid normalized name for Kubernetes release"
+                )
+
+        return f"{product_name}-{assembly_name_safe}-{self.release_env}-{self.kind}-{get_utc_now_formatted_str()}"
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
