@@ -20,7 +20,7 @@ ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "
 
 # OADP versions by group
 NON_OCP_OPERATOR_VERSIONS = {
-    "oadp-1.3": "1.3.8",
+    "oadp-1.3": "1.3.9",
     "oadp-1.4": "1.4.7",
     "oadp-1.5": "1.5.4",
     "logging-6.3": "6.3.2",
