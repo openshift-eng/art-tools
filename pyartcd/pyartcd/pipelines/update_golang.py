@@ -199,7 +199,7 @@ class UpdateGolangPipeline:
             raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
 
         # Initialize KonfluxDb for Konflux build system
-        if build_system == 'konflux':
+        if build_system in ('konflux', 'both'):
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
 
@@ -231,41 +231,71 @@ class UpdateGolangPipeline:
         await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
-        builder_nvrs = {}
+        brew_nvrs = {}
+        konflux_nvrs = {}
         if not self.force_image_build:
-            if self.build_system == 'brew':
-                builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
-            else:  # konflux
-                builder_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+            if self.build_system in ['both', 'brew']:
+                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+            if self.build_system in ['both', 'konflux']:
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
 
-        if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
-            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
-            _LOGGER.info(
-                f"Builder images are missing for rhel versions: {missing_in}. "
-                "Verifying builder branches are updated for building"
-            )
+        # Determine which rhel versions need builds
+        brew_missing = el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+        konflux_missing = el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+
+        if brew_missing or konflux_missing:
             # FIXME: yuxzhu: already broken
             # for el_v in missing_in:
             #     self.verify_golang_builder_repo(el_v, go_version)
 
             # Rebase and build missing images
-            if self.build_system == 'brew':
-                await asyncio.gather(*[self._rebase_and_build(el_v, go_version) for el_v in missing_in])
-            else:  # konflux
-                await asyncio.gather(*[self._rebase_and_build_konflux(el_v, go_version) for el_v in missing_in])
+            build_tasks = []
+            if self.build_system in ['both', 'brew'] and brew_missing:
+                build_tasks.extend([self._rebase_and_build_brew(el_v, go_version) for el_v in brew_missing])
+            if self.build_system in ['both', 'konflux'] and konflux_missing:
+                build_tasks.extend([self._rebase_and_build_konflux(el_v, go_version) for el_v in konflux_missing])
+            if build_tasks:
+                await asyncio.gather(*build_tasks)
 
             # Now all builders should be available, try to fetch again
-            if self.build_system == 'brew':
-                builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
-            else:  # konflux
-                builder_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+            if self.build_system in ['both', 'brew']:
+                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+            if self.build_system in ['both', 'konflux']:
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
 
-            if len(builder_nvrs) != len(el_nvr_map):
-                missing_in = el_nvr_map.keys() - builder_nvrs.keys()
-                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
+            # Check if we still have missing builds
+            brew_still_missing = (
+                el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+            )
+            konflux_still_missing = (
+                el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+            )
+
+            if brew_still_missing or konflux_still_missing:
+                error_parts = []
+                if brew_still_missing:
+                    error_parts.append(f'Brew: {brew_still_missing}')
+                if konflux_still_missing:
+                    error_parts.append(f'Konflux: {konflux_still_missing}')
+                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}')
 
         _LOGGER.info("Updating streams.yml with found builder images")
-        await self._slack_client.say_in_thread(f"new golang builders available {', '.join(builder_nvrs.values())}")
+        # Prepare message with all newly built builders
+        all_builder_messages = []
+        if brew_nvrs:
+            all_builder_messages.extend([f"{nvr} (brew)" for nvr in brew_nvrs.values()])
+        if konflux_nvrs:
+            all_builder_messages.extend([f"{nvr} (konflux)" for nvr in konflux_nvrs.values()])
+        await self._slack_client.say_in_thread(f"new golang builders available: {', '.join(all_builder_messages)}")
+
+        # For 'both' mode, only update streams.yml with konflux builds
+        # For 'brew' mode, use brew_nvrs; for 'konflux' mode, use konflux_nvrs
+        if self.build_system == 'both':
+            builder_nvrs = konflux_nvrs
+        elif self.build_system == 'brew':
+            builder_nvrs = brew_nvrs
+        else:  # konflux
+            builder_nvrs = konflux_nvrs
 
         await self.update_golang_streams(go_version, builder_nvrs)
 
@@ -407,7 +437,7 @@ class UpdateGolangPipeline:
             """Generate the complete pullspec based on build system"""
             if self.build_system == 'brew':
                 return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-            else:  # konflux
+            else:  # konflux or both (both uses konflux pullspec)
                 # TODO: This is temporary. In the future we need a location to share with multiple teams.
                 return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
@@ -546,8 +576,8 @@ class UpdateGolangPipeline:
             else:
                 _LOGGER.info(f"No update needed in {branch}")
 
-    async def _rebase(self, el_v, go_version):
-        _LOGGER.info("Rebasing...")
+    async def _rebase_brew(self, el_v, go_version):
+        _LOGGER.info("Rebasing for Brew...")
         branch = self.get_golang_branch(el_v, go_version)
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
@@ -555,7 +585,7 @@ class UpdateGolangPipeline:
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-{el_v}",
+            f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -576,14 +606,14 @@ class UpdateGolangPipeline:
             cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-    async def _build(self, el_v, go_version):
-        _LOGGER.info("Building...")
+    async def _build_brew(self, el_v, go_version):
+        _LOGGER.info("Building on Brew...")
         branch = self.get_golang_branch(el_v, go_version)
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-{el_v}",
+            f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -603,9 +633,9 @@ class UpdateGolangPipeline:
             cmd.append("--scratch")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-    async def _rebase_and_build(self, el_v, go_version):
-        await self._rebase(el_v, go_version)
-        await self._build(el_v, go_version)
+    async def _rebase_and_build_brew(self, el_v, go_version):
+        await self._rebase_brew(el_v, go_version)
+        await self._build_brew(el_v, go_version)
 
     async def _rebase_konflux(self, el_v, go_version):
         """Rebase golang-builder image for Konflux"""
@@ -617,7 +647,7 @@ class UpdateGolangPipeline:
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-{el_v}",
+            f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -647,7 +677,7 @@ class UpdateGolangPipeline:
         konflux_namespace = PRODUCT_NAMESPACE_MAP["ocp"]
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-{el_v}",
+            f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -749,9 +779,9 @@ class UpdateGolangPipeline:
 )
 @click.option(
     '--build-system',
-    type=click.Choice(['brew', 'konflux'], case_sensitive=False),
+    type=click.Choice(['brew', 'konflux', 'both'], case_sensitive=False),
     default='brew',
-    help='Build system to use for golang-builder images (brew or konflux). Defaults to brew for backward compatibility.',
+    help='Build system to use for golang-builder images (brew, konflux, or both). Defaults to brew for backward compatibility.',
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
