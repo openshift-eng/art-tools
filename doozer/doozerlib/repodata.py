@@ -162,7 +162,7 @@ class RpmModule:
         rpms = metadata["data"].get("artifacts", {}).get("rpms", [])
         return RpmModule(
             name=metadata["data"]["name"],
-            stream=metadata["data"]["stream"],
+            stream=str(metadata["data"]["stream"]),
             version=metadata["data"]["version"],
             context=metadata["data"]["context"],
             arch=metadata["data"]["arch"],
@@ -175,6 +175,8 @@ class Repodata:
     name: str
     primary_rpms: List[Rpm] = field(default_factory=list)
     modules: List[RpmModule] = field(default_factory=list)
+    modules_checksum: Optional[str] = None
+    modules_size: Optional[int] = None
 
     def get_rpms(self, items: Union[str, Iterable[str]], arch: str) -> Tuple[list[Rpm], list[str]]:
         """
@@ -343,7 +345,13 @@ class Repodata:
         return latest
 
     @staticmethod
-    def from_metadatas(name: str, primary: xml.etree.ElementTree.Element, modules_yaml: List[Dict]):
+    def from_metadatas(
+        name: str,
+        primary: xml.etree.ElementTree.Element,
+        modules_yaml: List[Dict],
+        modules_checksum: Optional[str] = None,
+        modules_size: Optional[int] = None,
+    ):
         primary_rpms = [
             Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
         ]
@@ -352,6 +360,8 @@ class Repodata:
             name=name,
             primary_rpms=primary_rpms,
             modules=modules,
+            modules_checksum=modules_checksum,
+            modules_size=modules_size,
         )
         return repodata
 
@@ -406,12 +416,22 @@ class RepodataLoader:
             primary_url = parse.urljoin(repo_url, primary_location.attrib['href'])
 
             modules_url = None
+            modules_checksum = None
+            modules_size = None
             modules_data_element = repomd_xml.find('repo:data[@type="modules"]', NAMESPACES)
             if modules_data_element is not None:
                 modules_location = modules_data_element.find('repo:location', NAMESPACES)
                 if modules_location is None:
                     raise ValueError("Couldn't find modules location in repodata")
                 modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
+
+                modules_checksum_element = modules_data_element.find('repo:checksum', NAMESPACES)
+                if modules_checksum_element is not None:
+                    modules_checksum = f"{modules_checksum_element.attrib['type']}:{modules_checksum_element.text}"
+
+                modules_size_element = modules_data_element.find('repo:size', NAMESPACES)
+                if modules_size_element is not None:
+                    modules_size = int(modules_size_element.text)
 
             @retry(
                 reraise=True,
@@ -442,6 +462,8 @@ class RepodataLoader:
             repo_name,
             ET.fromstring(primary_bytes),
             list(yaml.load_all(modules_bytes) if modules_bytes else []),
+            modules_checksum=modules_checksum,
+            modules_size=modules_size,
         )
         return repodata
 

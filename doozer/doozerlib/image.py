@@ -888,6 +888,26 @@ class ImageMetadata(Metadata):
         # Return union of both sources
         return rpms_from_build.union(rpms_from_config)
 
+    async def get_lockfile_modules_to_install(self) -> set[str]:
+        """
+        Get module names for lockfile generation from configuration.
+
+        Follows the same pattern as get_lockfile_rpms_to_install() for consistency.
+        Configuration path: konflux.cachi2.lockfile.modules
+
+        Returns:
+            set[str]: Module names specified in lockfile configuration
+        """
+        modules_from_config = set()
+        lockfile_modules = self.config.konflux.cachi2.lockfile.get('modules', [])
+
+        if lockfile_modules not in [Missing, None]:
+            modules_from_config = set(lockfile_modules)
+            if modules_from_config:
+                self.logger.info(f'{self.distgit_key} adding {len(modules_from_config)} modules from lockfile config')
+
+        return modules_from_config
+
     def get_enabled_repos(self) -> set[str]:
         """
         Get enabled repositories for lockfile generation.

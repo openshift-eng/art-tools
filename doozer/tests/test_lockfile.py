@@ -7,6 +7,7 @@ from doozerlib.lockfile import (
     DEFAULT_RPM_LOCKFILE_NAME,
     ArtifactInfo,
     ArtifactLockfileGenerator,
+    ModuleInfo,
     RpmInfo,
     RpmInfoCollector,
     RPMLockfileGenerator,
@@ -79,6 +80,35 @@ class TestRpmInfo(unittest.TestCase):
         self.assertLess(a, c)
         self.assertTrue(a <= b)
         self.assertTrue(c > a)
+
+
+class TestModuleInfo(unittest.TestCase):
+    def test_from_repository_metadata(self):
+        module_info = ModuleInfo.from_repository_metadata(
+            repoid="rhel-9-appstream-rpms", baseurl="https://example.com/", checksum="sha256:abc123", size=12345
+        )
+
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+        self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml")
+        self.assertEqual(module_info.checksum, "sha256:abc123")
+        self.assertEqual(module_info.size, 12345)
+
+    def test_to_dict(self):
+        module_info = ModuleInfo(
+            url="https://example.com/repodata/modules.yaml",
+            repoid="rhel-9-appstream-rpms",
+            checksum="sha256:abc123",
+            size=12345,
+        )
+
+        expected = {
+            "url": "https://example.com/repodata/modules.yaml",
+            "repoid": "rhel-9-appstream-rpms",
+            "checksum": "sha256:abc123",
+            "size": 12345,
+        }
+
+        self.assertEqual(module_info.to_dict(), expected)
 
 
 class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
@@ -315,6 +345,101 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
             )
             self.collector.logger.info.assert_any_call("Finished loading repos: rhel-9-appstream-rpms for arch x86_64")
 
+    def test_fetch_modules_info_per_arch_basic(self):
+        """Test basic module metadata collection from repositories"""
+        from doozerlib.repodata import RpmModule
+
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        perl_module = RpmModule("perl", "5.32", 789012, "def456", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, perl_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        result = self.collector._fetch_modules_info_per_arch({"nginx", "perl"}, {"rhel-9-appstream-rpms"}, "x86_64")
+
+        self.assertEqual(len(result), 1)
+        module_info = result[0]
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+        self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml")
+        self.assertEqual(module_info.checksum, "sha256:abc123")
+        self.assertEqual(module_info.size, 12345)
+
+    def test_fetch_modules_info_per_arch_deduplication(self):
+        """Test that multiple modules in same repo produce single metadata entry"""
+        from doozerlib.repodata import RpmModule
+
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        nginx_core_module = RpmModule("nginx-core", "1.24", 123456, "abc123", "x86_64", set())
+        nginx_fs_module = RpmModule("nginx-filesystem", "1.24", 123456, "abc123", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, nginx_core_module, nginx_fs_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        result = self.collector._fetch_modules_info_per_arch(
+            {"nginx", "nginx-core", "nginx-filesystem"}, {"rhel-9-appstream-rpms"}, "x86_64"
+        )
+
+        self.assertEqual(len(result), 1)
+        module_info = result[0]
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+
+    def test_fetch_modules_info_empty_modules(self):
+        """Test that empty module set returns empty results"""
+
+        async def _test():
+            result = await self.collector.fetch_modules_info(["x86_64"], {"rhel-9-appstream-rpms"}, set())
+
+            expected = {"x86_64": []}
+            self.assertEqual(result, expected)
+
+        import asyncio
+
+        asyncio.run(_test())
+
+    def test_fetch_modules_info_missing_modules(self):
+        """Test graceful handling when requested modules are not found"""
+
+        async def _test():
+            appstream_repodata = MagicMock()
+            appstream_repodata.modules = []
+
+            self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+            mock_repo = MagicMock()
+            mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+            self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+            result = await self.collector.fetch_modules_info(
+                ["x86_64"], {"rhel-9-appstream-rpms"}, {"nonexistent-module"}
+            )
+
+            self.assertEqual(result, {"x86_64": []})
+            self.collector.logger.warning.assert_called_with(
+                "Could not find modules nonexistent-module in rhel-9-appstream-rpms for arch x86_64"
+            )
+
+        import asyncio
+
+        asyncio.run(_test())
+
 
 class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -371,6 +496,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
             return {'x86_64': [dummy_rpm_info], 'aarch64': []}
 
         self.generator.builder.fetch_rpms_info = async_fetch_rpms_info
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={})
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -378,6 +504,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -396,6 +523,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
             return {'x86_64': [dummy_rpm_info], 'aarch64': []}
 
         self.generator.builder.fetch_rpms_info = async_fetch_rpms_info
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={})
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -403,6 +531,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -436,6 +565,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
 
         self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={})
 
         # Create mock ImageMetadata with force enabled
         mock_image_meta = MagicMock()
@@ -443,6 +573,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = True
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -551,6 +682,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         dummy_rpm_info = MagicMock()
         dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
         self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={})
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -558,6 +690,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -628,6 +761,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         dummy_rpm_info = MagicMock()
         dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
         self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={})
 
         # Create mock ImageMetadata
         mock_image_meta = MagicMock()
@@ -635,6 +769,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -645,6 +780,115 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_write_yaml.assert_called_once()
         # Should write digest file
         mock_write_text.assert_any_call(fingerprint)
+
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('builtins.open', new_callable=mock_open)
+    @patch('pathlib.Path.exists', return_value=False)
+    async def test_generate_lockfile_with_modules(self, mock_exists, mock_file, mock_write_yaml):
+        """Test lockfile generation with module metadata"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'python3', 'evr': '3.9-1.el9'}
+
+        dummy_module_info = MagicMock()
+        dummy_module_info.to_dict.return_value = {
+            'url': 'https://example.com/repodata/modules.yaml',
+            'repoid': 'rhel-9-appstream-rpms',
+            'checksum': 'sha256:abc123',
+            'size': 12345,
+        }
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={'x86_64': [dummy_module_info]})
+
+        # Create mock ImageMetadata
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        mock_image_meta.is_lockfile_generation_enabled.return_value = True
+        mock_image_meta.get_enabled_repos.return_value = self.repos_set
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value={'python36'})
+        mock_image_meta.is_lockfile_force_enabled.return_value = False
+        mock_image_meta.get_arches.return_value = ['x86_64']
+
+        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
+
+        # Verify both RPM and module info collection called
+        self.generator.builder.fetch_rpms_info.assert_called_once_with(['x86_64'], self.repos_set, self.rpms)
+        self.generator.builder.fetch_modules_info.assert_called_once_with(['x86_64'], self.repos_set, {'python36'})
+
+        # Verify lockfile structure includes module_metadata
+        mock_write_yaml.assert_called_once()
+        written_lockfile = mock_write_yaml.call_args[0][0]
+
+        self.assertEqual(written_lockfile['lockfileVersion'], 1)
+        self.assertEqual(written_lockfile['lockfileVendor'], 'redhat')
+        self.assertEqual(len(written_lockfile['arches']), 1)
+
+        arch_data = written_lockfile['arches'][0]
+        self.assertEqual(arch_data['arch'], 'x86_64')
+        self.assertEqual(len(arch_data['packages']), 1)
+        self.assertEqual(len(arch_data['module_metadata']), 1)
+        self.assertEqual(arch_data['module_metadata'][0]['repoid'], 'rhel-9-appstream-rpms')
+
+    @patch.object(RPMLockfileGenerator, '_write_yaml')
+    @patch('builtins.open', new_callable=mock_open)
+    @patch('pathlib.Path.exists', return_value=False)
+    async def test_generate_lockfile_no_modules_configured(self, mock_exists, mock_file, mock_write_yaml):
+        """Test lockfile generation with empty module configuration"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'python3', 'evr': '3.9-1.el9'}
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={'x86_64': []})
+
+        # Create mock ImageMetadata with no modules configured
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        mock_image_meta.is_lockfile_generation_enabled.return_value = True
+        mock_image_meta.get_enabled_repos.return_value = self.repos_set
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.is_lockfile_force_enabled.return_value = False
+        mock_image_meta.get_arches.return_value = ['x86_64']
+
+        await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
+
+        # Verify both collections called even with empty modules
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        self.generator.builder.fetch_modules_info.assert_called_once_with(['x86_64'], self.repos_set, set())
+
+        # Verify lockfile has empty module_metadata
+        mock_write_yaml.assert_called_once()
+        written_lockfile = mock_write_yaml.call_args[0][0]
+
+        arch_data = written_lockfile['arches'][0]
+        self.assertEqual(arch_data['module_metadata'], [])
+
+    def test_compute_combined_hash_rpms_and_modules(self):
+        """Test combined hash computation with both RPMs and modules"""
+        rpms = {'python3', 'gcc'}
+        modules = {'python36', 'nodejs'}
+
+        hash1 = RPMLockfileGenerator._compute_combined_hash(rpms, modules)
+        hash2 = RPMLockfileGenerator._compute_combined_hash(rpms, modules)
+
+        # Same inputs should produce same hash
+        self.assertEqual(hash1, hash2)
+
+        # Different inputs should produce different hash
+        hash3 = RPMLockfileGenerator._compute_combined_hash(rpms, {'python36'})
+        self.assertNotEqual(hash1, hash3)
+
+    def test_compute_combined_hash_empty_modules(self):
+        """Test combined hash with empty modules set"""
+        rpms = {'python3', 'gcc'}
+        empty_modules = set()
+
+        hash1 = RPMLockfileGenerator._compute_combined_hash(rpms, empty_modules)
+
+        # With empty modules, should still produce valid hash
+        self.assertIsInstance(hash1, str)
+        self.assertEqual(len(hash1), 64)  # SHA256 hex length
 
     async def test_generate_lockfile_skips_when_repositories_empty(self):
         """Test that generate_lockfile skips when repositories set is empty"""

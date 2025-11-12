@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from functools import total_ordering
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import aiohttp
 import yaml
@@ -18,7 +18,7 @@ from artcommonlib.util import download_file_from_github, split_git_url
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
-from doozerlib.repodata import Repodata, Rpm
+from doozerlib.repodata import Repodata, Rpm, RpmModule
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)
@@ -145,6 +145,59 @@ class ArtifactInfo:
             "download_url": self.url,
             "checksum": self.checksum,
             "filename": self.filename,
+        }
+
+
+@dataclass(frozen=True)
+class ModuleInfo:
+    """
+    Immutable data class representing repository module metadata for lockfile generation.
+
+    Follows Hermeto specification: https://github.com/hermetoproject/hermeto/blob/main/docs/rpm.md#rpm-lockfile-format
+
+    Represents repository-level module metadata (modules.yaml file) rather than individual modules.
+    One entry per repository containing modules, not per module.
+
+    Attributes:
+        url (str): Download URL for modules.yaml metadata file (required by Hermeto)
+        repoid (str): Repository content set ID (mandatory for Hermeto)
+        checksum (str): SHA256 checksum of modules.yaml file
+        size (int): File size of modules.yaml in bytes
+    """
+
+    url: str
+    repoid: str
+    checksum: str
+    size: int
+
+    @classmethod
+    def from_repository_metadata(cls, *, repoid: str, baseurl: str, checksum: str, size: int) -> "ModuleInfo":
+        """
+        Create ModuleInfo from repository metadata.
+
+        Args:
+            repoid: Repository content set ID
+            baseurl: Base repository URL
+            checksum: SHA256 checksum of modules.yaml
+            size: File size of modules.yaml in bytes
+
+        Returns:
+            ModuleInfo: Hermeto-compliant repository module metadata
+        """
+        return cls(
+            url=f'{baseurl}repodata/modules.yaml',
+            repoid=repoid,
+            checksum=checksum,
+            size=size,
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        """Convert to Hermeto-compliant dictionary format."""
+        return {
+            "url": self.url,
+            "repoid": self.repoid,
+            "checksum": self.checksum,
+            "size": self.size,
         }
 
 
@@ -290,6 +343,130 @@ class RpmInfoCollector:
 
         total_resolved = sum(len(result) for result in results)
         current_span.set_attribute("lockfile.total_resolved_packages", total_resolved)
+        return dict(zip(arches, results))
+
+    def _get_modules_yaml_metadata(self, repo_name: str, arch: str) -> Tuple[str, int]:
+        """
+        Extract checksum and size for modules.yaml from repodata.
+
+        Args:
+            repo_name: Repository name
+            arch: Architecture
+
+        Returns:
+            Tuple[str, int]: (checksum, size) for modules.yaml file
+        """
+        repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+        if repodata is None:
+            self.logger.warning(f'repodata {repo_name}-{arch} not found')
+            return "sha256:unknown", 0
+
+        if repodata.modules_checksum and repodata.modules_size is not None:
+            return repodata.modules_checksum, repodata.modules_size
+
+        return "sha256:unknown", 0
+
+    def _fetch_modules_info_per_arch(self, module_names: set[str], repo_names: set[str], arch: str) -> list[ModuleInfo]:
+        """
+        Resolve repository module metadata for specific architecture from repodata sources.
+
+        Finds repositories that contain any of the requested modules and returns one
+        ModuleInfo entry per unique repository (not per module).
+
+        Args:
+            module_names: Set of module names to resolve (e.g., {"python36", "nodejs"})
+            repo_names: Names of repodata sources to search
+            arch: Target architecture
+
+        Returns:
+            list[ModuleInfo]: Repository-based module metadata (one entry per repo with modules)
+        """
+        module_info_list = []
+        unresolved_modules = set(module_names)
+        processed_repos = set()
+
+        for repo_name in repo_names:
+            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            if repodata is None:
+                self.logger.error(f'repodata {repo_name}-{arch} not found while fetching modules')
+                continue
+
+            repo = self.repos._repos[repo_name]
+            if repo is None:
+                self.logger.error(f'repo {repo_name} not found')
+                continue
+
+            matching_modules = [
+                module for module in repodata.modules if module.name in module_names and module.arch == arch
+            ]
+
+            if not matching_modules:
+                continue
+
+            content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
+
+            repo_key = f"{content_set_id}"
+            if repo_key in processed_repos:
+                continue
+            processed_repos.add(repo_key)
+
+            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+            modules_checksum, modules_size = self._get_modules_yaml_metadata(repo_name, arch)
+
+            module_info = ModuleInfo.from_repository_metadata(
+                repoid=content_set_id, baseurl=baseurl, checksum=modules_checksum, size=modules_size
+            )
+            module_info_list.append(module_info)
+
+            found_modules = {module.name for module in matching_modules}
+            unresolved_modules -= found_modules
+
+            if not unresolved_modules:
+                break
+
+        if unresolved_modules:
+            self.logger.warning(
+                f"Could not find modules {','.join(unresolved_modules)} in {', '.join(repo_names)} for arch {arch}"
+            )
+
+        return sorted(module_info_list, key=lambda m: m.repoid)
+
+    @start_as_current_span_async(TRACER, "lockfile.fetch_modules_info")
+    async def fetch_modules_info(
+        self, arches: list[str], repositories: set[str], module_names: set[str]
+    ) -> dict[str, list[ModuleInfo]]:
+        """
+        Resolve module info across multiple architectures and repositories.
+
+        Args:
+            arches: Target architectures
+            repositories: Names of repositories to search
+            module_names: Names of modules to resolve (can be empty)
+
+        Returns:
+            dict[str, list[ModuleInfo]]: Always returns dict with arch keys, empty lists if no modules
+        """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("lockfile.module_count", len(module_names))
+
+        if not module_names:
+            self.logger.debug("No modules to install, returning empty module metadata")
+            return {arch: [] for arch in arches}
+
+        current_span.set_attribute("lockfile.arches", ",".join(arches))
+        current_span.set_attribute("lockfile.repositories", ",".join(sorted(repositories)))
+
+        results = await asyncio.gather(
+            *[
+                asyncio.get_running_loop().run_in_executor(
+                    None, self._fetch_modules_info_per_arch, module_names, repositories, arch
+                )
+                for arch in arches
+            ]
+        )
+
+        total_resolved = sum(len(result) for result in results)
+        current_span.set_attribute("lockfile.total_resolved_modules", total_resolved)
         return dict(zip(arches, results))
 
 
@@ -505,6 +682,22 @@ class RPMLockfileGenerator:
         joined = '\n'.join(sorted_items)
         return hashlib.sha256(joined.encode('utf-8')).hexdigest()
 
+    @staticmethod
+    def _compute_combined_hash(rpms: set[str], modules: set[str]) -> str:
+        """
+        Compute SHA256 hash from combined RPM and module sets.
+
+        Args:
+            rpms: Set of RPM names (can be empty)
+            modules: Set of module names (can be empty)
+
+        Returns:
+            str: SHA256 hex digest of combined sorted items
+        """
+        combined_items = sorted(list(rpms) + [f"module:{m}" for m in modules])
+        joined = '\n'.join(combined_items)
+        return hashlib.sha256(joined.encode('utf-8')).hexdigest()
+
     async def _get_digest_from_target_branch(self, digest_path: Path, image_meta: ImageMetadata) -> Optional[str]:
         """
         Fetch digest file content from the target art branch.
@@ -614,20 +807,28 @@ class RPMLockfileGenerator:
             "arches": [],
         }
 
-        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install)
+        modules_to_install = await image_meta.get_lockfile_modules_to_install()
+
+        rpms_info_by_arch, modules_info_by_arch = await asyncio.gather(
+            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
+            self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
+        )
+
         for arch, rpm_list in rpms_info_by_arch.items():
+            module_list = modules_info_by_arch.get(arch, [])
             lockfile["arches"].append(
                 {
                     "arch": arch,
                     "packages": [rpm.to_dict() for rpm in rpm_list],
-                    "module_metadata": [],
+                    "module_metadata": [module.to_dict() for module in module_list],
                 }
             )
 
         lockfile_path = dest_dir / filename
         self._write_yaml(lockfile, lockfile_path)
 
-        fingerprint = self._compute_hash(rpms_to_install)
+        combined_fingerprint = self._compute_combined_hash(rpms_to_install, modules_to_install)
+        fingerprint = combined_fingerprint
         digest_path = dest_dir / f'{filename}.digest'
         try:
             digest_path.write_text(fingerprint)
