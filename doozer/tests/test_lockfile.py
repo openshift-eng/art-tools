@@ -425,6 +425,37 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
 
         asyncio.run(_test())
 
+    def test_fetch_modules_info_per_arch_stream_extraction(self):
+        """Test that module:stream specifications are matched by name only"""
+        from doozerlib.repodata import RpmModule
+
+        # Repository has nginx module with name "nginx"
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        perl_module = RpmModule("perl", "5.32", 789012, "def456", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, perl_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+        appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        # Request modules with stream specification - should match by name only
+        result = self.collector._fetch_modules_info_per_arch(
+            {"nginx:1.24", "perl:5.32"}, {"rhel-9-appstream-rpms"}, "x86_64"
+        )
+
+        # Should find the modules despite the stream specification in request
+        self.assertEqual(len(result), 1)
+        module_info = result[0]
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+
     def test_fetch_modules_info_missing_modules(self):
         """Test graceful handling when requested modules are not found"""
 
@@ -515,7 +546,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -542,7 +573,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -584,7 +615,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = True
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -701,7 +732,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -780,7 +811,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = self.arches
 
@@ -817,7 +848,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value={'python36'})
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value={'python36'})
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = ['x86_64']
 
@@ -858,7 +889,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta.is_lockfile_generation_enabled.return_value = True
         mock_image_meta.get_enabled_repos.return_value = self.repos_set
         mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
-        mock_image_meta.get_lockfile_modules_to_install = AsyncMock(return_value=set())
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
         mock_image_meta.is_lockfile_force_enabled.return_value = False
         mock_image_meta.get_arches.return_value = ['x86_64']
 

@@ -387,7 +387,8 @@ class RpmInfoCollector:
             list[ModuleInfo]: Repository-based module metadata (one entry per repo with modules)
         """
         module_info_list = []
-        unresolved_modules = set(module_names)
+        search_names = {name.split(':')[0] for name in module_names}
+        unresolved_search_names = set(search_names)
         processed_repos = set()
 
         for repo_name in repo_names:
@@ -404,7 +405,7 @@ class RpmInfoCollector:
             matching_modules = [
                 module
                 for module in repodata.modules
-                if module.name in module_names and (module.arch == arch or module.arch == "noarch")
+                if module.name in search_names and (module.arch == arch or module.arch == "noarch")
             ]
 
             self.logger.debug(
@@ -435,14 +436,14 @@ class RpmInfoCollector:
             module_info_list.append(module_info)
 
             found_modules = {module.name for module in matching_modules}
-            unresolved_modules -= found_modules
+            unresolved_search_names -= found_modules
 
-            if not unresolved_modules:
+            if not unresolved_search_names:
                 break
 
-        if unresolved_modules:
+        if unresolved_search_names:
             self.logger.warning(
-                f"Could not find modules {','.join(unresolved_modules)} in {', '.join(repo_names)} for arch {arch}"
+                f"Could not find modules {','.join(unresolved_search_names)} in {', '.join(repo_names)} for arch {arch}"
             )
 
         return sorted(module_info_list, key=lambda m: m.repoid)
@@ -832,7 +833,7 @@ class RPMLockfileGenerator:
             "arches": [],
         }
 
-        modules_to_install = await image_meta.get_lockfile_modules_to_install()
+        modules_to_install = image_meta.get_lockfile_modules_to_install()
 
         rpms_info_by_arch, modules_info_by_arch = await asyncio.gather(
             self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),

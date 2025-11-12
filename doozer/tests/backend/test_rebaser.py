@@ -58,6 +58,7 @@ class TestRebaser(TestCase):
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
 
         dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
@@ -123,6 +124,7 @@ USER 2000
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
+        metadata.is_lockfile_generation_enabled.return_value = False
 
         dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
@@ -240,6 +242,8 @@ USER 3000
         metadata.get_arches.return_value = ["x86_64", "aarch64"]
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
+        metadata.branch_el_target.return_value = 9
+        metadata.get_lockfile_modules_to_install.return_value = set()
 
         dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """
@@ -290,6 +294,7 @@ USER 3000
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
+        metadata.is_lockfile_generation_enabled.return_value = False
 
         dfp = DockerfileParser(path=self.directory.name)
         dfp.content = """

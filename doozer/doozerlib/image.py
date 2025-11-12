@@ -888,7 +888,7 @@ class ImageMetadata(Metadata):
         # Return union of both sources
         return rpms_from_build.union(rpms_from_config)
 
-    async def get_lockfile_modules_to_install(self) -> set[str]:
+    def get_lockfile_modules_to_install(self) -> set[str]:
         """
         Get module names for lockfile generation from configuration.
 

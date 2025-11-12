@@ -1088,6 +1088,34 @@ class KonfluxRebaser:
         self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
         return matching_artifact
 
+    def _get_module_enablement_commands(self, metadata: ImageMetadata) -> List[str]:
+        """
+        Generate DNF module enable commands for RHEL 9+ images with lockfile modules.
+
+        Returns:
+            List[str]: List of RUN commands to enable modules, or empty list if no modules needed
+        """
+        if not metadata.is_lockfile_generation_enabled():
+            return []
+
+        try:
+            el_ver = metadata.branch_el_target()
+            if el_ver < 9:
+                return []
+        except ValueError:
+            return []
+
+        modules_to_install = metadata.get_lockfile_modules_to_install()
+        if not modules_to_install:
+            return []
+
+        modules_list = ' '.join(sorted(modules_to_install))
+        self._logger.info(f"Enabling modules for {metadata.distgit_key}: {modules_list}")
+
+        return [
+            f"RUN dnf module enable -y {modules_list}",
+        ]
+
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         network_mode = metadata.get_konflux_network_mode()
@@ -1281,6 +1309,10 @@ class KonfluxRebaser:
                 "ENV HTTP_PROXY='http://127.0.0.1:9999'",
                 "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
             ]
+
+        module_enable_commands = self._get_module_enablement_commands(metadata)
+        if module_enable_commands:
+            konflux_lines.extend(module_enable_commands)
 
         konflux_lines += ["# End Konflux-specific steps\n\n"]
 
