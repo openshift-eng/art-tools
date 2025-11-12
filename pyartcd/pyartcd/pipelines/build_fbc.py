@@ -17,6 +17,32 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
 
 
+def _generate_fbc_lock_name(
+    group: str,
+    major_minor: Optional[str] = None,
+) -> str:
+    """Generate FBC lock name with OCP version for non-OpenShift groups.
+
+    Args:
+        group: The doozer group name (e.g., "openshift-4.17", "oadp-1.4")
+        major_minor: Major.minor version (e.g., "4.17") - required for non-OpenShift groups
+
+    Returns:
+        Lock name following the pattern:
+        - For OpenShift: "lock:fbc-build:{group}"
+        - For non-OpenShift: "lock:fbc-build:{group}-ocp-{major_minor}"
+    """
+    if group.startswith('openshift-'):
+        # For OpenShift products, use the traditional lock naming
+        return f"lock:fbc-build:{group}"
+    else:
+        # For non-OpenShift products, include the target OCP version
+        if not major_minor:
+            raise ValueError(f"--major-minor is required for non-OpenShift group '{group}'")
+
+        return f"lock:fbc-build:{group}-ocp-{major_minor}"
+
+
 class BuildFbcPipeline:
     def __init__(
         self,
@@ -212,7 +238,7 @@ class BuildFbcPipeline:
     "-g",
     "--group",
     metavar='NAME',
-    required=False,
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
@@ -287,6 +313,10 @@ async def build_fbc(
     major_minor: Optional[str],
     ignore_locks: bool,
 ):
+    # Validate that --major-minor is provided for non-OpenShift groups
+    if not group.startswith('openshift-') and not major_minor:
+        raise click.BadParameter(f"--major-minor is required for non-OpenShift group '{group}'")
+
     pipeline = BuildFbcPipeline(
         runtime=runtime,
         version=version,
@@ -312,15 +342,18 @@ async def build_fbc(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    # Use group-based lock name, default to openshift-{version} if group not specified
-    final_group = f"openshift-{version}" if not group else group
-
     if ignore_locks:
         await pipeline.run()
     else:
+        # Generate appropriate lock name based on group type (includes OCP version for non-OpenShift groups)
+        lock_name = _generate_fbc_lock_name(
+            group=group,
+            major_minor=major_minor,
+        )
+
         await locks.run_with_lock(
             coro=pipeline.run(),
             lock=Lock.FBC_BUILD,
-            lock_name=Lock.FBC_BUILD.value.format(group=final_group),
+            lock_name=lock_name,
             lock_id=lock_identifier,
         )
