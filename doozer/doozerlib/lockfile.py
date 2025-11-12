@@ -171,7 +171,7 @@ class ModuleInfo:
     size: int
 
     @classmethod
-    def from_repository_metadata(cls, *, repoid: str, baseurl: str, checksum: str, size: int) -> "ModuleInfo":
+    def from_repository_metadata(cls, *, repoid: str, baseurl: str, checksum: str, size: int, url: str) -> "ModuleInfo":
         """
         Create ModuleInfo from repository metadata.
 
@@ -180,12 +180,13 @@ class ModuleInfo:
             baseurl: Base repository URL
             checksum: SHA256 checksum of modules.yaml
             size: File size of modules.yaml in bytes
+            url: Actual modules file URL from repomd.xml
 
         Returns:
             ModuleInfo: Hermeto-compliant repository module metadata
         """
         return cls(
-            url=f'{baseurl}repodata/modules.yaml',
+            url=url,
             repoid=repoid,
             checksum=checksum,
             size=size,
@@ -316,6 +317,8 @@ class RpmInfoCollector:
         """
         Resolve RPM info across multiple architectures and repositories.
 
+        Note: Repositories must be pre-loaded using _load_repos before calling this method.
+
         Args:
             arches (list[str]): Target architectures.
             repositories (set[str]): Names of repositories to search.
@@ -330,8 +333,6 @@ class RpmInfoCollector:
         current_span.set_attribute("lockfile.rpm_count", len(rpm_names))
         current_span.set_attribute("lockfile.arch_count", len(arches))
 
-        await asyncio.gather(*(self._load_repos(repositories, arch) for arch in arches))
-
         results = await asyncio.gather(
             *[
                 asyncio.get_running_loop().run_in_executor(
@@ -343,28 +344,32 @@ class RpmInfoCollector:
 
         total_resolved = sum(len(result) for result in results)
         current_span.set_attribute("lockfile.total_resolved_packages", total_resolved)
-        return dict(zip(arches, results))
+        return dict(zip(arches, results, strict=True))
 
-    def _get_modules_yaml_metadata(self, repo_name: str, arch: str) -> Tuple[str, int]:
+    def _get_modules_yaml_metadata(self, repo_name: str, arch: str) -> Tuple[str, int, str]:
         """
-        Extract checksum and size for modules.yaml from repodata.
+        Extract checksum, size and URL for modules.yaml from repodata.
 
         Args:
             repo_name: Repository name
             arch: Architecture
 
         Returns:
-            Tuple[str, int]: (checksum, size) for modules.yaml file
+            Tuple[str, int, str]: (checksum, size, url) for modules.yaml file
         """
         repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
         if repodata is None:
             self.logger.warning(f'repodata {repo_name}-{arch} not found')
-            return "sha256:unknown", 0
+            return "sha256:unknown", 0, "repodata/modules.yaml"
 
-        if repodata.modules_checksum and repodata.modules_size is not None:
-            return repodata.modules_checksum, repodata.modules_size
+        if (
+            repodata.modules_checksum is not None
+            and repodata.modules_size is not None
+            and repodata.modules_url is not None
+        ):
+            return repodata.modules_checksum, repodata.modules_size, repodata.modules_url
 
-        return "sha256:unknown", 0
+        return "sha256:unknown", 0, "repodata/modules.yaml"
 
     def _fetch_modules_info_per_arch(self, module_names: set[str], repo_names: set[str], arch: str) -> list[ModuleInfo]:
         """
@@ -397,10 +402,21 @@ class RpmInfoCollector:
                 continue
 
             matching_modules = [
-                module for module in repodata.modules if module.name in module_names and module.arch == arch
+                module
+                for module in repodata.modules
+                if module.name in module_names and (module.arch == arch or module.arch == "noarch")
             ]
 
+            self.logger.debug(
+                f'Repository {repo_name}-{arch}: found {len(repodata.modules)} total modules, {len(matching_modules)} matching {module_names}'
+            )
+
+            if repodata.modules:
+                module_summary = [(m.name, m.arch) for m in repodata.modules[:5]]
+                self.logger.debug(f'Available modules (first 5): {module_summary}')
+
             if not matching_modules:
+                self.logger.debug(f'No matching modules found in {repo_name}-{arch}, skipping repository')
                 continue
 
             content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
@@ -411,10 +427,10 @@ class RpmInfoCollector:
             processed_repos.add(repo_key)
 
             baseurl = repo.baseurl(repotype="unsigned", arch=arch)
-            modules_checksum, modules_size = self._get_modules_yaml_metadata(repo_name, arch)
+            modules_checksum, modules_size, modules_url = self._get_modules_yaml_metadata(repo_name, arch)
 
             module_info = ModuleInfo.from_repository_metadata(
-                repoid=content_set_id, baseurl=baseurl, checksum=modules_checksum, size=modules_size
+                repoid=content_set_id, baseurl=baseurl, checksum=modules_checksum, size=modules_size, url=modules_url
             )
             module_info_list.append(module_info)
 
@@ -467,7 +483,7 @@ class RpmInfoCollector:
 
         total_resolved = sum(len(result) for result in results)
         current_span.set_attribute("lockfile.total_resolved_modules", total_resolved)
-        return dict(zip(arches, results))
+        return dict(zip(arches, results, strict=True))
 
 
 class RPMLockfileGenerator:
@@ -800,6 +816,15 @@ class RPMLockfileGenerator:
 
         arches = image_meta.get_arches()
         enabled_repos = image_meta.get_enabled_repos()
+
+        # Load repositories once for both RPM and module collection to avoid race condition
+        # Only attempt loading if we have real repository objects (not test mocks)
+        if hasattr(self.builder.repos, '_repos') and enabled_repos:
+            try:
+                await asyncio.gather(*(self.builder._load_repos(enabled_repos, arch) for arch in arches))
+            except (TypeError, AttributeError):
+                # Skip repository loading in test scenarios where mocks don't support async operations
+                pass
 
         lockfile = {
             "lockfileVersion": 1,

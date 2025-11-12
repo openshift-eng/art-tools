@@ -85,24 +85,31 @@ class TestRpmInfo(unittest.TestCase):
 class TestModuleInfo(unittest.TestCase):
     def test_from_repository_metadata(self):
         module_info = ModuleInfo.from_repository_metadata(
-            repoid="rhel-9-appstream-rpms", baseurl="https://example.com/", checksum="sha256:abc123", size=12345
+            repoid="rhel-9-appstream-rpms",
+            baseurl="https://example.com/",
+            checksum="sha256:abc123",
+            size=12345,
+            url="https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz",
         )
 
         self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
-        self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml")
+        self.assertEqual(
+            module_info.url,
+            "https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz",
+        )
         self.assertEqual(module_info.checksum, "sha256:abc123")
         self.assertEqual(module_info.size, 12345)
 
     def test_to_dict(self):
         module_info = ModuleInfo(
-            url="https://example.com/repodata/modules.yaml",
+            url="https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz",
             repoid="rhel-9-appstream-rpms",
             checksum="sha256:abc123",
             size=12345,
         )
 
         expected = {
-            "url": "https://example.com/repodata/modules.yaml",
+            "url": "https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz",
             "repoid": "rhel-9-appstream-rpms",
             "checksum": "sha256:abc123",
             "size": 12345,
@@ -356,6 +363,7 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         appstream_repodata.modules = [nginx_module, perl_module]
         appstream_repodata.modules_checksum = "sha256:abc123"
         appstream_repodata.modules_size = 12345
+        appstream_repodata.modules_url = "https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz"
 
         self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
 
@@ -369,7 +377,10 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         self.assertEqual(len(result), 1)
         module_info = result[0]
         self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
-        self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml")
+        self.assertEqual(
+            module_info.url,
+            "https://rhsm-pulp.corp.redhat.com/content/dist/rhel8/8/x86_64/appstream/os/repodata/f4eb9512dbfcfb642c5f03474336f9bcf7af44e9ca738c260635502d7cb366e2-modules.yaml.gz",
+        )
         self.assertEqual(module_info.checksum, "sha256:abc123")
         self.assertEqual(module_info.size, 12345)
 

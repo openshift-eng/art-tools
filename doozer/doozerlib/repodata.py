@@ -177,6 +177,7 @@ class Repodata:
     modules: List[RpmModule] = field(default_factory=list)
     modules_checksum: Optional[str] = None
     modules_size: Optional[int] = None
+    modules_url: Optional[str] = None
 
     def get_rpms(self, items: Union[str, Iterable[str]], arch: str) -> Tuple[list[Rpm], list[str]]:
         """
@@ -351,6 +352,7 @@ class Repodata:
         modules_yaml: List[Dict],
         modules_checksum: Optional[str] = None,
         modules_size: Optional[int] = None,
+        modules_url: Optional[str] = None,
     ):
         primary_rpms = [
             Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
@@ -362,6 +364,7 @@ class Repodata:
             modules=modules,
             modules_checksum=modules_checksum,
             modules_size=modules_size,
+            modules_url=modules_url,
         )
         return repodata
 
@@ -464,6 +467,7 @@ class RepodataLoader:
             list(yaml.load_all(modules_bytes) if modules_bytes else []),
             modules_checksum=modules_checksum,
             modules_size=modules_size,
+            modules_url=modules_url,
         )
         return repodata
 
