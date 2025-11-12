@@ -516,22 +516,6 @@ class PromotePipeline:
                     await self.send_image_list_email(release_name, image_advisory, mail_dir)
                     self._logger.info("Advisory image list sent.")
 
-                # update jira promote task status
-                self._logger.info("Updating promote release subtask")
-                if release_jira and not self.runtime.dry_run:
-                    parent_jira = self._jira_client.get_issue(release_jira)
-                    title = "Promote the tested nightly"
-                    subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
-                    if not subtask:
-                        self._logger.warning("Promote release subtask not found in release_jira: %s", release_jira)
-                    elif subtask.fields.status.name != "Closed":
-                        self._jira_client.add_comment(
-                            subtask,
-                            "promote release job : {}".format(os.environ.get("BUILD_URL")),
-                        )
-                        self._jira_client.assign_to_me(subtask)
-                        self._jira_client.close_task(subtask)
-
                 # extract client binaries
                 client_type = "ocp"
                 if (
