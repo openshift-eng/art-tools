@@ -4,6 +4,7 @@ flexmock
 pygit2 >= 1.11.1 # https://github.com/libgit2/pygit2/issues/1176
 pylint
 pytest == 8.0.2
+pytest-mock
 tox
 typing
 typing-extensions
