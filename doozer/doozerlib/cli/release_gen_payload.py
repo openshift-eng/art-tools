@@ -18,9 +18,10 @@ import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
-from artcommonlib.constants import COREOS_RHEL10_STREAMS, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.constants import COREOS_RHEL10_STREAMS, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
@@ -33,10 +34,16 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
-from doozerlib.build_info import BuildRecordInspector, ImageInspector
+from doozerlib.build_info import (
+    BuildRecordInspector,
+    ImageInspector,
+    KonfluxBuildRecordInspector,
+)
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
+from doozerlib import release_inspector
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 from doozerlib.util import (
@@ -137,6 +144,12 @@ class RepositoryType(Enum):
     is_flag=True,
     help="Allow embargoed builds to sync publicly in named assemblies",
 )
+@click.option(
+    "--model",
+    metavar="NIGHTLY",
+    required=False,
+    help="Model nightly name to introspect and create multi-arch payload from (e.g., '4.21.0-0.nightly-2025-11-12-194750').",
+)
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(
@@ -155,6 +168,7 @@ async def release_gen_payload(
     apply_multi_arch: bool,
     moist_run: bool,
     embargo_permit_ack: bool,
+    model: str,
 ):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -208,7 +222,10 @@ read and propagate/expose this annotation in its display of the release image.
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
 
-    if runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
+    # For model mode, we don't need to clone sources - just introspect an existing nightly
+    if model:
+        runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+    elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
         runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
@@ -229,6 +246,7 @@ read and propagate/expose this annotation in its display of the release image.
         apply_multi_arch,
         moist_run,
         embargo_permit_ack,
+        model,
     ).run()
 
 
@@ -385,6 +403,7 @@ class GenPayloadCli:
         apply_multi_arch: bool = False,
         moist_run: bool = False,
         embargo_permit_ack: bool = False,
+        model: str = None,
     ):
         self.runtime = runtime
         self.package_rpm_finder = PackageRpmFinder(runtime)
@@ -407,6 +426,7 @@ class GenPayloadCli:
         self.apply = apply  # actually update the IS
         self.apply_multi_arch = apply_multi_arch  # update the "multi" IS as well
         self.moist_run = moist_run  # mirror the images but do not update the IS
+        self.model = model  # model nightly to introspect for multi-arch payload creation
 
         # store generated payload entries: {arch -> dict of payload entries}
         self.payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
@@ -441,6 +461,28 @@ class GenPayloadCli:
         )
 
         self.validate_parameters()
+
+        # Model mode: use gen-assembly to create assembly definition, then build multi-arch payload
+        if self.model:
+            # Check if the target multi-arch payload already exists
+            if await self._check_multi_payload_exists(self.model):
+                self.logger.info(f"Multi-arch payload for {self.model} already exists. Exiting successfully.")
+                exit(0)
+            
+            self.logger.info(f"Model mode: generating assembly definition from {self.model}")
+            assembly_def = await self._create_assembly_from_model(self.model)
+            
+            # Apply the assembly definition to runtime
+            self._apply_model_assembly(assembly_def)
+            
+            # Automatically permit all issues in model mode since we're modeling an existing tested nightly
+            self.emergency_ignore_issues = True
+            self.logger.info("Model mode: automatically permitting all issues (emergency_ignore_issues=True)")
+            
+            # Now proceed with normal assembly-based multi-arch payload generation
+            # Fall through to normal flow below
+
+        # Normal mode: proceed with assembly inspection and validation
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
@@ -467,12 +509,164 @@ class GenPayloadCli:
         )
         exit(1)
 
+    async def _check_multi_payload_exists(self, model_nightly: str) -> bool:
+        """
+        Check if the target multi-arch payload already exists in the multi release controller.
+        
+        :param model_nightly: Source nightly name (e.g., '4.21.0-0.nightly-2025-11-12-194750')
+        :return: True if the multi payload already exists, False otherwise
+        """
+        # Extract version from model nightly to construct multi nightly name
+        major_minor, _, _ = isolate_nightly_name_components(model_nightly)
+        
+        # Extract timestamp from model nightly (last 4 parts: YYYY-MM-DD-HHMMSS)
+        parts = model_nightly.split('-')
+        if len(parts) >= 6:
+            multi_ts = '-'.join(parts[-4:])
+        else:
+            self.logger.warning(f"Could not extract timestamp from {model_nightly}")
+            return False
+        
+        # Construct expected multi nightly name
+        target_multi_name = f"{major_minor}.0-0.nightly-multi-{multi_ts}"
+        
+        # Query the multi release controller graph
+        graph_url = "https://multi.ocp.releases.ci.openshift.org/graph"
+        self.logger.info(f"Checking if {target_multi_name} already exists in multi release controller")
+        
+        try:
+            rc, graph_json_str, err = await exectools.cmd_gather_async(
+                ["curl", "-s", graph_url], check=False
+            )
+            
+            if rc != 0:
+                self.logger.warning(f"Could not query multi release controller: {err}")
+                return False
+            
+            graph_data = json.loads(graph_json_str)
+            
+            # Check if target name exists in nodes
+            for node in graph_data.get("nodes", []):
+                if node.get("version") == target_multi_name:
+                    self.logger.info(f"Found existing multi payload: {node.get('payload')}")
+                    return True
+            
+            self.logger.info(f"Multi payload {target_multi_name} does not exist yet")
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"Error checking for existing multi payload: {e}")
+            return False
+
+    async def _create_assembly_from_model(self, model_nightly: str) -> Dict:
+        """
+        Use gen-assembly logic to create an assembly definition from a model nightly.
+        This reuses all of gen-assembly's proven logic for extracting brew_event,
+        RHCOS images, and image overrides.
+        
+        :param model_nightly: Nightly name to model
+        :return: Assembly definition dict
+        """
+        rt = self.runtime
+        
+        # Model mode only supports Konflux
+        if rt.build_system != 'konflux':
+            self.logger.warning(
+                f"Model mode requires Konflux build system, but runtime is set to '{rt.build_system}'. "
+                f"Overriding to 'konflux' for model processing."
+            )
+            # Temporarily override for gen-assembly processing
+            original_build_system = rt.build_system
+            rt.build_system = 'konflux'
+        else:
+            original_build_system = None
+        
+        # Create a temporary assembly name for the model
+        # Use a simple name that won't be parsed as a SemVer version
+        # Extract just the timestamp part to keep it unique
+        parts = model_nightly.split('-')
+        timestamp_suffix = '-'.join(parts[-4:]) if len(parts) >= 4 else model_nightly
+        model_assembly_name = f"model.{timestamp_suffix}"
+        
+        # Create GenAssemblyCli instance to generate the assembly definition
+        # Use a dummy release_date to prevent gen-assembly from querying the release schedule
+        dummy_release_date = datetime.now(tz=timezone.utc).strftime("%Y-%b-%d")
+        
+        gen_assembly = GenAssemblyCli(
+            runtime=rt,
+            gen_assembly_name=model_assembly_name,
+            nightlies=(model_nightly,),  # Single nightly to model from
+            standards=(),
+            custom=False,  # Not a custom assembly
+            pre_ga_mode='',
+            in_flight=None,
+            previous_list=(),
+            auto_previous=False,
+            graph_url=None,
+            graph_content_stable=None,
+            graph_content_candidate=None,
+            suggestions_url=None,
+            gen_microshift=False,
+            release_date=dummy_release_date,  # Prevent release schedule lookup
+        )
+        
+        # Run gen-assembly logic to create the assembly definition
+        self.logger.info(f"Running gen-assembly logic to analyze {model_nightly}")
+        assembly_def = await gen_assembly.run()
+        
+        self.logger.info(f"Generated assembly definition from model nightly")
+        
+        # Don't restore build_system - keep it as 'konflux' for the rest of payload generation
+        return assembly_def
+    
+    def _apply_model_assembly(self, assembly_def: Dict):
+        """
+        Apply the model-generated assembly definition to runtime so gen-payload
+        can use its normal assembly-based logic.
+        
+        :param assembly_def: Assembly definition generated from model nightly
+        """
+        rt = self.runtime
+        
+        # Extract the assembly name from the definition
+        model_assembly_name = list(assembly_def['releases'].keys())[0]
+        
+        # Fix basis.time format if it's a datetime object (convert to ISO 8601 string)
+        assembly_config = assembly_def['releases'][model_assembly_name]['assembly']
+        if 'basis' in assembly_config and 'time' in assembly_config['basis']:
+            basis_time = assembly_config['basis']['time']
+            if isinstance(basis_time, datetime):
+                # Convert to ISO 8601 format string
+                assembly_config['basis']['time'] = basis_time.isoformat()
+                self.logger.info(f"Converted basis.time to ISO format: {assembly_config['basis']['time']}")
+        
+        # Update runtime's releases_config with the new assembly
+        rt.releases_config.releases[model_assembly_name] = assembly_def['releases'][model_assembly_name]
+        
+        # Update runtime to use this assembly
+        rt.assembly = model_assembly_name
+        # Keep assembly_type as STREAM to avoid SemVer parsing issues
+        rt.assembly_type = AssemblyTypes.STREAM
+        
+        self.logger.info(f"Applied model assembly '{model_assembly_name}' to runtime (as STREAM type)")
+        
     def validate_parameters(self):
         """
         Sanity check the assembly requested and adjust state accordingly.
         """
 
         rt = self.runtime
+
+        # Validate --model parameter
+        if self.model:
+            if rt.assembly != "stream":
+                raise DoozerFatalError("--model is only supported with assembly 'stream'")
+            if rt.images or rt.exclude:
+                raise DoozerFatalError("--model is incompatible with -i (include) or -x (exclude) image filters")
+            # For model mode, always create multi-arch payload regardless of --arches
+            self.apply_multi_arch = True
+            self.logger.info("Model mode: will generate multi-arch payload regardless of --arches parameter")
+
         if rt.assembly not in {None, "stream", "test"} and rt.assembly not in rt.releases_config.releases:
             raise DoozerFatalError(f"Assembly '{rt.assembly}' is not explicitly defined.")
 
@@ -490,7 +684,7 @@ class GenPayloadCli:
             )
 
         # check that we can produce a full multi nightly if requested
-        if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch):
+        if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch) and not self.model:
             raise DoozerFatalError(
                 "Cannot create a multi nightly without including the full set of images. "
                 "Either include all images/arches or omit --apply-multi-arch"
@@ -1035,17 +1229,31 @@ class GenPayloadCli:
         await asyncio.sleep(120)
 
         # Updating public and private image streams
-        for private_mode, payload_entries_for_each_arch_iter in [
-            (False, self.payload_entries_for_arch),
-            (True, self.private_payload_entries_for_arch),
-        ]:
-            tasks = []
-            for arch, payload_entries in payload_entries_for_each_arch_iter.items():
-                self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(
-                    self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs)
-                )
-            await asyncio.gather(*tasks)
+        # Skip single-arch imagestream updates in model mode - only create multi-arch payload
+        if not self.model:
+            for private_mode, payload_entries_for_each_arch_iter in [
+                (False, self.payload_entries_for_arch),
+                (True, self.private_payload_entries_for_arch),
+            ]:
+                tasks = []
+                for arch, payload_entries in payload_entries_for_each_arch_iter.items():
+                    self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+                    tasks.append(
+                        self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs)
+                    )
+                await asyncio.gather(*tasks)
+        else:
+            # In model mode, still populate multi_specs for multi-arch creation
+            # but don't write/update single-arch imagestreams
+            self.logger.info("Model mode: skipping single-arch imagestream updates, only creating multi-arch payload")
+            for private_mode, payload_entries_for_each_arch_iter in [
+                (False, self.payload_entries_for_arch),
+                (True, self.private_payload_entries_for_arch),
+            ]:
+                for arch, payload_entries in payload_entries_for_each_arch_iter.items():
+                    for payload_tag_name, payload_entry in payload_entries.items():
+                        multi_specs[private_mode].setdefault(payload_tag_name, dict())
+                        multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         if self.apply_multi_arch:
             if self.runtime.group_config.multi_arch.enabled:
@@ -1473,7 +1681,19 @@ class GenPayloadCli:
         the same.
         """
 
-        multi_ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        # For model mode, extract timestamp from the model nightly name
+        if self.model:
+            # Model nightly format: 4.21.0-0.nightly-2025-11-12-194750
+            # Extract the timestamp: 2025-11-12-194750 (skip the "nightly" part)
+            parts = self.model.split('-')
+            if len(parts) >= 6:
+                # Last 4 parts are: YYYY, MM, DD, HHMMSS (skip "nightly" which is 5th from last)
+                multi_ts = '-'.join(parts[-4:])
+            else:
+                raise DoozerFatalError(f"Could not extract timestamp from model nightly {self.model}")
+        else:
+            multi_ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the
