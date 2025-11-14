@@ -34,6 +34,7 @@ class BuildOadpPipeline:
         skip_rebase: bool = False,
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
+        network_mode: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -45,6 +46,7 @@ class BuildOadpPipeline:
         self.skip_rebase = skip_rebase
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
+        self.network_mode = network_mode
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -150,6 +152,8 @@ class BuildOadpPipeline:
                 f"--release={release}",
                 f"--message='Updating Dockerfile version and release {self.version}-{release}'",
             ]
+            if self.network_mode:
+                rebase_cmd.extend(['--network-mode', self.network_mode])
             if not self.runtime.dry_run:
                 rebase_cmd.append("--push")
 
@@ -190,6 +194,8 @@ class BuildOadpPipeline:
                 kubeconfig,
             ]
         )
+        if self.network_mode:
+            build_cmd.extend(['--network-mode', self.network_mode])
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
 
@@ -243,6 +249,11 @@ class BuildOadpPipeline:
     help="Path to the Konflux kubeconfig file (optional)",
 )
 @click.option("--data-gitref", required=False, default='', help="Doozer data path git [branch / tag / sha] to use")
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @pass_runtime
 @click_coroutine
@@ -257,6 +268,7 @@ async def build_oadp(
     skip_rebase: bool,
     kubeconfig: Optional[str],
     data_gitref: Optional[str],
+    network_mode: Optional[str],
     ignore_locks: bool,
 ):
     """Rebase and build OADP image for an assembly"""
@@ -272,6 +284,7 @@ async def build_oadp(
             skip_rebase=skip_rebase,
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
+            network_mode=network_mode,
         )
 
         lock_identifier = jenkins.get_build_path()
