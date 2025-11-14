@@ -347,6 +347,24 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Option
     return int(match[1]), int(match[2])
 
 
+def extract_group_from_nvr(nvr: str) -> Optional[str]:
+    """
+    Extract the group from an NVR by matching -vMAJOR.MINOR pattern.
+
+    Example NVR: "ose-azure-file-csi-driver-container-v4.13.0-202409181807.p0.g15e6f80.assembly.stream.el8"
+    Returns: "openshift-4.13"
+
+    :param nvr: Build NVR string
+    :return: Group string like "openshift-4.13" or None if pattern not found
+    """
+    # Match -vMAJOR.MINOR pattern (e.g., -v4.13, -v4.18)
+    match = re.search(r'-v(\d+)\.(\d+)\.', nvr)
+    if match:
+        major, minor = match.groups()
+        return f"openshift-{major}.{minor}"
+    return None
+
+
 async def run_limited_unordered(func, args: Iterable, limit: int) -> List:
     """
     limit the concurrency of asyncio tasks - adapted from https://death.andgravity.com/limit-concurrency
