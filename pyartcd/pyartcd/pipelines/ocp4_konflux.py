@@ -548,11 +548,8 @@ class KonfluxOcp4Pipeline:
 
     async def initialize(self):
         jenkins.init_jenkins()
-        jenkins.update_title(f' - {self.version} ')
+        jenkins.update_title(f' - {self.version} [{self.assembly}] ')
         await self.init_build_plan()
-
-        if self.assembly.lower() == "test":
-            jenkins.update_title(" [TEST]")
 
     async def clean_up(self):
         LOGGER.info('Cleaning up Doozer source dirs')
