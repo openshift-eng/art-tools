@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import os
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from functools import total_ordering
@@ -14,7 +13,6 @@ import yaml
 from artcommonlib import exectools, logutil
 from artcommonlib.rpm_utils import compare_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import download_file_from_github, split_git_url
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
@@ -501,40 +499,19 @@ class RPMLockfileGenerator:
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
 
-    def _get_target_branch(self, distgit_key: str) -> Optional[str]:
-        """
-        Construct target branch name using the same format as rebaser.
-
-        Args:
-            distgit_key (str): Distgit key to construct the target branch name.
-
-        Returns:
-            Optional[str]: Target branch name, or None if runtime is not available.
-        """
-        if not self.runtime:
-            return None
-        return "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format(
-            group=self.runtime.group,
-            assembly_name=self.runtime.assembly,
-            distgit_key=distgit_key,
-        )
-
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
     ) -> tuple[bool, set[str]]:
         """
-        Determine if lockfile generation is needed and return RPMs to install.
-
-        Checks lockfile generation configuration, repository availability, and
-        digest optimization to avoid unnecessary regeneration.
+        Determine if lockfile generation is needed for an image.
 
         Args:
-            image_meta: Image metadata containing configuration and distgit info
+            image_meta: Image metadata containing repository and RPM configuration
             dest_dir: Destination directory for lockfile output
-            filename: Lockfile filename, defaults to rpms.lock.yaml
+            filename: Name of the lockfile to generate
 
         Returns:
-            tuple[bool, set[str]]: (should_generate, rpms_to_install)
+            tuple[bool, set[str]]: Whether to generate lockfile and set of RPMs to install
         """
         if not image_meta.is_lockfile_generation_enabled():
             return False, set()
@@ -553,46 +530,6 @@ class RPMLockfileGenerator:
             return False, set()
         else:
             self.logger.info(f'{image_meta.distgit_key} image needs to install {len(rpms_to_install)} rpms')
-
-        if image_meta.is_lockfile_force_enabled():
-            self.logger.info(
-                f"Force flag set for {image_meta.distgit_key}. Regenerating lockfile without digest check."
-            )
-            return True, rpms_to_install
-
-        fingerprint = self._compute_hash(rpms_to_install)
-        digest_path = dest_dir / f'{filename}.digest'
-
-        old_fingerprint = None
-        if digest_path.exists():
-            try:
-                with open(digest_path, 'r') as f:
-                    old_fingerprint = f.read().strip()
-            except Exception as e:
-                self.logger.info(f"Failed to read local digest file '{digest_path}': {e}")
-
-        if old_fingerprint is None:
-            old_fingerprint = await self._get_digest_from_target_branch(digest_path, image_meta)
-            if old_fingerprint:
-                self.logger.info(f"Found digest in target branch for {image_meta.distgit_key}")
-
-        if old_fingerprint == fingerprint:
-            self.logger.info(
-                f"No changes in RPM list for {image_meta.distgit_key}. Checking upstream lockfile existence."
-            )
-
-            lockfile_path = dest_dir / filename
-            upstream_lockfile = await self._get_lockfile_from_target_branch(lockfile_path, image_meta)
-            if upstream_lockfile is None:
-                self.logger.info(
-                    f"Lockfile not found upstream for {image_meta.distgit_key}. Regenerating despite matching fingerprint."
-                )
-                return True, rpms_to_install
-
-            self.logger.info(f"Lockfile exists upstream for {image_meta.distgit_key}. Skipping lockfile generation.")
-            return False, rpms_to_install
-        elif old_fingerprint:
-            self.logger.info(f"RPM list changed for {image_meta.distgit_key}. Regenerating lockfile.")
 
         return True, rpms_to_install
 
@@ -619,7 +556,7 @@ class RPMLockfileGenerator:
                 images_needing_lockfiles.append(image_meta)
                 self.logger.info(f"Image {image_meta.distgit_key} needs lockfile generation")
             else:
-                self.logger.info(f"Image {image_meta.distgit_key} skipping lockfile generation (digest unchanged)")
+                self.logger.info(f"Image {image_meta.distgit_key} skipping lockfile generation")
 
         repos_by_arch = {}
 
@@ -649,150 +586,6 @@ class RPMLockfileGenerator:
         else:
             self.logger.info("No images need lockfile generation - skipping repository loading")
 
-    async def _sync_from_upstream_if_needed(
-        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
-    ) -> None:
-        """
-        Download existing lockfile and digest from target branch if available.
-
-        Attempts to fetch both lockfile and digest from the upstream target branch
-        to enable digest optimization for unchanged RPM lists.
-
-        Args:
-            image_meta: Image metadata containing distgit information
-            dest_dir: Local directory to write downloaded files
-            filename: Lockfile filename, defaults to rpms.lock.yaml
-        """
-        lockfile_path = dest_dir / filename
-        digest_path = dest_dir / f'{filename}.digest'
-
-        upstream_digest = await self._get_digest_from_target_branch(digest_path, image_meta)
-        if upstream_digest:
-            try:
-                digest_path.write_text(upstream_digest)
-                self.logger.info(f"Downloaded digest file to {digest_path}")
-            except Exception as e:
-                self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
-
-        upstream_lockfile = await self._get_lockfile_from_target_branch(lockfile_path, image_meta)
-        if upstream_lockfile:
-            try:
-                lockfile_path.write_text(upstream_lockfile)
-                self.logger.info(f"Downloaded lockfile to {lockfile_path}")
-            except Exception as e:
-                self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
-        else:
-            self.logger.warning(f"Could not download lockfile from upstream branch for {image_meta.distgit_key}")
-
-    @staticmethod
-    def _compute_hash(rpms: set[str]) -> str:
-        """
-        Compute a SHA256 hash fingerprint from a set of RPM names.
-
-        Args:
-            rpms (set[str]): Set of RPM names.
-
-        Returns:
-            str: SHA256 hex digest of sorted RPM names joined by newline.
-        """
-        sorted_items = sorted(rpms)
-        joined = '\n'.join(sorted_items)
-        return hashlib.sha256(joined.encode('utf-8')).hexdigest()
-
-    @staticmethod
-    def _compute_combined_hash(rpms: set[str], modules: set[str]) -> str:
-        """
-        Compute SHA256 hash from combined RPM and module sets.
-
-        Args:
-            rpms: Set of RPM names (can be empty)
-            modules: Set of module names (can be empty)
-
-        Returns:
-            str: SHA256 hex digest of combined sorted items
-        """
-        combined_items = sorted(list(rpms) + [f"module:{m}" for m in modules])
-        joined = '\n'.join(combined_items)
-        return hashlib.sha256(joined.encode('utf-8')).hexdigest()
-
-    async def _get_digest_from_target_branch(self, digest_path: Path, image_meta: ImageMetadata) -> Optional[str]:
-        """
-        Fetch digest file content from the target art branch.
-
-        Args:
-            digest_path (Path): Path to the digest file relative to repo root.
-            image_meta (ImageMetadata): Image metadata containing distgit information.
-
-        Returns:
-            Optional[str]: Digest content if found, None otherwise.
-        """
-        target_branch = self._get_target_branch(image_meta.distgit_key)
-        if not target_branch:
-            return None
-
-        try:
-            git_url = str(image_meta.config.content.source.git.url)
-            digest_filename = digest_path.name
-
-            server, org, repo_name = split_git_url(git_url)
-            if 'github.com' not in server:
-                self.logger.warning(f"Non-GitHub repository, skipping: {git_url}")
-                return None
-
-            token = os.environ.get('GITHUB_TOKEN')
-            if not token:
-                self.logger.warning("GITHUB_TOKEN not available, unable to perform digest check")
-                return None
-
-            async with aiohttp.ClientSession() as session:
-                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
-                    await download_file_from_github(git_url, target_branch, digest_filename, token, tmp.name, session)
-                    tmp.seek(0)
-                    return tmp.read().strip()
-
-        except Exception as e:
-            self.logger.debug(f"Error fetching digest from GitHub branch '{target_branch}': {e}")
-            return None
-
-    async def _get_lockfile_from_target_branch(self, lockfile_path: Path, image_meta: 'ImageMetadata') -> Optional[str]:
-        """
-        Fetch lockfile content from the target art branch.
-
-        Args:
-            lockfile_path (Path): Path to the lockfile relative to repo root.
-            image_meta (ImageMetadata): Image metadata containing distgit information.
-
-        Returns:
-            Optional[str]: Lockfile content if found, None otherwise.
-        """
-        target_branch = self._get_target_branch(image_meta.distgit_key)
-        if not target_branch:
-            return None
-
-        try:
-            git_url = str(image_meta.config.content.source.git.url)
-            lockfile_filename = lockfile_path.name
-
-            server, org, repo_name = split_git_url(git_url)
-            if 'github.com' not in server:
-                self.logger.warning(f"Non-GitHub repository, skipping: {git_url}")
-                return None
-
-            token = os.environ.get('GITHUB_TOKEN')
-            if not token:
-                self.logger.warning("GITHUB_TOKEN not available, unable to download lockfile")
-                return None
-
-            async with aiohttp.ClientSession() as session:
-                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
-                    await download_file_from_github(git_url, target_branch, lockfile_filename, token, tmp.name, session)
-                    tmp.seek(0)
-                    return tmp.read()
-
-        except Exception as e:
-            self.logger.debug(f"Error fetching lockfile from GitHub branch '{target_branch}': {e}")
-            return None
-
     async def generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
     ) -> None:
@@ -811,8 +604,6 @@ class RPMLockfileGenerator:
         should_generate, rpms_to_install = await self.should_generate_lockfile(image_meta, dest_dir, filename)
 
         if not should_generate:
-            if rpms_to_install:
-                await self._sync_from_upstream_if_needed(image_meta, dest_dir, filename)
             return
 
         arches = image_meta.get_arches()
@@ -852,14 +643,6 @@ class RPMLockfileGenerator:
 
         lockfile_path = dest_dir / filename
         self._write_yaml(lockfile, lockfile_path)
-
-        combined_fingerprint = self._compute_combined_hash(rpms_to_install, modules_to_install)
-        fingerprint = combined_fingerprint
-        digest_path = dest_dir / f'{filename}.digest'
-        try:
-            digest_path.write_text(fingerprint)
-        except Exception as e:
-            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
 
     def _write_yaml(self, data: dict, output_path: Path) -> None:
         """

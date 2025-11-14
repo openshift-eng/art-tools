@@ -44,6 +44,33 @@ BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-r
 FBC_BUILD_PRIORITY = "3"
 
 
+def _generate_fbc_branch_name(
+    group: str, assembly: str, distgit_key: str, ocp_version: Optional[Tuple[int, int]] = None
+) -> str:
+    """Generate FBC branch name with optional OCP version for non-OpenShift products.
+
+    Args:
+        group: The doozer group name (e.g., "openshift-4.17", "oadp-1.4")
+        assembly: Assembly name (e.g., "stream", "4.17.1")
+        distgit_key: Operator distgit key (e.g., "cluster-nfd-operator")
+        ocp_version: Target OCP version tuple (major, minor) for non-OpenShift products
+
+    Returns:
+        Branch name following the pattern:
+        - For OpenShift: "art-{group}-assembly-{assembly}-fbc-{distgit_key}"
+        - For non-OpenShift: "art-{group}-ocp-{ocp_major}.{ocp_minor}-assembly-{assembly}-fbc-{distgit_key}"
+    """
+    if group.startswith('openshift-'):
+        # For OpenShift products, use the traditional naming
+        return f"art-{group}-assembly-{assembly}-fbc-{distgit_key}"
+    else:
+        # For non-OpenShift products, include the target OCP version
+        if ocp_version is None:
+            raise ValueError(f"ocp_version is required for non-OpenShift group '{group}'")
+        ocp_version_str = f"{ocp_version[0]}.{ocp_version[1]}"
+        return f"art-{group}-ocp-{ocp_version_str}-assembly-{assembly}-fbc-{distgit_key}"
+
+
 class KonfluxFbcImporter:
     def __init__(
         self,
@@ -107,12 +134,8 @@ class KonfluxFbcImporter:
             )
 
         # Clone the FBC repo
-        build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-            {
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            }
+        build_branch = _generate_fbc_branch_name(
+            group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=self.ocp_version
         )
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, build_branch, repo_dir)
         build_repo = BuildRepo(url=self.fbc_git_repo, branch=build_branch, local_dir=repo_dir, logger=logger)
@@ -597,13 +620,16 @@ class KonfluxFbcRebaser:
         }
 
         try:
+            # Get OCP version for branch naming
+            group_config = metadata.runtime.group_config
+            if self.ocp_version_override:
+                ocp_version = self.ocp_version_override
+            else:
+                ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
             # Clone the FBC repo
-            fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-                {
-                    "group": self.group,
-                    "assembly_name": self.assembly,
-                    "distgit_key": metadata.distgit_key,
-                }
+            fbc_build_branch = _generate_fbc_branch_name(
+                group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
             )
             logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
             build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
@@ -753,7 +779,7 @@ class KonfluxFbcRebaser:
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
             replaces = None
-            if self.group.startswith(('oadp-', 'mta-', 'logging-')):
+            if not self.group.startswith('openshift-'):
                 # Find the current head - the entry that is not replaced by any other entry
                 bundle_with_replaces = [it for it in channel['entries']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
@@ -1140,12 +1166,15 @@ class KonfluxFbcBuilder:
                 build_repo = await BuildRepo.from_local_dir(repo_dir, logger)
                 logger.info("FBC repository loaded from %s", repo_dir)
             else:
-                build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-                    {
-                        "group": self.group,
-                        "assembly_name": self.assembly,
-                        "distgit_key": metadata.distgit_key,
-                    }
+                # Get OCP version for branch naming
+                if self.major_minor_override:
+                    ocp_version = self.major_minor_override
+                else:
+                    group_config = metadata.runtime.group_config
+                    ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+                build_branch = _generate_fbc_branch_name(
+                    group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
                 )
                 logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
                 build_repo = BuildRepo(

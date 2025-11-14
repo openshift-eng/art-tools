@@ -26,7 +26,7 @@ class BuildOadpPipeline:
         self,
         runtime: Runtime,
         group: str,
-        version: str,
+        version: Optional[str],
         assembly: str,
         image_list: str,
         data_path: str,
@@ -101,10 +101,27 @@ class BuildOadpPipeline:
 
     async def run(self):
         """Run the OADP rebase and build pipeline"""
-        await self._rebase_and_build()
+        # Load group config once for both version and product information
+        group_config = await load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=self._doozer_env_vars.get('DOOZER_DATA_PATH'),
+            doozer_data_gitref=self.data_gitref,
+        )
+
+        # Set version from group config if not provided
+        if not self.version:
+            self.version = group_config.get('version')
+            if not self.version:
+                raise ValueError(f"No version found in group config for {self.group}")
+            self._logger.info(f"Using version {self.version} from group config")
+
+        # Extract product from group config
+        product = group_config.get('product', 'ocp')
+        await self._rebase_and_build(product)
         self.trigger_bundle_build()
 
-    async def _rebase_and_build(self):
+    async def _rebase_and_build(self, product: str):
         """Rebase and build OADP image"""
         release = default_release_suffix()
 
@@ -155,15 +172,6 @@ class BuildOadpPipeline:
             "--build-priority=1",
         ]
 
-        # Load group config to get product information
-        group_config = await load_group_config(
-            group=self.group,
-            assembly=self.assembly,
-            doozer_data_path=self._doozer_env_vars['DOOZER_DATA_PATH'],
-            doozer_data_gitref=self.data_gitref,
-        )
-        product = group_config.get('product', 'ocp')
-
         # Resolve namespace using product-based utility function
         namespace = resolve_konflux_namespace_by_product(product)
         build_cmd.append(f"--konflux-namespace={namespace}")
@@ -212,8 +220,8 @@ class BuildOadpPipeline:
 @click.option(
     "--version",
     metavar='NAME',
-    required=True,
-    help="OADP version",
+    required=False,
+    help="OADP version (if not provided, will be read from group config)",
 )
 @click.option(
     "--assembly",
@@ -242,7 +250,7 @@ async def build_oadp(
     runtime: Runtime,
     data_path: str,
     group: str,
-    version: str,
+    version: Optional[str],
     assembly: str,
     image_list: str,
     skip_bundle_build: bool,

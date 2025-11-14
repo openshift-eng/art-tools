@@ -3,6 +3,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -249,6 +250,14 @@ class KonfluxOlmBundleRebaser:
         dest_annotations_path = bundle_metadata_dir / "annotations.yaml"
         async with aiofiles.open(dest_annotations_path, 'w') as f:
             await f.write(yaml.safe_dump({'annotations': operator_framework_tags}))
+
+        # Copy bundle's dependencies.yaml
+        # Non-OCP products, such as MTC, may use dependencies.yaml
+        if not metadata.runtime.group.startswith("openshift-"):
+            dependencies_path = operator_manifests_dir / "metadata" / "dependencies.yaml"
+            if dependencies_path.exists():
+                dest_dependencies_path = bundle_metadata_dir / "dependencies.yaml"
+                shutil.copy2(dependencies_path, dest_dependencies_path)
 
         # Generate bundle's Dockerfile
         nvr = await asyncio.to_thread(

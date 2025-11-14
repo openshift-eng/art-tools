@@ -9,7 +9,7 @@
       "description": "An object containing all releases in a group.",
       "type": "object",
       "patternProperties": {
-        "^stream$|^test$|^art\\d+$|^\\d+\\.\\d+\\.\\d+$|^\\d+\\.\\d+\\.\\d+$\\-|^[fre]c\\.\\d+$": {
+        "^stream$|^test$|^minimal$|^art\\d+$|^\\d+\\.\\d+\\.\\d+$|^\\d+\\.\\d+\\.\\d+$\\-|^[fre]c\\.\\d+$": {
           "$ref": "release.schema.json"
         }
       },

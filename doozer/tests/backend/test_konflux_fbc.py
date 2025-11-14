@@ -12,6 +12,7 @@ from doozerlib.backend.konflux_fbc import (
     KonfluxFbcFragmentMerger,
     KonfluxFbcImporter,
     KonfluxFbcRebaser,
+    _generate_fbc_branch_name,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo, PodInfo
 from doozerlib.image import ImageMetadata
@@ -61,6 +62,12 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         index_image = "test-index-image"
 
         build_repo = mock_build_repo.return_value
@@ -70,7 +77,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
-            branch="art-test-group-assembly-test-assembly-fbc-test-distgit-key",
+            branch="art-test-group-ocp-4.9-assembly-test-assembly-fbc-test-distgit-key",
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
@@ -109,6 +116,12 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         index_image = "test-index-image"
 
         build_repo = mock_build_repo.return_value
@@ -278,6 +291,18 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     async def test_rebase(self, mock_opm, mock_build_repo, mock_rebase_dir):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
             nvr="foo-bundle-1.0.0-1",
@@ -297,7 +322,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
-            branch="art-test-group-assembly-test-assembly-fbc-test-distgit-key",
+            branch="art-test-group-ocp-4.9-assembly-test-assembly-fbc-test-distgit-key",
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
@@ -313,6 +338,18 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     async def test_rebase_with_push(self, mock_opm, mock_build_repo, mock_rebase_dir):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
             nvr="foo-bundle-1.0.0-1",
@@ -333,7 +370,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
-            branch="art-test-group-assembly-test-assembly-fbc-test-distgit-key",
+            branch="art-test-group-ocp-4.9-assembly-test-assembly-fbc-test-distgit-key",
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
@@ -368,6 +405,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         metadata.runtime = MagicMock()
         metadata.get_olm_bundle_delivery_repo_name = MagicMock(return_value="openshift4/foo-bundle")
         build_repo = MagicMock()
@@ -509,6 +552,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
                 {
                     "name": "test-bundle-name.1.2.3",
+                    "replaces": "test-bundle-name.1.0.0",
                     "skipRange": ">=4.8.0 <4.17.0",
                     "skips": [
                         "test-bundle-name.0.0.9",
@@ -807,6 +851,12 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         mock_konflux_client = self.kube_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         all_arches = metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
         build_repo = MockBuildRepo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
@@ -839,7 +889,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         await self.builder.build(metadata)
         MockBuildRepo.assert_called_once_with(
             url=self.fbc_repo,
-            branch="art-test-group-assembly-test-assembly-fbc-test-distgit-key",
+            branch="art-test-group-ocp-4.9-assembly-test-assembly-fbc-test-distgit-key",
             local_dir=self.base_dir.joinpath(metadata.distgit_key),
             logger=ANY,
         )
@@ -893,6 +943,12 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         mock_konflux_client = self.kube_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
         all_arches = metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
         build_repo = MockBuildRepo.from_local_dir.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
@@ -1200,3 +1256,42 @@ spec:
 
         result = await self.merger._merge_idms(["example.com/idm1", "example.com/idm2", "example.com/idm3"])
         self.assertEqual(result, expected)
+
+
+class TestGenerateFbcBranchName(unittest.TestCase):
+    """Test the _generate_fbc_branch_name function."""
+
+    def test_openshift_group_branch_naming(self):
+        """Test branch naming for OpenShift groups (traditional naming)."""
+        branch_name = _generate_fbc_branch_name(
+            group="openshift-4.17",
+            assembly="stream",
+            distgit_key="cluster-nfd-operator",
+            ocp_version=(4, 17),  # Should be ignored for OpenShift groups
+        )
+        expected = "art-openshift-4.17-assembly-stream-fbc-cluster-nfd-operator"
+        self.assertEqual(branch_name, expected)
+
+    def test_non_openshift_group_branch_naming(self):
+        """Test branch naming for non-OpenShift groups (includes OCP version)."""
+        branch_name = _generate_fbc_branch_name(
+            group="oadp-1.5", assembly="stream", distgit_key="oadp-operator", ocp_version=(4, 17)
+        )
+        expected = "art-oadp-1.5-ocp-4.17-assembly-stream-fbc-oadp-operator"
+        self.assertEqual(branch_name, expected)
+
+    def test_non_openshift_group_different_assembly(self):
+        """Test branch naming for non-OpenShift groups with different assembly."""
+        branch_name = _generate_fbc_branch_name(
+            group="mta-1.2", assembly="4.17.2", distgit_key="mta-operator", ocp_version=(4, 17)
+        )
+        expected = "art-mta-1.2-ocp-4.17-assembly-4.17.2-fbc-mta-operator"
+        self.assertEqual(branch_name, expected)
+
+    def test_non_openshift_group_missing_ocp_version(self):
+        """Test that missing ocp_version raises ValueError for non-OpenShift groups."""
+        with self.assertRaises(ValueError) as cm:
+            _generate_fbc_branch_name(
+                group="oadp-1.5", assembly="stream", distgit_key="oadp-operator", ocp_version=None
+            )
+        self.assertIn("ocp_version is required for non-OpenShift group 'oadp-1.5'", str(cm.exception))

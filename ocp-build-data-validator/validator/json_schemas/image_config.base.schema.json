@@ -1208,17 +1208,6 @@
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/enabled"
                 },
                 "enabled-": {},
-                "force": {
-                  "description": "Force lockfile generation even when conditions aren't met",
-                  "type": "boolean"
-                },
-                "force?": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
-                },
-                "force!": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
-                },
-                "force-": {},
                 "rpms": {
                   "description": "Array of RPM package names to include in lockfile generation",
                   "type": "array",

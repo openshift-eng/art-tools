@@ -18,14 +18,6 @@ GIT_NO_PROMPTS = {
 
 ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "4.19", "4.20", "4.21"]
 
-# OADP versions by group
-NON_OCP_OPERATOR_VERSIONS = {
-    "oadp-1.3": "1.3.8",
-    "oadp-1.4": "1.4.7",
-    "oadp-1.5": "1.5.3",
-    "logging-6.3": "6.3.2",
-}
-
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
