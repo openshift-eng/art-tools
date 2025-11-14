@@ -110,12 +110,16 @@ class ImagesHealthPipeline:
             and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED.value
         ]
 
+        version_tag = f'`openshift-{version}`'
+        if self.assembly != 'stream':
+            version_tag += f' (assembly `{self.assembly}`)'
+
         if not concerns:
-            await self.slack_client.say(f':white_check_mark: All images are healthy for openshift-{version}')
+            await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
             return
 
         response = await self.slack_client.say(
-            f':alert: There are some issues to look into for `openshift-{version}`. {self.get_component_tag(concerns)}'
+            f':alert: There are some issues to look into for {version_tag}. {self.get_component_tag(concerns)}'
         )
         report = ''
         for concern in concerns:
