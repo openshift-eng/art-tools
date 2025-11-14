@@ -17,6 +17,7 @@ from artcommonlib.util import extract_group_from_nvr
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 from sqlalchemy.sql import text
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 SCHEMA_LEVEL = 1
 
@@ -963,6 +964,7 @@ class KonfluxDb:
         # This will check cache first, then use exponential windows
         return await self.get_latest_build(nvr=nvr, outcome=outcome, strict=strict)
 
+    @retry(reraise=True, wait=wait_fixed(5), stop=stop_after_attempt(3))
     async def get_build_records_by_nvrs(
         self,
         nvrs: typing.Sequence[str],
