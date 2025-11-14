@@ -89,9 +89,9 @@ class TestModuleInfo(unittest.TestCase):
             baseurl="https://example.com/",
             checksum="sha256:abc123",
             size=12345,
-            url="https://example.com/repodata/modules.yaml.gz"
+            url="https://example.com/repodata/modules.yaml.gz",
         )
-        
+
         self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
         self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml.gz")
         self.assertEqual(module_info.checksum, "sha256:abc123")
@@ -102,14 +102,14 @@ class TestModuleInfo(unittest.TestCase):
             url="https://example.com/repodata/modules.yaml.gz",
             repoid="rhel-9-appstream-rpms",
             checksum="sha256:abc123",
-            size=12345
+            size=12345,
         )
-        
+
         expected = {
             "url": "https://example.com/repodata/modules.yaml.gz",
             "repoid": "rhel-9-appstream-rpms",
             "checksum": "sha256:abc123",
-            "size": 12345
+            "size": 12345,
         }
         self.assertEqual(module_info.to_dict(), expected)
 
@@ -350,6 +350,7 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
 
     def test_fetch_modules_info_empty_modules(self):
         """Test graceful handling when no modules are requested"""
+
         async def _test():
             result = await self.collector.fetch_modules_info(['x86_64'], {'repo1'}, set())
             self.assertEqual(result, {'x86_64': []})
@@ -358,11 +359,11 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
 
     def test_fetch_modules_info_missing_modules(self):
         """Test graceful handling when requested modules are not found"""
-        
+
         empty_repodata = MagicMock()
         empty_repodata.modules = []
         self.collector.loaded_repos = {"repo1-x86_64": empty_repodata}
-        
+
         mock_repo = MagicMock()
         mock_repo.content_set.return_value = "repo1-content-set"
         mock_repo.baseurl.return_value = "https://example.com/"
@@ -380,24 +381,22 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         # Create sample modules
         nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
         perl_module = RpmModule("perl", "5.32", 789012, "def456", "x86_64", set())
-        
+
         appstream_repodata = MagicMock()
         appstream_repodata.modules = [nginx_module, perl_module]
         appstream_repodata.modules_checksum = "sha256:abc123"
         appstream_repodata.modules_size = 12345
         appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
-        
+
         self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
-        
+
         mock_repo = MagicMock()
         mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
         mock_repo.baseurl.return_value = "https://example.com/"
         self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
-        
-        result = self.collector._fetch_modules_info_per_arch(
-            {"nginx", "perl"}, {"rhel-9-appstream-rpms"}, "x86_64"
-        )
-        
+
+        result = self.collector._fetch_modules_info_per_arch({"nginx", "perl"}, {"rhel-9-appstream-rpms"}, "x86_64")
+
         # Should find one ModuleInfo entry for the repository
         self.assertEqual(len(result), 1)
         module_info = result[0]
@@ -407,28 +406,26 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
 
     def test_fetch_modules_info_per_arch_deduplication(self):
         """Test that only one ModuleInfo is created per repository"""
-        # Multiple modules from same repository  
+        # Multiple modules from same repository
         nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
         nodejs_module = RpmModule("nodejs", "16", 456789, "def456", "x86_64", set())
-        
+
         appstream_repodata = MagicMock()
         appstream_repodata.modules = [nginx_module, nodejs_module]
-        appstream_repodata.modules_checksum = "sha256:abc123" 
+        appstream_repodata.modules_checksum = "sha256:abc123"
         appstream_repodata.modules_size = 12345
         appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
-        
+
         self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
-        
+
         mock_repo = MagicMock()
         mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
         mock_repo.baseurl.return_value = "https://example.com/"
         self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
-        
+
         # Request multiple modules from same repo
-        result = self.collector._fetch_modules_info_per_arch(
-            {"nginx", "nodejs"}, {"rhel-9-appstream-rpms"}, "x86_64"
-        )
-        
+        result = self.collector._fetch_modules_info_per_arch({"nginx", "nodejs"}, {"rhel-9-appstream-rpms"}, "x86_64")
+
         # Should only have one ModuleInfo entry despite multiple modules
         self.assertEqual(len(result), 1)
 
@@ -505,7 +502,7 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
             'url': 'https://example.com/modules.yaml',
             'repoid': 'rhel-9-appstream',
             'checksum': 'sha256:abc123',
-            'size': 12345
+            'size': 12345,
         }
 
         self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})

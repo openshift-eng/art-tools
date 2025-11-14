@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from functools import total_ordering
