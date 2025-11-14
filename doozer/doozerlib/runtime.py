@@ -24,6 +24,8 @@ from artcommonlib.assembly import (
     assembly_type,
 )
 from artcommonlib.config import BuildDataLoader
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
 from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -248,6 +250,65 @@ class Runtime(GroupRuntime):
     def get_errata_config(self):
         replace_vars = self.get_replace_vars(self.group_config)
         return self._build_data_loader.load_config("erratatool", default={}, replace_vars=replace_vars)
+
+    def get_plashet_config(self):
+        plashet_config_dict = self.group_config.get('plashet')
+        if not plashet_config_dict:
+            return None
+        return PlashetConfig.model_validate(plashet_config_dict)
+
+    def _get_repos_config(self) -> RepoList:
+        """
+        Get repository configuration from group_config.
+
+        Supports both new-style (all_repos) and old-style (repos) configurations:
+        - New-style: repos are defined in separate YAML files under repos/ directory
+          and loaded via !include in group.ext.yml as group_config['all_repos']
+        - Old-style: repos are defined directly in group.yml under the 'repos' key
+          and are converted to new-style RepoList format
+
+        :return: RepoList containing repo configurations
+        """
+        if 'all_repos' in self.group_config:
+            # New-style repo config: repos are defined in separate files and included via group.ext.yml
+            self._logger.info("Using new-style repo configurations from all_repos")
+            all_repos = self.group_config['all_repos']
+
+            # Parse using Pydantic models
+            repo_list = RepoList.model_validate(all_repos)
+            self._logger.info(f"Loaded {len(repo_list.root)} repos from all_repos")
+            return repo_list
+        else:
+            # Old-style repo config: repos are defined in group.yml
+            # Convert to new-style format using Pydantic models
+            self._logger.info("Using old-style repo configurations from group.yml, converting to new-style format")
+            old_repos = self.group_config.repos
+            new_repos = []
+
+            for repo_name, repo_data in old_repos.items():
+                # Parse content_set and reposync if present
+                content_set = None
+                if 'content_set' in repo_data:
+                    content_set = ContentSet.model_validate(repo_data['content_set'])
+
+                reposync = RepoSync()
+                if 'reposync' in repo_data:
+                    reposync = RepoSync.model_validate(repo_data['reposync'])
+
+                # Create Repo object using constructor
+                repo = Repo(
+                    name=repo_name,
+                    type='external',
+                    disabled=False,
+                    conf=repo_data.get('conf'),
+                    content_set=content_set,
+                    reposync=reposync,
+                )
+                new_repos.append(repo)
+
+            repo_list = RepoList.model_validate(new_repos)
+            self._logger.info(f"Converted {len(repo_list.root)} old-style repos to new-style format")
+            return repo_list
 
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
@@ -550,8 +611,13 @@ class Runtime(GroupRuntime):
                 # We should only really be building the latest release with unsigned RPMs, so default to True
                 self.gpgcheck = True
 
-            self.repos = Repos(self.group_config.repos, self.arches, self.gpgcheck)
-            self.freeze_automation = self.group_config.freeze_automation or FREEZE_AUTOMATION_NO
+            # Load repos configuration: new-style from all_repos or old-style from group.yml
+            repos_config = self._get_repos_config()
+            plashet_config = self.get_plashet_config()
+            self.repos = Repos(
+                repos_config, self.arches, self.gpgcheck, plashet_config=plashet_config, template_vars=replace_vars
+            )
+            self.freeze_automation = self.group_config.freeze_automation or FREEZE_AUTOMATION_NO  # type: ignore
 
             if validate_content_sets:
                 # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp

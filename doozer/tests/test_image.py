@@ -360,12 +360,32 @@ class TestImageMetadata(unittest.TestCase):
         self.assertFalse(result)
 
     def test_get_enabled_repos_with_repos(self):
-        """Test get_enabled_repos returns configured repositories"""
+        """Test get_enabled_repos returns repos that are both globally enabled and in image config"""
         metadata = self._create_image_metadata('openshift/test_repos')
 
+        # Mock config to return repos from image config
         mock_config = MagicMock()
         mock_config.get.return_value = ['repo1', 'repo2', 'repo3']
         metadata.config = mock_config
+
+        # Mock runtime.repos to have globally enabled repos
+        mock_repo1 = MagicMock()
+        mock_repo1.name = 'repo1'
+        mock_repo1.enabled = True
+
+        mock_repo2 = MagicMock()
+        mock_repo2.name = 'repo2'
+        mock_repo2.enabled = True
+
+        mock_repo3 = MagicMock()
+        mock_repo3.name = 'repo3'
+        mock_repo3.enabled = True
+
+        metadata.runtime.repos = {
+            'repo1': mock_repo1,
+            'repo2': mock_repo2,
+            'repo3': mock_repo3,
+        }
 
         result = metadata.get_enabled_repos()
 
@@ -383,6 +403,45 @@ class TestImageMetadata(unittest.TestCase):
         result = metadata.get_enabled_repos()
 
         self.assertEqual(result, set())
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_enabled_repos_intersection_logic(self):
+        """Test get_enabled_repos returns only repos enabled in BOTH group.yml AND image config"""
+        metadata = self._create_image_metadata('openshift/test_repos_intersection')
+
+        # Mock config to return repos from image config
+        mock_config = MagicMock()
+        mock_config.get.return_value = ['repo1', 'repo2', 'repo3']
+        metadata.config = mock_config
+
+        # Mock runtime.repos where only repo1 and repo2 are globally enabled
+        mock_repo1 = MagicMock()
+        mock_repo1.name = 'repo1'
+        mock_repo1.enabled = True
+
+        mock_repo2 = MagicMock()
+        mock_repo2.name = 'repo2'
+        mock_repo2.enabled = True
+
+        mock_repo3 = MagicMock()
+        mock_repo3.name = 'repo3'
+        mock_repo3.enabled = False  # NOT globally enabled
+
+        mock_repo4 = MagicMock()
+        mock_repo4.name = 'repo4'
+        mock_repo4.enabled = True  # Globally enabled but not in image config
+
+        metadata.runtime.repos = {
+            'repo1': mock_repo1,
+            'repo2': mock_repo2,
+            'repo3': mock_repo3,
+            'repo4': mock_repo4,
+        }
+
+        result = metadata.get_enabled_repos()
+
+        # Should only return repos enabled in BOTH places (repo1 and repo2)
+        self.assertEqual(result, {'repo1', 'repo2'})
         mock_config.get.assert_called_once_with("enabled_repos", [])
 
 
@@ -420,12 +479,15 @@ class TestImageInspector(IsolatedAsyncioTestCase):
         brew_build_inspector = mock.MagicMock(autospec=build_info.BrewBuildRecordInspector)
         get_build_id.return_value = 12345
         brew_build_inspector.get_build_id.return_value = 12345
-        get_image_meta.return_value = mock.MagicMock(
+        mock_meta = mock.MagicMock(
             autospec=image.ImageMetadata,
             config={
                 "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
             },
         )
+        mock_meta.get_enabled_repos.return_value = {"rhel-8-baseos-rpms", "rhel-8-appstream-rpms"}
+        mock_meta.runtime = runtime
+        get_image_meta.return_value = mock_meta
         image_arch.return_value = "x86_64"
         get_repodata_threadsafe.return_value = Repodata(
             name='rhel-8-appstream-rpms',

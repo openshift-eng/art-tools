@@ -4,11 +4,15 @@ import json
 import os
 import threading
 import time
-from typing import Dict, List, cast
+from string import Template
+from typing import Dict, List, Optional, Union, cast
 
 import requests
 import yaml
 from artcommonlib import logutil
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import Repo as RepoConf
+from artcommonlib.config.repo import RepoList
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 
@@ -27,10 +31,91 @@ class Repo(object):
     """Represents a single yum repository and provides sane ways to
     access each property based on the arch or repo type."""
 
-    def __init__(self, name, data, valid_arches, gpgcheck=True):
+    @staticmethod
+    def from_repo_config(
+        repo_config: RepoConf,
+        valid_arches: List[str],
+        gpgcheck: bool = True,
+        plashet_config: Optional[PlashetConfig] = None,
+        template_vars: Optional[Dict[str, str]] = None,
+    ) -> 'Repo':
+        """
+        Create a Repo instance from a new-style RepoConf (Pydantic model).
+
+        :param repo_config: New-style RepoConf Pydantic model
+        :param valid_arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        :param plashet_config: Global plashet configuration (required for plashet type repos)
+        :param template_vars: Additional template variables for URL substitution (e.g., {'slug': 'el9-embargoed'})
+        :return: Repo instance
+        """
+        # Convert new-style RepoConf to old-style dict
+        repo_dict = {}
+        arches = list(valid_arches)
+
+        # Handle plashet type repos
+        if repo_config.type == 'plashet':
+            if not plashet_config:
+                raise ValueError(f"Repo '{repo_config.name}' is of type 'plashet' but no plashet_config was provided")
+            if not repo_config.plashet:
+                raise ValueError(f"Repo '{repo_config.name}' doesn't have required key `plashet`.")
+
+            if plashet_arches := repo_config.plashet.arches or plashet_config.arches:
+                plashet_arches = set(plashet_arches)
+                arches = [arch for arch in arches if arch in plashet_arches]
+
+            vars_dict = {}
+            if template_vars:
+                vars_dict.update(template_vars)
+
+            # Build conf dict with baseurl for each architecture
+            conf = repo_config.conf.copy() if repo_config.conf else {}
+
+            # If baseurl is not provided in repo config, construct it from plashet config
+            if 'baseurl' not in conf or not conf['baseurl']:
+                vars_dict['slug'] = repo_config.plashet.slug or repo_config.name
+                baseurl_dict = {}
+
+                for arch in arches:
+                    vars_dict['arch'] = arch
+
+                    # Use string.Template to substitute variables in download_url
+                    template = Template(plashet_config.download_url)
+                    baseurl_dict[arch] = template.substitute(vars_dict)
+
+                conf['baseurl'] = baseurl_dict
+            repo_dict['conf'] = conf
+
+        # Handle external type repos (existing logic)
+        elif repo_config.type == 'external':
+            if repo_config.conf:
+                repo_dict['conf'] = repo_config.conf
+        else:
+            raise ValueError(f"Unsupported repo type: {repo_config.type}")
+
+        # Add content_set if present
+        if repo_config.content_set:
+            repo_dict['content_set'] = repo_config.content_set.model_dump(exclude_none=True)
+
+        # Add reposync if present
+        if repo_config.reposync:
+            repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
+
+        return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
+
+    def __init__(self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True):
+        """
+        Initialize a Repo instance.
+
+        :param name: Repository name
+        :param data: Repository configuration as old-style dict with 'conf' and 'content_set' keys
+        :param valid_arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        """
         self.name = name
         self._valid_arches = valid_arches
         self._invalid_cs_arches = set()
+
         self._data = Model(data)
         for req in ['conf', 'content_set']:
             if req not in self._data:
@@ -41,8 +126,6 @@ class Repo(object):
         # fill out default conf values
         conf = self._data.conf
         conf.name = conf.get('name', name)
-        conf.enabled = conf.get('enabled', None)
-        self.enabled = conf.enabled == 1
         self.gpgcheck = gpgcheck
 
         def pkgs_to_list(pkgs_str):
@@ -88,7 +171,19 @@ class Repo(object):
     @property
     def enabled(self):
         """Allows access via repo.enabled"""
-        return self._data.conf.enabled == 1
+        val = self._data.conf.enabled
+        if isinstance(val, str):
+            val = val.lower()
+            if val in ('true', 'yes'):
+                return True
+            if val in ('false', 'no'):
+                return False
+            raise ValueError(f"Invalid enabled option {val}")
+        if val in (Missing, 1, True):
+            return True
+        if val in (0, False):
+            return False
+        raise ValueError(f"Invalid enabled option {val}")
 
     @property
     def arches(self):
@@ -294,15 +389,6 @@ class Repo(object):
             lock.release()
 
 
-# base empty repo section for disabling repos in Dockerfiles
-EMPTY_REPO = """
-[{0}]
-baseurl = http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/AtomicOpenShift_Empty/
-enabled = 1
-gpgcheck = 0
-name = {0}
-"""
-
 # Base header for all content_sets.yml output
 CONTENT_SETS = """
 # This file is managed by the doozer build tool: https://github.com/openshift-eng/doozer,
@@ -331,15 +417,55 @@ class Repos(object):
     automatic content_set and repo conf file generation.
     """
 
-    def __init__(self, repos: Dict[str, Dict], arches: List[str], gpgcheck=True):
+    def __init__(
+        self,
+        repos: Union[Dict[str, Dict], RepoList],
+        arches: List[str],
+        gpgcheck=True,
+        plashet_config: Optional[PlashetConfig] = None,
+        template_vars: Optional[Dict[str, str]] = None,
+    ):
+        """
+        Initialize Repos collection.
+
+        :param repos: Repository configuration (old-style dict or new-style RepoList)
+        :param arches: List of valid architectures
+        :param gpgcheck: Whether to enable GPG signature checking
+        :param plashet_config: Global plashet configuration (required for plashet type repos)
+        :param template_vars: Additional template variables for URL substitution
+        """
         self._arches = arches
         self._repos: Dict[str, Repo] = {}
         repotypes = []
         names = []
-        for name, repo in repos.items():
-            names.append(name)
-            self._repos[name] = Repo(name, repo, self._arches, gpgcheck=gpgcheck)
-            repotypes.extend(self._repos[name].repotypes)
+
+        # Handle both old-style dict and new-style RepoList
+        if isinstance(repos, RepoList):
+            # New-style RepoList: process both external and plashet repos
+            for repo_config in repos.root:
+                if repo_config.disabled:
+                    continue
+                # Skip repos that are neither external nor plashet
+                if repo_config.type not in ['external', 'plashet']:
+                    continue
+
+                # Use static method to convert new-style RepoConf to Repo instance
+                names.append(repo_config.name)
+                self._repos[repo_config.name] = Repo.from_repo_config(
+                    repo_config,
+                    self._arches,
+                    gpgcheck=gpgcheck,
+                    plashet_config=plashet_config,
+                    template_vars=template_vars,
+                )
+                repotypes.extend(self._repos[repo_config.name].repotypes)
+        else:
+            # Old-style dict: pass directly to Repo constructor
+            for name, repo in repos.items():
+                names.append(name)
+                self._repos[name] = Repo(name, repo, self._arches, gpgcheck=gpgcheck)
+                repotypes.extend(self._repos[name].repotypes)
+
         self.names = tuple(names)
         self.repotypes = list(set(repotypes))  # leave only unique values
 
@@ -359,26 +485,34 @@ class Repos(object):
         """Mainly for debugging to dump a dict representation of the collection"""
         return str(self._repos)
 
-    def repo_file(self, repo_type, enabled_repos=[], empty_repos=[], arch=None, konflux=False):
+    def repo_file(self, repo_type, enabled_repos=[], arch=None, konflux=False, omit_disabled_repos=True):
         """
-        Returns a str defining a list of repo configuration secions for a yum configuration file.
+        Returns a str defining a list of repo configuration sections for a yum configuration file.
         :param repo_type: Whether to prefer signed or unsigned repos.
-        :param enabled_repos: A list of group.yml repo names which should be enabled. If a repo is enabled==1
-            in group.yml, that setting takes precedence over this list. If not enabled==1 in group.yml and not
-            found in this list, the repo will be returned as enabled==0. If '*' is included in the list,
-            all repos will be enabled.
-        :param empty_repos: A list of repo names to return defined as no-op yum repos.
+        :param enabled_repos: A list of group.yml repo names which should be enabled. A repo is considered
+            enabled only if it is both enabled in group.yml AND listed in this parameter. An empty list
+            means all repos are disabled.
         :param arch: The architecture for which this repository should be generated. If None, all architectures
             will be included in the returned str.
+        :param konflux: Whether to generate Konflux-specific repo configuration.
+        :param omit_disabled_repos: If True, disabled repos will be omitted from the generated repo file.
+            If False, disabled repos will be included with enabled=0 and a warning will be printed.
         """
 
         result = ''
         for r in self._repos.values():
-            enabled = r.enabled  # If enabled in group.yml, it will always be enabled.
-            if enabled_repos and (r.name in enabled_repos or '*' in enabled_repos):
-                enabled = True
+            # A repo is enabled only if BOTH conditions are true:
+            # 1. enabled in group.yml (r.enabled)
+            # 2. listed in enabled_repos
+            enabled = r.enabled and r.name in enabled_repos
+
             if not enabled:
-                continue
+                if omit_disabled_repos:
+                    # Skip disabled repos
+                    continue
+                else:
+                    # Include disabled repo with enabled=0 and print warning
+                    LOGGER.warning(f"Repository '{r.name}' is disabled but included in repo file")
 
             if arch:  # Generating a single arch?
                 # Just use the configured name for the set. This behavior needs to be preserved to
@@ -392,9 +526,6 @@ class Repos(object):
                         repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux
                     )
 
-        for er in empty_repos:
-            result += EMPTY_REPO.format(er)
-
         return result
 
     def content_sets(self, enabled_repos=[], non_shipping_repos=[]):
@@ -406,8 +537,12 @@ class Repos(object):
         if missing_repos:
             raise ValueError(f"enabled_repos references undefined repo(s): {missing_repos}")
         result = {}
-        globally_enabled_repos = {r.name for r in self._repos.values() if r.enabled}
-        shipping_repos = (set(globally_enabled_repos) | set(enabled_repos)) - set(non_shipping_repos)
+        # A repo is enabled only if BOTH enabled in group.yml AND listed in enabled_repos
+        if enabled_repos:
+            globally_enabled_repos = {r.name for r in self._repos.values() if r.enabled}
+            shipping_repos = (globally_enabled_repos & set(enabled_repos)) - set(non_shipping_repos)
+        else:
+            shipping_repos = set()
         for a in sorted(self._arches):
             content_sets = []
             for r in shipping_repos:
