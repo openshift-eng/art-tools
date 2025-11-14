@@ -7,11 +7,12 @@ from doozerlib.lockfile import (
     DEFAULT_RPM_LOCKFILE_NAME,
     ArtifactInfo,
     ArtifactLockfileGenerator,
+    ModuleInfo,
     RpmInfo,
     RpmInfoCollector,
     RPMLockfileGenerator,
 )
-from doozerlib.repodata import Repodata, Rpm
+from doozerlib.repodata import Repodata, Rpm, RpmModule
 from doozerlib.repos import Repo, Repos
 
 
@@ -79,6 +80,38 @@ class TestRpmInfo(unittest.TestCase):
         self.assertLess(a, c)
         self.assertTrue(a <= b)
         self.assertTrue(c > a)
+
+
+class TestModuleInfo(unittest.TestCase):
+    def test_from_repository_metadata(self):
+        module_info = ModuleInfo.from_repository_metadata(
+            repoid="rhel-9-appstream-rpms",
+            baseurl="https://example.com/",
+            checksum="sha256:abc123",
+            size=12345,
+            url="https://example.com/repodata/modules.yaml.gz",
+        )
+
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+        self.assertEqual(module_info.url, "https://example.com/repodata/modules.yaml.gz")
+        self.assertEqual(module_info.checksum, "sha256:abc123")
+        self.assertEqual(module_info.size, 12345)
+
+    def test_to_dict(self):
+        module_info = ModuleInfo(
+            url="https://example.com/repodata/modules.yaml.gz",
+            repoid="rhel-9-appstream-rpms",
+            checksum="sha256:abc123",
+            size=12345,
+        )
+
+        expected = {
+            "url": "https://example.com/repodata/modules.yaml.gz",
+            "repoid": "rhel-9-appstream-rpms",
+            "checksum": "sha256:abc123",
+            "size": 12345,
+        }
+        self.assertEqual(module_info.to_dict(), expected)
 
 
 class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
@@ -315,6 +348,116 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
             )
             self.collector.logger.info.assert_any_call("Finished loading repos: rhel-9-appstream-rpms for arch x86_64")
 
+    def test_fetch_modules_info_empty_modules(self):
+        """Test graceful handling when no modules are requested"""
+
+        async def _test():
+            result = await self.collector.fetch_modules_info(['x86_64'], {'repo1'}, set())
+            self.assertEqual(result, {'x86_64': []})
+
+        asyncio.run(_test())
+
+    def test_fetch_modules_info_missing_modules(self):
+        """Test graceful handling when requested modules are not found"""
+
+        empty_repodata = MagicMock()
+        empty_repodata.modules = []
+        self.collector.loaded_repos = {"repo1-x86_64": empty_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "repo1-content-set"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"repo1": mock_repo}
+
+        async def _test():
+            result = await self.collector.fetch_modules_info(['x86_64'], {'repo1'}, {'nonexistent'})
+            # Should return empty list for the arch when modules not found
+            self.assertEqual(result, {'x86_64': []})
+
+        asyncio.run(_test())
+
+    def test_fetch_modules_info_per_arch_basic(self):
+        """Test basic module info fetching for a single architecture"""
+        # Create sample modules
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        perl_module = RpmModule("perl", "5.32", 789012, "def456", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, perl_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+        appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        result = self.collector._fetch_modules_info_per_arch({"nginx", "perl"}, {"rhel-9-appstream-rpms"}, "x86_64")
+
+        # Should find one ModuleInfo entry for the repository
+        self.assertEqual(len(result), 1)
+        module_info = result[0]
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+        self.assertEqual(module_info.checksum, "sha256:abc123")
+        self.assertEqual(module_info.size, 12345)
+
+    def test_fetch_modules_info_per_arch_deduplication(self):
+        """Test that only one ModuleInfo is created per repository"""
+        # Multiple modules from same repository
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        nodejs_module = RpmModule("nodejs", "16", 456789, "def456", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, nodejs_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+        appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        # Request multiple modules from same repo
+        result = self.collector._fetch_modules_info_per_arch({"nginx", "nodejs"}, {"rhel-9-appstream-rpms"}, "x86_64")
+
+        # Should only have one ModuleInfo entry despite multiple modules
+        self.assertEqual(len(result), 1)
+
+    def test_fetch_modules_info_per_arch_stream_extraction(self):
+        """Test that module:stream specifications are matched by name only"""
+        # Repository has nginx module with name "nginx"
+        nginx_module = RpmModule("nginx", "1.24", 123456, "abc123", "x86_64", set())
+        perl_module = RpmModule("perl", "5.32", 789012, "def456", "x86_64", set())
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.modules = [nginx_module, perl_module]
+        appstream_repodata.modules_checksum = "sha256:abc123"
+        appstream_repodata.modules_size = 12345
+        appstream_repodata.modules_url = "https://example.com/repodata/modules.yaml.gz"
+
+        self.collector.loaded_repos = {"rhel-9-appstream-rpms-x86_64": appstream_repodata}
+
+        mock_repo = MagicMock()
+        mock_repo.content_set.return_value = "rhel-9-appstream-rpms"
+        mock_repo.baseurl.return_value = "https://example.com/"
+        self.collector.repos._repos = {"rhel-9-appstream-rpms": mock_repo}
+
+        # Request modules with stream specification - should match by name only
+        result = self.collector._fetch_modules_info_per_arch(
+            {"nginx:1.24", "perl:5.32"}, {"rhel-9-appstream-rpms"}, "x86_64"
+        )
+
+        # Should find the modules despite the stream specification in request
+        self.assertEqual(len(result), 1)
+        module_info = result[0]
+        self.assertEqual(module_info.repoid, "rhel-9-appstream-rpms")
+
 
 class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -348,6 +491,71 @@ class TestRPMLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         # Should always generate when conditions are met
         self.generator.builder.fetch_rpms_info.assert_called_once()
         mock_write_yaml.assert_called_once()
+
+    async def test_generate_lockfile_with_modules(self):
+        """Test lockfile generation includes module metadata when modules are configured"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg', 'evr': '1.0-1'}
+
+        dummy_module_info = MagicMock()
+        dummy_module_info.to_dict.return_value = {
+            'url': 'https://example.com/modules.yaml',
+            'repoid': 'rhel-9-appstream',
+            'checksum': 'sha256:abc123',
+            'size': 12345,
+        }
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={'x86_64': [dummy_module_info]})
+
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        mock_image_meta.is_lockfile_generation_enabled.return_value = True
+        mock_image_meta.get_enabled_repos.return_value = self.repos_set
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value={'python36'})
+        mock_image_meta.get_arches.return_value = ['x86_64']
+
+        with patch.object(self.generator, '_write_yaml') as mock_write:
+            await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
+
+        self.generator.builder.fetch_rpms_info.assert_called_once()
+        self.generator.builder.fetch_modules_info.assert_called_once()
+        mock_write.assert_called_once()
+
+        # Verify the lockfile structure contains module_metadata
+        call_args = mock_write.call_args[0]
+        lockfile_data = call_args[0]
+        self.assertIn('arches', lockfile_data)
+        arch_data = lockfile_data['arches'][0]
+        self.assertIn('module_metadata', arch_data)
+        self.assertEqual(len(arch_data['module_metadata']), 1)
+        self.assertEqual(arch_data['module_metadata'][0]['repoid'], 'rhel-9-appstream')
+
+    async def test_generate_lockfile_no_modules_configured(self):
+        """Test lockfile generation with empty module_metadata when no modules are configured"""
+        dummy_rpm_info = MagicMock()
+        dummy_rpm_info.to_dict.return_value = {'name': 'mypkg'}
+
+        self.generator.builder.fetch_rpms_info = AsyncMock(return_value={'x86_64': [dummy_rpm_info]})
+        self.generator.builder.fetch_modules_info = AsyncMock(return_value={'x86_64': []})
+
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        mock_image_meta.is_lockfile_generation_enabled.return_value = True
+        mock_image_meta.get_enabled_repos.return_value = self.repos_set
+        mock_image_meta.get_lockfile_rpms_to_install = AsyncMock(return_value=self.rpms)
+        mock_image_meta.get_lockfile_modules_to_install = MagicMock(return_value=set())
+        mock_image_meta.get_arches.return_value = ['x86_64']
+
+        with patch.object(self.generator, '_write_yaml') as mock_write:
+            await self.generator.generate_lockfile(mock_image_meta, self.path, self.filename)
+
+        call_args = mock_write.call_args[0]
+        lockfile_data = call_args[0]
+        arch_data = lockfile_data['arches'][0]
+        self.assertIn('module_metadata', arch_data)
+        self.assertEqual(len(arch_data['module_metadata']), 0)
 
     @patch('builtins.open', new_callable=mock_open)
     @patch('pathlib.Path.exists', return_value=False)

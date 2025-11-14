@@ -1233,7 +1233,22 @@
                 "inspect_parent!": {
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
                 },
-                "inspect_parent-": {}
+                "inspect_parent-": {},
+                "modules": {
+                  "description": "Array of module names to include in lockfile generation",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "modules?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/modules"
+                },
+                "modules!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/modules"
+                },
+                "modules-": {}
               },
               "additionalProperties": false
             },
