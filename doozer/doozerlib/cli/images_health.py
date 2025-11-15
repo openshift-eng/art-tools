@@ -188,6 +188,8 @@ class ImagesHealthPipeline:
         """
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
+
+        self.logger.info('Querying builds for image: %s', image_meta.distgit_key)
         results = [
             build
             async for build in self.runtime.konflux_db.search_builds_by_fields(
