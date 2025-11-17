@@ -738,7 +738,7 @@ def get_advisory_boilerplate(runtime, et_data, art_advisory_key, errata_type):
     return advisory_boilerplate
 
 
-async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
+async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
     """
     Extract NVRs from FBC image using ORAS workflow.
     Reuses the logic from elliott snapshot CLI.
@@ -829,6 +829,13 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                         content = f.read()
                         logger.debug(f"{file}: {content[:200]}...")  # First 200 chars
 
+            # Transform the URLs - require product name to be specified
+            if not product:
+                raise ValueError(
+                    "Product parameter is required to determine the registry namespace for image transformation"
+                )
+            registry_transform_pattern = rf'registry\.redhat\.io/{product}/[^@]*'
+
             related_images = []
             related_images_path = os.path.join(temp_dir, 'related-images.json')
             if os.path.exists(related_images_path):
@@ -838,13 +845,12 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
 
                 logger.info(f"Found {len(raw_images)} images in related-images.json")
 
-                # Transform the URLs like the manual sed command
                 for img_url in raw_images:
-                    if 'registry.redhat.io/oadp/' in img_url:
-                        # Apply the same transformation as the sed command:
-                        # s|registry\.redhat\.io/oadp/[^@]*|quay.io/redhat-user-workloads/ocp-art-tenant/art-images|g
+                    # Check if the URL matches the product namespace pattern
+                    if f'registry.redhat.io/{product}/' in img_url:
+                        # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                         transformed_url = re.sub(
-                            r'registry\.redhat\.io/oadp/[^@]*',
+                            registry_transform_pattern,
                             'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
                             img_url,
                         )
@@ -875,11 +881,13 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str) -> list[str]:
                 registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
                 found_images = re.findall(registry_pattern, catalog_content)
 
+                # Use the same product namespace for catalog.json fallback
                 for img_url in found_images:
                     img_url = img_url.rstrip('",')
-                    if 'registry.redhat.io/oadp/' in img_url:
+                    # Check if the URL matches the product namespace pattern
+                    if f'registry.redhat.io/{product}/' in img_url:
                         transformed_url = re.sub(
-                            r'registry\.redhat\.io/oadp/[^@]*',
+                            registry_transform_pattern,
                             'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
                             img_url,
                         )

@@ -503,7 +503,7 @@ class ReleaseFromFbcPipeline:
         # Extract related images from each FBC sequentially to avoid temp directory conflicts
         fbc_related_images = {}
         for fbc_pullspec in fbc_pullspecs:
-            related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec)
+            related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec, self.product)
             fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
 
         # Compare related images across all FBCs
