@@ -551,3 +551,61 @@ USER 3000
                 except ValueError:
                     # If version parsing fails, it should be handled gracefully
                     pass
+
+    def test_get_module_enablement_commands_disabled_by_config(self):
+        """Test _get_module_enablement_commands returns empty list when dnf_modules_enable is disabled"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        # Create mock metadata with dnf_modules_enable disabled
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = False
+
+        result = rebaser._get_module_enablement_commands(mock_metadata)
+
+        # Should return empty list
+        self.assertEqual(result, [])
+
+        # Should log that module enablement is disabled
+        rebaser._logger.info.assert_called_once_with("DNF module enablement disabled for test-image")
+
+        # Should not call other metadata methods since we returned early
+        mock_metadata.branch_el_target.assert_not_called()
+        mock_metadata.get_lockfile_modules_to_install.assert_not_called()
+
+    def test_get_module_enablement_commands_enabled_by_config(self):
+        """Test _get_module_enablement_commands generates commands when dnf_modules_enable is enabled"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        # Create mock metadata with dnf_modules_enable enabled
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
+        mock_metadata.branch_el_target.return_value = 9  # RHEL 9
+        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15", "maven:3.8"}
+
+        result = rebaser._get_module_enablement_commands(mock_metadata)
+
+        # Should return command list
+        self.assertEqual(len(result), 1)
+        self.assertIn("RUN dnf module enable -y", result[0])
+        self.assertIn("maven:3.8", result[0])
+        self.assertIn("postgresql:15", result[0])
+
+        # Should log the modules being enabled
+        rebaser._logger.info.assert_called_once()
+        log_message = rebaser._logger.info.call_args[0][0]
+        self.assertIn("Enabling modules for test-image", log_message)
+
+        # Should have called all metadata methods
+        mock_metadata.is_dnf_modules_enable_enabled.assert_called_once()
+        mock_metadata.branch_el_target.assert_called_once()
+        mock_metadata.get_lockfile_modules_to_install.assert_called_once()

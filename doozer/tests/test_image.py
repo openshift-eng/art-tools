@@ -965,6 +965,87 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         # Should not log when using default
         metadata.logger.info.assert_not_called()
 
+    def test_is_dnf_modules_enable_enabled_default(self):
+        """Test dnf_modules_enable defaults to True when no configuration is set"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock both configs as Missing
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.config = mock_config
+
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertTrue(result)
+        # Should not log when using default
+        metadata.logger.info.assert_not_called()
+
+    def test_is_dnf_modules_enable_enabled_image_config_override(self):
+        """Test dnf_modules_enable respects image-level configuration override"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config override
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = False
+        metadata.config = mock_config
+
+        # Mock group config as Missing
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertFalse(result)
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from metadata config: False")
+
+    def test_is_dnf_modules_enable_enabled_group_config_override(self):
+        """Test dnf_modules_enable respects group-level configuration override"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config as Missing
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.config = mock_config
+
+        # Mock group config override
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = True
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertTrue(result)
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from group config: True")
+
+    def test_is_dnf_modules_enable_enabled_precedence(self):
+        """Test dnf_modules_enable configuration hierarchy precedence (image > group)"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config override (should take precedence)
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = False
+        metadata.config = mock_config
+
+        # Mock group config with different value
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = True
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertFalse(result)
+        # Should use image config and log it
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from metadata config: False")
+
     async def test_fetch_rpms_inspect_parent_disabled_returns_full_set(self):
         """Test fetch_rpms_from_build with inspect_parent=False returns full image RPMs"""
         metadata = self._create_image_metadata('openshift/test-inspect-parent')
