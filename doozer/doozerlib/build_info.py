@@ -141,9 +141,8 @@ class BrewImageInspector(ImageInspector):
 
         # Get enabled repos for the image
         group_repos = self.runtime.repos
-        enabled_repos = sorted(
-            {r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", []))
-        )
+        # Use get_enabled_repos() which applies AND logic (globally enabled AND in image config)
+        enabled_repos = sorted(meta.get_enabled_repos())
         if not enabled_repos:  # no enabled repos
             logger.warning(
                 "Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.",
@@ -742,9 +741,8 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         non_latest_rpms_for_arch = {}
 
         # Get enabled repos
-        enabled_repos = {r.name for r in group_repos.values() if r.enabled}
-        if meta.config.enabled_repos is not Missing:
-            enabled_repos |= set(meta.config.enabled_repos)
+        # Use get_enabled_repos() which applies AND logic (globally enabled AND in image config)
+        enabled_repos = meta.get_enabled_repos()
 
         # If there are no enabled repos, nothing to do here
         if not enabled_repos:
