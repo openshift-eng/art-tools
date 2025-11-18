@@ -479,11 +479,11 @@ class OLMBundle(object):
             )
             raise
 
-        if self.runtime.group_config.operator_image_ref_mode == 'manifest-list':
-            return image_info['listDigest']
+        if self.runtime.group_config.operator_image_ref_mode == 'by-arch':
+            # @TODO: decide how to handle 4.2 multi-arch. hardcoding amd64 for now
+            return image_info['contentDigest']
 
-        # @TODO: decide how to handle 4.2 multi-arch. hardcoding amd64 for now
-        return image_info['contentDigest']
+        return image_info['listDigest']
 
     def append_related_images_spec(self, contents, images):
         """Create a new section under contents' "spec" called "relatedImages", listing all given

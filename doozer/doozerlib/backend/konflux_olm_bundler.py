@@ -363,9 +363,9 @@ class KonfluxOlmBundleRebaser:
             image_nvr = f"{image_component_name}-{image_version}-{image_release}"
             namespace, image_short_name, image_tag = references[pullspec]
             image_sha = (
-                image_info['listDigest']
-                if self._group_config.operator_image_ref_mode == 'manifest-list'
-                else image_info['contentDigest']
+                image_info['contentDigest']
+                if self._group_config.operator_image_ref_mode == 'by-arch'
+                else image_info['listDigest']
             )
             if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
