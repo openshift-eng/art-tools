@@ -703,7 +703,7 @@ class KonfluxDb:
         embargoed: typing.Optional[bool] = None,
         extra_patterns: dict = {},
         strict: bool = False,
-        use_cache: bool = False,
+        use_cache: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build with optimized caching and exponential window search.
