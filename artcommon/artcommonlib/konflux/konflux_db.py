@@ -286,7 +286,7 @@ class KonfluxDb:
     _cache_lock = threading.RLock()
     _group_loading_events: typing.Dict[str, asyncio.Event] = {}  # Per-group events for coordinating lazy-load
 
-    def __init__(self, enable_cache: bool = False, cache_days: int = 30):
+    def __init__(self, enable_cache: bool = True, cache_days: int = 30):
         """
         Initialize KonfluxDb client.
 
@@ -703,7 +703,7 @@ class KonfluxDb:
         embargoed: typing.Optional[bool] = None,
         extra_patterns: dict = {},
         strict: bool = False,
-        use_cache: bool = True,
+        use_cache: bool = False,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build with optimized caching and exponential window search.
