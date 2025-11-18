@@ -555,10 +555,7 @@ USER 3000
     def test_get_module_enablement_commands_disabled_by_config(self):
         """Test _get_module_enablement_commands returns empty list when dnf_modules_enable is disabled"""
         rebaser = KonfluxRebaser(
-            runtime=MagicMock(),
-            base_dir=Path("/tmp"),
-            source_resolver=MagicMock(),
-            repo_type="test"
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
         )
         rebaser._logger = MagicMock()
 
@@ -583,10 +580,7 @@ USER 3000
     def test_get_module_enablement_commands_enabled_by_config(self):
         """Test _get_module_enablement_commands generates commands when dnf_modules_enable is enabled"""
         rebaser = KonfluxRebaser(
-            runtime=MagicMock(),
-            base_dir=Path("/tmp"),
-            source_resolver=MagicMock(),
-            repo_type="test"
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
         )
         rebaser._logger = MagicMock()
 
