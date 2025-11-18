@@ -376,7 +376,7 @@ class PrepareReleaseKonfluxPipeline:
             await self.run_cmd_with_retry(base_command, operate_cmd)
 
         # Find bugs
-        self.logger.info("Finding bugs...", impetus)
+        self.logger.info("Finding %s bugs...", impetus)
         impetus_bugs = await self.find_bugs(build_system='brew')
 
         # Process bugs
