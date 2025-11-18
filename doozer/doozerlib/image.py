@@ -759,6 +759,33 @@ class ImageMetadata(Metadata):
 
         return True
 
+    def is_dnf_modules_enable_enabled(self) -> bool:
+        """
+        Determines whether DNF module enablement command injection is enabled.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.cachi2.lockfile.dnf_modules_enable)
+        2. Group configuration (runtime.group_config.konflux.cachi2.lockfile.dnf_modules_enable)
+
+        If neither is set, DNF modules enablement defaults to enabled (True).
+
+        Returns:
+            bool: True if DNF module enablement injection is enabled, False otherwise.
+        """
+        dnf_modules_enable_config_override = self.config.konflux.cachi2.lockfile.dnf_modules_enable
+        if dnf_modules_enable_config_override not in [Missing, None]:
+            dnf_modules_enable = bool(dnf_modules_enable_config_override)
+            self.logger.info(f"DNF modules enablement set from metadata config: {dnf_modules_enable}")
+            return dnf_modules_enable
+
+        dnf_modules_enable_group_override = self.runtime.group_config.konflux.cachi2.lockfile.dnf_modules_enable
+        if dnf_modules_enable_group_override not in [Missing, None]:
+            dnf_modules_enable = bool(dnf_modules_enable_group_override)
+            self.logger.info(f"DNF modules enablement set from group config: {dnf_modules_enable}")
+            return dnf_modules_enable
+
+        return True
+
     async def fetch_rpms_from_build(self) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.

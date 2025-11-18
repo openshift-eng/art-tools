@@ -1098,6 +1098,11 @@ class KonfluxRebaser:
         if not metadata.is_lockfile_generation_enabled():
             return []
 
+        # Check if DNF module enablement is disabled
+        if not metadata.is_dnf_modules_enable_enabled():
+            self._logger.info(f"DNF module enablement disabled for {metadata.distgit_key}")
+            return []
+
         try:
             el_ver = metadata.branch_el_target()
             if el_ver < 9:

@@ -1248,7 +1248,18 @@
                 "modules!": {
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/modules"
                 },
-                "modules-": {}
+                "modules-": {},
+                "dnf_modules_enable": {
+                  "description": "Enable automatic DNF module enablement commands injection (default: true)",
+                  "type": "boolean"
+                },
+                "dnf_modules_enable?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/dnf_modules_enable"
+                },
+                "dnf_modules_enable!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/dnf_modules_enable"
+                },
+                "dnf_modules_enable-": {}
               },
               "additionalProperties": false
             },
