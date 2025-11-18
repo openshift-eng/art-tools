@@ -149,6 +149,7 @@ class BuildCache:
         artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
         engine: typing.Optional[typing.Union[Engine, str]] = None,
         embargoed: typing.Optional[bool] = None,
+        completed_before: typing.Optional[datetime] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build for name with optional filters from specified group.
@@ -163,6 +164,7 @@ class BuildCache:
         :param artifact_type: Filter by artifact type (rpm/image) - accepts enum or string
         :param engine: Filter by engine (brew/konflux) - accepts enum or string
         :param embargoed: Filter by embargoed status
+        :param completed_before: Filter by completion time (only return builds completed before this time)
         :return: Latest matching build or None
         """
         # Normalize enum parameters - accept strings or enums
@@ -202,6 +204,12 @@ class BuildCache:
                     continue
                 if embargoed is not None and build.embargoed != embargoed:
                     continue
+                if completed_before is not None and build.start_time is not None:
+                    # Ensure completed_before is timezone-aware for comparison
+                    cb_time = completed_before.astimezone(timezone.utc) if completed_before.tzinfo else completed_before.replace(tzinfo=timezone.utc)
+                    build_time = build.start_time.astimezone(timezone.utc) if build.start_time.tzinfo else build.start_time.replace(tzinfo=timezone.utc)
+                    if build_time >= cb_time:
+                        continue
 
                 # Found matching build
                 self._cache_hits += 1
@@ -775,6 +783,7 @@ class KonfluxDb:
                 artifact_type=artifact_type,
                 engine=engine,
                 embargoed=embargoed,
+                completed_before=completed_before,
             )
             if cached:
                 # Verify extra_patterns if specified
