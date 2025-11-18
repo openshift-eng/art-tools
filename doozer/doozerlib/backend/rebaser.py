@@ -26,7 +26,7 @@ from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.image import ImageMetadata
+from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
@@ -96,7 +96,6 @@ class KonfluxRebaser:
         self.force_private_bit = force_private_bit
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
-        self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
         self.rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
@@ -420,7 +419,9 @@ class KonfluxRebaser:
             elif "image" in parent:
                 mapped_images.append((parent["image"], False))
             elif "stream" in parent:
-                mapped_images.append((await self._resolve_stream_parent(parent['stream'], original_parent, dfp), False))
+                mapped_images.append(
+                    (await self._resolve_stream_parent(metadata, parent['stream'], original_parent, dfp), False)
+                )
             else:
                 raise ValueError(f"Image in 'from' for [{metadata.distgit_key}] is missing its definition.")
 
@@ -480,35 +481,25 @@ class KonfluxRebaser:
             return f"{self.image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 
     @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")
-    async def _resolve_stream_parent(self, stream_name: str, original_parent: str, dfp: DockerfileParser):
-        stream = self._runtime.resolve_stream(stream_name)
-        stream_image = str(stream.image)
+    async def _resolve_stream_parent(
+        self, metadata: ImageMetadata, stream_name: str, original_parent: str, dfp: DockerfileParser
+    ):
+        stream_image = None
+        if self.variant is BuildVariant.OCP and metadata.canonical_builders_enabled:
+            # canonical_builders_from_upstream is enabled: try matching upstream golang builders
+            stream_image = await self._resolve_image_from_upstream_parent(original_parent, dfp)
 
-        # For pullspecs not containing full registry URL, like `openshift/golang-builder:foo`,
-        # we need to prepend the full brew registry URL.
-        if stream_image.startswith("openshift/"):
-            stream_image = f"{constants.BREW_REGISTRY_BASE_URL}/{stream_image}"
+        # do typical stream resolution
+        if not stream_image:
+            stream = self._runtime.resolve_stream(stream_name)
+            stream_image = str(stream.image)
 
-            if "openshift/golang-builder" in stream_image:
-                # For example:
-                # "brew.registry.redhat.io/openshift/golang-builder:v1.22.5-202407301806.g4c8b32d.el9" ->
-                # "brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.22.5-202407301806.g4c8b32d.el9"
-                stream_image = stream_image.replace("openshift/golang-builder", "rh-osbs/openshift-golang-builder")
-
-        elif self.variant is BuildVariant.OKD:
+        # For OKD variant, return stream image as-is without transformation
+        if self.variant is BuildVariant.OKD:
             return stream_image
 
-        if not self.should_match_upstream:
-            # Do typical stream resolution.
-            return stream_image
-
-        # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
-        matching_image = await self._resolve_image_from_upstream_parent(original_parent, dfp)
-        if matching_image:
-            return matching_image
-
-        # Didn't find a match for upstream parent: do typical stream resolution
-        return stream_image
+        # Transform the stream pullspec to brew registry format
+        return self._transform_stream_pullspec(stream_image)
 
     @start_as_current_span_async(TRACER, "rebase.wait_for_parent_members")
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
@@ -904,6 +895,27 @@ class KonfluxRebaser:
         df_stages.append(df_stage)
         return df_stages
 
+    @staticmethod
+    def _transform_stream_pullspec(pullspec: str) -> str:
+        """
+        Transform a stream image pullspec to the appropriate brew registry format.
+
+        For pullspecs starting with "openshift/" (without full registry URL),
+        prepend the brew registry URL and replace the namespace:
+        - "openshift/golang-builder:..." -> "brew.registry.redhat.io/rh-osbs/openshift-golang-builder:..."
+        - "openshift/foo:..." -> "brew.registry.redhat.io/rh-osbs/openshift-foo:..."
+
+        Args:
+            pullspec: The stream image pullspec
+
+        Returns:
+            Transformed pullspec with full brew registry URL
+        """
+        if pullspec.startswith("openshift/"):
+            # Prepend brew registry and replace openshift/ with rh-osbs/openshift-
+            return f"{constants.BREW_REGISTRY_BASE_URL}/{pullspec.replace('openshift/', 'rh-osbs/openshift-')}"
+        return pullspec
+
     @start_as_current_span_async(TRACER, "rebase.update_dockerfile")
     async def _update_dockerfile(
         self,
@@ -1019,7 +1031,7 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if self.should_match_upstream:
+        if metadata.canonical_builders_enabled:
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
@@ -1921,17 +1933,20 @@ class KonfluxRebaser:
 
         try:
             self._logger.debug('Retrieving image info for image %s', original_parent)
-            labels = await util.oc_image_info_for_arch_async__caching(original_parent)['config']['config']['Labels']
 
-            # Get builder X.Y
-            major, minor, _ = util.extract_version_fields(labels['version'])
+            # Use the cached function to extract builder info
+            el_version, golang_version = extract_builder_info_from_pullspec(original_parent)
 
-            # Get builder EL version
-            el_version = release_util.isolate_el_version_in_release(labels['release'])
+            if not el_version or not golang_version:
+                raise ValueError(f'Could not extract RHEL version or golang version from {original_parent}')
+
+            major, minor = golang_version
 
             # Get expected stream name
-            for stream in self._runtime.streams.values():
-                image = stream['image']
+            for name, stream in self._runtime.streams.items():
+                image = str(stream['image'])
+                if ':' not in image:
+                    raise ValueError(f"Invalid stream image `{image}` in stream `{name}`")
                 image_tag = image.split(':')[-1]
 
                 # Compare builder X.Y
