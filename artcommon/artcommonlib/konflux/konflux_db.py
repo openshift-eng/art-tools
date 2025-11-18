@@ -961,7 +961,7 @@ class KonfluxDb:
         """
         # Use optimized get_latest_build with NVR parameter
         # This will check cache first, then use exponential windows
-        return await self.get_latest_build(nvr=nvr, outcome=outcome, strict=strict)
+        return await self.get_latest_build(nvr=nvr, outcome=outcome, strict=strict, use_cache=False)
 
     async def get_build_records_by_nvrs(
         self,
