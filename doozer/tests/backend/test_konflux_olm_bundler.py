@@ -101,7 +101,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             'contentDigest': 'sha256:abcdef1234567890',
         }
         mock_oc_image_info.return_value = mock_image_info
-        self.rebaser._group_config.operator_image_ref_mode = 'manifest-list'
+        # operator_image_ref_mode defaults to 'manifest-list' (uses listDigest)
         self.rebaser._group_config.get.return_value = 'namespace'
         metadata = MagicMock()
         metadata.runtime.group = "openshift-4.19"
