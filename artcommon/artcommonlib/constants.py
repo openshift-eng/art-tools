@@ -16,7 +16,7 @@ GIT_NO_PROMPTS = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 
-ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "4.19", "4.20", "4.21"]
+ACTIVE_OCP_VERSIONS = ["4.12", "4.13", "4.14", "4.15", "4.16", "4.17", "4.18", "4.19", "4.20", "4.21", "4.22"]
 
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
@@ -36,7 +36,19 @@ REDIS_PORT = '6379'
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2.redhat.com:4317"
 
 # Sync konflux builds to default (formerly Brew) imagestreams for versions in this list
-KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = ["4.21", "4.20", "4.19", "4.18", "4.17", "4.16", "4.15", "4.14", "4.13", "4.12"]
+KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS = [
+    "4.22",
+    "4.21",
+    "4.20",
+    "4.19",
+    "4.18",
+    "4.17",
+    "4.16",
+    "4.15",
+    "4.14",
+    "4.13",
+    "4.12",
+]
 KONFLUX_ART_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
 
 KONFLUX_DEFAULT_BUILD_PRIORITY = 5
