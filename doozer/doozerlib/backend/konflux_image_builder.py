@@ -697,6 +697,7 @@ class KonfluxImageBuilder:
             'el_target': f'el{isolate_el_version_in_release(release)}',
             'arches': building_arches,
             'embargoed': is_release_embargoed(release, 'konflux'),
+            'hermetic': metadata.get_konflux_network_mode() == "hermetic",
             'start_time': datetime.now(tz=timezone.utc),
             'end_time': None,
             'nvr': nvr,
