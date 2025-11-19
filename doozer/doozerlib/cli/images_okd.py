@@ -1041,10 +1041,19 @@ async def images_okd_prs(
                 "skip_if_only_changed": image_meta.config.content.source.okd_alignment.skip_if_only_changed
             }
 
+        if image_meta.config.content.source.okd_alignment.ci_always_run:
+            ci_always_run = True
+        else:
+            ci_always_run = False
+            # When auto_run=False, prow will still run the job if the run_if_changed or skip_if_only_changed
+            # files trigger the job. In virtually all cases, this is not what people expect. So just clear
+            # the values to prevent jobs from starting unexpectedly.
+            test_on_change = {}
+
         ci_operator_config.set_tests(
             [
                 {
-                    "always_run": False,
+                    "always_run": ci_always_run,
                     "as": "e2e-aws-ovn",
                     "optional": True,
                     **test_on_change,
