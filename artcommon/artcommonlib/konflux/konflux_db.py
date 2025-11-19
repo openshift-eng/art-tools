@@ -206,8 +206,16 @@ class BuildCache:
                     continue
                 if completed_before is not None and build.start_time is not None:
                     # Ensure completed_before is timezone-aware for comparison
-                    cb_time = completed_before.astimezone(timezone.utc) if completed_before.tzinfo else completed_before.replace(tzinfo=timezone.utc)
-                    build_time = build.start_time.astimezone(timezone.utc) if build.start_time.tzinfo else build.start_time.replace(tzinfo=timezone.utc)
+                    cb_time = (
+                        completed_before.astimezone(timezone.utc)
+                        if completed_before.tzinfo
+                        else completed_before.replace(tzinfo=timezone.utc)
+                    )
+                    build_time = (
+                        build.start_time.astimezone(timezone.utc)
+                        if build.start_time.tzinfo
+                        else build.start_time.replace(tzinfo=timezone.utc)
+                    )
                     if build_time >= cb_time:
                         continue
 
