@@ -24,6 +24,9 @@ SCHEMA_LEVEL = 1
 # Doubles each time, covers ~15 months maximum
 EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
 
+# Special group name for builder base image cache that aggregates all RHEL specific ocp-build-data groups
+BUILDER_BASE_IMAGE_GROUP = "builder_base_image"
+
 
 class BuildCache:
     """
@@ -56,11 +59,12 @@ class BuildCache:
 
     def add_builds(self, builds: typing.List[KonfluxRecord], group: typing.Optional[str] = None):
         """
-        Add multiple builds to cache. All builds must be from the same group.
+        Add multiple builds to cache. All builds must be from the same group, except for
+        the special builder_base_image group which can contain builds from multiple groups.
 
-        :param builds: List of KonfluxBuildRecord objects to cache (all must have same group)
+        :param builds: List of KonfluxBuildRecord objects to cache (all must have same group unless group is builder_base_image)
         :param group: Optional group name (e.g., 'openshift-4.18'). If not provided, uses builds[0].group
-        :raises ValueError: If builds are from different groups or group cannot be determined
+        :raises ValueError: If builds are from different groups or group cannot be determined (except for builder_base_image)
         """
         if not builds:
             return
@@ -71,12 +75,16 @@ class BuildCache:
             if not group:
                 raise ValueError("Cannot add builds to cache: no group provided and builds[0].group is None")
 
-        # Verify all builds are from the same group
-        mismatched_builds = [(build.nvr, build.group) for build in builds if build.group and build.group != group]
-        if mismatched_builds:
-            raise ValueError(
-                f"All builds must be from group '{group}'. Found builds from different groups: {mismatched_builds}"
-            )
+        # Special handling for builder_base_image group - allows builds from multiple groups
+        is_builder_base_image = group == BUILDER_BASE_IMAGE_GROUP
+
+        # Verify all builds are from the same group (unless builder_base_image)
+        if not is_builder_base_image:
+            mismatched_builds = [(build.nvr, build.group) for build in builds if build.group and build.group != group]
+            if mismatched_builds:
+                raise ValueError(
+                    f"All builds must be from group '{group}'. Found builds from different groups: {mismatched_builds}"
+                )
 
         with self._lock:
             self._ensure_group(group)
@@ -110,7 +118,7 @@ class BuildCache:
         """
         Get specific build by NVR.
 
-        Searches across all groups if group not specified, otherwise only in specified group.
+        Searches in specified group if provided, otherwise searches across all groups.
 
         :param nvr: Build NVR
         :param group: Optional group to search in
@@ -126,7 +134,7 @@ class BuildCache:
                         self.logger.debug(f"Cache HIT: NVR {nvr} in group {group}")
                         return build
 
-            # Otherwise search all groups
+            # No group specified - search all groups. This includes the builder_base_image group if it has been loaded.
             else:
                 for group_name, group_cache in self._groups.items():
                     build = group_cache['by_nvr'].get(nvr)
@@ -337,7 +345,7 @@ class KonfluxDb:
         self.bq_client.bind(record_cls.TABLE_ID)
         self.record_cls = record_cls
 
-    async def _ensure_group_cached(self, group: str):
+    async def _ensure_group_cached(self, group: typing.Optional[str]):
         """
         Lazy-load cache for group if not already loaded.
 
@@ -345,10 +353,18 @@ class KonfluxDb:
         Uses per-group async events to coordinate concurrent load attempts - only one
         coroutine will actually load while others wait for it to complete.
 
-        :param group: Group name (e.g., 'openshift-4.18')
+        When group is None or empty, loads the special BUILDER_BASE_IMAGE_GROUP which
+        aggregates builds from all groups matching the pattern rhel[0-9]+-* or *-rhel[0-9]+.
+        This should match all of our builder and base images in ocp-build-data.
+
+        :param group: Group name (e.g., 'openshift-4.18') or None/empty for builder_base_image
         """
         if not self.cache:
             return
+
+        # Map empty/None group to builder_base_image special group
+        if not group:
+            group = BUILDER_BASE_IMAGE_GROUP
 
         # Quick check - if already loaded, return immediately
         if self.cache.is_group_loaded(group):
@@ -388,9 +404,18 @@ class KonfluxDb:
             start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
             where_clauses = [
                 Column('outcome', String).in_(['success', 'failure']),
-                Column('group', String) == group,
                 Column('start_time', DateTime) >= start_time,
             ]
+
+            # For builder_base_image group, match groups starting with rhel[0-9]+- or ending with -rhel[0-9]+
+            # For regular groups, match exactly
+            if group == BUILDER_BASE_IMAGE_GROUP:
+                # Match groups like rhel8-openshift-4.18, rhel9-openshift-4.19, openshift-4.18-rhel8, etc.
+                rhel_pattern = r'^rhel[0-9]+-|-rhel[0-9]+$'
+                regexp_condition = func.REGEXP_CONTAINS(Column('group', String), rhel_pattern)
+                where_clauses.append(regexp_condition)
+            else:
+                where_clauses.append(Column('group', String) == group)
 
             order_by_clause = Column('start_time', quote=True).desc()
 
@@ -727,9 +752,12 @@ class KonfluxDb:
         Can search by name OR by NVR. Uses cache first when available, falls back
         to BigQuery with exponential window expansion (7, 14, 28, 56, 112, 224, 448 days).
 
+        When group is not specified and cannot be extracted from NVR, uses the
+        builder_base_image group which aggregates RHEL builder groups.
+
         :param name: component name, e.g. 'ironic' (optional if nvr provided)
         :param nvr: build NVR (optional, alternative to name search)
-        :param group: e.g. 'openshift-4.18' (required if searching by name, optional if searching by nvr - will be extracted from nvr if not provided)
+        :param group: e.g. 'openshift-4.18' (optional - will be extracted from nvr or use builder_base_image)
         :param outcome: 'success' | 'failure'
         :param assembly: assembly name filter
         :param el_target: e.g. 'el8', 'el9'
@@ -742,7 +770,7 @@ class KonfluxDb:
         :param use_cache: If True, check cache first. Always updates cache with result. Default True.
         :return: Latest matching build or None
         :raise: IOError if build not found and strict=True
-        :raise: ValueError if neither name nor nvr provided
+        :raise: ValueError if neither name nor nvr provided, or if name provided without group
         """
 
         # Validate inputs
@@ -765,14 +793,14 @@ class KonfluxDb:
             if group:
                 self.logger.debug(f"Extracted group '{group}' from NVR {nvr}")
 
-        # Lazy-load cache for group if needed
-        if group and use_cache:
+        # Lazy-load cache for group if needed (or builder_base_image if group still None)
+        if use_cache:
             await self._ensure_group_cached(group)
 
         # NVR lookup (fast path)
         if nvr:
             if use_cache and self.cache:
-                # Try group-specific lookup first if group provided
+                # Try group-specific lookup first if group provided, otherwise builder_base_image
                 cached = self.cache.get_by_nvr(nvr, group=group)
                 if cached:
                     return cached
