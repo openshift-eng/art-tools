@@ -760,7 +760,7 @@ class KonfluxDb:
             engine = Engine(engine)
 
         # Extract group from NVR if nvr is provided but group is not
-        if nvr and not group:
+        if nvr and group is None:
             group = extract_group_from_nvr(nvr)
             if group:
                 self.logger.debug(f"Extracted group '{group}' from NVR {nvr}")
