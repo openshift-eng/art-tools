@@ -23,7 +23,7 @@ from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembl
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.model import Model
+from artcommonlib.model import Model, Missing
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
@@ -1367,15 +1367,25 @@ class PrepareReleaseKonfluxPipeline:
         nightlies = get_assembly_basis(self.releases_config, self.assembly).get("reference_releases", {}).values()
         candidate_nightlies = nightlies_with_pullspecs(nightlies)
 
+        # Handle potentially missing or empty advisory fields
+        rhcos_advisory = self.updated_assembly_group_config.advisories.get('rhcos', Missing)
+        rhcos_advisory = rhcos_advisory if rhcos_advisory and rhcos_advisory is not Missing else "TBD"
+
+        rpm_advisory = self.updated_assembly_group_config.advisories.get('rpm', Missing)
+        rpm_advisory = rpm_advisory if rpm_advisory and rpm_advisory is not Missing else "TBD"
+
+        shipment_url = self.updated_assembly_group_config.shipment.url
+        shipment_url = shipment_url if shipment_url and shipment_url is not Missing else "TBD"
+
         return {
             "release_name": self.release_name,
             "x": self.release_version[0],
             "y": self.release_version[1],
             "z": self.release_version[2],
             "release_date": self.release_date,
-            "rhcos_advisory": self.updated_assembly_group_config.advisories['rhcos'],
-            "rpm_advisory": self.updated_assembly_group_config.advisories['rpm'],
-            "shipment_url": self.updated_assembly_group_config.shipment.url,
+            "rhcos_advisory": rhcos_advisory,
+            "rpm_advisory": rpm_advisory,
+            "shipment_url": shipment_url,
             "candidate_nightlies": candidate_nightlies,
         }
 
