@@ -146,7 +146,13 @@ class Runtime(GroupRuntime):
         return Model(group_config)
 
     def initialize(
-        self, mode='none', no_group=False, disabled=None, build_system: str = None, with_shipment: bool = False
+        self,
+        mode='none',
+        no_group=False,
+        disabled=None,
+        build_system: str = None,
+        with_shipment: bool = False,
+        disable_konflux_db_cache=False,
     ):
         if self.initialized:
             return
@@ -161,7 +167,7 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        super().initialize(build_system)
+        super().initialize(build_system, disable_konflux_db_cache)
 
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")

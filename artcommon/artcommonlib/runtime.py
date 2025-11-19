@@ -25,9 +25,9 @@ class GroupRuntime(ABC):
         for key, val in kwargs.items():
             self.__dict__[key] = val
 
-    def initialize(self, build_system=None):
+    def initialize(self, build_system=None, disable_konflux_db_cache=False):
         self.initialize_logging()
-        self.initialize_konflux_db()
+        self.initialize_konflux_db(disable_konflux_db_cache)
         if build_system:
             self.build_system = build_system
 
@@ -52,11 +52,11 @@ class GroupRuntime(ABC):
         logutil.setup_logging(log_level, self.debug_log_path)
         self._logger = logging.getLogger('artcommonlib')
 
-    def initialize_konflux_db(self):
+    def initialize_konflux_db(self, disable_konflux_db_cache=False):
         if self.konflux_db:
             return  # already initialized
         try:
-            self.konflux_db = KonfluxDb()
+            self.konflux_db = KonfluxDb(enable_cache=disable_konflux_db_cache is False)
             self._logger.info('Konflux DB initialized ')
 
         except Exception as err:
