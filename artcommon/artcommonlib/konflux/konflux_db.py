@@ -4,26 +4,327 @@ import copy
 import inspect
 import logging
 import pprint
+import re
+import threading
 import typing
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxRecord
+from artcommonlib.util import extract_group_from_nvr
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 from sqlalchemy.sql import text
 
 SCHEMA_LEVEL = 1
-DEFAULT_SEARCH_WINDOW = 90
-DEFAULT_SEARCH_DAYS = 360  # By default, search for the last 360 days of data
+
+# Exponential search windows: 7, 14, 28, 56, 112, 224, 448 days
+# Doubles each time, covers ~15 months maximum
+EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
+
+
+class BuildCache:
+    """
+    Thread-safe in-memory cache of recent builds, per-group.
+
+    Maintains separate caches for each group, lazy-loaded on first access.
+
+    Stores builds indexed by:
+    - group → { name → [builds sorted by start_time desc], nvr → build }
+    """
+
+    def __init__(self, cache_days: int = 30):
+        self._groups = {}  # group → { 'by_name': {}, 'by_nvr': {}, 'oldest': datetime, 'newest': datetime }
+        self._lock = threading.RLock()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._cache_days = cache_days
+        self.logger = logging.getLogger(__name__)
+
+    def _ensure_group(self, group: str):
+        """Ensure group cache exists."""
+        if group not in self._groups:
+            self._groups[group] = {
+                'by_name': defaultdict(list),
+                'by_nvr': {},
+                'oldest': None,
+                'newest': None,
+                'total_builds': 0,
+            }
+
+    def add_builds(self, builds: typing.List[KonfluxRecord], group: typing.Optional[str] = None):
+        """
+        Add multiple builds to cache. All builds must be from the same group.
+
+        :param builds: List of KonfluxBuildRecord objects to cache (all must have same group)
+        :param group: Optional group name (e.g., 'openshift-4.18'). If not provided, uses builds[0].group
+        :raises ValueError: If builds are from different groups or group cannot be determined
+        """
+        if not builds:
+            return
+
+        # Determine group from first build if not provided
+        if not group:
+            group = builds[0].group
+            if not group:
+                raise ValueError("Cannot add builds to cache: no group provided and builds[0].group is None")
+
+        # Verify all builds are from the same group
+        mismatched_builds = [(build.nvr, build.group) for build in builds if build.group and build.group != group]
+        if mismatched_builds:
+            raise ValueError(
+                f"All builds must be from group '{group}'. Found builds from different groups: {mismatched_builds}"
+            )
+
+        with self._lock:
+            self._ensure_group(group)
+            group_cache = self._groups[group]
+
+            for build in builds:
+                # Index by name
+                group_cache['by_name'][build.name].append(build)
+
+                # Index by NVR
+                group_cache['by_nvr'][build.nvr] = build
+
+                # Track time range
+                if build.start_time:
+                    if group_cache['oldest'] is None or build.start_time < group_cache['oldest']:
+                        group_cache['oldest'] = build.start_time
+                    if group_cache['newest'] is None or build.start_time > group_cache['newest']:
+                        group_cache['newest'] = build.start_time
+
+                group_cache['total_builds'] += 1
+
+            # Sort each name's build list by start_time descending (newest first)
+            for name in group_cache['by_name']:
+                group_cache['by_name'][name].sort(key=lambda b: b.start_time or datetime.min, reverse=True)
+
+            self.logger.info(
+                f"Cache loaded {len(builds)} builds for group '{group}' (total: {group_cache['total_builds']})"
+            )
+
+    def get_by_nvr(self, nvr: str, group: typing.Optional[str] = None) -> typing.Optional[KonfluxRecord]:
+        """
+        Get specific build by NVR.
+
+        Searches across all groups if group not specified, otherwise only in specified group.
+
+        :param nvr: Build NVR
+        :param group: Optional group to search in
+        :return: Build record or None
+        """
+        with self._lock:
+            # If group specified, only search that group
+            if group:
+                if group in self._groups:
+                    build = self._groups[group]['by_nvr'].get(nvr)
+                    if build:
+                        self._cache_hits += 1
+                        self.logger.debug(f"Cache HIT: NVR {nvr} in group {group}")
+                        return build
+
+            # Otherwise search all groups
+            else:
+                for group_name, group_cache in self._groups.items():
+                    build = group_cache['by_nvr'].get(nvr)
+                    if build:
+                        self._cache_hits += 1
+                        self.logger.debug(f"Cache HIT: NVR {nvr} in group {group_name}")
+                        return build
+
+            self._cache_misses += 1
+            self.logger.debug(f"Cache MISS: NVR {nvr}")
+            return None
+
+    def get_by_name(
+        self,
+        name: str,
+        group: str,
+        outcome: typing.Optional[typing.Union[KonfluxBuildOutcome, str]] = None,
+        assembly: typing.Optional[str] = None,
+        el_target: typing.Optional[str] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
+        embargoed: typing.Optional[bool] = None,
+        completed_before: typing.Optional[datetime] = None,
+    ) -> typing.Optional[KonfluxRecord]:
+        """
+        Get latest build for name with optional filters from specified group.
+
+        Returns the most recent build matching all specified criteria.
+
+        :param name: Component name
+        :param group: Group name (required)
+        :param outcome: Filter by outcome (success/failure) - accepts enum or string
+        :param assembly: Filter by assembly
+        :param el_target: Filter by el_target (e.g., 'el8', 'el9')
+        :param artifact_type: Filter by artifact type (rpm/image) - accepts enum or string
+        :param engine: Filter by engine (brew/konflux) - accepts enum or string
+        :param embargoed: Filter by embargoed status
+        :param completed_before: Filter by completion time (only return builds completed before this time)
+        :return: Latest matching build or None
+        """
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
+
+        with self._lock:
+            # Check if group cached
+            if group not in self._groups:
+                self._cache_misses += 1
+                self.logger.warning(f"Cache MISS: Group {group} not cached")
+                return None
+
+            group_cache = self._groups[group]
+            builds = group_cache['by_name'].get(name, [])
+            if not builds:
+                self._cache_misses += 1
+                self.logger.debug(f"Cache MISS: No builds for name {name} in group {group}")
+                return None
+
+            # Filter builds by criteria
+            for build in builds:  # Already sorted newest first
+                # Apply filters
+                if outcome is not None and build.outcome != outcome:
+                    continue
+                if assembly is not None and build.assembly != assembly:
+                    continue
+                if el_target is not None and build.el_target != el_target:
+                    continue
+                if artifact_type is not None and build.artifact_type != artifact_type:
+                    continue
+                if engine is not None and build.engine != engine:
+                    continue
+                if embargoed is not None and build.embargoed != embargoed:
+                    continue
+                if completed_before is not None and build.start_time is not None:
+                    # Ensure completed_before is timezone-aware for comparison
+                    cb_time = (
+                        completed_before.astimezone(timezone.utc)
+                        if completed_before.tzinfo
+                        else completed_before.replace(tzinfo=timezone.utc)
+                    )
+                    build_time = (
+                        build.start_time.astimezone(timezone.utc)
+                        if build.start_time.tzinfo
+                        else build.start_time.replace(tzinfo=timezone.utc)
+                    )
+                    if build_time >= cb_time:
+                        continue
+
+                # Found matching build
+                self._cache_hits += 1
+                self.logger.debug(f"Cache HIT: {name} in group {group} with filters")
+                return build
+
+            # No matching build found
+            self._cache_misses += 1
+            self.logger.debug(f"Cache MISS: {name} in group {group} with filters (have builds but none match)")
+            return None
+
+    def is_group_loaded(self, group: str) -> bool:
+        """
+        Check if group is already loaded in cache.
+
+        :param group: Group name
+        :return: True if group is cached
+        """
+        with self._lock:
+            return group in self._groups
+
+    def stats(self, group: typing.Optional[str] = None) -> dict:
+        """
+        Get cache statistics.
+
+        :param group: Optional group to get stats for. If None, returns aggregate stats.
+        :return: Dictionary with cache stats
+        """
+        with self._lock:
+            total_queries = self._cache_hits + self._cache_misses
+            hit_rate = (self._cache_hits / total_queries * 100) if total_queries > 0 else 0
+
+            if group and group in self._groups:
+                # Group-specific stats
+                group_cache = self._groups[group]
+                return {
+                    'group': group,
+                    'total_builds': group_cache['total_builds'],
+                    'unique_names': len(group_cache['by_name']),
+                    'unique_nvrs': len(group_cache['by_nvr']),
+                    'oldest_build': group_cache['oldest'].isoformat() if group_cache['oldest'] else None,
+                    'newest_build': group_cache['newest'].isoformat() if group_cache['newest'] else None,
+                    'cache_hits': self._cache_hits,
+                    'cache_misses': self._cache_misses,
+                    'hit_rate': f"{hit_rate:.1f}%",
+                }
+            else:
+                # Aggregate stats across all groups
+                total_builds = sum(g['total_builds'] for g in self._groups.values())
+                total_nvrs = sum(len(g['by_nvr']) for g in self._groups.values())
+
+                return {
+                    'groups_cached': list(self._groups.keys()),
+                    'total_builds': total_builds,
+                    'unique_nvrs': total_nvrs,
+                    'cache_hits': self._cache_hits,
+                    'cache_misses': self._cache_misses,
+                    'hit_rate': f"{hit_rate:.1f}%",
+                }
+
+    def clear(self, group: typing.Optional[str] = None):
+        """
+        Clear cached data.
+
+        :param group: Optional group to clear. If None, clears all groups.
+        """
+        with self._lock:
+            if group:
+                if group in self._groups:
+                    del self._groups[group]
+                    self.logger.info(f"Cache cleared for group '{group}'")
+            else:
+                self._groups.clear()
+                self._cache_hits = 0
+                self._cache_misses = 0
+                self.logger.info("Cache cleared for all groups")
 
 
 class KonfluxDb:
-    def __init__(self):
+    # Class-level singleton cache shared across all KonfluxDb instances
+    _shared_cache: typing.Optional[BuildCache] = None
+    _cache_lock = threading.RLock()
+    _group_loading_events: typing.Dict[str, asyncio.Event] = {}  # Per-group events for coordinating lazy-load
+
+    def __init__(self, enable_cache: bool = True, cache_days: int = 30):
+        """
+        Initialize KonfluxDb client.
+
+        All instances share a single global cache for efficiency. The cache is created
+        on first instantiation with enable_cache=True.
+
+        :param enable_cache: If True, enable the shared build cache. Default True.
+        :param cache_days: Number of days of recent builds to cache per group. Default 30.
+                          Only used when creating the cache for the first time.
+        """
         self.logger = logging.getLogger(__name__)
         self.bq_client = bigquery.BigQueryClient()
         self.record_cls = None
+
+        # Initialize shared cache on first use
+        with KonfluxDb._cache_lock:
+            if enable_cache and KonfluxDb._shared_cache is None:
+                KonfluxDb._shared_cache = BuildCache(cache_days=cache_days)
+                self.logger.debug(f"Initialized shared BuildCache with {cache_days} day window")
+
+        # Reference the shared cache (or None if caching disabled)
+        self.cache = KonfluxDb._shared_cache if enable_cache else None
 
     def bind(self, record_cls: typing.Type[KonfluxRecord]):
         """
@@ -35,6 +336,115 @@ class KonfluxDb:
 
         self.bq_client.bind(record_cls.TABLE_ID)
         self.record_cls = record_cls
+
+    async def _ensure_group_cached(self, group: str):
+        """
+        Lazy-load cache for group if not already loaded.
+
+        Automatically loads the last N days of builds for the group on first access.
+        Uses per-group async events to coordinate concurrent load attempts - only one
+        coroutine will actually load while others wait for it to complete.
+
+        :param group: Group name (e.g., 'openshift-4.18')
+        """
+        if not self.cache:
+            return
+
+        # Quick check - if already loaded, return immediately
+        if self.cache.is_group_loaded(group):
+            self.logger.debug(f"Cache already loaded for group '{group}'")
+            return
+
+        while True:
+            # Quick check - if already loaded, return immediately
+            if self.cache.is_group_loaded(group):
+                self.logger.debug(f"Cache already loaded for group '{group}'")
+                return
+            # Get or create an event for this group (thread-safe)
+            with KonfluxDb._cache_lock:
+                if group not in KonfluxDb._group_loading_events:
+                    # Create new event for this group
+                    event = asyncio.Event()
+                    KonfluxDb._group_loading_events[group] = event
+                    should_load = True
+                else:
+                    # Another coroutine is already loading
+                    event = KonfluxDb._group_loading_events[group]
+                    should_load = False
+
+            if not should_load:
+                # Wait for the other coroutine to finish loading
+                self.logger.debug(f"Waiting for another coroutine to load group '{group}'...")
+                await event.wait()
+                continue
+            else:
+                break
+
+        # We're the one who will load
+        try:
+            self.logger.info(f"Lazy-loading cache for group '{group}' (last {self.cache._cache_days} days)...")
+
+            # Build query for last N days of builds in this group
+            start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
+            where_clauses = [
+                Column('outcome', String).in_(['success', 'failure']),
+                Column('group', String) == group,
+                Column('start_time', DateTime) >= start_time,
+            ]
+
+            order_by_clause = Column('start_time', quote=True).desc()
+
+            # Execute single large query
+            rows = await self.bq_client.select(
+                where_clauses=where_clauses,
+                order_by_clause=order_by_clause,
+                limit=None,  # Get all results
+            )
+
+            # Load all rows into cache (thread-safe operation)
+            builds = [self.from_result_row(row) for row in rows]
+            self.cache.add_builds(builds, group)
+
+            self.logger.info(f"Cache loaded for group '{group}': {len(builds)} builds")
+
+        except Exception as e:
+            self.logger.error(f"Failed to load cache for group '{group}': {e}")
+            raise
+        finally:
+            # Signal completion to any waiting coroutines
+            event.set()
+            with KonfluxDb._cache_lock:
+                del KonfluxDb._group_loading_events[group]
+
+    def cache_stats(self, group: typing.Optional[str] = None) -> dict:
+        """
+        Get cache statistics.
+
+        :param group: Optional group to get stats for. If None, returns aggregate stats.
+        :return: Dictionary with cache stats, or empty dict if cache disabled
+        """
+        if not self.cache:
+            return {'enabled': False}
+
+        stats = self.cache.stats(group=group)
+        stats['enabled'] = True
+        return stats
+
+    @classmethod
+    def clear_shared_cache(cls, group: typing.Optional[str] = None):
+        """
+        Clear the shared cache across all KonfluxDb instances.
+
+        :param group: Optional group to clear. If None, clears all groups.
+        """
+        with cls._cache_lock:
+            if cls._shared_cache:
+                cls._shared_cache.clear(group=group)
+            # Clear loading events for the group(s) being cleared
+            if group:
+                cls._group_loading_events.pop(group, None)
+            else:
+                cls._group_loading_events.clear()
 
     def generate_build_schema(self):
         """
@@ -125,7 +535,6 @@ class KonfluxDb:
         self,
         start_search: typing.Optional[datetime] = None,
         end_search: typing.Optional[datetime] = None,
-        window_size: typing.Optional[int] = None,
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         extra_patterns: typing.Optional[dict] = None,
         array_contains: typing.Optional[typing.Dict[str, str]] = None,
@@ -135,33 +544,35 @@ class KonfluxDb:
         strict: bool = False,
     ) -> typing.AsyncIterator[KonfluxRecord]:
         """
-        Execute a SELECT * from the BigQuery table.
+        Execute a SELECT * from the BigQuery table using exponential window expansion.
 
-        "where" is an optional dictionary that maps names and values to define a WHERE clause.
-        "start_search" is a lower bound to be applied to the partitioning field `start_time`. If None, the search starts 360 days ago.
-        "end_search" can optionally be provided as an upper bound for the same field. If None, the search ends now.
-        "window_size" is the number of days to search in each iteration. If None, defaults to DEFAULT_SEARCH_WINDOW.
-        "extra_patterns" is an optional dictionary that maps names and values to define extra patterns to be matched.
-        "array_contains" is an optional dictionary that maps array field names to values that should be contained in those arrays.
-        "order_by" is the column to order by.
-        "sorting" is the sorting order.
-        "limit" is the maximum number of results to return. None for no limit.
-        "strict" is a flag that raises an exception if no results are found.
+        Uses exponential window expansion (7, 14, 28, 56, 112, 224, 448 days) for cost optimization.
+        If start_search is specified, will not search earlier than that date.
 
-        Return a generator that yields KonfluxRecord objects.
+        :param start_search: Optional lower bound for start_time field (don't search before this).
+        :param end_search: Upper bound for start_time field. If None, uses current time.
+        :param where: Dictionary mapping column names to values for WHERE clause.
+        :param extra_patterns: Dictionary mapping column names to regex patterns.
+        :param array_contains: Dictionary mapping array field names to values to search for.
+        :param order_by: Column to order by (default: start_time).
+        :param sorting: Sorting order ('DESC' or 'ASC').
+        :param limit: Maximum number of results to return.
+        :param strict: If True, raise IOError if no results found.
+        :return: AsyncIterator yielding KonfluxRecord objects.
         """
 
         if start_search and end_search and start_search >= end_search:
             raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
         end_search = end_search.astimezone(timezone.utc) if end_search else datetime.now(tz=timezone.utc)
-        start_search = (
-            start_search.astimezone(timezone.utc) if start_search else end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        )
-        assert window_size is None or window_size > 0, f"search_window {window_size} must be a positive integer"
-        window_size = window_size or DEFAULT_SEARCH_WINDOW
+        earliest_search = start_search.astimezone(timezone.utc) if start_search else None
 
         base_clauses = []
         where = where or {}
+
+        # Normalize enum values in where dict - convert enums to strings for SQL comparison
+        where = {
+            k: str(v) if isinstance(v, (KonfluxBuildOutcome, ArtifactType, Engine)) else v for k, v in where.items()
+        }
 
         # Unless otherwise specified, only look for builds in 'success' or 'failure' state
         if 'outcome' not in where:
@@ -192,30 +603,49 @@ class KonfluxDb:
         order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
         order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
 
-        # Table is partitioned by start_time. Perform an iterative search within given days of windows, going back to start_search
+        # Exponential window search: 7, 14, 28, 56, 112, 224, 448 days
         total_rows = 0
-        for window in range(0, (end_search - start_search).days, window_size):
-            end_window = end_search - timedelta(days=window)
-            start_window = max(end_window - timedelta(days=window_size), start_search)
+        previous_start = end_search
+
+        for window_days in EXPONENTIAL_SEARCH_WINDOWS:
+            start_window = end_search - timedelta(days=window_days)
+
+            # Respect start_search constraint if provided
+            if earliest_search and start_window < earliest_search:
+                start_window = earliest_search
+
             where_clauses = base_clauses + [
                 Column('start_time', DateTime) >= start_window,
-                Column('start_time', DateTime) < end_window,
+                Column('start_time', DateTime) < previous_start,
             ]
+
             try:
+                self.logger.debug(
+                    f"Querying {window_days}-day window: [{start_window.date()}, {previous_start.date()})"
+                )
                 rows = await self.bq_client.select(
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
                     limit=limit - total_rows if limit is not None else None,
                 )
             except Exception as e:
-                self.logger.error('Failed executing query: %s', e)
+                self.logger.error(f'Failed executing query for {window_days}-day window: {e}')
                 raise
-            self.logger.debug('Found %s builds in batch %s', rows.total_rows, (window // window_size) + 1)
+
+            self.logger.debug(f'Found {rows.total_rows} builds in {window_days}-day window')
             for row in rows:
                 total_rows += 1
                 yield self.from_result_row(row)
                 if limit is not None and total_rows >= limit:
                     return
+
+            previous_start = start_window
+
+            # If we hit the start_search boundary, stop searching
+            if earliest_search and start_window <= earliest_search:
+                self.logger.debug(f"Reached start_search boundary at {window_days}-day window, stopping")
+                break
+
         if total_rows == 0:
             # We can print out BinaryExpression search clause, but it gets much trickier with Function
             # that comes into play when extra_patterns is used, so exclude those cases
@@ -234,11 +664,11 @@ class KonfluxDb:
         self,
         names: typing.List[str],
         group: str,
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         assembly: str = 'stream',
         el_target: typing.Optional[str] = None,
-        artifact_type: typing.Optional[ArtifactType] = None,
-        engine: typing.Optional[Engine] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
         completed_before: typing.Optional[datetime] = None,
         embargoed: bool = None,
         extra_patterns: dict = {},
@@ -247,6 +677,14 @@ class KonfluxDb:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
         """
+
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
 
         return await asyncio.gather(
             *[
@@ -269,97 +707,243 @@ class KonfluxDb:
 
     async def get_latest_build(
         self,
-        name: str,
-        group: str,
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        name: typing.Optional[str] = None,
+        nvr: typing.Optional[str] = None,
+        group: typing.Optional[str] = None,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
+        assembly: typing.Optional[str] = None,
+        el_target: typing.Optional[str] = None,
+        artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
+        engine: typing.Optional[typing.Union[Engine, str]] = None,
+        completed_before: typing.Optional[datetime] = None,
+        embargoed: typing.Optional[bool] = None,
+        extra_patterns: dict = {},
+        strict: bool = False,
+        use_cache: bool = True,
+    ) -> typing.Optional[KonfluxRecord]:
+        """
+        Get latest build with optimized caching and exponential window search.
+
+        Can search by name OR by NVR. Uses cache first when available, falls back
+        to BigQuery with exponential window expansion (7, 14, 28, 56, 112, 224, 448 days).
+
+        :param name: component name, e.g. 'ironic' (optional if nvr provided)
+        :param nvr: build NVR (optional, alternative to name search)
+        :param group: e.g. 'openshift-4.18' (required if searching by name, optional if searching by nvr - will be extracted from nvr if not provided)
+        :param outcome: 'success' | 'failure'
+        :param assembly: assembly name filter
+        :param el_target: e.g. 'el8', 'el9'
+        :param artifact_type: 'rpm' | 'image'
+        :param engine: 'brew' | 'konflux'
+        :param completed_before: cut off timestamp for builds completion time
+        :param embargoed: filter by embargoed status
+        :param extra_patterns: e.g. {'release': 'b45ea65'} for LIKE queries
+        :param strict: If True, raise IOError if build not found
+        :param use_cache: If True, check cache first. Always updates cache with result. Default True.
+        :return: Latest matching build or None
+        :raise: IOError if build not found and strict=True
+        :raise: ValueError if neither name nor nvr provided
+        """
+
+        # Validate inputs
+        if not name and not nvr:
+            raise ValueError("Must provide either 'name' or 'nvr' parameter")
+        if name and not group:
+            raise ValueError("Must provide 'group' when searching by name")
+
+        # Normalize enum parameters - accept strings or enums
+        if outcome is not None and not isinstance(outcome, KonfluxBuildOutcome):
+            outcome = KonfluxBuildOutcome(outcome)
+        if artifact_type is not None and not isinstance(artifact_type, ArtifactType):
+            artifact_type = ArtifactType(artifact_type)
+        if engine is not None and not isinstance(engine, Engine):
+            engine = Engine(engine)
+
+        # Extract group from NVR if nvr is provided but group is not
+        if nvr and not group:
+            group = extract_group_from_nvr(nvr)
+            if group:
+                self.logger.debug(f"Extracted group '{group}' from NVR {nvr}")
+
+        # Lazy-load cache for group if needed
+        if group and use_cache:
+            await self._ensure_group_cached(group)
+
+        # NVR lookup (fast path)
+        if nvr:
+            if use_cache and self.cache:
+                # Try group-specific lookup first if group provided
+                cached = self.cache.get_by_nvr(nvr, group=group)
+                if cached:
+                    return cached
+
+            # Cache miss or disabled - fall through to BigQuery NVR search
+            self.logger.debug(f"NVR {nvr} not in cache, querying BigQuery")
+
+        # Name lookup with filters (common path)
+        if name and use_cache and self.cache:
+            cached = self.cache.get_by_name(
+                name=name,
+                group=group,
+                outcome=outcome,
+                assembly=assembly,
+                el_target=el_target,
+                artifact_type=artifact_type,
+                engine=engine,
+                embargoed=embargoed,
+                completed_before=completed_before,
+            )
+            if cached:
+                # Verify extra_patterns if specified
+                if extra_patterns:
+                    for col_name, col_value in extra_patterns.items():
+                        build_value = getattr(cached, col_name, None)
+                        if build_value is None or col_value not in str(build_value):
+                            self.logger.debug(f"Cached build doesn't match extra_pattern {col_name}={col_value}")
+                            break
+                    else:
+                        # All extra_patterns match
+                        return cached
+                else:
+                    return cached
+
+        # Cache miss or disabled → query BigQuery with exponential windows
+        result = await self._query_bigquery_exponential(
+            name=name,
+            nvr=nvr,
+            group=group,
+            outcome=outcome,
+            assembly=assembly,
+            el_target=el_target,
+            artifact_type=artifact_type,
+            engine=engine,
+            completed_before=completed_before,
+            embargoed=embargoed,
+            extra_patterns=extra_patterns,
+        )
+
+        # Update cache only if use_cache=True
+        if result and self.cache and result.group and use_cache:
+            self.cache.add_builds([result], result.group)
+
+        if not result and strict:
+            raise IOError(f"Build record not found for name={name}, nvr={nvr}")
+
+        return result
+
+    async def _query_bigquery_exponential(
+        self,
+        name: typing.Optional[str] = None,
+        nvr: typing.Optional[str] = None,
+        group: typing.Optional[str] = None,
+        outcome: typing.Optional[KonfluxBuildOutcome] = None,
         assembly: typing.Optional[str] = None,
         el_target: typing.Optional[str] = None,
         artifact_type: typing.Optional[ArtifactType] = None,
         engine: typing.Optional[Engine] = None,
         completed_before: typing.Optional[datetime] = None,
-        embargoed: bool = None,
-        extra_patterns: dict = {},
-        strict: bool = False,
+        embargoed: typing.Optional[bool] = None,
+        extra_patterns: typing.Optional[dict] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
-        Search for the latest Konflux build information in BigQuery.
+        Query BigQuery with exponential window expansion.
 
-        :param name: component name, e.g. 'ironic'
-        :param group: e.g. 'openshift-4.18'
-        :param outcome: 'success' | 'failure'
-        :param assembly: assembly name, if omitted any assembly is matched
-        :param el_target: e.g. 'el8'
-        :param artifact_type: 'rpm' | 'image'
-        :param engine: 'brew' | 'konflux'
-        :param completed_before: cut off timestamp for builds completion time
-        :param embargoed: set to True to find a private build
-        :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
-        :param strict: If True, raise an IOError if the build record is not found.
-        :return: The latest build record; None if the build record is not found.
-        :raise: IOError if the build record is not found and strict is True.
+        Searches progressively expanding windows: 7, 14, 28, 56, 112, 224, 448 days.
+        Stops at first result found or when completed_before constraint is reached.
+
+        :param name: Component name
+        :param nvr: Build NVR (alternative to name search)
+        :param group: Group name (e.g., 'openshift-4.18')
+        :param outcome: Build outcome filter
+        :param assembly: Assembly name filter
+        :param el_target: EL target filter
+        :param artifact_type: Artifact type filter
+        :param engine: Engine filter
+        :param completed_before: Cut-off timestamp (never search beyond this)
+        :param embargoed: Embargoed status filter
+        :param extra_patterns: Extra pattern matching (regex)
+        :return: First matching build or None
         """
+        # Build base WHERE clauses
+        base_clauses = []
 
-        # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
-        # at most. This will let us reduce the amount of scanned data (and the BigQuery usage cost), as in the vast
-        # majority of cases we would find a build in the first 3-month interval.
-        base_clauses = [
-            Column('name', String) == name,
-            Column('group', String) == group,
-            Column('outcome', String) == str(outcome),
-        ]
-        if assembly:
+        if name:
+            base_clauses.append(Column('name', String) == name)
+        if nvr:
+            base_clauses.append(Column('nvr', String) == nvr)
+        if group:
+            base_clauses.append(Column('group', String) == group)
+        if outcome is not None:
+            base_clauses.append(Column('outcome', String) == str(outcome))
+        if assembly is not None:
             base_clauses.append(Column('assembly', String) == assembly)
+        if el_target is not None:
+            base_clauses.append(Column('el_target', String) == el_target)
+        if artifact_type is not None:
+            base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+        if engine is not None:
+            base_clauses.append(Column('engine', String) == str(engine))
         if embargoed is not None:
             base_clauses.append(Column('embargoed', Boolean) == embargoed)
 
+        # Add extra_patterns (regex matching)
+        extra_patterns = extra_patterns or {}
+        for col_name, col_value in extra_patterns.items():
+            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+            base_clauses.append(regexp_condition)
+
+        # Order by start_time descending (newest first)
         order_by_clause = Column('start_time', quote=True).desc()
 
-        if completed_before:
-            completed_before = completed_before.astimezone(timezone.utc)
-            self.logger.info('Searching for %s builds completed before %s', name, completed_before)
-            base_clauses.extend([Column('end_time').isnot(None), Column('end_time', DateTime) <= completed_before])
+        # Determine search boundary (never search before this)
+        end_search = datetime.now(tz=timezone.utc)
+        earliest_search = completed_before.astimezone(timezone.utc) if completed_before else None
 
-        if el_target:
-            base_clauses.append(Column('el_target', String) == el_target)
+        # Exponential window search: 7, 14, 28, 56, 112, 224, 448 days
+        for window_days in EXPONENTIAL_SEARCH_WINDOWS:
+            start_window = end_search - timedelta(days=window_days)
 
-        if artifact_type:
-            base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+            # Respect completed_before constraint - never search beyond it
+            if earliest_search and start_window < earliest_search:
+                start_window = earliest_search
 
-        if engine:
-            base_clauses.append(Column('engine', String) == str(engine))
+            # Build time range WHERE clause
+            where_clauses = base_clauses + [
+                Column('start_time', DateTime) >= start_window,
+                Column('start_time', DateTime) < end_search,
+            ]
 
-        for col_name, col_value in extra_patterns.items():
-            base_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
+            # Add completed_before filter if specified
+            if completed_before:
+                where_clauses.append(Column('start_time', DateTime) < completed_before)
 
-        end_search = datetime.now(tz=timezone.utc) if not completed_before else completed_before
-        start_search = end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        for window in range(0, DEFAULT_SEARCH_DAYS, DEFAULT_SEARCH_WINDOW):
-            end_window = end_search - timedelta(days=window)
-            start_window = max(end_window - timedelta(days=DEFAULT_SEARCH_WINDOW), start_search)
-            where_clauses = copy.copy(base_clauses)
-            where_clauses.extend(
-                [
-                    Column('start_time', DateTime) >= start_window,
-                    Column('start_time', DateTime) < end_window,
-                ]
-            )
+            try:
+                self.logger.debug(
+                    f"Querying BigQuery: window={window_days}d, range=[{start_window.date()}, {end_search.date()})"
+                )
 
-            results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
-            if results.total_rows == 0:
-                continue  # No builds found in this window, try the next one
-            return self.from_result_row(next(results))
+                rows = await self.bq_client.select(
+                    where_clauses=where_clauses,
+                    order_by_clause=order_by_clause,
+                    limit=1,  # Only need first result
+                )
 
-        # If we got here, no builds have been found in the whole 36 months period
-        if strict:
-            raise IOError(f"Build record for {name} not found.")
-        self.logger.debug(
-            'No builds found for %s in %s with status %s in assembly %s and target %s',
-            name,
-            group,
-            outcome.value,
-            assembly,
-            el_target,
-        )
+                if rows.total_rows > 0:
+                    result = self.from_result_row(next(rows))
+                    self.logger.debug(f"Found build in {window_days}-day window: {result.nvr}")
+                    return result
+
+            except Exception as e:
+                self.logger.error(f"Failed querying {window_days}-day window: {e}")
+                raise
+
+            # If we hit the completed_before boundary, stop searching
+            if earliest_search and start_window <= earliest_search:
+                self.logger.debug(f"Reached completed_before boundary at {window_days}-day window, stopping search")
+                break
+
+        # No results found in any window
+        self.logger.debug(f"No builds found in exponential search up to {EXPONENTIAL_SEARCH_WINDOWS[-1]} days")
         return None
 
     def from_result_row(self, row: Row) -> KonfluxRecord:
@@ -377,10 +961,14 @@ class KonfluxDb:
             raise
 
     async def get_build_record_by_nvr(
-        self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True
+        self,
+        nvr: str,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
+        strict: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """Get a build record by NVR.
-        Note that this function only searches for the build record in the last 3 years.
+
+        Uses optimized cache-first lookup via get_latest_build().
 
         :param nvr: The NVR of the build.
         :param outcome: The outcome of the build.
@@ -388,48 +976,60 @@ class KonfluxDb:
         :return: The build record; None if the build record is not found.
         :raise: IOError if the build record is not found and strict is True.
         """
-        where = {"nvr": nvr, "outcome": str(outcome)}
-        result = await anext(self.search_builds_by_fields(where=where, limit=1), None)
-        if result:
-            return result
-        # If we got here, no builds have been found in the whole 3-year period
-        if strict:
-            raise IOError(f"Build record with NVR {nvr} not found.")
-        self.logger.warning('No builds found for NVR %s', nvr)
-        return None
+        # Use optimized get_latest_build with NVR parameter
+        # This will check cache first, then use exponential windows
+        return await self.get_latest_build(nvr=nvr, outcome=outcome, strict=strict)
 
     async def get_build_records_by_nvrs(
         self,
         nvrs: typing.Sequence[str],
-        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         strict: bool = True,
     ) -> list[KonfluxRecord | None]:
-        """Get build records by NVRS.
-        Note that this function only searches for the build records in the last 3 years.
-        :param nvrs: The NVRS of the builds.
+        """Get build records by NVRs.
+
+        Uses optimized cache-first lookups via get_latest_build() for each NVR.
+        Queries run in parallel for performance.
+
+        :param nvrs: The NVRs of the builds.
         :param outcome: The outcome of the builds.
         :param where: Additional fields to filter the build records.
         :param strict: If True, raise an exception if any build record is not found.
         :return: The build records.
         """
         nvrs = list(nvrs)
-        if not where:
-            where = {}
-        else:
-            # do not modify the original dict
-            where = where.copy()
+
+        # Validate where parameter
+        if where:
             if "nvr" in where or "outcome" in where:
                 raise ValueError(
                     "'nvr' and 'outcome' fields are reserved and should not be used in the 'where' parameter"
                 )
 
+        # Extract additional filters from where if provided
+        assembly = where.get('assembly') if where else None
+        el_target = where.get('el_target') if where else None
+        artifact_type = where.get('artifact_type') if where else None
+        engine = where.get('engine') if where else None
+        embargoed = where.get('embargoed') if where else None
+
+        # Use optimized get_latest_build for each NVR (runs in parallel)
         async def _task(nvr):
-            where.update({"nvr": nvr, "outcome": str(outcome)})
-            return await anext(self.search_builds_by_fields(where=where, limit=1, strict=strict), None)
+            return await self.get_latest_build(
+                nvr=nvr,
+                outcome=outcome,
+                assembly=assembly,
+                el_target=el_target,
+                artifact_type=artifact_type,
+                engine=engine,
+                embargoed=embargoed,
+                strict=strict,
+            )
 
         records = await asyncio.gather(*(_task(nvr) for nvr in nvrs), return_exceptions=True)
 
+        # Check for errors
         errors = [(nvr, record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)]
         if errors:
             error_strings = [f"NVR {nvr}: {str(exc)}" for nvr, exc in errors]
