@@ -86,8 +86,18 @@ class BuildCache:
                 # Index by name
                 group_cache['by_name'][build.name].append(build)
 
-                # Index by NVR
-                group_cache['by_nvr'][build.nvr] = build
+                # Index by NVR - prioritize successful builds over failed ones
+                existing_build = group_cache['by_nvr'].get(build.nvr)
+                if existing_build is None:
+                    # No existing build with this NVR, add it
+                    group_cache['by_nvr'][build.nvr] = build
+                elif existing_build.outcome != KonfluxBuildOutcome.SUCCESS and build.outcome == KonfluxBuildOutcome.SUCCESS:
+                    # Existing build is not successful, but new build is - replace with successful build
+                    group_cache['by_nvr'][build.nvr] = build
+                elif existing_build.outcome == build.outcome:
+                    # Same outcome - keep the one with the latest start_time
+                    if build.start_time and existing_build.start_time and build.start_time > existing_build.start_time:
+                        group_cache['by_nvr'][build.nvr] = build
 
                 # Track time range
                 if build.start_time:
@@ -775,7 +785,14 @@ class KonfluxDb:
                 # Try group-specific lookup first if group provided
                 cached = self.cache.get_by_nvr(nvr, group=group)
                 if cached:
-                    return cached
+                    # Verify the cached build matches the requested outcome
+                    if outcome is None or cached.outcome == outcome:
+                        return cached
+                    else:
+                        self.logger.debug(
+                            f"Cached NVR {nvr} has outcome {cached.outcome}, but requested {outcome}. "
+                            "Falling through to BigQuery."
+                        )
 
             # Cache miss or disabled - fall through to BigQuery NVR search
             self.logger.debug(f"NVR {nvr} not in cache, querying BigQuery")

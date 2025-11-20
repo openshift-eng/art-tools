@@ -674,3 +674,94 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
             # Verify enum equality works (critical for cache lookups)
             self.assertTrue(result == expected_enum, f"Converted enum {result} should equal {expected_enum}")
+
+    def test_cache_prioritizes_successful_builds(self):
+        """Test that cache prioritizes successful builds over failed builds for the same NVR"""
+        cache = self.db.cache
+        group = 'openshift-4.18'
+        nvr = 'test-build-1.0.0-1.el8'
+
+        # Create two builds with same NVR but different outcomes
+        failed_build = KonfluxBuildRecord(
+            name='test-build',
+            version='1.0.0',
+            release='1.el8',
+            group=group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.FAILURE,
+            start_time=datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        )
+
+        successful_build = KonfluxBuildRecord(
+            name='test-build',
+            version='1.0.0',
+            release='1.el8',
+            group=group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            start_time=datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
+        )
+
+        # Test 1: Add failed build first, then successful build - should keep successful
+        cache.add_builds([failed_build, successful_build], group)
+        cached = cache.get_by_nvr(nvr, group)
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached.outcome, KonfluxBuildOutcome.SUCCESS, "Should prioritize successful build")
+
+        # Clear and test opposite order
+        cache.clear(group)
+
+        # Test 2: Add successful build first, then failed build - should keep successful
+        cache.add_builds([successful_build, failed_build], group)
+        cached = cache.get_by_nvr(nvr, group)
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached.outcome, KonfluxBuildOutcome.SUCCESS, "Should keep successful build even when failed comes after")
+
+    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
+    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    async def test_get_latest_build_checks_outcome_from_cache(self, select_mock, ensure_cached_mock):
+        """Test that get_latest_build verifies outcome when returning from cache"""
+        ensure_cached_mock.return_value = None
+
+        group = 'openshift-4.18'
+        nvr = 'test-build-1.0.0-1.el8'
+
+        # Manually populate cache with a failed build
+        failed_build = KonfluxBuildRecord(
+            name='test-build',
+            version='1.0.0',
+            release='1.el8',
+            group=group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.FAILURE,
+            start_time=datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        self.db.cache.add_builds([failed_build], group)
+
+        # Mock BigQuery to return a successful build
+        successful_build = KonfluxBuildRecord(
+            name='test-build',
+            version='1.0.0',
+            release='1.el8',
+            group=group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            start_time=datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
+        )
+
+        mock_row = MagicMock()
+        mock_response = MagicMock()
+        mock_response.total_rows = 1
+        mock_response.__iter__ = MagicMock(return_value=iter([mock_row]))
+        select_mock.return_value = mock_response
+
+        with patch.object(self.db, 'from_result_row', return_value=successful_build):
+            # Request successful build - cache has failed, should fall through to BigQuery
+            result = await self.db.get_latest_build(
+                nvr=nvr, group=group, outcome=KonfluxBuildOutcome.SUCCESS
+            )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result.outcome, KonfluxBuildOutcome.SUCCESS, "Should return successful build from BigQuery, not failed from cache")
+            # BigQuery should have been called since cache had wrong outcome
+            select_mock.assert_called_once()
