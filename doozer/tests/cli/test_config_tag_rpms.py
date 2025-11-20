@@ -66,7 +66,9 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             10001: None,
             10002: None,
         }
-        await TagRPMsCli.tag_builds(koji_api, tag_build_tuples, logger=MagicMock())
+        runtime = MagicMock()
+        cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
+        await cli.tag_builds(koji_api, tag_build_tuples)
         mc.tagBuild.assert_any_call("tag1", "foo-1.0.0-1")
         mc.tagBuild.assert_any_call("tag2", "bar-1.0.0-1")
         watch_tasks_async.assert_awaited_once_with(koji_api, ANY, [10001, 10002])
@@ -218,7 +220,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
         tag_builds.assert_awaited_once_with(
-            ANY, [('test-target-tag', kernel_build['nvr']), ('test-target-tag', kernel_rt_build['nvr'])], ANY
+            ANY, [('test-target-tag', kernel_build['nvr']), ('test-target-tag', kernel_rt_build['nvr'])]
         )
 
     @patch("doozerlib.brew.get_builds_tags")

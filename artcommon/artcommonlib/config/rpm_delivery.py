@@ -13,10 +13,8 @@ class RPMDelivery(BaseModel):
     target_tag: Optional[str] = Field(None, min_length=1)
 
 
-class RPMDeliveries(RootModel):
+class RPMDeliveries(RootModel[list[RPMDelivery]]):
     """Represents rpm_deliveries field in group config"""
-
-    root: List[RPMDelivery]
 
     def __bool__(self):
         return bool(self.root)
