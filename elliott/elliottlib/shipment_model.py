@@ -106,11 +106,18 @@ class EnvAdvisory(StrictBaseModel):
     url: Optional[str] = None
 
 
+class EnvResult(StrictBaseModel):
+    """Information about the release result for the environment"""
+
+    pipeline: Optional[str] = None
+
+
 class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
     advisory: Optional[EnvAdvisory] = None
+    result: Optional[EnvResult] = None
 
     def shipped(self):
         return bool(self.advisory)
