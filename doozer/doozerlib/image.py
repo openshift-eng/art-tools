@@ -50,6 +50,8 @@ class ImageMetadata(Metadata):
         if clone_source:
             runtime.source_resolver.resolve_source(self)
 
+        self.installed_rpms = None
+
     @property
     def image_name(self):
         return self.config.name
@@ -732,33 +734,6 @@ class ImageMetadata(Metadata):
 
         return lockfile_enabled
 
-    def is_lockfile_parent_inspect_enabled(self) -> bool:
-        """
-        Determines whether lockfile parent inspection is enabled for the current image configuration.
-
-        The method checks configuration in the following order:
-        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.inspect_parent`)
-        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent`)
-
-        If neither is set, parent inspection defaults to enabled (True).
-
-        Returns:
-            bool: True if lockfile parent inspection is enabled, False otherwise.
-        """
-        lockfile_inspect_parent_config_override = self.config.konflux.cachi2.lockfile.inspect_parent
-        if lockfile_inspect_parent_config_override not in [Missing, None]:
-            lockfile_inspect_parent = bool(lockfile_inspect_parent_config_override)
-            self.logger.info(f"Lockfile parent inspection set from metadata config: {lockfile_inspect_parent}")
-            return lockfile_inspect_parent
-
-        lockfile_inspect_parent_group_override = self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent
-        if lockfile_inspect_parent_group_override not in [Missing, None]:
-            lockfile_inspect_parent = bool(lockfile_inspect_parent_group_override)
-            self.logger.info(f"Lockfile parent inspection set from group config: {lockfile_inspect_parent}")
-            return lockfile_inspect_parent
-
-        return True
-
     def is_dnf_modules_enable_enabled(self) -> bool:
         """
         Determines whether DNF module enablement command injection is enabled.
@@ -824,31 +799,9 @@ class ImageMetadata(Metadata):
                 self.installed_rpms = []
                 return set()
 
-            # Check if we should skip parent inspection
-            if not self.is_lockfile_parent_inspect_enabled():
-                # Skip parent inspection: return full image RPM list
-                self.installed_rpms = list(rpms)
-                return rpms
+            self.installed_rpms = list(rpms)
+            return rpms
 
-            parents = self.get_parent_members()
-            if not parents:
-                self.logger.warning(f'No parent found for {self.distgit_key}; using full RPM set')
-                self.installed_rpms = list(rpms)
-                return rpms
-
-            parent_name = next(iter(parents))
-            try:
-                base_search_params['name'] = parent_name
-                parent_build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
-                parent_rpms = set(parent_build.installed_rpms or []) if parent_build else set()
-
-                diff_rpms = rpms - parent_rpms
-                self.installed_rpms = list(diff_rpms)
-                return diff_rpms
-            except Exception as e:
-                self.logger.error(f"Failed to fetch parent RPMs for {parent_name}/{self.runtime.group}: {e}")
-                self.installed_rpms = list(rpms)
-                return rpms
         except Exception as e:
             self.logger.error(f"Failed to fetch RPMs for {self.distgit_key}/{self.runtime.group}: {e}")
             self.installed_rpms = []
