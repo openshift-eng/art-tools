@@ -98,7 +98,7 @@ class BuildCache:
                     # Existing build is not successful, but new build is - replace with successful build
                     group_cache['by_nvr'][build.nvr] = build
                 elif existing_build.outcome == build.outcome and build.start_time > existing_build.start_time:
-                        group_cache['by_nvr'][build.nvr] = build
+                    group_cache['by_nvr'][build.nvr] = build
 
                 # Track time range
                 if build.start_time:
