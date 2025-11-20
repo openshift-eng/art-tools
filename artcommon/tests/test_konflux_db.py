@@ -715,7 +715,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         cache.add_builds([successful_build, failed_build], group)
         cached = cache.get_by_nvr(nvr, group)
         self.assertIsNotNone(cached)
-        self.assertEqual(cached.outcome, KonfluxBuildOutcome.SUCCESS, "Should keep successful build even when failed comes after")
+        self.assertEqual(
+            cached.outcome, KonfluxBuildOutcome.SUCCESS, "Should keep successful build even when failed comes after"
+        )
 
     @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
     @patch('artcommonlib.bigquery.BigQueryClient.select')
@@ -757,11 +759,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         with patch.object(self.db, 'from_result_row', return_value=successful_build):
             # Request successful build - cache has failed, should fall through to BigQuery
-            result = await self.db.get_latest_build(
-                nvr=nvr, group=group, outcome=KonfluxBuildOutcome.SUCCESS
-            )
+            result = await self.db.get_latest_build(nvr=nvr, group=group, outcome=KonfluxBuildOutcome.SUCCESS)
 
             self.assertIsNotNone(result)
-            self.assertEqual(result.outcome, KonfluxBuildOutcome.SUCCESS, "Should return successful build from BigQuery, not failed from cache")
+            self.assertEqual(
+                result.outcome,
+                KonfluxBuildOutcome.SUCCESS,
+                "Should return successful build from BigQuery, not failed from cache",
+            )
             # BigQuery should have been called since cache had wrong outcome
             select_mock.assert_called_once()

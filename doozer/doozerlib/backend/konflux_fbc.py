@@ -949,7 +949,9 @@ class KonfluxFbcRebaser:
         for pullspec in ref_pullspecs:
             p_split = pullspec.split('@', 1)
             if len(p_split) == 1:
-                raise ValueError(f"{p_split} invalid, it dosen't contains @, olm_bundle_blobs: {olm_bundle_blobs} \n ref_pullspecs: {ref_pullspecs}")
+                raise ValueError(
+                    f"{p_split} invalid, it dosen't contains @, olm_bundle_blobs: {olm_bundle_blobs} \n ref_pullspecs: {ref_pullspecs}"
+                )
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None

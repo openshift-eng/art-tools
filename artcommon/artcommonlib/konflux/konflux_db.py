@@ -91,7 +91,10 @@ class BuildCache:
                 if existing_build is None:
                     # No existing build with this NVR, add it
                     group_cache['by_nvr'][build.nvr] = build
-                elif existing_build.outcome != KonfluxBuildOutcome.SUCCESS and build.outcome == KonfluxBuildOutcome.SUCCESS:
+                elif (
+                    existing_build.outcome != KonfluxBuildOutcome.SUCCESS
+                    and build.outcome == KonfluxBuildOutcome.SUCCESS
+                ):
                     # Existing build is not successful, but new build is - replace with successful build
                     group_cache['by_nvr'][build.nvr] = build
                 elif existing_build.outcome == build.outcome:
