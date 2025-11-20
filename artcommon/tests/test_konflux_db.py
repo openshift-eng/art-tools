@@ -417,7 +417,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Mock the BigQuery response
         expected_build = KonfluxBundleBuildRecord(
-            name='ironic', version='1.2.3', release='4.el8', group='openshift-4.18', outcome='success'
+            name='ironic',
+            version='1.2.3',
+            release='4.el8',
+            group='openshift-4.18',
+            outcome='success',
+            start_time=datetime.now(tz=timezone.utc),
+            end_time=datetime.now(tz=timezone.utc),
         )
 
         # Mock from_result_row to return our build
@@ -480,9 +486,22 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         ensure_cached_mock.return_value = None
 
         # Mock the BigQuery response
-        build1 = KonfluxBundleBuildRecord(name='ironic', version='1.2.3', release='4.el8', group='openshift-4.18')
+        now = datetime.now(tz=timezone.utc)
+        build1 = KonfluxBundleBuildRecord(
+            name='ironic',
+            version='1.2.3',
+            release='4.el8',
+            group='openshift-4.18',
+            start_time=now,
+            end_time=now,
+        )
         build2 = KonfluxBundleBuildRecord(
-            name='ose-installer-artifacts', version='1.0.0', release='1.el8', group='openshift-4.18'
+            name='ose-installer-artifacts',
+            version='1.0.0',
+            release='1.el8',
+            group='openshift-4.18',
+            start_time=now,
+            end_time=now,
         )
 
         # Track which build to return based on call order
