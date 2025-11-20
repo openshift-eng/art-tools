@@ -80,6 +80,26 @@
       "title": "EnvAdvisory",
       "type": "object"
     },
+    "EnvResult": {
+      "additionalProperties": false,
+      "description": "Information about the release result for the environment",
+      "properties": {
+        "pipeline": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipeline"
+        }
+      },
+      "title": "EnvResult",
+      "type": "object"
+    },
     "Environments": {
       "additionalProperties": false,
       "description": "Environments to release the shipment to",
@@ -352,6 +372,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/EnvAdvisory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvResult"
             },
             {
               "type": "null"
