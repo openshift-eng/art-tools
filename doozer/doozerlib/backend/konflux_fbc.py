@@ -946,6 +946,10 @@ class KonfluxFbcRebaser:
                     dest_repos[digest] = repo
                 else:
                     continue
+        for pullspec in ref_pullspecs:
+            p_split = pullspec.split('@', 1)
+            if len(p_split) == 1:
+                raise ValueError(f"{p_split}" invalid, it dosen't contains @")
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None
