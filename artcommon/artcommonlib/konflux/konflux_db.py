@@ -816,9 +816,21 @@ class KonfluxDb:
                 if extra_patterns:
                     for col_name, col_value in extra_patterns.items():
                         build_value = getattr(cached, col_name, None)
-                        if build_value is None or col_value not in str(build_value):
-                            self.logger.debug(f"Cached build doesn't match extra_pattern {col_name}={col_value}")
-                            break
+                        # Boolean columns need exact match
+                        if col_name in ('hermetic', 'embargoed'):
+                            # Convert string representation to boolean if needed
+                            if isinstance(col_value, str):
+                                expected_bool = col_value.lower() in ('true', '1', 'yes')
+                            else:
+                                expected_bool = bool(col_value)
+                            if build_value != expected_bool:
+                                self.logger.debug(f"Cached build doesn't match extra_pattern {col_name}={col_value}")
+                                break
+                        else:
+                            # String columns use substring matching
+                            if build_value is None or col_value not in str(build_value):
+                                self.logger.debug(f"Cached build doesn't match extra_pattern {col_name}={col_value}")
+                                break
                     else:
                         # All extra_patterns match
                         return cached
@@ -904,11 +916,21 @@ class KonfluxDb:
         if embargoed is not None:
             base_clauses.append(Column('embargoed', Boolean) == embargoed)
 
-        # Add extra_patterns (regex matching)
+        # Add extra_patterns (regex matching for strings, equality for booleans)
         extra_patterns = extra_patterns or {}
         for col_name, col_value in extra_patterns.items():
-            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
-            base_clauses.append(regexp_condition)
+            # Boolean columns should use equality, not regex
+            if col_name in ('hermetic', 'embargoed'):
+                # Convert string representation to boolean if needed
+                if isinstance(col_value, str):
+                    bool_value = col_value.lower() in ('true', '1', 'yes')
+                else:
+                    bool_value = bool(col_value)
+                base_clauses.append(Column(col_name, Boolean) == bool_value)
+            else:
+                # String columns use regex matching
+                regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+                base_clauses.append(regexp_condition)
 
         # Order by start_time descending (newest first)
         order_by_clause = Column('start_time', quote=True).desc()
