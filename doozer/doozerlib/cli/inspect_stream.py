@@ -35,6 +35,7 @@ async def inspect_stream(runtime, code, strict):
                 print('Running in strict mode')
             exit(1)
         print(f'RHCOS builds consistent {rhcos_builds}')
+        # TODO: check rhcos consistent for coreos-10
     elif code == AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT:
         requirements = runtime.group_config.rhcos.require_consistency
         if not requirements:

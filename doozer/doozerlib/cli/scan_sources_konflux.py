@@ -1343,59 +1343,80 @@ class ConfigScanSources:
             }
         """
         statuses = []
-
-        version = self.runtime.get_minor_version()
-        primary_container = get_primary_container_name(self.runtime)
+        primary_containers = get_primary_container_name(self.runtime)
         for arch in self.runtime.arches:
             brew_arch = brew_arch_for_go_arch(arch)
             for private in (False, True):
-                status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
-                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                    tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
-                    latest_rhcos_value = self.latest_rhcos_node_shasum(arch)
-                else:
-                    tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
-                    latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
-
-                if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
-                    status['updated'] = True
-                    status['changed'] = True
-                    status['reason'] = (
-                        f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
+                for primary_container in primary_containers:
+                    rhel_version = self.runtime.group_config.rhcos.payload_tags.get(primary_container, {}).get(
+                        "rhel_version", None
                     )
-                    statuses.append(status)
-                # check outdate rpms in rhcos
-                pullspec_for_tag = dict()
-                build_id = ""
-                for container_conf in self.runtime.group_config.rhcos.payload_tags:
-                    build_id, pullspec = rhcos.RHCOSBuildFinder(
-                        self.runtime, version, brew_arch, private
-                    ).latest_container(container_conf)
-                    pullspec_for_tag[container_conf.name] = pullspec
-                non_latest_rpms = await rhcos.RHCOSBuildInspector(
-                    self.runtime, pullspec_for_tag, brew_arch, build_id
-                ).find_non_latest_rpms(exclude_rhel=True)
-                non_latest_rpms_filtered = []
-
-                # exclude rpm if non_latest_rpms in rhel image rpm list
-                exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
-                for installed_rpm, latest_rpm, repo in non_latest_rpms:
-                    if any(excluded in installed_rpm for excluded in exclude_rpms):
-                        self.logger.info(
-                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
-                        )
-                    else:
-                        non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
-                if non_latest_rpms_filtered:
-                    status['outdated'] = True
-                    status['changed'] = True
-                    status['reason'] = ";\n".join(
-                        f"Outdated RPM {installed_rpm} installed in RHCOS ({brew_arch}) when {latest_rpm} was available in repo {repo}"
-                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
-                    )
-                    statuses.append(status)
-
+                    if not rhel_version:
+                        rhel_version = f"{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}"
+                    status = self.check_rhcos_changes(primary_container, brew_arch, private, rhel_version)
+                    if status:
+                        statuses.append(status)
+                    status = self.check_outdated_rpms(primary_container, brew_arch, private, rhel_version)
+                    if status:
+                        statuses.append(status)
         self.rhcos_status = statuses
+
+    def check_rhcos_changes(self, primary_container, brew_arch, private, rhel_version):
+        # check if the rhcos changes in imagestream for the primary container
+        version = self.runtime.get_minor_version()
+        status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
+        if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+            # the primary container is the node image, eg node-image
+            tagged_rhcos_value = self.tagged_rhcos_node_digest(primary_container, version, brew_arch, private)
+            latest_rhcos_value = self.latest_rhcos_node_shasum(brew_arch, primary_container)
+        else:
+            # the primary container is machine-os-content
+            tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
+            latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
+
+        if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
+            status['updated'] = True
+            status['changed'] = True
+            status['rhel_version'] = rhel_version
+            status['reason'] = (
+                f"latest RHCOS build {primary_container} is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
+            )
+            return status
+        return None
+
+    def check_outdated_rpms(self, primary_container, brew_arch, private, rhel_version):
+        # check outdate rpms in rhcos
+        pullspec_for_tag = dict()
+        build_id = ""
+        for container_conf in self.runtime.group_config.rhcos.payload_tags:
+            build_id, pullspec = rhcos.RHCOSBuildFinder(
+                self.runtime, version, brew_arch, private, primary_container=primary_container
+            ).latest_container(container_conf)
+            pullspec_for_tag[container_conf.name] = pullspec
+        non_latest_rpms = await rhcos.RHCOSBuildInspector(
+            self.runtime, pullspec_for_tag, brew_arch, build_id, primary_container=primary_container
+        ).find_non_latest_rpms(exclude_rhel=True)
+        non_latest_rpms_filtered = []
+
+        # exclude rpm if non_latest_rpms in rhel image rpm list
+        exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+        for installed_rpm, latest_rpm, repo in non_latest_rpms:
+            if any(excluded in installed_rpm for excluded in exclude_rpms):
+                self.logger.info(
+                    f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                )
+            else:
+                non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
+        if non_latest_rpms_filtered:
+            status['outdated'] = True
+            status['changed'] = True
+            status['rhel_version'] = rhel_version
+            status['reason'] = ";\n".join(
+                f"Outdated RPM {installed_rpm} installed in RHCOS {primary_container} ({brew_arch}) when {latest_rpm} was available in repo {repo}"
+                for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+            )
+            return status
+        return None
 
     def tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:
         """get latest coreos image diget from tagged RHCOS in given imagestream"""
@@ -1419,11 +1440,16 @@ class ConfigScanSources:
 
         return shasum
 
-    def latest_rhcos_node_shasum(self, arch) -> Optional[str]:
+    def latest_rhcos_node_shasum(self, arch, primary_container) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         rhcos_index = next(
-            (tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), ""
+            (
+                tag.rhcos_index_tag
+                for tag in self.runtime.group_config.rhcos.payload_tags
+                if tag.name == primary_container
+            ),
+            "",
         )
         rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch)
         return rhcos_info['digest']

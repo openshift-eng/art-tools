@@ -30,6 +30,7 @@ class Ocp4ScanPipeline:
         self.rhcos_outdated = False
         self.rhcos_inconsistent = False
         self.inconsistent_rhcos_rpms = None
+        self.rhcos_outdated_rhel_version = set()
 
         self.skipped = True  # True by default; if not locked, run() will set it to False
 
@@ -115,6 +116,7 @@ class Ocp4ScanPipeline:
                     self.rhcos_updated = True
                 if rhcos_change['reason'].get('outdated', None):
                     self.rhcos_outdated = True
+                    self.rhcos_outdated_rhel_version.add(rhcos_change['reason'].get('rhel_version', None))
 
     async def get_rhcos_inconsistencies(self):
         """
@@ -182,7 +184,11 @@ class Ocp4ScanPipeline:
             self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
             layered_rhcos = await has_layered_rhcos(self.doozer_base_command)
             job_name = 'build-node-image' if layered_rhcos else 'build'
-            jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
+            for rhel_version in self.rhcos_outdated_rhel_version:
+                self.logger.info(
+                    'Triggering a %s RHCOS build for consistency for rhel version %s', self.version, rhel_version
+                )
+                jenkins.start_rhcos(build_version=f"{self.version}-{rhel_version}", new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
             rhcos_changes = True
