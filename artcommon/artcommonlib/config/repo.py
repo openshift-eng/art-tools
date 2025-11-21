@@ -40,7 +40,7 @@ class ContentSet(BaseModel):
 
 
 class RepoSync(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     latest_only: bool = True
 
 
