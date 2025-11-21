@@ -602,7 +602,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
+        self.assertIn(
+            "A regular shipment is expected to have data.releaseNotes defined",
+            str(context.exception),
+        )
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
