@@ -103,9 +103,7 @@ class TagRPMsCli:
             DoozerFatalError: If assembly type is not None or STREAM
         """
         if self._runtime.assembly_type not in (None, AssemblyTypes.STREAM):
-            raise DoozerFatalError(
-                f"This command cannot be run for non-stream assembly {self._runtime.assembly_type}"
-            )
+            raise DoozerFatalError(f"This command cannot be run for non-stream assembly {self._runtime.assembly_type}")
 
     def _load_rpm_deliveries_config(self) -> Optional[RPMDeliveries]:
         """Load and validate rpm_deliveries configuration.
@@ -135,10 +133,13 @@ class TagRPMsCli:
         Returns:
             Tuple of (stop_ship_builds, integration_builds, rhel_builds)
         """
-        self.logger.info("Getting tagged builds in stop-ship tag %s...", entry.stop_ship_tag)
-        builds_in_stop_ship_tag = await self.get_tagged_builds(
-            koji_api, [(entry.stop_ship_tag, pkg) for pkg in packages], build_type="rpm"
-        )
+        if entry.stop_ship_tag:
+            self.logger.info("Getting tagged builds in stop-ship tag %s...", entry.stop_ship_tag)
+            builds_in_stop_ship_tag = await self.get_tagged_builds(
+                koji_api, [(entry.stop_ship_tag, pkg) for pkg in packages], build_type="rpm"
+            )
+        else:
+            builds_in_stop_ship_tag = [[] for _ in packages]
 
         self.logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
         builds_in_integration_tag = await self.get_tagged_builds(
@@ -208,7 +209,7 @@ class TagRPMsCli:
         """
         for build in candidate_builds:
             # check if the build is already tagged into the stop-ship tag
-            if build["nvr"] in stop_ship_nvrs:
+            if entry.stop_ship_tag and build["nvr"] in stop_ship_nvrs:
                 self.logger.warning(
                     "Build %s is tagged into the stop-ship tag: %s. Skipping...",
                     build["nvr"],
@@ -218,9 +219,7 @@ class TagRPMsCli:
 
             # check if the build is in the rhel tag. If not, skip it.
             if entry.rhel_tag and build["nvr"] not in rhel_build_nvrs:
-                self.logger.warning(
-                    "Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag
-                )
+                self.logger.warning("Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag)
                 continue
 
             # check if the build is already (or historically) tagged into the target tag
@@ -285,7 +284,9 @@ class TagRPMsCli:
 
             # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
             kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-            kernel_rt_version = f"{kernel_rt_build['version']}-{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
+            kernel_rt_version = (
+                f"{kernel_rt_build['version']}-{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
+            )
 
             if kernel_version not in kernel_rt_version:
                 raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
@@ -320,9 +321,7 @@ class TagRPMsCli:
         else:
             self.logger.info("Nothing to untag")
 
-    async def _execute_tag_operations(
-        self, koji_api: koji.ClientSession, builds_to_tag: Dict[str, Dict], report: Dict
-    ):
+    async def _execute_tag_operations(self, koji_api: koji.ClientSession, builds_to_tag: Dict[str, Dict], report: Dict):
         """Execute tag operations and update report.
 
         Args:
@@ -387,12 +386,13 @@ class TagRPMsCli:
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
                 rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
 
-                self.logger.info(
-                    "Found %s build(s) of package %s in stop-ship tag %s",
-                    len(stop_ship_nvrs),
-                    package,
-                    entry.stop_ship_tag,
-                )
+                if entry.stop_ship_tag:
+                    self.logger.info(
+                        "Found %s build(s) of package %s in stop-ship tag %s",
+                        len(stop_ship_nvrs),
+                        package,
+                        entry.stop_ship_tag,
+                    )
 
                 # Find stop-ship builds to untag
                 nvrs_to_untag = self._find_stop_ship_builds_to_untag(koji_api, stop_ship_nvrs, entry)
