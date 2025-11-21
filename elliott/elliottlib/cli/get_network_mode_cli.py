@@ -10,13 +10,16 @@ from elliottlib.runtime import Runtime
 
 
 class GetNetworkModeCli:
-    def __init__(self, runtime, as_json: bool):
+    def __init__(self, runtime, as_json: bool, only_hermetic: bool, only_open: bool):
         self.runtime = runtime
         self.as_json = as_json
+        self.only_hermetic = only_hermetic
+        self.only_open = only_open
+
         self.konflux_db = runtime.konflux_db
         self.logger = logutil.get_logger(__name__)
 
-    async def run(self):
+    async def get_results(self):
         # Use provided query_group to override the group for querying builds, or use runtime group
         # This allows querying builds stored with different group names (e.g., okd-4.21)
         assembly_to_use = self.runtime.assembly or 'stream'
@@ -44,32 +47,29 @@ class GetNetworkModeCli:
             artifact_type=ArtifactType.IMAGE,
         )
 
+        # Filter out non-found builds
+        builds = [build for build in builds if build]
+
+        # Filter by network mode if provided
+        if self.only_hermetic:
+            builds = [build for build in builds if build.hermetic]
+        elif self.only_open:
+            builds = [build for build in builds if not build.hermetic]
+
         # Create a map of name to build record
-        build_map: Dict[str, KonfluxBuildRecord] = {build.name: build for build in builds if build is not None}
-        results = []
+        results = [
+            {
+                'name': build.name,
+                'nvr': build.nvr,
+                'network_mode': 'hermetic' if build.hermetic else 'open',
+                'pullspec': build.image_pullspec,
+            }
+            for build in builds
+        ]
+        return results
 
-        for image_meta in image_metas:
-            build_record = build_map.get(image_meta.distgit_key)
-
-            if build_record is None:
-                network_mode = None
-                nvr = None
-                pullspec = None
-                self.logger.warning(f'No build found for {image_meta.distgit_key}')
-
-            else:
-                network_mode = 'hermetic' if build_record.hermetic else 'open'
-                nvr = build_record.nvr
-                pullspec = build_record.image_pullspec
-
-            results.append(
-                {
-                    'name': image_meta.distgit_key,
-                    'nvr': nvr,
-                    'network_mode': network_mode,
-                    'pullspec': pullspec,
-                }
-            )
+    async def run(self):
+        results = await self.get_results()
 
         # Output results
         if self.as_json:
@@ -99,9 +99,27 @@ class GetNetworkModeCli:
     default=False,
     help='Disable Konflux DB cache',
 )
+@click.option(
+    '--only-hermetic',
+    is_flag=True,
+    default=False,
+    help='Only returns hermetic network mode builds',
+)
+@click.option(
+    '--only-open',
+    is_flag=True,
+    default=False,
+    help='Only returns open network mode builds',
+)
 @pass_runtime
 @click_coroutine
-async def get_network_mode_cli(runtime: Runtime, as_json: bool, disable_cache: bool):
+async def get_network_mode_cli(
+    runtime: Runtime,
+    as_json: bool,
+    disable_cache: bool,
+    only_hermetic: bool,
+    only_open: bool,
+):
     """
     Get the network mode (hermetic, internal-only, or open) of the latest build
     for each image component in the group.
@@ -118,11 +136,23 @@ async def get_network_mode_cli(runtime: Runtime, as_json: bool, disable_cache: b
 
         # Output as JSON
         elliott --group openshift-4.21 get-network-mode --json
+
+        # Only fetch components that were built in hermetic mode
+        elliott --group openshift-4.21 get-network-mode --only-hermetic
+
+        # Only fetch components that were built in open mode
+        elliott --group openshift-4.21 get-network-mode --only-open
+
+        # Disable Konflux DB cache
+        elliott --group openshift-4.21 get-network-mode --disable-cache
     """
+
+    if only_open and only_hermetic:
+        raise click.BadParameter('Use only one of --only-open and --only-hermetic')
 
     runtime.initialize(mode='images', disable_konflux_db_cache=disable_cache)
 
     if runtime.konflux_db is None:
         raise RuntimeError('Must run Elliott with Konflux DB initialized')
 
-    await GetNetworkModeCli(runtime, as_json).run()
+    await GetNetworkModeCli(runtime, as_json, only_hermetic, only_open).run()
