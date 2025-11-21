@@ -54,6 +54,7 @@ from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
 from elliottlib.cli.find_unconsumed_rpms import find_unconsumed_rpms_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
+from elliottlib.cli.get_network_mode_cli import get_network_mode_cli
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.cli.konflux_release_watch_cli import watch_release_cli
 from elliottlib.cli.move_builds_cli import move_builds_cli
@@ -288,6 +289,7 @@ cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_bugs_cli)
 cli.add_command(find_builds_cli)
 cli.add_command(find_k_builds_cli)
+cli.add_command(get_network_mode_cli)
 cli.add_command(tag_builds_cli)
 cli.add_command(tarball_sources_cli)
 cli.add_command(verify_cvp_cli)
