@@ -1,9 +1,10 @@
+import asyncio
 import base64
 import io
 import os
 import pathlib
 import sys
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import click
 import yaml
@@ -12,8 +13,8 @@ from artcommonlib.format_util import color_print, green_print, red_print, yellow
 from artcommonlib.metadata import CONFIG_MODES
 from ghapi.core import GhApi
 
-from doozerlib import Runtime, metadata
-from doozerlib.cli import cli, pass_runtime
+from doozerlib import Runtime
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rhcos import RHCOSBuildInspector
@@ -540,3 +541,187 @@ def config_update_required(runtime, image_list):
         data_obj.save()
 
     green_print('\nComplete! Remember to commit and push the changes!')
+
+
+@cli.command("config:find-package-repo", short_help="Find which repo(s) provide a specific package")
+@click.argument("packages", nargs=1, metavar="PACKAGES", type=click.STRING, required=True)
+@click.option(
+    "-a",
+    "--arch",
+    metavar='ARCH',
+    help="Architecture to search (defaults to x86_64). Results include both arch-specific and noarch packages.",
+    default='x86_64',
+    required=False,
+)
+@click.option(
+    "--yaml",
+    "as_yaml",
+    default=False,
+    is_flag=True,
+    help='Print results in YAML format',
+)
+@click.option(
+    "--all-versions",
+    default=False,
+    is_flag=True,
+    help='Show all versions of the package found, not just the latest',
+)
+@click.option(
+    "--repos",
+    metavar='REPOS',
+    help='Comma-separated list of repository names to search. If not specified, all configured repositories are searched.',
+    default=None,
+    required=False,
+)
+@pass_runtime
+@click_coroutine
+async def config_find_package_repo(runtime, packages, arch, as_yaml, all_versions, repos):
+    """
+    Find which repository (or repositories) defined in group.yml provide a specific package.
+
+    This command searches through all repos configured in group.yml and identifies
+    which ones contain the specified package. Useful for answering questions like
+    "what repo makes the nmstate-devel package available in 4.16?"
+
+    Usage:
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel --arch ppc64le
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel --yaml
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel --all-versions
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel --repos rhel-9-baseos-rpms,rhel-9-appstream-rpms
+
+        $ doozer --group=openshift-4.16 config:find-package-repo nmstate-devel,aardvark-dns --repos rhel-9-baseos-rpms,rhel-8-appstream-rpms
+    """
+
+    packages = packages.split(',')
+
+    # Default to "stream" assembly unless otherwise specified
+    if runtime.assembly is None or runtime.assembly == 'test':
+        runtime.assembly = 'stream'
+
+    # We need repos initialized, so can't use group_only or config_only
+    # But we don't need to clone distgits or load image/rpm configs
+    opts = dict(CONFIG_RUNTIME_OPTS)
+    opts['group_only'] = False  # Need repos, so can't use group_only
+    opts['config_only'] = False  # Need repos, so can't use config_only
+    runtime.initialize(**opts)
+
+    if arch not in runtime.arches:
+        runtime.logger.warning(
+            f'Architecture {arch} is not in the group\'s configured arches {runtime.arches}. '
+            f'Searching anyway, but results may be incomplete.'
+        )
+
+    # Parse and filter repos if --repos option is provided
+    repos_to_search = None
+    if repos:
+        repos_to_search = [r.strip() for r in repos.split(',') if r.strip()]
+        # Validate that all specified repos exist
+        # runtime.repos is a Repos object, check against its names tuple
+        available_repo_names = set(runtime.repos.names)
+        invalid_repos = [r for r in repos_to_search if r not in available_repo_names]
+        if invalid_repos:
+            raise DoozerFatalError(
+                f'The following repositories are not configured: {", ".join(invalid_repos)}. '
+                f'Available repositories: {", ".join(sorted(available_repo_names))}'
+            )
+
+    # Dictionary: package_name -> repo_name -> list of matching RPMs
+    results: Dict[str, Dict[str, List[Dict]]] = {}
+
+    async def search_repo(repo, repo_name):
+        try:
+            repodata = await repo.get_repodata(arch)
+            # Get the repo URL for this repo and arch
+            repo_url = repo.baseurl(repotype="unsigned", arch=arch)
+
+            for package in packages:
+                # Search for the package in this repo's repodata
+                runtime.logger.info(f'Searching for {package} in repo {repo_name}...')
+                matching_rpms = [
+                    rpm
+                    for rpm in repodata.primary_rpms
+                    if rpm.name == package and (rpm.arch == arch or rpm.arch == 'noarch')
+                ]
+
+                if matching_rpms:
+                    if all_versions:
+                        # Include all versions
+                        rpm_list = [rpm.to_dict() for rpm in matching_rpms]
+                    else:
+                        # Find the latest version
+                        latest_rpm = matching_rpms[0]
+                        for rpm in matching_rpms[1:]:
+                            if rpm.compare(latest_rpm) > 0:
+                                latest_rpm = rpm
+                        rpm_list = [latest_rpm.to_dict()]
+
+                    # Add repo_url to each RPM dict
+                    for rpm_dict in rpm_list:
+                        rpm_dict['repo_url'] = repo_url
+
+                    # Group by package name, then by repo
+                    if package not in results:
+                        results[package] = {}
+                    results[package][repo_name] = rpm_list
+                    runtime.logger.info(f'Found {package} in repo {repo_name}')
+
+        except Exception as e:
+            runtime.logger.warning(f'Error searching repo {repo_name}: {e}')
+
+    # Search through all repos (or filtered repos if --repos was specified)
+    repos_dict = dict(runtime.repos.items())
+    if repos_to_search:
+        repos_dict = {repo_name: repo for repo_name, repo in runtime.repos.items() if repo_name in repos_to_search}
+    tasks = [search_repo(repo, repo_name) for repo_name, repo in repos_dict.items()]
+    await asyncio.gather(*tasks)
+
+    # Format and output results
+    if not results:
+        if as_yaml:
+            click.echo(yaml.safe_dump({'packages': packages, 'results': {}}))
+        else:
+            red_print(f'Package(s) {", ".join(packages)} not found in any configured repositories for arch {arch}')
+        sys.exit(1)
+
+    if as_yaml:
+        # Transform results to only include required fields: repo_url, nevra, nvr, version
+        transformed_results = {}
+        for package_name, repos in results.items():
+            transformed_results[package_name] = {'repos': {}}
+            for repo_name, rpms in repos.items():
+                transformed_results[package_name]['repos'][repo_name] = [
+                    {
+                        'repo_url': rpm_dict['repo_url'],
+                        'nevra': rpm_dict['nevra'],
+                        'nvr': rpm_dict['nvr'],
+                        'version': rpm_dict['version'],
+                    }
+                    for rpm_dict in rpms
+                ]
+
+        output = {
+            'arch': arch,
+            'packages': sorted(results.keys()),
+            'results': transformed_results,
+        }
+        click.echo(yaml.safe_dump(output, default_flow_style=False))
+    else:
+        green_print('Found package(s) in the following repository(ies):\n')
+        for package_name in sorted(results.keys()):
+            click.echo(f'  Package: {package_name}')
+            for repo_name in sorted(results[package_name].keys()):
+                click.echo(f'    Repository: {repo_name}')
+                # Get repo_url from the first RPM (all RPMs in same repo have same URL)
+                repo_url = results[package_name][repo_name][0].get('repo_url', 'N/A')
+                click.echo(f'    Repo URL: {repo_url}')
+                for rpm_dict in results[package_name][repo_name]:
+                    click.echo(
+                        f'    - {rpm_dict["nevra"]} (version: {rpm_dict["version"]}, release: {rpm_dict["release"]})'
+                    )
+            click.echo()
