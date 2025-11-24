@@ -266,6 +266,7 @@ def get_inflight(assembly, group):
             f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
             headers={'Accept': 'application/json'},
         )
+        response.raise_for_status()
         try:
             data = response.json()
             for release in data['all_ga_tasks']:
@@ -284,6 +285,15 @@ def get_inflight(assembly, group):
                             break
                         else:
                             raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
+        except ValueError as e:
+            if "time data" in str(e) or "does not match format" in str(e):
+                raise ValueError(
+                    f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
+                )
+            else:
+                raise  # Re-raise other ValueErrors unchanged
         except KeyError as e:
             raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
 
