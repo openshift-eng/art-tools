@@ -195,9 +195,7 @@ def get_assembly_release_date(assembly, group):
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
     s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    response = s.get(
-        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
-    )
+    response = s.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     try:
         data = response.json()
         for release in data['all_ga_tasks']:
@@ -284,14 +282,14 @@ def get_inflight(assembly, group):
                         raise ValueError(f"Didn't find in_inflight release in {release['name']}")
     except KeyError as e:
         raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
-    
+
     if not inflight_release:
         LOGGER.info(
             f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
         )
     else:
         LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
-    
+
     return inflight_release
 
 
