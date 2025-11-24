@@ -203,8 +203,8 @@ def get_assembly_release_date(assembly, group):
             if assembly in release['name']:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    except (json.JSONDecodeError, KeyError) as e:
-        raise ValueError(f'Failed to parse release schedule data for {group}/{assembly}: {e}')
+    except KeyError:
+        pass
     raise ValueError(f'Assembly release date not found for {assembly}')
 
 
