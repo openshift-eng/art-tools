@@ -255,7 +255,7 @@ def get_inflight(assembly, group):
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    
+
     # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
     if minor > 0:
         prev_group = f'openshift-{major}.{minor - 1}'
