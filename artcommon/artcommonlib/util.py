@@ -263,21 +263,19 @@ def get_inflight(assembly, group):
         headers={'Accept': 'application/json'},
     )
     for release in release_schedules.json()['all_ga_tasks']:
-        is_future = is_future_release_date(release['date_start'])
-        if is_future:
-            days_diff = abs(
-                (
-                    datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                    - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                ).days
-            )
-            if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                if match:
-                    inflight_release = match.group()
-                    break
-                else:
-                    raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+        days_diff = abs(
+            (
+                datetime.strptime(assembly_release_date, "%Y-%b-%d")
+                - datetime.strptime(release['date_start'], "%Y-%m-%d")
+            ).days
+        )
+        if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
+            match = re.search(r'\d+\.\d+\.\d+', release['name'])
+            if match:
+                inflight_release = match.group()
+                break
+            else:
+                raise ValueError(f"Didn't find in_inflight release in {release['name']}")
     return inflight_release
 
 
