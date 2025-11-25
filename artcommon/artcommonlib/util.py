@@ -195,11 +195,11 @@ def get_assembly_release_date(assembly, group):
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
     s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    release_schedules = s.get(
-        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
-    )
+    response = s.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    response.raise_for_status()
     try:
-        for release in release_schedules.json()['all_ga_tasks']:
+        data = response.json()
+        for release in data['all_ga_tasks']:
             if assembly in release['name']:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
@@ -255,29 +255,57 @@ def get_inflight(assembly, group):
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    s = requests.Session()
-    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    release_schedules = s.get(
-        f'{RELEASE_SCHEDULES}/openshift-{major}.{minor - 1}.z/?fields=all_ga_tasks',
-        headers={'Accept': 'application/json'},
-    )
-    for release in release_schedules.json()['all_ga_tasks']:
-        is_future = is_future_release_date(release['date_start'])
-        if is_future:
-            days_diff = abs(
-                (
-                    datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                    - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                ).days
+
+    # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
+    if minor > 0:
+        prev_group = f'openshift-{major}.{minor - 1}'
+        s = requests.Session()
+        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+        s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+        response = s.get(
+            f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
+            headers={'Accept': 'application/json'},
+        )
+        response.raise_for_status()
+        try:
+            data = response.json()
+            for release in data['all_ga_tasks']:
+                is_future = is_future_release_date(release['date_start'])
+                if is_future:
+                    days_diff = abs(
+                        (
+                            datetime.strptime(assembly_release_date, "%Y-%b-%d")
+                            - datetime.strptime(release['date_start'], "%Y-%m-%d")
+                        ).days
+                    )
+                    if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
+                        match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                        if match:
+                            inflight_release = match.group()
+                            break
+                        else:
+                            raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
+        except ValueError as e:
+            if "time data" in str(e) or "does not match format" in str(e):
+                raise ValueError(
+                    f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
+                )
+            else:
+                raise  # Re-raise other ValueErrors unchanged
+        except KeyError as e:
+            raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
+
+        if not inflight_release:
+            LOGGER.info(
+                f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
             )
-            if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                if match:
-                    inflight_release = match.group()
-                    break
-                else:
-                    raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+        else:
+            LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
+    else:
+        LOGGER.info(f'No previous group available for {group} (minor version is 0)')
+
     return inflight_release
 
 
