@@ -335,7 +335,11 @@ def get_weekday() -> str:
 
 
 async def is_build_permitted(
-    version: str, data_path: str = constants.OCP_BUILD_DATA_URL, doozer_working: str = '', doozer_data_gitref: str = ''
+    version: str = '',
+    group: str = '',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '',
+    doozer_data_gitref: str = '',
 ) -> bool:
     """
     Check whether the group should be built right now.
@@ -343,11 +347,20 @@ async def is_build_permitted(
         - group config 'freeze_automation'
         - manual/scheduled run
         - current day of the week
-    """
 
+    Args:
+        version: OCP version (e.g., '4.17'). If provided, group is constructed as 'openshift-{version}'.
+        group: Full group name (e.g., 'openshift-4.17'). One of version or group must be provided.
+        data_path: Path to ocp-build-data
+        doozer_working: Doozer working directory
+        doozer_data_gitref: Git ref for ocp-build-data
+    """
+    if not version and not group:
+        raise ValueError("Either version or group must be provided")
+    if not group:
+        group = f'openshift-{version}'
     # Get 'freeze_automation' flag
     # get_freeze_automation now expects a full group name like 'openshift-4.15'
-    group = f'openshift-{version}'
     freeze_automation = await get_freeze_automation(
         group=group,
         doozer_data_path=data_path,
