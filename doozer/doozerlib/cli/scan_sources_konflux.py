@@ -25,7 +25,12 @@ from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
-from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.rhcos import (
+    get_latest_layered_rhcos_build,
+    get_latest_layered_rhcos_build_shasum,
+    get_primary_container_name,
+    layered_rhcos_build_rpmlist,
+)
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation
 from async_lru import alru_cache
@@ -124,11 +129,7 @@ class ConfigScanSources:
             await self.scan_images(self.image_tree[level])
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
-        if (
-            self.ci_kubeconfig
-            and self.runtime.group.startswith("openshift-")
-            and self.runtime.group != 'openshift-4.21'
-        ):
+        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-"):
             await self.detect_rhcos_status()
 
         # Print the output report
@@ -1343,29 +1344,36 @@ class ConfigScanSources:
             }
         """
         statuses = []
-        primary_containers = get_primary_container_name(self.runtime)
+        version = self.runtime.get_minor_version()
+        primary_container = get_primary_container_name(self.runtime)
         for arch in self.runtime.arches:
             brew_arch = brew_arch_for_go_arch(arch)
             for private in (False, True):
-                for primary_container in primary_containers:
-                    rhel_version = self.runtime.group_config.rhcos.payload_tags.get(primary_container, {}).get(
-                        "rhel_version", None
-                    )
-                    if not rhel_version:
-                        rhel_version = f"{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}"
-                    # check if the rhcos changes in imagestream for the primary container
-                    version = self.runtime.get_minor_version()
-                    status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
-                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                        # the primary container is the node image, eg node-image
-                        tagged_rhcos_value = self.tagged_rhcos_node_digest(
-                            primary_container, version, brew_arch, private
-                        )
-                        latest_rhcos_value = self.latest_rhcos_node_shasum(brew_arch, primary_container)
-                    else:
-                        # the primary container is machine-os-content
-                        tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
-                        latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
+                rhel_version = (
+                    f"{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}"
+                )
+                # check if the rhcos changes in imagestream for the primary container
+
+                status = dict(name=f"{version}-{brew_arch}{'-priv' if private else ''}")
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    # the primary container is the node image, eg node-image
+                    for tag in self.runtime.group_config.rhcos.payload_tags:
+                        # the node image will have commitmeta key, but extensions will have meta key
+                        if tag['meta_type'] == "commitmeta":
+                            tagged_rhcos_value = self.tagged_rhcos_node_digest(tag.name, version, brew_arch, private)
+                            latest_rhcos_value = get_latest_layered_rhcos_build_shasum(tag, brew_arch)
+                            if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
+                                status['updated'] = True
+                                status['changed'] = True
+                                status['rhel_version'] = tag['rhel_version']
+                                status['reason'] = (
+                                    f"latest RHCOS build {tag.name} is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
+                                )
+                                statuses.append(status)
+                else:
+                    # the primary container is machine-os-content
+                    tagged_rhcos_value = self.tagged_rhcos_id(primary_container, version, brew_arch, private)
+                    latest_rhcos_value = self.latest_rhcos_build_id(version, brew_arch, private)
 
                     if latest_rhcos_value and tagged_rhcos_value != latest_rhcos_value:
                         status['updated'] = True
@@ -1375,9 +1383,22 @@ class ConfigScanSources:
                             f"latest RHCOS build {primary_container} is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
                         )
                         statuses.append(status)
-                    # check outdate rpms in rhcos
-                    pullspec_for_tag = dict()
-                    build_id = ""
+                # check outdate rpms in rhcos
+                pullspec_for_tag = dict()
+                build_id = ""
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    # get latest rhcos image rpms and compare with latest rpms in repository
+                    rpm_entries = []
+                    for container_conf in self.runtime.group_config.rhcos.payload_tags:
+                        build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
+                        if not pullspec:
+                            raise IOError(f"No RHCOS latest found for {version} / {brew_arch}")
+                        pullspec_for_tag[container_conf.name] = pullspec
+                        rpm_entries.extend(layered_rhcos_build_rpmlist(pullspec, container_conf.meta_type))
+                    non_latest_rpms = await rhcos.RHCOSBuildInspector(
+                        self.runtime, pullspec_for_tag, brew_arch, build_id, primary_container=primary_container
+                    ).find_non_latest_rpms(exclude_rhel=True, os_metadata_rpm_list=rpm_entries)
+                else:
                     for container_conf in self.runtime.group_config.rhcos.payload_tags:
                         build_id, pullspec = rhcos.RHCOSBuildFinder(
                             self.runtime, version, brew_arch, private, primary_container=primary_container
@@ -1386,26 +1407,26 @@ class ConfigScanSources:
                     non_latest_rpms = await rhcos.RHCOSBuildInspector(
                         self.runtime, pullspec_for_tag, brew_arch, build_id, primary_container=primary_container
                     ).find_non_latest_rpms(exclude_rhel=True)
-                    non_latest_rpms_filtered = []
+                non_latest_rpms_filtered = []
 
-                    # exclude rpm if non_latest_rpms in rhel image rpm list
-                    exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
-                    for installed_rpm, latest_rpm, repo in non_latest_rpms:
-                        if any(excluded in installed_rpm for excluded in exclude_rpms):
-                            self.logger.info(
-                                f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
-                            )
-                        else:
-                            non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
-                    if non_latest_rpms_filtered:
-                        status['outdated'] = True
-                        status['changed'] = True
-                        status['rhel_version'] = rhel_version
-                        status['reason'] = ";\n".join(
-                            f"Outdated RPM {installed_rpm} installed in RHCOS {primary_container} ({brew_arch}) when {latest_rpm} was available in repo {repo}"
-                            for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+                # exclude rpm if non_latest_rpms in rhel image rpm list
+                exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
+                for installed_rpm, latest_rpm, repo in non_latest_rpms:
+                    if any(excluded in installed_rpm for excluded in exclude_rpms):
+                        self.logger.info(
+                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
                         )
-                        statuses.append(status)
+                    else:
+                        non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
+                if non_latest_rpms_filtered:
+                    status['outdated'] = True
+                    status['changed'] = True
+                    status['rhel_version'] = rhel_version
+                    status['reason'] = ";\n".join(
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({brew_arch}) when {latest_rpm} was available in repo {repo}"
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+                    )
+                    statuses.append(status)
         self.rhcos_status = statuses
 
     def tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:

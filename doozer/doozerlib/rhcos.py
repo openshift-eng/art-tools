@@ -466,7 +466,9 @@ class RHCOSBuildInspector:
 
         raise IOError(f'Unable to determine RHEL version base for rhcos {self.build_id}')
 
-    async def find_non_latest_rpms(self, exclude_rhel: Optional[bool] = False) -> List[Tuple[str, str, str]]:
+    async def find_non_latest_rpms(
+        self, exclude_rhel: Optional[bool] = False, os_metadata_rpm_list: Optional[list] = None
+    ) -> List[Tuple[str, str, str]]:
         """
         If the packages installed in this image overlap packages in the build repo,
         return NVRs of the latest candidate builds that are not also installed in this image.
@@ -496,6 +498,7 @@ class RHCOSBuildInspector:
         )
 
         # Get all installed rpms
+        rpm_list = os_metadata_rpm_list or self.get_os_metadata_rpm_list(exclude_rhel)
         rpms_to_check = [
             {
                 "name": name,
@@ -505,7 +508,7 @@ class RHCOSBuildInspector:
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
             }
-            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list(exclude_rhel)
+            for name, epoch, version, release, arch in rpm_list
         ]
 
         logger.info("Determining outdated rpms...")
