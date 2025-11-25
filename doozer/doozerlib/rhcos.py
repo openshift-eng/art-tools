@@ -201,7 +201,9 @@ class RHCOSBuildFinder:
         :return: rpm list for rhel build
         """
         if self.layered:
-            rhel_version = self.runtime.group_config.rhcos.payload_tags.get(self.primary_container).get("rhel_version")
+            rhel_version = self.runtime.group_config.rhcos.payload_tags.get(self._primary_container, {}).get(
+                "rhel_version"
+            )
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_version}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
             with request.urlopen(url) as req:
@@ -412,7 +414,10 @@ class RHCOSBuildInspector:
         look up the group.yml-configured primary RHCOS container.
         @return Model with entries for name and build_metadata_key
         """
-        return self.primary_container if self.primary_container else rhcos.get_primary_container_conf(self.runtime)
+        container_config = self.get_container_configs().get(self.primary_container, {})
+        if container_config:
+            return container_config
+        return rhcos.get_primary_container_conf(self.runtime)
 
     def get_container_configs(self):
         """
