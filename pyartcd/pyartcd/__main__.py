@@ -39,13 +39,19 @@ from pyartcd.pipelines import (
     review_cvp,
     scan_fips,
     scan_for_kernel_bugs,
+    scan_plashet_rpms,
     sigstore_sign,
     sync_rhcos_bfb,
     tag_rpms,
     tarball_sources,
     update_golang,
 )
-from pyartcd.pipelines.scheduled import schedule_oadp_scan, schedule_ocp4_scan, schedule_ocp4_scan_konflux
+from pyartcd.pipelines.scheduled import (
+    schedule_oadp_scan,
+    schedule_ocp4_scan,
+    schedule_ocp4_scan_konflux,
+    schedule_scan_plashet_rpms,
+)
 
 
 def main(args: Optional[Sequence[str]] = None):
