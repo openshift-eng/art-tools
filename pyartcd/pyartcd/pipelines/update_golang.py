@@ -171,6 +171,7 @@ class UpdateGolangPipeline:
         data_path: str | None = None,
         data_gitref: str | None = None,
         skip_pr: bool = False,
+        external_golang_rpms: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -187,6 +188,7 @@ class UpdateGolangPipeline:
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.skip_pr = skip_pr
+        self.external_golang_rpms = external_golang_rpms
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -217,20 +219,31 @@ class UpdateGolangPipeline:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
+        external_repos_msg = " using golang RPMs from external repos" if self.external_golang_rpms else ""
         await self._slack_client.say_in_thread(
-            f":construction: Updating golang for {self.ocp_version} (building images on {self.build_system}) :construction:"
+            f":construction: Updating golang for {self.ocp_version} (building images on {self.build_system}{external_repos_msg}) :construction:"
         )
-        # # Process golang RPM builds (always from Brew)
-        # cannot_proceed = not all(
-        #     await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
-        # )
-        # if cannot_proceed:
-        #     raise ValueError(
-        #         'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
-        #     )
 
-        # _LOGGER.info('All golang RPM builds are tagged and available!')
-        # await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
+        if self.external_golang_rpms:
+            _LOGGER.warning(
+                "Using golang RPMs from external repos. Skipping tagging and availability checks. "
+                "Ensure external repos are enabled in golang-builder image metadata config."
+            )
+            await self._slack_client.say_in_thread(
+                ":warning: Using golang RPMs from external repos. Skipping tagging and availability checks."
+            )
+        else:
+            # Process golang RPM builds (always from Brew)
+            cannot_proceed = not all(
+                await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+            )
+            if cannot_proceed:
+                raise ValueError(
+                    'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
+                )
+
+            _LOGGER.info('All golang RPM builds are tagged and available!')
+            await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         brew_nvrs = {}
@@ -279,7 +292,13 @@ class UpdateGolangPipeline:
                     error_parts.append(f'Brew: {brew_still_missing}')
                 if konflux_still_missing:
                     error_parts.append(f'Konflux: {konflux_still_missing}')
-                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}')
+                error_msg = f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}'
+                if self.external_golang_rpms:
+                    error_msg += (
+                        '. When using --external-golang-rpms, ensure the external repo is enabled '
+                        'in the enabled_repos section of golang-builder image metadata config.'
+                    )
+                raise ValueError(error_msg)
 
         _LOGGER.info("Updating streams.yml with found builder images")
         # Prepare message with all newly built builders
@@ -825,6 +844,12 @@ class UpdateGolangPipeline:
     default=False,
     help='Skip PR generation for ocp-build-data updates. Defaults to False (PRs will be created).',
 )
+@click.option(
+    '--external-golang-rpms',
+    is_flag=True,
+    default=False,
+    help='Use golang RPMs from external repos (not tagged in rhaos build tags). Skips tagging and availability checks. Defaults to False.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -843,6 +868,7 @@ async def update_golang(
     data_path: str,
     data_gitref: str,
     skip_pr: bool,
+    external_golang_rpms: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -866,4 +892,5 @@ async def update_golang(
         data_path,
         data_gitref,
         skip_pr,
+        external_golang_rpms,
     ).run()
