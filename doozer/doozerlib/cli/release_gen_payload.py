@@ -1867,6 +1867,9 @@ class PayloadGenerator:
         for rhcos_build in rhcos_builds:
             for nvr in rhcos_build.get_rpm_nvrs():
                 rpm_name = parse_nvr(nvr)["name"]
+                if "el10" in parse_nvr(nvr)["release"]:
+                    # skip el10 rhcos rpm check
+                    continue
                 if rpm_name not in rpm_uses:
                     rpm_uses[rpm_name] = dict()
                 if nvr not in rpm_uses[rpm_name]:
@@ -1897,39 +1900,39 @@ class PayloadGenerator:
             if name in ["kernel-core", "kernel-rt-core"]:
                 release = entry[3]
                 el_suffix = release.rsplit('.', 1)[-1]
-                if el_suffix not in kernels:
-                    kernels[el_suffix] = {}
-                kernels[el_suffix][name] = entry
+                # skip el10 rhcos kernels check
+                if "el10" in el_suffix:
+                    continue
+                kernels[name] = entry
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
 
-        for el_suffix, entries in kernels.items():
-            if "kernel-core" in entries and "kernel-rt-core" in entries:
-                kernel_entry = entries["kernel-core"]
-                kernel_rt_entry = entries["kernel-rt-core"]
+        if "kernel-core" in kernels and "kernel-rt-core" in kernels:
+            kernel_entry = kernels["kernel-core"]
+            kernel_rt_entry = kernels["kernel-rt-core"]
 
-                # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
-                kernel_v, kernel_r = kernel_entry[2:4]
-                # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
-                kernel_rt_v, kernel_rt_r = kernel_rt_entry[2:4]
-                inconsistency = False
-                if kernel_v != kernel_rt_v:
+            # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
+            kernel_v, kernel_r = kernel_entry[2:4]
+            # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
+            kernel_rt_v, kernel_rt_r = kernel_rt_entry[2:4]
+            inconsistency = False
+            if kernel_v != kernel_rt_v:
+                inconsistency = True
+            elif kernel_r != kernel_rt_r:
+                # 372.43.1.el8_6 => 372.43.1
+                kernel_r = kernel_r.rsplit('.', 1)[0]
+                # 372.41.1.rt7.198.el8_6 => 372.41.1
+                kernel_rt_r = kernel_rt_r.rsplit('.', 3)[0]
+                if kernel_r != kernel_rt_r:
                     inconsistency = True
-                elif kernel_r != kernel_rt_r:
-                    # 372.43.1.el8_6 => 372.43.1
-                    kernel_r = kernel_r.rsplit('.', 1)[0]
-                    # 372.41.1.rt7.198.el8_6 => 372.41.1
-                    kernel_rt_r = kernel_rt_r.rsplit('.', 3)[0]
-                    if kernel_r != kernel_rt_r:
-                        inconsistency = True
-                if inconsistency:
-                    inconsistencies.append(
-                        {
-                            "kernel-core": _to_nvr(kernel_entry),
-                            "kernel-rt-core": _to_nvr(kernel_rt_entry),
-                        }
-                    )
+            if inconsistency:
+                inconsistencies.append(
+                    {
+                        "kernel-core": _to_nvr(kernel_entry),
+                        "kernel-rt-core": _to_nvr(kernel_rt_entry),
+                    }
+                )
         return inconsistencies
 
     def find_rhcos_payload_rpm_inconsistencies(
@@ -1958,6 +1961,9 @@ class PayloadGenerator:
         rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
             name, _, version, release, _ = rpm
+            if "el10" in release:
+                # skip el10 rhcos kernels check
+                continue
             rhcos_rpm_vrs[name] = f"{version}-{release}"
 
         # check that each member consistency condition is met

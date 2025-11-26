@@ -237,6 +237,9 @@ class RHCOSBuildInspector:
         self.build_id = build_id  # this is used for non-layered rhcos
         self.stream_version = None
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
+        # Initialize RHEL 10 metadata attributes to None (they may be set conditionally later)
+        self._build_meta_10 = None
+        self._os_commitmeta_10 = None
 
         if self.layered:
             # set build_id to the rhel base image build id of the rhel-coreos image
