@@ -170,6 +170,7 @@ class UpdateGolangPipeline:
         kubeconfig: str | None = None,
         data_path: str | None = None,
         data_gitref: str | None = None,
+        skip_pr: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -185,6 +186,7 @@ class UpdateGolangPipeline:
         self.tag_builds = tag_builds
         self.data_path = data_path
         self.data_gitref = data_gitref
+        self.skip_pr = skip_pr
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -536,6 +538,24 @@ class UpdateGolangPipeline:
             if self.dry_run:
                 _LOGGER.info(f"[DRY RUN] Would have created PR to update {go_version} golang builders")
                 return
+            if self.skip_pr:
+                # Log NVRs and pullspecs for golang builder images
+                builder_info = []
+                for el_v, nvr in builder_nvrs.items():
+                    parsed_nvr = parse_nvr(nvr)
+                    pullspec = get_pullspec(parsed_nvr)
+                    builder_info.append(f"  - RHEL {el_v}: {nvr} -> {pullspec}")
+                builder_details = "\n".join(builder_info)
+
+                _LOGGER.info(
+                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
+                    f"Golang builder images:\n{builder_details}"
+                )
+                await self._slack_client.say_in_thread(
+                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
+                    f"Golang builder images:\n{builder_details}"
+                )
+                return
             fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
             title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
@@ -791,6 +811,12 @@ class UpdateGolangPipeline:
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option(
+    '--skip-pr',
+    is_flag=True,
+    default=False,
+    help='Skip PR generation for ocp-build-data updates. Defaults to False (PRs will be created).',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -808,6 +834,7 @@ async def update_golang(
     kubeconfig: str,
     data_path: str,
     data_gitref: str,
+    skip_pr: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -830,4 +857,5 @@ async def update_golang(
         kubeconfig,
         data_path,
         data_gitref,
+        skip_pr,
     ).run()
