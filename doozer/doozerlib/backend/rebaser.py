@@ -652,7 +652,7 @@ class KonfluxRebaser:
                     f'git -C {curdir} log --no-merges --diff-filter=a -n 1 --pretty=format:%H {dockerfile_name}',
                 )
                 if rc == 0:
-                    rc, ae, err = await exectools.cmd_gather_async('git show -s --pretty=format:%ae {}'.format(sha))
+                    rc, ae, err = await exectools.cmd_gather_async(f"git -C {curdir} show -s --pretty=format:%ae {sha}")
                     if rc == 0:
                         if ae.lower().endswith('@redhat.com'):
                             self._logger.info('Last Dockerfile committer: {}'.format(ae))
