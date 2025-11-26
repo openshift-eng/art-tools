@@ -412,7 +412,14 @@ class KonfluxRebaser:
     @start_as_current_span_async(TRACER, "rebase.resolve_member_parent")
     async def _resolve_member_parent(self, member: str, original_parent: str):
         """Resolve the parent image for the given image metadata."""
-        parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
+        parent_metadata: ImageMetadata = self._runtime.late_resolve_image(member, required=False)
+
+        if self.variant is BuildVariant.OKD:
+            okd_alignment_config = parent_metadata.config.content.source.okd_alignment
+            if okd_alignment_config.resolve_as.stream:
+                stream_config = self._runtime.resolve_stream(okd_alignment_config.resolve_as.stream)
+                return stream_config.image, False
+
         private_fix = False
         if parent_metadata is None:
             if not self._runtime.ignore_missing_base:
@@ -421,12 +428,6 @@ class KonfluxRebaser:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
-
-                if self.variant is BuildVariant.OKD:
-                    okd_alignment_config = parent_metadata.config.content.source.okd_alignment
-                    if okd_alignment_config.resolve_as.stream:
-                        stream_config = self._runtime.resolve_stream(okd_alignment_config.resolve_as.stream)
-                        return stream_config.image, False
 
                 build = await parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',

@@ -135,7 +135,10 @@ class OkdRebaseCli:
 
         if image_meta.config.mode == 'disabled':
             # Raise an exception to be caught in okd4 pipeline; image will be removed from the building list.
-            raise ValueError('Image is disabled; skipping rebase')
+            self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_meta.distgit_key)
+            image_meta.rebase_status = True
+            image_meta.rebase_event.set()
+            return
 
         await rebaser.rebase_to(
             image_meta,
