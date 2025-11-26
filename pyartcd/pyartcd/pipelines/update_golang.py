@@ -633,6 +633,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
+            "--build-system=brew",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -661,6 +662,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
+            "--build-system=brew",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -695,6 +697,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
+            "--build-system=konflux",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -725,6 +728,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
+            "--build-system=konflux",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
