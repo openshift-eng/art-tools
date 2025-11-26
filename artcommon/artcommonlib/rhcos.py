@@ -105,19 +105,91 @@ def get_build_id_from_rhcos_pullspec(pullspec, layered_id: bool = True) -> str:
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
-    # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
-    # brew build name looks like rhcos-x86_64-4.19.9.6.202505081313-0 we need build_id 4.19.9.6.202505081313-0
     manifest_tag_label = labels.get('coreos.build.manifest-list-tag')
     image_version_label = labels.get('org.opencontainers.image.version')
     if layered_id and manifest_tag_label:
+        # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
         list_tag = manifest_tag_label.split('-')
         build_id = f"{list_tag[0]}.{list_tag[1]}.{list_tag[2]}-0"
     elif image_version_label:
+        # brew build name looks like rhcos-x86_64-4.19.96.202505081313-0 we need build_id 4.19.96.202505081313-0
         build_id = image_version_label
     else:
+        # for 4.12 old build labels looks like version=412.86.202511191939-0
         build_id = labels.version
 
     if not build_id:
         raise Exception(f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
 
     return build_id
+
+
+def get_latest_layered_rhcos_build(container_conf: dict = None, arch: str = None):
+    """
+    Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
+    """
+    brew_arch = go_arch_for_brew_arch(arch)
+    rhcos_id_data, _ = exectools.cmd_assert(
+        f'oc image info -o json {container_conf.rhel_build_id_index} --filter-by-os={brew_arch}', retries=3
+    )
+    build_id = rhcos_id_data['config']['config']['Labels']["org.opencontainers.image.version"]
+    rhcos_data, _ = exectools.cmd_assert(
+        f'oc image info -o json {container_conf.rhcos_index_tag} --filter-by-os={brew_arch}', retries=3
+    )
+    pullspec = f"{ART_PROD_IMAGE_REPO}@{rhcos_data['digest']}"
+    return build_id, pullspec
+
+
+def get_latest_layered_rhcos_build_shasum(container_conf: dict = None, arch: str = None):
+    """
+    Get the latest Layered RHCOS build shasum for the specified rhcos container configuration.
+    """
+    brew_arch = go_arch_for_brew_arch(arch)
+    rhcos_data, _ = exectools.cmd_assert(
+        f'oc image info -o json {container_conf.rhcos_index_tag} --filter-by-os={brew_arch}', retries=3
+    )
+    return rhcos_data['digest']
+
+
+def layered_rhcos_build_rpmlist(pullspec: str = None, meta_type: str = "meta") -> List[List]:
+    """
+    Get the rhcos build metadata for a layered rhcos build.
+    Returns the raw RPM entries from the OS metadata. Example entry: ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64']
+    @param pullspec: The pullspec to get the metadata for.
+    @param meta_type: The type of metadata to get.
+    @return: The rhcos build metadata.
+    """
+    if meta_type == "commitmeta":
+        # this is for coreos build
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stdout, _ = exectools.cmd_assert(
+                f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+            )
+            with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
+                meta_data = json.load(f)
+        return meta_data["rpmdb.pkglist"]
+    elif meta_type == "meta":
+        # this is for extension build
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stdout, _ = exectools.cmd_assert(
+                f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+            )
+            with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
+                extensions_data = json.load(f)
+        entries = []
+        for name, vra in extensions_data.items():
+            # e.g. "kernel-rt-core": "4.18.0-372.32.1.rt7.189.el8_6.x86_64"
+            # or "qemu-img": "15:6.2.0-11.module+el8.6.0+16538+01ea313d.6.x86_64"
+            values = vra.rsplit('-', 1)
+            if len(values) != 2:
+                logger.warning("Skipping extension rpm %s with invalid version-release: %s", name, vra)
+                continue
+            version, ra = values
+            # if epoch is not specified, just use 0. for some reason it's included in the version in
+            # RHCOS metadata as "epoch:version"; but if we query brew for it that way, it does not
+            # like the format, so we separate it out from the version.
+            epoch, version = version.split(':', 1) if ':' in version else ('0', version)
+            release, arch = ra.rsplit('.', 1)
+            entries.append([name, epoch, version, release, arch])
+        return entries
+    return []

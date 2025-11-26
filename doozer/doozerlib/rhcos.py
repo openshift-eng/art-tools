@@ -156,25 +156,31 @@ class RHCOSBuildFinder:
          }
         """
         if self.layered and pullspec:
-            if meta_type == "commitmeta":
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(
-                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
-                    )
-                    with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
-                        meta_data = json.load(f)
-                return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
-            elif meta_type == "meta":
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(
-                        f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
-                    )
-                    with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
-                        extensions_data = json.load(f)
-                return {"extensions": {"manifest": extensions_data}}
+            return self.rhcos_build_meta_layered(pullspec, meta_type)
         else:
             # this is hard to test with retries, so wrap testable method
             return self._rhcos_build_meta(build_id, arch, meta_type)
+
+    def rhcos_build_meta_layered(self, pullspec: str, meta_type: str = "meta") -> Dict:
+        """
+        This is a helper function to retrieve meta.json from a layered RHCOS build
+        """
+        if meta_type == "commitmeta":
+            with tempfile.TemporaryDirectory() as temp_dir:
+                stdout, _ = exectools.cmd_assert(
+                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+                )
+                with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
+                    meta_data = json.load(f)
+            return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
+        elif meta_type == "meta":
+            with tempfile.TemporaryDirectory() as temp_dir:
+                stdout, _ = exectools.cmd_assert(
+                    f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+                )
+                with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
+                    extensions_data = json.load(f)
+            return {"extensions": {"manifest": extensions_data}}
 
     def _rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
         """
@@ -186,14 +192,17 @@ class RHCOSBuildFinder:
         with request.urlopen(url) as req:
             return json.loads(req.read().decode())
 
-    def rhel_build_meta(self, build_id: str):
+    def rhel_build_meta_layered(self, pullspec: str):
         """
         For layered node image, get it's rhel image rpm list
-        :param build_id: the rhel image build id eg. 9.6.20250527-0
+        :param pullspec: the rhel image pullspec eg. quay.io/openshift-release-dev/ocp-v4.0-art-dev
         :return: rpm list for rhel build
         """
         if self.layered:
-            url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
+            build_id = get_build_id_from_rhcos_pullspec(pullspec)
+            rhel_major = build_id.split(".")[0]
+            rhel_minor = build_id.split(".")[1]
+            url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_major}.{rhel_minor}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
             with request.urlopen(url) as req:
                 return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
@@ -206,14 +215,7 @@ class RHCOSBuildFinder:
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
         if self.layered:
-            primary_conf = self.get_primary_container_conf()
-            rhcosdata = util.oc_image_info_for_arch(primary_conf.rhcos_index_tag, self.go_arch)
-            build_id = rhcosdata['config']['config']['Labels'][
-                "org.opencontainers.image.version"
-            ]  # in 4.19, the extension don't have rhcos-id
-            if container_conf or container_conf != primary_conf:
-                rhcosdata = util.oc_image_info_for_arch(container_conf.rhcos_index_tag, self.go_arch)
-            pullspec = f"{ART_PROD_IMAGE_REPO}@{rhcosdata['digest']}"
+            build_id, pullspec = rhcos.get_latest_layered_rhcos_build(container_conf, self.brew_arch)
             return build_id, pullspec
         else:
             build_id = self.latest_rhcos_build_id()
@@ -232,22 +234,33 @@ class RHCOSBuildInspector:
         self.runtime = runtime
         self.brew_arch = brew_arch
         self.pullspec_for_tag = pullspec_for_tag
-        self.build_id = build_id
+        self.build_id = build_id  # this is used for non-layered rhcos
         self.stream_version = None
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
 
         if self.layered:
             # set build_id to the rhel base image build id of the rhel-coreos image
-            self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"], layered_id=False)
+            self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"])
 
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
-            self._build_meta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
+            self._build_meta = finder.rhcos_build_meta_layered(
+                pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
             )
-            self._os_commitmeta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
+            self._os_commitmeta = finder.rhcos_build_meta_layered(
+                pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
             )
-            self.rhel_build_meta = finder.rhel_build_meta(self.build_id)
+            self.rhel_build_meta = finder.rhel_build_meta_layered(pullspec_for_tag.get("rhel-coreos", None))
+            # if there is el10 then add it to metadata
+            if pullspec_for_tag.get("rhel-coreos-10", None):
+                self._build_meta_10 = finder.rhcos_build_meta_layered(
+                    pullspec=pullspec_for_tag.get("rhel-coreos-10-extensions", None), meta_type='meta'
+                )
+                self._os_commitmeta_10 = finder.rhcos_build_meta_layered(
+                    pullspec=pullspec_for_tag.get("rhel-coreos-10", None), meta_type='commitmeta'
+                )
+                self.rhel_build_meta = self.rhel_build_meta + finder.rhel_build_meta_layered(
+                    pullspec_for_tag.get("rhel-coreos-10", None)
+                )
         else:
             for tag, pullspec in pullspec_for_tag.items():
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
@@ -288,14 +301,19 @@ class RHCOSBuildInspector:
         Also include entries from the build meta.json extensions manifest. We don't have epoch for
         these so we just use 0 which may not be correct. So far nothing looks at epoch so it's not a problem.
         """
-        entries = self.get_os_metadata()['rpmostree.rpmdb.pkglist']
+
+        entries = self._os_commitmeta['rpmostree.rpmdb.pkglist']
         if not entries:
             raise Exception(f"no pkglist in OS Metadata for build {self.build_id}")
+        if self._build_meta_10:
+            entries.extend(self._os_commitmeta_10['rpmostree.rpmdb.pkglist'])
 
         # items like kernel-rt that are only present in extensions are not listed in the os
         # metadata, so we need to add them in separately.
         try:
-            extensions = self.get_build_metadata()['extensions']['manifest']
+            extensions = self._build_meta['extensions']['manifest']
+            if self._build_meta_10:
+                extensions.update(self._build_meta_10['extensions']['manifest'])
         except KeyError:
             extensions = dict()  # no extensions before 4.8; ignore missing
         for name, vra in extensions.items():

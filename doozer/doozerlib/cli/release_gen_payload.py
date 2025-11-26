@@ -1891,33 +1891,45 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {entry[0]: entry for entry in rpm_list}
+        kernels = {}
+        for entry in rpm_list:
+            name = entry[0]
+            if name in ["kernel-core", "kernel-rt-core"]:
+                release = entry[3]
+                el_suffix = release.rsplit('.', 1)[-1]
+                if el_suffix not in kernels:
+                    kernels[el_suffix] = {}
+                kernels[el_suffix][name] = entry
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
 
-        if {"kernel-core", "kernel-rt-core"} <= rpms_dict.keys():
-            # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
-            kernel_v, kernel_r = rpms_dict["kernel-core"][2:4]
-            # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
-            kernel_rt_v, kernel_rt_r = rpms_dict["kernel-rt-core"][2:4]
-            inconsistency = False
-            if kernel_v != kernel_rt_v:
-                inconsistency = True
-            elif kernel_r != kernel_rt_r:
-                # 372.43.1.el8_6 => 372.43.1
-                kernel_r = kernel_r.rsplit('.', 1)[0]
-                # 372.41.1.rt7.198.el8_6 => 372.41.1
-                kernel_rt_r = kernel_rt_r.rsplit('.', 3)[0]
-                if kernel_r != kernel_rt_r:
+        for el_suffix, entries in kernels.items():
+            if "kernel-core" in entries and "kernel-rt-core" in entries:
+                kernel_entry = entries["kernel-core"]
+                kernel_rt_entry = entries["kernel-rt-core"]
+
+                # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
+                kernel_v, kernel_r = kernel_entry[2:4]
+                # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
+                kernel_rt_v, kernel_rt_r = kernel_rt_entry[2:4]
+                inconsistency = False
+                if kernel_v != kernel_rt_v:
                     inconsistency = True
-            if inconsistency:
-                inconsistencies.append(
-                    {
-                        "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
-                        "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
-                    }
-                )
+                elif kernel_r != kernel_rt_r:
+                    # 372.43.1.el8_6 => 372.43.1
+                    kernel_r = kernel_r.rsplit('.', 1)[0]
+                    # 372.41.1.rt7.198.el8_6 => 372.41.1
+                    kernel_rt_r = kernel_rt_r.rsplit('.', 3)[0]
+                    if kernel_r != kernel_rt_r:
+                        inconsistency = True
+                if inconsistency:
+                    inconsistencies.append(
+                        {
+                            "kernel-core": _to_nvr(kernel_entry),
+                            "kernel-rt-core": _to_nvr(kernel_rt_entry),
+                        }
+                    )
         return inconsistencies
 
     def find_rhcos_payload_rpm_inconsistencies(
