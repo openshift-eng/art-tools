@@ -220,17 +220,17 @@ class UpdateGolangPipeline:
         await self._slack_client.say_in_thread(
             f":construction: Updating golang for {self.ocp_version} (building images on {self.build_system}) :construction:"
         )
-        # Process golang RPM builds (always from Brew)
-        cannot_proceed = not all(
-            await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
-        )
-        if cannot_proceed:
-            raise ValueError(
-                'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
-            )
+        # # Process golang RPM builds (always from Brew)
+        # cannot_proceed = not all(
+        #     await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+        # )
+        # if cannot_proceed:
+        #     raise ValueError(
+        #         'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
+        #     )
 
-        _LOGGER.info('All golang RPM builds are tagged and available!')
-        await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
+        # _LOGGER.info('All golang RPM builds are tagged and available!')
+        # await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         brew_nvrs = {}
@@ -285,10 +285,19 @@ class UpdateGolangPipeline:
         # Prepare message with all newly built builders
         all_builder_messages = []
         if brew_nvrs:
-            all_builder_messages.extend([f"{nvr} (brew)" for nvr in brew_nvrs.values()])
+            for el_v, nvr in brew_nvrs.items():
+                parsed_nvr = parse_nvr(nvr)
+                pullspec = self._get_builder_pullspec(parsed_nvr, 'brew')
+                all_builder_messages.append(f"RHEL {el_v}: {nvr} -> {pullspec} (brew)")
         if konflux_nvrs:
-            all_builder_messages.extend([f"{nvr} (konflux)" for nvr in konflux_nvrs.values()])
-        await self._slack_client.say_in_thread(f"new golang builders available: {', '.join(all_builder_messages)}")
+            for el_v, nvr in konflux_nvrs.items():
+                parsed_nvr = parse_nvr(nvr)
+                pullspec = self._get_builder_pullspec(parsed_nvr, 'konflux')
+                all_builder_messages.append(f"RHEL {el_v}: {nvr} -> {pullspec} (konflux)")
+
+        builder_message = "New golang builders available:\n" + "\n".join([f"  - {msg}" for msg in all_builder_messages])
+        _LOGGER.info(builder_message)
+        await self._slack_client.say_in_thread(builder_message)
 
         # For 'both' mode, only update streams.yml with konflux builds
         # For 'brew' mode, use brew_nvrs; for 'konflux' mode, use konflux_nvrs
@@ -426,6 +435,14 @@ class UpdateGolangPipeline:
                         builder_nvrs[el_v] = nvr_str
         return builder_nvrs
 
+    def _get_builder_pullspec(self, parsed_nvr, build_system: str):
+        """Generate the complete pullspec based on build system"""
+        if build_system == 'brew':
+            return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+        else:  # konflux or both (both uses konflux pullspec)
+            # TODO: This is temporary. In the future we need a location to share with multiple teams.
+            return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+
     async def update_golang_streams(self, go_version, builder_nvrs):
         """
         Update golang builders for current release in ocp-build-data
@@ -434,15 +451,6 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
-
-        def get_pullspec(parsed_nvr):
-            """Generate the complete pullspec based on build system"""
-            if self.build_system == 'brew':
-                return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-            else:  # konflux or both (both uses konflux pullspec)
-                # TODO: This is temporary. In the future we need a location to share with multiple teams.
-                return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
@@ -493,7 +501,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
                 latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
-                new_latest_go = get_pullspec(parsed_nvr)
+                new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
@@ -506,7 +514,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
-                new_previous_go = get_pullspec(parsed_nvr)
+                new_previous_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
                         info['image'] = new_previous_go
@@ -522,7 +530,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
-                new_latest_go = get_pullspec(parsed_nvr)
+                new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
@@ -543,7 +551,7 @@ class UpdateGolangPipeline:
                 builder_info = []
                 for el_v, nvr in builder_nvrs.items():
                     parsed_nvr = parse_nvr(nvr)
-                    pullspec = get_pullspec(parsed_nvr)
+                    pullspec = self._get_builder_pullspec(parsed_nvr, self.build_system)
                     builder_info.append(f"  - RHEL {el_v}: {nvr} -> {pullspec}")
                 builder_details = "\n".join(builder_info)
 
