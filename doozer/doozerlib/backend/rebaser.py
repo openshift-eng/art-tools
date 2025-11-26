@@ -493,7 +493,7 @@ class KonfluxRebaser:
             # wait for parent member to be rebased
             while not parent_member.rebase_event.is_set():
                 self._logger.info(
-                    "[%s] Parent image %s is being rebasing; waiting...",
+                    "[%s] Parent image %s is being rebased; waiting...",
                     metadata.distgit_key,
                     parent_member.distgit_key,
                 )
