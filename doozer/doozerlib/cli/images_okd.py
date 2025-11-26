@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import shutil
+import sys
 import tempfile
 from collections import OrderedDict
 from copy import copy
@@ -42,9 +43,9 @@ from doozerlib.cli import (
     validate_semver_major_minor_patch,
 )
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
-from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
+from doozerlib.state import STATE_FAIL, STATE_PASS
 from doozerlib.util import extract_version_fields, what_is_in_master
 
 OKD_DEFAULT_IMAGE_REPO = 'quay.io/okd/scos-content'
@@ -92,6 +93,7 @@ class OkdRebaseCli:
         self.message = message
         self.push = push
         self.upcycle = runtime.upcycle
+        self.state = {}
 
     async def run(self):
         self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
@@ -115,39 +117,44 @@ class OkdRebaseCli:
 
         metas = self.runtime.ordered_image_metas()
         tasks = [self.rebase_image(image_meta, rebaser) for image_meta in metas]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=False)
 
         # Check rebase results, log errors if any in state.yml
-        failed_images = []
-        for index, result in enumerate(results):
-            if isinstance(result, Exception):
-                image_name = metas[index].distgit_key
-                failed_images.append(image_name)
-                self.logger.error(f"Failed to rebase {image_name}: {result}")
-        if failed_images:
-            self.runtime.state['images:okd:rebase'] = {'failed-images': failed_images}
-            raise DoozerFatalError(f"Failed to rebase images: {','.join(failed_images)}")
+        self.runtime.state.setdefault('images:okd:rebase', {})['images'] = self.state
+
+        if any((state == 'failure' for state in self.state.values())):
+            self.runtime.state['status'] = STATE_FAIL
+            sys.exit(1)
+
         else:
-            self.logger.info("Rebase complete")
+            self.runtime.state['status'] = STATE_PASS
 
     async def rebase_image(self, image_meta: ImageMetadata, rebaser: KonfluxRebaser):
         image_meta.config = self.get_okd_image_config(image_meta)
+        image_name = image_meta.distgit_key
 
         if image_meta.config.mode == 'disabled':
             # Raise an exception to be caught in okd4 pipeline; image will be removed from the building list.
-            self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_meta.distgit_key)
+            self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_name)
             image_meta.rebase_status = True
             image_meta.rebase_event.set()
+            self.state[image_name] = 'skipped'
             return
 
-        await rebaser.rebase_to(
-            image_meta,
-            self.version,
-            self.release,
-            force_yum_updates=False,
-            commit_message=self.message,
-            push=self.push,
-        )
+        try:
+            await rebaser.rebase_to(
+                image_meta,
+                self.version,
+                self.release,
+                force_yum_updates=False,
+                commit_message=self.message,
+                push=self.push,
+            )
+            self.state[image_name] = 'success'
+
+        except Exception as e:
+            self.logger.warning('Failed rebasing %s: %s', image_name, e)
+            self.state[image_name] = 'failure'
 
     def get_okd_image_config(self, image_meta: ImageMetadata):
         image_config = copy(image_meta.config)
@@ -155,8 +162,23 @@ class OkdRebaseCli:
 
         if image_config.okd is not Missing:
             # Merge the rest of the config, with okd taking precedence
+            # Certain fields like 'from' should be completely replaced, not merged
             self.logger.info('Merging OKD configuration into image configuration for %s', image_meta.distgit_key)
-            image_config = Model(deep_merge(image_config.primitive(), image_meta.config.okd.primitive()))
+            base_config = image_config.primitive()
+            okd_config = image_meta.config.okd.primitive()
+
+            # Fields that should be completely replaced rather than merged
+            replace_fields = {'from'}
+
+            # First, do a deep merge for fields that should be merged
+            merged_config = deep_merge(base_config, okd_config)
+
+            # Then, replace fields that should be completely replaced
+            for field in replace_fields:
+                if field in okd_config:
+                    merged_config[field] = okd_config[field]
+
+            image_config = Model(merged_config)
 
         return image_config
 
