@@ -83,7 +83,7 @@ class KonfluxOcp4Pipeline:
         lock_identifier: str = None,
         skip_plashets: bool = False,
         build_priority: str = None,
-        use_mass_rebuild_locks: bool = True,
+        use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
     ):
         self.runtime = runtime
