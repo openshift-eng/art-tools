@@ -10,6 +10,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.variants import BuildVariant
+from doozerlib.state import STATE_PASS
 
 from pyartcd import jenkins, locks
 from pyartcd import record as record_util
@@ -187,36 +188,37 @@ class KonfluxOkd4Pipeline:
             await exectools.cmd_assert_async(cmd)
 
         except ChildProcessError:
+            pass
+
+        finally:
             self.handle_rebase_failures()
 
     def handle_rebase_failures(self):
-        with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
-            state = yaml.safe_load(state_yaml)
-        rebase_failures = state['images:okd:rebase'].get('failed-images', [])
-        # TODO update Jenkins with rebase failures
-
-        if not rebase_failures:
-            # Something else went wrong
-            LOGGER.error('Unknown error during rebase, please investigate')
-            raise
+        state = self.load_state_yaml()
 
         # Some images failed to rebase: log them, and track them in Redis
+        rebase_failures = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'failure']
         LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
         jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
 
-        # Exclude images that failed to rebase from the build step
+        # OKD disabled images have not been rebased and must not be built
+        skipped_images = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'skipped']
+
+        # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
             # Move from building all to excluding failed images
             self.build_plan.image_build_strategy = BuildStrategy.EXCEPT
-            self.build_plan.images_excluded = rebase_failures
+            self.build_plan.images_excluded = rebase_failures + skipped_images
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
             # Remove failed images from included ones
-            self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in rebase_failures]
+            self.build_plan.images_included = [
+                i for i in self.build_plan.images_included if i not in rebase_failures + skipped_images
+            ]
 
         else:  # strategy = EXCLUDE
             # Append failed images to excluded ones
-            self.build_plan.images_excluded.extend(rebase_failures)
+            self.build_plan.images_excluded.extend(rebase_failures + skipped_images)
 
     async def build_images(self):
         if not self.building_images():
@@ -336,10 +338,13 @@ class KonfluxOkd4Pipeline:
             raise ValueError(f'Invalid build strategy: {build_strategy}')
 
     def finalize(self):
-        with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
-            state = yaml.safe_load(state_yaml)
-        if state.get('status') != 'passed':
+        state = self.load_state_yaml()
+        if state.get('status') != STATE_PASS:
             sys.exit(1)
+
+    def load_state_yaml(self) -> dict:
+        with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
+            return yaml.safe_load(state_yaml)
 
 
 @cli.command("okd4", help="A pipeline to build images with Konflux for OCP 4")
