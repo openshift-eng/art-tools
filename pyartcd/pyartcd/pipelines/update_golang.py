@@ -526,7 +526,7 @@ class UpdateGolangPipeline:
                         info['image'] = new_latest_go
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
-        elif go_previous in go_version:
+        elif go_previous and go_previous in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
