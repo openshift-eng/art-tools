@@ -394,16 +394,14 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         # Some images also have their own upstream information. This allows them to
         # be mirrored out into upstream, optionally transformed, and made available as builder images for
         # other images without being in streams.yml.
-
         for image_meta in runtime.ordered_image_metas():
             if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
                 upstream_entry = Model(
                     dict_to_model=image_meta.config.content.source.ci_alignment.primitive()
                 )  # Make a copy
-
-                # Use pull_url() which handles both Brew and Konflux build systems
-                upstream_entry['image'] = image_meta.pull_url()
-
+                upstream_entry['image'] = (
+                    image_meta.pull_url()
+                )  # Make the image metadata entry match what would exist in streams.yml.
                 if upstream_entry.final_user is Missing:
                     upstream_entry.final_user = image_meta.config.final_stage_user
                 upstreaming_entries[image_meta.distgit_key] = upstream_entry
@@ -441,7 +439,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     CI to compile with the same golang version ART is using and use identical UBI8 images, etc. To accomplish
     this, streams.yml contains metadata which is extraneous to the product build, but critical to enable
     a high fidelity CI signal.
-    It may seem at first that all we would need to do was mirror the internal build images (Brew or Konflux)
+    It may seem at first that all we would need to do was mirror the internal brew images we use
     somewhere accessible by CI, but it is not that simple:
     1. When a CI build yum installs, it needs to pull RPMs from an RPM mirroring service that runs in
        CI. That mirroring service subsequently pulls and caches files ART syncs using reposync.
@@ -449,7 +447,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
        images are configured in ci-operator config's 'build_root' and they are used to build
        and run test cases. Sometimes called 'CI release' image, these images contain tools that
        are not part of the typical golang builder (e.g. tito).
-    Both of these differences require us to 'transform' the ART build images into images compatible
+    Both of these differences require us to 'transform' the image ART uses in brew into an image compatible
     for use in CI. A challenge to this transformation is that they must be performed in the CI context
     as they depend on the services only available in ci (e.g. base-4-6-rhel8.ocp.svc is used to
     find the current yum repo configuration which should be used).
