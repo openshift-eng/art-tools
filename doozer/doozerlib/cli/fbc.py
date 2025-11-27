@@ -511,7 +511,7 @@ class FbcRebaseAndBuildCli:
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in self.runtime.ordered_image_metas() if operator_meta.is_olm_operator
             ]
-            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            records = await asyncio.gather(*(metadata.get_latest_build(default=None) for metadata in operator_metas))
             not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
             if not_found:
                 raise DoozerFatalError(f"Couldn't find build records for {not_found}")
