@@ -518,7 +518,7 @@ class RHCOSBuildInspector:
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
             }
-            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list(exclude_rhel)
+            for name, epoch, version, release, arch, repo_name in self.get_os_metadata_rpm_list(exclude_rhel)
         ]
 
         logger.info("Determining outdated rpms...")
