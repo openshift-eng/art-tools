@@ -382,3 +382,10 @@ option_push = click.option(
     is_flag=True,
     help='Pushes to distgit after local changes (--no-push by default).',
 )
+option_registry_auth = click.option(
+    '--registry-auth',
+    '--pull-secret',
+    metavar='PATH',
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help='Path to registry authentication file (pull secret JSON)',
+)
