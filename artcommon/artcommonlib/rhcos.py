@@ -151,14 +151,3 @@ def get_latest_layered_rhcos_build(container_conf: dict = None, arch: str = None
 
     pullspec = f"{ART_PROD_IMAGE_REPO}@{digest}"
     return build_id, pullspec
-
-
-def get_latest_layered_rhcos_build_shasum(container_conf: dict = None, arch: str = None):
-    """
-    Get the latest Layered RHCOS build shasum for the specified rhcos container configuration.
-    """
-    brew_arch = go_arch_for_brew_arch(arch)
-    rhcos_data, _ = exectools.cmd_assert(
-        f'oc image info -o json {container_conf.rhcos_index_tag} --filter-by-os={brew_arch}', retries=3
-    )
-    return json.loads(rhcos_data)['digest']

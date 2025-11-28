@@ -1865,11 +1865,11 @@ class PayloadGenerator:
         rpm_uses: Dict[str, Set[str]] = {}
 
         for rhcos_build in rhcos_builds:
-            for nvr in rhcos_build.get_rpm_nvrs():
-                rpm_name = parse_nvr(nvr)["name"]
-                if "el10" in parse_nvr(nvr)["release"]:
-                    # skip el10 rhcos rpm check
+            for name, epoch, version, release, arch, repo_name in rhcos_build.get_os_metadata_rpm_list():
+                if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
                     continue
+                rpm_name = name
+                nvr = f"{name}-{version}-{release}"
                 if rpm_name not in rpm_uses:
                     rpm_uses[rpm_name] = dict()
                 if nvr not in rpm_uses[rpm_name]:
@@ -1894,23 +1894,18 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        kernels = {}
-        for entry in rpm_list:
-            name = entry[0]
-            if name in ["kernel-core", "kernel-rt-core"]:
-                release = entry[3]
-                el_suffix = release.rsplit('.', 1)[-1]
-                # skip el10 rhcos kernels check
-                if "el10" in el_suffix:
-                    continue
-                kernels[name] = entry
+        rpms_dict = {
+            entry[0]: entry[:-1]
+            for entry in rpm_list
+            if entry[-1] not in ["rhel-coreos-10", "rhel-coreos-10-extensions"]
+        }
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
 
-        if "kernel-core" in kernels and "kernel-rt-core" in kernels:
-            kernel_entry = kernels["kernel-core"]
-            kernel_rt_entry = kernels["kernel-rt-core"]
+        if {"kernel-core", "kernel-rt-core"} <= rpms_dict.keys():
+            kernel_entry = rpms_dict["kernel-core"]
+            kernel_rt_entry = rpms_dict["kernel-rt-core"]
 
             # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
             kernel_v, kernel_r = kernel_entry[2:4]
@@ -1929,8 +1924,8 @@ class PayloadGenerator:
             if inconsistency:
                 inconsistencies.append(
                     {
-                        "kernel-core": _to_nvr(kernel_entry),
-                        "kernel-rt-core": _to_nvr(kernel_rt_entry),
+                        "kernel-core": _to_nvr(kernel_entry[:-1]),
+                        "kernel-rt-core": _to_nvr(kernel_rt_entry[:-1]),
                     }
                 )
         return inconsistencies
