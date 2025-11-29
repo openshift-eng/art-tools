@@ -249,7 +249,27 @@ class RpmInfoCollector:
         current_span.set_attribute("lockfile.repos_to_fetch", ",".join(repos_to_fetch))
         current_span.set_attribute("lockfile.repo_count", len(repos_to_fetch))
 
-        repodatas = await asyncio.gather(*(self.repos[repo_name].get_repodata(arch) for repo_name in repos_to_fetch))
+        # Filter out architecture-specific repos that don't match the target arch
+        compatible_repos = []
+        arch_suffixes = ['-x86_64', '-aarch64', '-ppc64le', '-s390x']
+        
+        for repo_name in repos_to_fetch:
+            repo_target_arch = None
+            for suffix in arch_suffixes:
+                if repo_name.endswith(suffix):
+                    repo_target_arch = suffix[1:]  # Remove the leading dash
+                    break
+            
+            # Include repo if it's not arch-specific or if it matches the target arch
+            if not repo_target_arch or repo_target_arch == arch:
+                compatible_repos.append(repo_name)
+            else:
+                self.logger.info(f"Skipping {repo_name} for arch {arch} (incompatible architecture)")
+        
+        if compatible_repos:
+            repodatas = await asyncio.gather(*(self.repos[repo_name].get_repodata(arch) for repo_name in compatible_repos))
+        else:
+            repodatas = []
 
         self.loaded_repos.update({r.name: r for r in repodatas})
         self.logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")

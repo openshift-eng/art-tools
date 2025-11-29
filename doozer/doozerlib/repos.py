@@ -152,7 +152,18 @@ class Repo(object):
         self.cs_optional = self._data.content_set.get('optional', False)
 
         self.repotypes = DEFAULT_REPOTYPES
-        self.baseurl(DEFAULT_REPOTYPES[0], self._valid_arches[0])  # run once just to populate self.repotypes
+        
+        # For architecture-specific repos, use the target arch for initialization
+        arch_suffixes = ['-x86_64', '-aarch64', '-ppc64le', '-s390x']
+        repo_target_arch = None
+        for suffix in arch_suffixes:
+            if name.endswith(suffix):
+                repo_target_arch = suffix[1:]  # Remove the leading dash
+                break
+        
+        # Choose appropriate arch for initialization
+        init_arch = repo_target_arch if repo_target_arch else self._valid_arches[0]
+        self.baseurl(DEFAULT_REPOTYPES[0], init_arch)  # run once just to populate self.repotypes
         self.reposync_enabled = (
             True
             if self._data.reposync.enabled is Missing or self._data.reposync.enabled
@@ -211,6 +222,19 @@ class Repo(object):
         if not repotype:
             repotype = 'unsigned'
         """Get baseurl based on repo type, if one was specified for this repo."""
+        
+        # Check if this is an architecture-specific repository
+        arch_suffixes = ['-x86_64', '-aarch64', '-ppc64le', '-s390x']
+        repo_target_arch = None
+        for suffix in arch_suffixes:
+            if self.name.endswith(suffix):
+                repo_target_arch = suffix[1:]  # Remove the leading dash
+                break
+        
+        # If this is an arch-specific repo and the requested arch doesn't match, return None
+        if repo_target_arch and repo_target_arch != arch:
+            raise ValueError(f'Repository {self.name} only supports {repo_target_arch} architecture, not {arch}')
+        
         bu = self._data.conf.baseurl
         if isinstance(bu, str):
             return bu
@@ -228,6 +252,9 @@ class Repo(object):
                 if arch not in self._valid_arches:
                     raise ValueError('{} is not a valid arch option!'.format(arch))
                 if arch not in bu_sub:
+                    # For arch-specific repos, this is expected
+                    if repo_target_arch:
+                        raise ValueError(f'Repository {self.name} only supports {repo_target_arch} architecture, not {arch}')
                     raise ValueError('No baseurl available for arch {}'.format(arch))
                 return bu_sub[arch]
             return bu[repotype]
