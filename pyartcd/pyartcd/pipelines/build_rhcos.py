@@ -38,8 +38,9 @@ class BuildRhcosPipeline:
         self.runtime = runtime
         self.new_build = new_build
         self.ignore_running = ignore_running
-        self.version = version
+        self.version = version.split('-')[0]
         self.job = job
+        self.rhel_version = version.split('-')[1] if len(version.split('-')) > 1 else None
         self.api_token = None
         self.dry_run = self.runtime.dry_run
         self.request_session = requests.Session()
@@ -115,8 +116,12 @@ class BuildRhcosPipeline:
         group_file = asyncio.run(load_group_config(group=f"openshift-{self.version}", assembly="stream"))
         if "layered_rhcos" in group_file['rhcos'].keys():  # for layered rhcos job
             if self.job == 'build-node-image':  # for build node job release value is 4.x-9.x
+                if self.rhel_version:
+                    return f"{self.version}-{self.rhel_version}"
                 return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
             else:  # for build job release value is rhel-9.x
+                if self.rhel_version:
+                    return f"rhel-{self.rhel_version}"
                 return f"rhel-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
         else:
             return (

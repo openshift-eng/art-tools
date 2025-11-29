@@ -11,7 +11,7 @@ from artcommonlib.assembly import (
     assembly_type,
 )
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
+from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs, get_latest_layered_rhcos_build
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
@@ -639,9 +639,7 @@ class AssemblyInspector:
 
             try:
                 version = self.runtime.get_minor_version()
-                build_id, pullspec = RHCOSBuildFinder(
-                    runtime, version, brew_arch, private, custom=custom
-                ).latest_container(container_conf)
+                build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
                 if not pullspec:
                     raise IOError(f"No RHCOS latest found for {version} / {brew_arch}")
                 pullspec_for_tag[container_conf.name] = pullspec

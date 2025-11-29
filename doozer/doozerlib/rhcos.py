@@ -28,7 +28,15 @@ class RHCOSNotFound(Exception):
 
 
 class RHCOSBuildFinder:
-    def __init__(self, runtime, version: str, brew_arch: str = "x86_64", private: bool = False, custom: bool = False):
+    def __init__(
+        self,
+        runtime,
+        version: str,
+        brew_arch: str = "x86_64",
+        private: bool = False,
+        custom: bool = False,
+        primary_container: str = None,
+    ):
         """
         @param runtime  The Runtime object passed in from the CLI
         @param version  The 4.y ocp version as a string (e.g. "4.6")
@@ -44,7 +52,7 @@ class RHCOSBuildFinder:
         self.private = private
         self.custom = custom
         self.go_arch = go_arch_for_brew_arch(brew_arch)
-        self._primary_container = None
+        self._primary_container = primary_container
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
         if self.layered is Missing:
             self.layered = False
@@ -193,7 +201,10 @@ class RHCOSBuildFinder:
         :return: rpm list for rhel build
         """
         if self.layered:
-            url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{self.runtime.group_config.vars.RHCOS_EL_MAJOR}.{self.runtime.group_config.vars.RHCOS_EL_MINOR}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
+            rhel_version = self.runtime.group_config.rhcos.payload_tags.get(self._primary_container, {}).get(
+                "rhel_version"
+            )
+            url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_version}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
             with request.urlopen(url) as req:
                 return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
@@ -227,7 +238,12 @@ class RHCOSBuildFinder:
 
 class RHCOSBuildInspector:
     def __init__(
-        self, runtime: Runtime, pullspec_for_tag: Dict[str, str], brew_arch: str, build_id: Optional[str] = None
+        self,
+        runtime: Runtime,
+        pullspec_for_tag: Dict[str, str],
+        brew_arch: str,
+        build_id: Optional[str] = None,
+        primary_container: str = "rhel-coreos",
     ):
         self.runtime = runtime
         self.brew_arch = brew_arch
@@ -235,17 +251,22 @@ class RHCOSBuildInspector:
         self.build_id = build_id
         self.stream_version = None
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
+        self.primary_container = primary_container
 
         if self.layered:
             # set build_id to the rhel base image build id of the rhel-coreos image
-            self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"], layered_id=False)
+            self.build_id = (
+                build_id
+                if build_id
+                else get_build_id_from_rhcos_pullspec(pullspec_for_tag[primary_container], layered_id=False)
+            )
 
-            finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
+            finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, primary_container=primary_container)
             self._build_meta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
+                self.build_id, pullspec=pullspec_for_tag.get(primary_container + "-extensions", None), meta_type='meta'
             )
             self._os_commitmeta = finder.rhcos_build_meta(
-                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
+                self.build_id, pullspec=pullspec_for_tag.get(primary_container, None), meta_type='commitmeta'
             )
             self.rhel_build_meta = finder.rhel_build_meta(self.build_id)
         else:
@@ -393,6 +414,9 @@ class RHCOSBuildInspector:
         look up the group.yml-configured primary RHCOS container.
         @return Model with entries for name and build_metadata_key
         """
+        container_config = self.get_container_configs().get(self.primary_container, {})
+        if container_config:
+            return container_config
         return rhcos.get_primary_container_conf(self.runtime)
 
     def get_container_configs(self):
@@ -442,7 +466,9 @@ class RHCOSBuildInspector:
 
         raise IOError(f'Unable to determine RHEL version base for rhcos {self.build_id}')
 
-    async def find_non_latest_rpms(self, exclude_rhel: Optional[bool] = False) -> List[Tuple[str, str, str]]:
+    async def find_non_latest_rpms(
+        self, exclude_rhel: Optional[bool] = False, os_metadata_rpm_list: Optional[list] = None
+    ) -> List[Tuple[str, str, str]]:
         """
         If the packages installed in this image overlap packages in the build repo,
         return NVRs of the latest candidate builds that are not also installed in this image.
@@ -472,6 +498,7 @@ class RHCOSBuildInspector:
         )
 
         # Get all installed rpms
+        rpm_list = os_metadata_rpm_list or self.get_os_metadata_rpm_list(exclude_rhel)
         rpms_to_check = [
             {
                 "name": name,
@@ -481,7 +508,7 @@ class RHCOSBuildInspector:
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
             }
-            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list(exclude_rhel)
+            for name, epoch, version, release, arch in rpm_list
         ]
 
         logger.info("Determining outdated rpms...")
