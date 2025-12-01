@@ -1170,7 +1170,7 @@ class Runtime(GroupRuntime):
         """
         if not self.cache_dir:
             return None
-        os.path.join(self.cache_dir, self.user or "default", 'git')
+        return os.path.join(self.cache_dir, self.user or "default", 'git')
 
     def export_sources(self, output):
         self._logger.info('Writing sources to {}'.format(output))
