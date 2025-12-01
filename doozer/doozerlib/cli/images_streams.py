@@ -22,10 +22,16 @@ from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import constants, util
-from doozerlib.cli import cli, pass_runtime
+from doozerlib.cli import cli, option_registry_auth, pass_runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import extract_version_fields, get_docker_config_json, what_is_in_master
+from doozerlib.util import (
+    extract_version_fields,
+    get_docker_config_json,
+    oc_image_info,
+    oc_image_info_for_arch,
+    what_is_in_master,
+)
 from pyartcd import jenkins
 
 transform_rhel_7_base_repos = 'rhel-7/base-repos'
@@ -104,10 +110,28 @@ def images_streams():
     '--force', default=False, is_flag=True, help='Force the mirror operation even if not defined in config upstream.'
 )
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@option_registry_auth
 @pass_runtime
-def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, force, dry_run):
+def images_streams_mirror(
+    runtime,
+    streams: Tuple[str, ...],
+    only_if_missing: bool,
+    live_test_mode: bool,
+    force: bool,
+    dry_run: bool,
+    registry_auth: Optional[str],
+):
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
+
+    # Determine which registry config to use:
+    # 1. If --registry-auth is provided, use it directly (it's already a file path)
+    # 2. Otherwise, fall back to --registry-config-dir (global option, needs conversion to file path)
+    registry_config_file = None
+    if registry_auth:
+        registry_config_file = registry_auth
+    elif runtime.registry_config_dir is not None:
+        registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
     def mirror_image(cmd_start: str, upstream_dest: str):
         full_cmd_1 = f'{cmd_start} {upstream_dest}'
@@ -166,17 +190,19 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             # image exists yet. If the image does not yet exist, this code should fail
             # quietly.
             if config.upstream_image_mirror is not Missing:
-                check_cmd = f'oc image info --filter-by-os=amd64 {config.upstream_image}'
-                rc, _, _ = exectools.cmd_gather(check_cmd)
-                if rc != 0:
+                image_info = oc_image_info_for_arch(
+                    config.upstream_image, go_arch='amd64', registry_config=registry_config_file, strict=False
+                )
+
+                if image_info is None:
                     print(
                         f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.'
                     )
                 else:
                     for upstream_image_mirror_dest in config.upstream_image_mirror:
                         priv_cmd = f'oc image mirror {config.upstream_image}'
-                        if runtime.registry_config_dir is not None:
-                            priv_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
+                        if registry_config_file is not None:
+                            priv_cmd += f" --registry-config={registry_config_file}"
                         mirror_image(priv_cmd, upstream_image_mirror_dest)
 
             # If the configuration specifies an upstream_image_base, then ART is responsible for mirroring
@@ -196,18 +222,26 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                 src_image_pullspec = runtime.resolve_brew_image_url(src_image)
 
             if only_if_missing:
-                check_cmd = f'oc image info --filter-by-os=amd64 {upstream_dest}'
-                rc, check_out, check_err = exectools.cmd_gather(check_cmd)
+                # Check if AMD64 destination image exists
+                amd64_info = oc_image_info_for_arch(
+                    upstream_dest, go_arch='amd64', registry_config=registry_config_file, strict=False
+                )
+                amd64_exists = amd64_info is not None
+
                 if mirror_arm:
-                    check_cmd_arm = f'oc image info {upstream_dest}-arm64'
-                    rc_arm, check_out, check_err = exectools.cmd_gather(check_cmd_arm)
-                    if rc == 0 and rc_arm == 0:
+                    # Check if ARM64 destination image exists
+                    arm64_info = oc_image_info(
+                        f'{upstream_dest}-arm64', registry_config=registry_config_file, strict=False
+                    )
+                    arm64_exists = arm64_info is not None
+
+                    if amd64_exists and arm64_exists:
                         print(
                             f'Image {upstream_dest} and {upstream_dest}-arm64 seems to exist already; skipping because of --only-if-missing'
                         )
                         continue
                 else:
-                    if rc == 0:
+                    if amd64_exists:
                         print(f'Image {upstream_dest} seems to exist already; skipping because of --only-if-missing')
                         continue
 
@@ -220,16 +254,16 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
 
             cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec}'
 
-            if runtime.registry_config_dir is not None:
-                cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
+            if registry_config_file is not None:
+                cmd += f" --registry-config={registry_config_file}"
             mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
                 # oc image mirror will filter out missing arches (as long as the manifest is there) regardless of specifying --skip-missing
                 arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec}'
-                if runtime.registry_config_dir is not None:
-                    arm_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
+                if registry_config_file is not None:
+                    arm_cmd += f" --registry-config={registry_config_file}"
                 mirror_image(arm_cmd, f'{upstream_dest}-arm64')
 
 
@@ -394,14 +428,16 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         # Some images also have their own upstream information. This allows them to
         # be mirrored out into upstream, optionally transformed, and made available as builder images for
         # other images without being in streams.yml.
+
         for image_meta in runtime.ordered_image_metas():
             if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
                 upstream_entry = Model(
                     dict_to_model=image_meta.config.content.source.ci_alignment.primitive()
                 )  # Make a copy
-                upstream_entry['image'] = (
-                    image_meta.pull_url()
-                )  # Make the image metadata entry match what would exist in streams.yml.
+
+                # Use pull_url() which handles both Brew and Konflux build systems
+                upstream_entry['image'] = image_meta.pull_url()
+
                 if upstream_entry.final_user is Missing:
                     upstream_entry.final_user = image_meta.config.final_stage_user
                 upstreaming_entries[image_meta.distgit_key] = upstream_entry
@@ -439,7 +475,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     CI to compile with the same golang version ART is using and use identical UBI8 images, etc. To accomplish
     this, streams.yml contains metadata which is extraneous to the product build, but critical to enable
     a high fidelity CI signal.
-    It may seem at first that all we would need to do was mirror the internal brew images we use
+    It may seem at first that all we would need to do was mirror the internal build images (Brew or Konflux)
     somewhere accessible by CI, but it is not that simple:
     1. When a CI build yum installs, it needs to pull RPMs from an RPM mirroring service that runs in
        CI. That mirroring service subsequently pulls and caches files ART syncs using reposync.
@@ -447,7 +483,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
        images are configured in ci-operator config's 'build_root' and they are used to build
        and run test cases. Sometimes called 'CI release' image, these images contain tools that
        are not part of the typical golang builder (e.g. tito).
-    Both of these differences require us to 'transform' the image ART uses in brew into an image compatible
+    Both of these differences require us to 'transform' the ART build images into images compatible
     for use in CI. A challenge to this transformation is that they must be performed in the CI context
     as they depend on the services only available in ci (e.g. base-4-6-rhel8.ocp.svc is used to
     find the current yum repo configuration which should be used).

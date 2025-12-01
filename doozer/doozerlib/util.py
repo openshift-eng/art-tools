@@ -1,4 +1,3 @@
-import base64
 import copy
 import functools
 import json
@@ -6,8 +5,7 @@ import logging
 import os
 import pathlib
 import re
-import tempfile
-import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime
 from itertools import chain
@@ -574,11 +572,13 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def oc_image_info(
     pullspec: str,
     *options,
     registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
+    strict: bool = True,
+) -> dict | list[dict] | None:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
     pullspec. Use oc_image_info__caching if you do not believe the image will change
@@ -587,47 +587,84 @@ def oc_image_info(
     :param pullspec: e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-vsphere-problem-detector-rhel9:v4.19.0-202501230108.p0.gcbd8539.assembly.stream.el9
     :param options: list of extra args to use with oc, e.g. '--show-multiarch', '--filter-by-os=linux/amd64'
     :param registry_config: The path to the registry config file.
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Parsed JSON output or None if strict=False and image doesn't exist
     """
 
     cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
     cmd.extend(options)
     if registry_config:
         cmd.extend([f'--registry-config={registry_config}'])
-    out, _ = exectools.cmd_assert(cmd, retries=3)
+
+    rc, out, err = exectools.cmd_gather(cmd)
+
+    if rc != 0:
+        if not strict and 'manifest unknown' in err.lower():
+            return None
+        # Raise IOError for errors (strict=True or other errors)
+        raise IOError(f"oc image info failed (rc={rc}): {err}")
+
     return json.loads(out)
 
 
-def oc_image_info_for_arch(pullspec: str, go_arch: str = 'amd64') -> Dict:
+def oc_image_info_for_arch(
+    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
+) -> dict | None:
     """
     Filter by os because images can be multi-arch manifest lists
     (which cause oc image info to throw an error if not filtered).
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict of image info or None if strict=False and image doesn't exist
     """
-    return oc_image_info(pullspec, f'--filter-by-os={go_arch}')
+    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
+    if result is None:
+        return None
+    assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
+    return result
 
 
 @lru_cache(maxsize=1000)
-def oc_image_info_for_arch__caching(pullspec: str, go_arch: str = 'amd64') -> Dict:
+def oc_image_info_for_arch__caching(
+    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
+) -> dict | None:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
     pullspec. This function will cache that output per pullspec, so do not use it
     if you expect the image to change during the course of doozer's execution.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict of image info or None if strict=False and image doesn't exist
     """
-    return oc_image_info_for_arch(pullspec, go_arch)
+    return oc_image_info_for_arch(pullspec, go_arch, registry_config=registry_config, strict=strict)
 
 
 def oc_image_info_show_multiarch(
     pullspec: str,
     registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
+    strict: bool = True,
+) -> dict | list[dict] | None:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
     For single arch images, it will return a dict representing the supported arch manifest.
     For multi arch images, it will return a list of dictionaries, each of these representing a single arch
+
+    :param pullspec: Image pullspec
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict/List of image info or None if strict=False and image doesn't exist
     """
     return oc_image_info(
         pullspec,
         '--show-multiarch',
         registry_config=registry_config,
+        strict=strict,
     )
 
 
@@ -635,13 +672,19 @@ def oc_image_info_show_multiarch(
 def oc_image_info_show_multiarch__caching(
     pullspec: str,
     registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
+    strict: bool = True,
+) -> dict | list[dict] | None:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
     For single arch images, it will return a dict representing the supported arch manifest.
     For multi arch images, it will return a list of dictionaries, each of these representing a single arch
+
+    :param pullspec: Image pullspec
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict/List of image info or None if strict=False and image doesn't exist
     """
-    return oc_image_info_show_multiarch(pullspec, registry_config)
+    return oc_image_info_show_multiarch(pullspec, registry_config, strict)
 
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))

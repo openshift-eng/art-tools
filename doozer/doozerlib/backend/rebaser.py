@@ -413,20 +413,28 @@ class KonfluxRebaser:
     async def _resolve_member_parent(self, member: str, original_parent: str):
         """Resolve the parent image for the given image metadata."""
         parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
-        private_fix = False
+
         if parent_metadata is None:
+            parent_loaded = False
+            parent_metadata = self._runtime.late_resolve_image(member, required=False)
+
+        else:
+            parent_loaded = True
+
+        if self.variant is BuildVariant.OKD:
+            okd_alignment_config = parent_metadata.config.content.source.okd_alignment
+            if okd_alignment_config.resolve_as.stream:
+                stream_config = self._runtime.resolve_stream(okd_alignment_config.resolve_as.stream)
+                return stream_config.image, False
+
+        private_fix = False
+        if not parent_loaded:
             if not self._runtime.ignore_missing_base:
                 raise IOError(f"Parent image {member} is not loaded.")
             if self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
-
-                if self.variant is BuildVariant.OKD:
-                    okd_alignment_config = parent_metadata.config.content.source.okd_alignment
-                    if okd_alignment_config.resolve_as.stream:
-                        stream_config = self._runtime.resolve_stream(okd_alignment_config.resolve_as.stream)
-                        return stream_config.image, False
 
                 build = await parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
@@ -493,7 +501,7 @@ class KonfluxRebaser:
             # wait for parent member to be rebased
             while not parent_member.rebase_event.is_set():
                 self._logger.info(
-                    "[%s] Parent image %s is being rebasing; waiting...",
+                    "[%s] Parent image %s is being rebased; waiting...",
                     metadata.distgit_key,
                     parent_member.distgit_key,
                 )
@@ -652,7 +660,7 @@ class KonfluxRebaser:
                     f'git -C {curdir} log --no-merges --diff-filter=a -n 1 --pretty=format:%H {dockerfile_name}',
                 )
                 if rc == 0:
-                    rc, ae, err = await exectools.cmd_gather_async('git show -s --pretty=format:%ae {}'.format(sha))
+                    rc, ae, err = await exectools.cmd_gather_async(f"git -C {curdir} show -s --pretty=format:%ae {sha}")
                     if rc == 0:
                         if ae.lower().endswith('@redhat.com'):
                             self._logger.info('Last Dockerfile committer: {}'.format(ae))

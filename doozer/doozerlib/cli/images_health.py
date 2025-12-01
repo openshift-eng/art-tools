@@ -84,7 +84,12 @@ class ImagesHealthPipeline:
         # Filter out images that are disabled for this variant
         for image_meta in self.runtime.image_metas():
             if self.variant is BuildVariant.OKD:
-                if image_meta.config.okd is not Missing and image_meta.config.okd.mode == 'disabled':
+                # Skip images with okd.mode: disabled
+                if (
+                    image_meta.config.okd is not Missing
+                    and image_meta.config.okd.mode is not Missing
+                    and image_meta.config.okd.mode == 'disabled'
+                ):
                     self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
                     continue
             elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
