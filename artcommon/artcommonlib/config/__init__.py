@@ -15,7 +15,7 @@ class _IncludeConstructor:
     """Custom ruamel.yaml constructor for processing !include tag in YAML files."""
 
     def __init__(self, base_dir: Path | None, replace_vars: dict | None = None) -> None:
-        self.base_dir = base_dir
+        self.base_dir = base_dir.resolve() if base_dir else None
         self.replace_vars = replace_vars
 
     def __call__(self, loader, node) -> Any:
