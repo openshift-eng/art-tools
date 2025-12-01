@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from collections import OrderedDict
@@ -6,6 +7,7 @@ from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
@@ -247,20 +249,49 @@ class ImageMetadata(Metadata):
         return self.image_name.replace("/", "-")
 
     def pull_url(self):
-        # Don't trust what is the Dockerfile for version & release. This field may not even be present.
-        # Query brew to find the most recently built release for this component version.
-        _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
+        """
+        Get the pullspec for the latest build of this image.
 
-        # we need to pull images from proxy if 'brew_image_namespace' is enabled:
-        # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
-        if self.runtime.group_config.urls.brew_image_namespace is not Missing:
-            name = self.runtime.group_config.urls.brew_image_namespace + '/' + self.config.name.replace('/', '-')
+        Returns the pullspec from Konflux if build_system is 'konflux',
+        otherwise returns the Brew pullspec.
+        """
+        if self.runtime.build_system == 'konflux':
+            # Bind Konflux DB if not already bound
+            if not hasattr(self.runtime, '_konflux_db_bound'):
+                self.runtime.konflux_db.bind(KonfluxBuildRecord)
+                self.runtime._konflux_db_bound = True
+
+            # Get the latest Konflux build synchronously
+            async def get_latest_konflux_build():
+                return await self.runtime.konflux_db.get_latest_build(
+                    name=self.distgit_key,
+                    group=self.runtime.group,
+                    assembly=self.runtime.assembly,
+                    artifact_type=ArtifactType.IMAGE,
+                    engine=Engine.KONFLUX,
+                    outcome=KonfluxBuildOutcome.SUCCESS,
+                )
+
+            build = asyncio.run(get_latest_konflux_build())
+            if not build:
+                raise IOError(f'No Konflux build found for {self.distgit_key} in group {self.runtime.group}')
+            return build.image_pullspec
         else:
-            name = self.config.name
+            # Brew build system (existing behavior)
+            # Don't trust what is the Dockerfile for version & release. This field may not even be present.
+            # Query brew to find the most recently built release for this component version.
+            _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
 
-        return "{host}/{name}:{version}-{release}".format(
-            host=self.runtime.group_config.urls.brew_image_host, name=name, version=version, release=release
-        )
+            # we need to pull images from proxy if 'brew_image_namespace' is enabled:
+            # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
+            if self.runtime.group_config.urls.brew_image_namespace is not Missing:
+                name = self.runtime.group_config.urls.brew_image_namespace + '/' + self.config.name.replace('/', '-')
+            else:
+                name = self.config.name
+
+            return "{host}/{name}:{version}-{release}".format(
+                host=self.runtime.group_config.urls.brew_image_host, name=name, version=version, release=release
+            )
 
     def pull_image(self):
         pull_image(self.pull_url())
