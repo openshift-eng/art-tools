@@ -455,6 +455,8 @@ class KonfluxImageBuilder:
                             data["path"] = values
 
                         if entry in ["requirements_files", "requirements_build_files"]:
+                            if "binary" not in data:
+                                data["binary"] = {}
                             if entry == "requirements_files":
                                 if "requirements_files" not in data:
                                     data["requirements_files"] = []
