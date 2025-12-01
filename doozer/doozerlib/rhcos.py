@@ -342,11 +342,11 @@ class RHCOSBuildInspector:
         except KeyError:
             pass  # no extensions before 4.8; ignore missing
 
-        # Process _build_meta_10 (rhcos-coreos-10-extensions)
+        # Process _build_meta_10 (rhel-coreos-10-extensions)
         if self._build_meta_10:
             try:
                 extensions_10 = self._build_meta_10['extensions']['manifest']
-                _process_extensions(extensions_10, "rhcos-coreos-10-extensions")
+                _process_extensions(extensions_10, "rhel-coreos-10-extensions")
             except KeyError:
                 pass
 
