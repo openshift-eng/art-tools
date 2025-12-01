@@ -313,11 +313,12 @@ class RHCOSBuildInspector:
         for entry in commitmeta_entries:
             entries.append(entry + ["rhel-coreos"])
 
-        # Process _os_commitmeta_10 (rhel-coreos-10)
-        if self._build_meta_10:
-            commitmeta_10_entries = self._os_commitmeta_10.get('rpmostree.rpmdb.pkglist', [])
-            for entry in commitmeta_10_entries:
-                entries.append(entry + ["rhel-coreos-10"])
+        # [SKIP] Process _os_commitmeta_10 (rhel-coreos-10)
+        # For the situaction where didn't exclude_rhel when check kernel, it will cause confusion that two versions if kernel exist
+        # if self._build_meta_10:
+        #     commitmeta_10_entries = self._os_commitmeta_10.get('rpmostree.rpmdb.pkglist', [])
+        #     for entry in commitmeta_10_entries:
+        #         entries.append(entry + ["rhel-coreos-10"])
 
         def _process_extensions(extensions_manifest, repo_name):
             for name, vra in extensions_manifest.items():
@@ -343,12 +344,13 @@ class RHCOSBuildInspector:
             pass  # no extensions before 4.8; ignore missing
 
         # Process _build_meta_10 (rhcos-coreos-10-extensions)
-        if self._build_meta_10:
-            try:
-                extensions_10 = self._build_meta_10['extensions']['manifest']
-                _process_extensions(extensions_10, "rhcos-coreos-10-extensions")
-            except KeyError:
-                pass
+        # For the situaction where didn't exclude_rhel when check kernel, it will cause confusion that two versions if kernel exist
+        # if self._build_meta_10:
+        #     try:
+        #         extensions_10 = self._build_meta_10['extensions']['manifest']
+        #         _process_extensions(extensions_10, "rhcos-coreos-10-extensions")
+        #     except KeyError:
+        #         pass
 
         if exclude_rhel and self.layered:
             # for node image exclude rpms in rhel layer
