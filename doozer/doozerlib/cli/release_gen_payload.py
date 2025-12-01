@@ -1955,8 +1955,8 @@ class PayloadGenerator:
         # index by name the RPMs installed in the RHCOS build
         rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
-            name, _, version, release, _ = rpm
-            if "el10" in release:
+            name, _, version, release, _, repo_name = rpm
+            if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
                 # skip el10 rhcos kernels check
                 continue
             rhcos_rpm_vrs[name] = f"{version}-{release}"
