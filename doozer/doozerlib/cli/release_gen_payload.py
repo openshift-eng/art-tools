@@ -1872,11 +1872,8 @@ class PayloadGenerator:
         rpm_uses: Dict[str, Set[str]] = {}
 
         for rhcos_build in rhcos_builds:
-            for name, epoch, version, release, arch, repo_name in rhcos_build.get_os_metadata_rpm_list():
-                if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
-                    continue
-                rpm_name = name
-                nvr = f"{name}-{version}-{release}"
+            for nvr in rhcos_build.get_rpm_nvrs():
+                rpm_name = parse_nvr(nvr)["name"]
                 if rpm_name not in rpm_uses:
                     rpm_uses[rpm_name] = dict()
                 if nvr not in rpm_uses[rpm_name]:
@@ -1901,23 +1898,16 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {
-            entry[0]: entry[:-1]
-            for entry in rpm_list
-            if entry[-1] not in ["rhel-coreos-10", "rhel-coreos-10-extensions"]
-        }
+        rpms_dict = {entry[0]: entry for entry in rpm_list}
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
 
         if {"kernel-core", "kernel-rt-core"} <= rpms_dict.keys():
-            kernel_entry = rpms_dict["kernel-core"]
-            kernel_rt_entry = rpms_dict["kernel-rt-core"]
-
             # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
-            kernel_v, kernel_r = kernel_entry[2:4]
+            kernel_v, kernel_r = rpms_dict["kernel-core"][2:4]
             # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
-            kernel_rt_v, kernel_rt_r = kernel_rt_entry[2:4]
+            kernel_rt_v, kernel_rt_r = rpms_dict["kernel-rt-core"][2:4]
             inconsistency = False
             if kernel_v != kernel_rt_v:
                 inconsistency = True
@@ -1931,8 +1921,8 @@ class PayloadGenerator:
             if inconsistency:
                 inconsistencies.append(
                     {
-                        "kernel-core": _to_nvr(kernel_entry[:-1]),
-                        "kernel-rt-core": _to_nvr(kernel_rt_entry[:-1]),
+                        "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
+                        "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
                     }
                 )
         return inconsistencies
@@ -1962,10 +1952,7 @@ class PayloadGenerator:
         # index by name the RPMs installed in the RHCOS build
         rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
-            name, _, version, release, _, repo_name = rpm
-            if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
-                # skip el10 rhcos kernels check
-                continue
+            name, _, version, release, _ = rpm
             rhcos_rpm_vrs[name] = f"{version}-{release}"
 
         # check that each member consistency condition is met

@@ -1,8 +1,6 @@
 import json
 
 from artcommonlib import exectools, logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
-from artcommonlib.constants import ART_PROD_IMAGE_REPO
 from artcommonlib.model import ListModel, Model
 from artcommonlib.runtime import GroupRuntime
 
@@ -85,7 +83,7 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     return container['image']
 
 
-def get_build_id_from_rhcos_pullspec(pullspec) -> str:
+def get_build_id_from_rhcos_pullspec(pullspec, layered_id: bool = True) -> str:
     """
     Extract the RHCOS build ID from an image pullspec.
     - Starting from 4.16, the version is extracted from a new label "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
@@ -107,47 +105,19 @@ def get_build_id_from_rhcos_pullspec(pullspec) -> str:
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
-    # only layered rhcos will have coreos.build.manifest-list-tag
+    # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
+    # brew build name looks like rhcos-x86_64-4.19.9.6.202505081313-0 we need build_id 4.19.9.6.202505081313-0
     manifest_tag_label = labels.get('coreos.build.manifest-list-tag')
     image_version_label = labels.get('org.opencontainers.image.version')
-    if manifest_tag_label and "node-image-extensions" in manifest_tag_label:
-        # for layered rhcos extensions it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
+    if layered_id and manifest_tag_label:
         list_tag = manifest_tag_label.split('-')
         build_id = f"{list_tag[0]}.{list_tag[1]}.{list_tag[2]}-0"
     elif image_version_label:
-        # for layered rhcos node image it has label io.openshift.build.versions=machine-os=9.6.20251125-1
-        # brew build name looks like rhcos-x86_64-4.19.96.202505081313-0 we need build_id 4.19.96.202505081313-0
         build_id = image_version_label
     else:
-        # for 4.12 old build labels looks like version=412.86.202511191939-0
         build_id = labels.version
 
     if not build_id:
         raise Exception(f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
-    logger.info(f"Found BuildID: {build_id}")
+
     return build_id
-
-
-def get_latest_layered_rhcos_build(container_conf: dict = None, arch: str = None):
-    """
-    Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
-    """
-    brew_arch = go_arch_for_brew_arch(arch)
-
-    # Get build_id from rhel_build_id_index
-    rhel_info_str, _ = exectools.cmd_assert(
-        f'oc image info -o json {container_conf.rhel_build_id_index} --filter-by-os={brew_arch}', retries=3
-    )
-    rhel_info = json.loads(rhel_info_str)
-    build_id = rhel_info['config']['config']['Labels']["org.opencontainers.image.version"]
-
-    if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
-        digest = rhel_info['digest']
-    else:
-        rhcos_info_str, _ = exectools.cmd_assert(
-            f'oc image info -o json {container_conf.rhcos_index_tag} --filter-by-os={brew_arch}', retries=3
-        )
-        digest = json.loads(rhcos_info_str)['digest']
-
-    pullspec = f"{ART_PROD_IMAGE_REPO}@{digest}"
-    return build_id, pullspec
