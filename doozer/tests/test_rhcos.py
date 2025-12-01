@@ -322,8 +322,8 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             ],
         )
         get_os_metadata_rpm_list.return_value = [
-            ['foo', '0', '1.0.0', '1.el9', 'x86_64'],
-            ['bar', '0', '1.0.0', '1.el9', 'x86_64'],
+            ['foo', '0', '1.0.0', '1.el9', 'x86_64', 'rhel-8-baseos-rpms'],
+            ['bar', '0', '1.0.0', '1.el9', 'x86_64', 'rhel-8-appstream-rpms'],
         ]
         rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
         actual = await rhcos_build.find_non_latest_rpms()
