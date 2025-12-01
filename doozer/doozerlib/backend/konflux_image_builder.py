@@ -455,12 +455,16 @@ class KonfluxImageBuilder:
                             data["path"] = values
 
                         if entry in ["requirements_files", "requirements_build_files"]:
-                            if "requirements_files" not in data:
-                                data["requirements_files"] = []
+                            if "binary" not in data:
+                                data["binary"] = {}
                             if entry == "requirements_files":
+                                if "requirements_files" not in data:
+                                    data["requirements_files"] = []
                                 data["requirements_files"] = data["requirements_files"] + values
                             if entry == "requirements_build_files":
-                                data["requirements_files"] = data["requirements_files"] + values
+                                if "requirements_build_files" not in data:
+                                    data["requirements_build_files"] = []
+                                data["requirements_build_files"] += values
                         flag = True
                     prefetch.append(data)
 
