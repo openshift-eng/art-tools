@@ -792,6 +792,33 @@ class ImageMetadata(Metadata):
 
         return True
 
+    def is_cross_arch_enabled(self) -> bool:
+        """
+        Determines whether cross-architecture lockfile inclusion is enabled.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.cachi2.lockfile.cross_arch)
+        2. Group configuration (runtime.group_config.konflux.cachi2.lockfile.cross_arch)
+
+        If neither is set, cross-architecture inclusion defaults to disabled (False).
+
+        Returns:
+            bool: True if cross-architecture lockfile inclusion is enabled, False otherwise.
+        """
+        cross_arch_config_override = self.config.konflux.cachi2.lockfile.cross_arch
+        if cross_arch_config_override not in [Missing, None]:
+            cross_arch = bool(cross_arch_config_override)
+            self.logger.info(f"Cross-architecture lockfile inclusion set from metadata config: {cross_arch}")
+            return cross_arch
+
+        cross_arch_group_override = self.runtime.group_config.konflux.cachi2.lockfile.cross_arch
+        if cross_arch_group_override not in [Missing, None]:
+            cross_arch = bool(cross_arch_group_override)
+            self.logger.info(f"Cross-architecture lockfile inclusion set from group config: {cross_arch}")
+            return cross_arch
+
+        return False
+
     async def fetch_rpms_from_build(self) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.
