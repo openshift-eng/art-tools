@@ -2280,8 +2280,12 @@ class KonfluxRebaser:
                     for sr in u_list:
                         s = sr.get('search', None)
                         r = sr.get('replace', None)
-                        if not s or not r:
+                        if s is None or r is None:
                             raise ValueError('Must provide `search` and `replace` fields in art.yaml `update_list`')
+                        if not isinstance(s, str) or not isinstance(r, str):
+                            raise ValueError('`search` and `replace` fields in art.yaml `update_list` must be strings')
+                        if not s:
+                            raise ValueError('`search` field in art.yaml `update_list` cannot be empty')
 
                         original_string = sr_file_str
                         sr_file_str = sr_file_str.replace(s, r)
