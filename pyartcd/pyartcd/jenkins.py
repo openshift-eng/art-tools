@@ -610,6 +610,7 @@ def start_build_plashets(
         'DATA_GITREF': data_gitref,
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
+        'VERSION': '',
     }
 
     return start_build(
