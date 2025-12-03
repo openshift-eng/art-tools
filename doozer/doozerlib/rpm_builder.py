@@ -377,7 +377,7 @@ class RPMBuilder:
             elif line.startswith("%setup"):
                 lines[i] = f"%setup -q -n {rpm.config.name}-{rpm.version}\n"
             elif line.startswith("%autosetup"):
-                lines[i] = f"%autosetup -S git -n {rpm.config.name}-{rpm.version} -p1\n"
+                lines[i] = f"%autosetup -n {rpm.config.name}-{rpm.version} -p1\n"
             elif line.startswith("%changelog"):
                 changelog_added = True
                 lines[i] = f"{lines[i].strip()}\n{changelog_title}\n- Update to source commit {source_commit_url}\n"
