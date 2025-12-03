@@ -122,7 +122,7 @@ class KonfluxFbcImporter:
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
         catalog_blobs = await self._get_catalog_blobs_from_index_image(
-            index_image, package_name, migrate_level=migrate_level
+            index_image, package_name, migrate_level=migrate_level, strict=strict
         )
         if not catalog_blobs:
             if strict:
@@ -196,11 +196,14 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
+    async def _render_index_image(
+        self, index_image: str, migrate_level: str = "none", strict: bool = True
+    ) -> List[Dict] | None:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
             migrate_level=migrate_level,
+            strict=strict,
         )
         return blobs
 
@@ -230,12 +233,14 @@ class KonfluxFbcImporter:
         return filtered
 
     async def _get_catalog_blobs_from_index_image(
-        self, index_image: str, package_name: str, migrate_level: str = "none"
-    ):
-        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
+        self, index_image: str, package_name: str, migrate_level: str = "none", strict: bool = True
+    ) -> list[dict[str, Any]] | None:
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level, strict=strict)
+        if blobs is None:
+            return None
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
-            return
+            return None
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
