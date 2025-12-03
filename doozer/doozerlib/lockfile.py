@@ -631,6 +631,16 @@ class RPMLockfileGenerator:
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
 
+        if image_meta.is_cross_arch_enabled():
+            self.logger.info("Cross-architecture lockfile inclusion enabled")
+
+            all_rpms = []
+            for arch_rpms in rpms_info_by_arch.values():
+                all_rpms.extend(arch_rpms)
+
+            for arch in arches:
+                rpms_info_by_arch[arch] = all_rpms
+
         for arch, rpm_list in rpms_info_by_arch.items():
             module_list = modules_info_by_arch.get(arch, [])
             lockfile["arches"].append(

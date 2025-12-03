@@ -1259,7 +1259,18 @@
                 "dnf_modules_enable!": {
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/dnf_modules_enable"
                 },
-                "dnf_modules_enable-": {}
+                "dnf_modules_enable-": {},
+                "cross_arch": {
+                  "description": "Include RPMs from all architectures in lockfile (default: false)",
+                  "type": "boolean"
+                },
+                "cross_arch?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/cross_arch"
+                },
+                "cross_arch!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/cross_arch"
+                },
+                "cross_arch-": {}
               },
               "additionalProperties": false
             },
