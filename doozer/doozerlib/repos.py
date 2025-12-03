@@ -328,7 +328,7 @@ class Repo(object):
             # This key will bed used only if gpgcheck=1
             result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
 
-        if konflux and 'ocp-artifacts' in baseurl_value or 'download.devel.redhat.com/' in baseurl_value:
+        if konflux and ('ocp-artifacts' in baseurl_value or 'download.devel.redhat.com/' in baseurl_value):
             result += f'sslcacert = {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}/{KONFLUX_REPO_CA_BUNDLE_FILENAME}\n'
 
         result += '\n'

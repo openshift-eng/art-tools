@@ -170,6 +170,8 @@ class UpdateGolangPipeline:
         kubeconfig: str | None = None,
         data_path: str | None = None,
         data_gitref: str | None = None,
+        skip_pr: bool = False,
+        external_golang_rpms: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -185,6 +187,8 @@ class UpdateGolangPipeline:
         self.tag_builds = tag_builds
         self.data_path = data_path
         self.data_gitref = data_gitref
+        self.skip_pr = skip_pr
+        self.external_golang_rpms = external_golang_rpms
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -215,20 +219,31 @@ class UpdateGolangPipeline:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
+        external_repos_msg = " using golang RPMs from external repos" if self.external_golang_rpms else ""
         await self._slack_client.say_in_thread(
-            f":construction: Updating golang for {self.ocp_version} (building images on {self.build_system}) :construction:"
+            f":construction: Updating golang for {self.ocp_version} (building images on {self.build_system}{external_repos_msg}) :construction:"
         )
-        # Process golang RPM builds (always from Brew)
-        cannot_proceed = not all(
-            await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
-        )
-        if cannot_proceed:
-            raise ValueError(
-                'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
-            )
 
-        _LOGGER.info('All golang RPM builds are tagged and available!')
-        await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
+        if self.external_golang_rpms:
+            _LOGGER.warning(
+                "Using golang RPMs from external repos. Skipping tagging and availability checks. "
+                "Ensure external repos are enabled in golang-builder image metadata config."
+            )
+            await self._slack_client.say_in_thread(
+                ":warning: Using golang RPMs from external repos. Skipping tagging and availability checks."
+            )
+        else:
+            # Process golang RPM builds (always from Brew)
+            cannot_proceed = not all(
+                await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+            )
+            if cannot_proceed:
+                raise ValueError(
+                    'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
+                )
+
+            _LOGGER.info('All golang RPM builds are tagged and available!')
+            await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         brew_nvrs = {}
@@ -277,16 +292,31 @@ class UpdateGolangPipeline:
                     error_parts.append(f'Brew: {brew_still_missing}')
                 if konflux_still_missing:
                     error_parts.append(f'Konflux: {konflux_still_missing}')
-                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}')
+                error_msg = f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}'
+                if self.external_golang_rpms:
+                    error_msg += (
+                        '. When using --external-golang-rpms, ensure the external repo is enabled '
+                        'in the enabled_repos section of golang-builder image metadata config.'
+                    )
+                raise ValueError(error_msg)
 
         _LOGGER.info("Updating streams.yml with found builder images")
         # Prepare message with all newly built builders
         all_builder_messages = []
         if brew_nvrs:
-            all_builder_messages.extend([f"{nvr} (brew)" for nvr in brew_nvrs.values()])
+            for el_v, nvr in brew_nvrs.items():
+                parsed_nvr = parse_nvr(nvr)
+                pullspec = self._get_builder_pullspec(parsed_nvr, 'brew')
+                all_builder_messages.append(f"RHEL {el_v}: {nvr} -> {pullspec} (brew)")
         if konflux_nvrs:
-            all_builder_messages.extend([f"{nvr} (konflux)" for nvr in konflux_nvrs.values()])
-        await self._slack_client.say_in_thread(f"new golang builders available: {', '.join(all_builder_messages)}")
+            for el_v, nvr in konflux_nvrs.items():
+                parsed_nvr = parse_nvr(nvr)
+                pullspec = self._get_builder_pullspec(parsed_nvr, 'konflux')
+                all_builder_messages.append(f"RHEL {el_v}: {nvr} -> {pullspec} (konflux)")
+
+        builder_message = "New golang builders available:\n" + "\n".join([f"  - {msg}" for msg in all_builder_messages])
+        _LOGGER.info(builder_message)
+        await self._slack_client.say_in_thread(builder_message)
 
         # For 'both' mode, only update streams.yml with konflux builds
         # For 'brew' mode, use brew_nvrs; for 'konflux' mode, use konflux_nvrs
@@ -424,6 +454,14 @@ class UpdateGolangPipeline:
                         builder_nvrs[el_v] = nvr_str
         return builder_nvrs
 
+    def _get_builder_pullspec(self, parsed_nvr, build_system: str):
+        """Generate the complete pullspec based on build system"""
+        if build_system == 'brew':
+            return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+        else:  # konflux or both (both uses konflux pullspec)
+            # TODO: This is temporary. In the future we need a location to share with multiple teams.
+            return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+
     async def update_golang_streams(self, go_version, builder_nvrs):
         """
         Update golang builders for current release in ocp-build-data
@@ -432,15 +470,6 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
-
-        def get_pullspec(parsed_nvr):
-            """Generate the complete pullspec based on build system"""
-            if self.build_system == 'brew':
-                return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-            else:  # konflux or both (both uses konflux pullspec)
-                # TODO: This is temporary. In the future we need a location to share with multiple teams.
-                return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
@@ -491,20 +520,20 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
                 latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
-                new_latest_go = get_pullspec(parsed_nvr)
+                new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
-        elif go_previous in go_version:
+        elif go_previous and go_previous in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
-                new_previous_go = get_pullspec(parsed_nvr)
+                new_previous_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
                         info['image'] = new_previous_go
@@ -520,7 +549,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
                 previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
-                new_latest_go = get_pullspec(parsed_nvr)
+                new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
@@ -535,6 +564,24 @@ class UpdateGolangPipeline:
         if update_streams:
             if self.dry_run:
                 _LOGGER.info(f"[DRY RUN] Would have created PR to update {go_version} golang builders")
+                return
+            if self.skip_pr:
+                # Log NVRs and pullspecs for golang builder images
+                builder_info = []
+                for el_v, nvr in builder_nvrs.items():
+                    parsed_nvr = parse_nvr(nvr)
+                    pullspec = self._get_builder_pullspec(parsed_nvr, self.build_system)
+                    builder_info.append(f"  - RHEL {el_v}: {nvr} -> {pullspec}")
+                builder_details = "\n".join(builder_info)
+
+                _LOGGER.info(
+                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
+                    f"Golang builder images:\n{builder_details}"
+                )
+                await self._slack_client.say_in_thread(
+                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
+                    f"Golang builder images:\n{builder_details}"
+                )
                 return
             fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
@@ -586,6 +633,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
+            "--build-system=brew",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -614,6 +662,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
+            "--build-system=brew",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -648,6 +697,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
+            "--build-system=konflux",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -678,6 +728,7 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
+            "--build-system=konflux",
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
@@ -791,6 +842,18 @@ class UpdateGolangPipeline:
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option(
+    '--skip-pr',
+    is_flag=True,
+    default=False,
+    help='Skip PR generation for ocp-build-data updates. Defaults to False (PRs will be created).',
+)
+@click.option(
+    '--external-golang-rpms',
+    is_flag=True,
+    default=False,
+    help='Use golang RPMs from external repos (not tagged in rhaos build tags). Skips tagging and availability checks. Defaults to False.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -808,6 +871,8 @@ async def update_golang(
     kubeconfig: str,
     data_path: str,
     data_gitref: str,
+    skip_pr: bool,
+    external_golang_rpms: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -830,4 +895,6 @@ async def update_golang(
         kubeconfig,
         data_path,
         data_gitref,
+        skip_pr,
+        external_golang_rpms,
     ).run()
