@@ -346,7 +346,7 @@ Some description
 %prep
 %setup -q
 #...
-%autosetup -S git
+%autosetup
 %changelog
         """.splitlines()
 
@@ -359,7 +359,7 @@ Some description
         self.assertIn("Source0:        foo-1.2.3.tar.gz\n", specfile_content)
         self.assertIn("%description\n[Maintainer] project: My Product, component: My Component\n", specfile_content)
         self.assertIn("%setup -q -n foo-1.2.3\n", specfile_content)
-        self.assertIn("%autosetup -S git -n foo-1.2.3 -p1\n", specfile_content)
+        self.assertIn("%autosetup -n foo-1.2.3 -p1\n", specfile_content)
         self.assertIn("Version:        1.2.3\n", specfile_content)
         self.assertIn("AOS Automation Release Team <noreply@redhat.com>", specfile_content[17])
 
