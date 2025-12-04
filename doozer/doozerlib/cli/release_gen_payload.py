@@ -2035,7 +2035,7 @@ class PayloadGenerator:
                 return AssemblyIssue(
                     f"RHCOS and '{payload_tag}' should use the same build of "
                     f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
-                    f"{payload_tag_nvr} has {build['nvr']}",
+                    f"{payload_tag_nvr} has {name}-{required_vr} in {build['nvr']}",
                     payload_tag,
                     AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
