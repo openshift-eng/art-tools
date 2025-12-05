@@ -425,6 +425,28 @@ class KonfluxOcp4Pipeline:
             self.slack_client.bind_channel(f'openshift-{self.version}')
             await self.slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
 
+    async def sweep_second_fix_bugs(self):
+        # find-bugs:second-fix closes CVE trackers that are not first-fix in pre-release branches
+        # The command itself checks the software lifecycle phase and only runs for pre-release/signing phases
+        cmd = [
+            'elliott',
+            f'--group=openshift-{self.version}',
+            "find-bugs:second-fix",
+            "--close",
+        ]
+
+        if self.runtime.dry_run:
+            cmd.append('--dry-run')
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            if self.runtime.dry_run:
+                return
+            self.slack_client.bind_channel(f'openshift-{self.version}')
+            await self.slack_client.say(f'Second-fix bug sweep failed for {self.version}. Please investigate')
+
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
@@ -704,6 +726,7 @@ class KonfluxOcp4Pipeline:
             if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
                 await self.sweep_bugs()
                 await self.sweep_golang_bugs()
+                await self.sweep_second_fix_bugs()
             else:
                 LOGGER.info(
                     f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
