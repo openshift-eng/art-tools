@@ -3,8 +3,9 @@
 venv:
 	uv venv --python 3.11
 	# Install base requirements files first to ensure all runtime dependencies are available
-	uv pip install -r artcommon/requirements.txt -r doozer/requirements.txt -r ocp-build-data-validator/requirements.txt
-	# Install elliott dependencies (it uses pyproject.toml)
+	uv pip install -r doozer/requirements.txt -r ocp-build-data-validator/requirements.txt
+	# Install dependencies for packages that use pyproject.toml
+	cd artcommon && uv pip install . && cd ..
 	cd elliott && uv pip install . && cd ..
 	cd pyartcd && uv pip install . && cd ..
 	# Install development dependencies
