@@ -460,6 +460,42 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             ],
         )  # rhcos notably absent from mirroring
 
+    @patch("aiofiles.open")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_mirror_payload_content_mismatched_siblings(self, exec_mock, open_mock):
+        """Test that mismatched siblings are not mirrored"""
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
+
+        # Mark mismatched-image as having mismatched siblings
+        gpcli.mismatched_siblings = ['mismatched-image']
+
+        payload_entries = dict(
+            good_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="good_pullspec",
+                image_meta=Mock(distgit_key="good-image"),
+                image_inspector=Mock(get_pullspec=lambda: "good_src"),
+            ),
+            mismatched_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="mismatched_pullspec",
+                image_meta=Mock(distgit_key="mismatched-image"),
+                image_inspector=Mock(get_pullspec=lambda: "mismatched_src"),
+            ),
+        )
+
+        buffer = io.StringIO()
+        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+        exec_mock.return_value = None  # do not actually run the command
+
+        await gpcli.mirror_payload_content("s390x", payload_entries)
+
+        lines = sorted(buffer.getvalue().splitlines())
+        self.assertEqual(
+            lines,
+            ["good_src=good_pullspec"],  # mismatched_image notably absent
+        )
+
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
     async def test_generate_specific_payload_imagestreams(self, build_mock):
         build_mock.side_effect = lambda name, _: name  # just to make the test simpler
@@ -503,7 +539,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 True: dict(),
                 False: dict(
                     rhcos=dict(s390x=payload_entries["rhcos"]),
-                    spam=dict(),  # embargoed
+                    # spam is embargoed and excluded from public payload (not even an empty dict)
                     eggs=dict(s390x=payload_entries["eggs"]),
                 ),
             },
@@ -528,7 +564,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 ),
                 False: dict(
                     rhcos=dict(s390x=payload_entries["rhcos"]),
-                    spam=dict(),  # embargoed
+                    # spam was skipped in public payload (not even an empty dict)
                     eggs=dict(s390x=payload_entries["eggs"]),
                 ),
             },
@@ -537,6 +573,66 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             "ocp-s390x-priv", "release-s390x-priv", ["rhcos", "spam", "eggs"], True
         )
         gpcli.apply_arch_imagestream.assert_awaited_once()
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
+    async def test_generate_specific_payload_imagestreams_mismatched_siblings(self, build_mock):
+        """Test that mismatched siblings are excluded from imagestreams and multi_specs"""
+        build_mock.side_effect = lambda name, _: name  # just to make the test simpler
+        runtime = MagicMock(images=[], exclude=[], assembly_type=AssemblyTypes.STREAM)
+        gpcli = flexmock(
+            rgp_cli.GenPayloadCli(
+                runtime=runtime,
+                apply=True,
+                is_name="release",
+                is_namespace="ocp",
+            )
+        )
+
+        # Mark 'mismatched-image' as having mismatched siblings
+        gpcli.mismatched_siblings = ['mismatched-image']
+
+        payload_entries = dict(
+            rhcos=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+            ),
+            good_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+                image_meta=Mock(distgit_key="good-image"),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
+            ),
+            mismatched_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+                image_meta=Mock(distgit_key="mismatched-image"),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
+            ),
+        )
+
+        gpcli.write_imagestream_artifact_file = AsyncMock()
+        gpcli.apply_arch_imagestream = AsyncMock()
+
+        multi_specs = {True: dict(), False: dict()}
+        await gpcli.generate_specific_payload_imagestreams("x86_64", False, payload_entries, multi_specs)
+
+        # Verify that mismatched-image was excluded from the imagestream tags
+        # It should not appear in multi_specs at all (not even as an empty dict)
+        self.assertEqual(
+            multi_specs,
+            {
+                True: dict(),
+                False: dict(
+                    rhcos=dict(x86_64=payload_entries["rhcos"]),
+                    good_image=dict(x86_64=payload_entries["good_image"]),
+                    # mismatched_image is completely absent from multi_specs
+                ),
+            },
+        )
+
+        # Verify that only rhcos and good_image were included in the istags (not mismatched_image)
+        # Note: x86_64 (amd64) doesn't get an arch suffix, so it's just "ocp" and "release"
+        gpcli.write_imagestream_artifact_file.assert_awaited_once_with("ocp", "release", ["rhcos", "good_image"], True)
 
     @patch("aiofiles.open")
     async def test_write_imagestream_artifact_file(self, open_mock):
