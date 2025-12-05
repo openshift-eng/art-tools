@@ -879,7 +879,9 @@ class KonfluxDb:
         Query BigQuery with exponential window expansion.
 
         Searches progressively expanding windows: 7, 14, 28, 56, 112, 224, 448 days.
-        Stops at first result found or when completed_before constraint is reached.
+        If completed_before is set, optimizes by starting search from that timestamp
+        instead of now (since no valid results exist after it). Continues expanding
+        backwards through all windows until first result is found.
 
         :param name: Component name
         :param nvr: Build NVR (alternative to name search)
@@ -889,7 +891,7 @@ class KonfluxDb:
         :param el_target: EL target filter
         :param artifact_type: Artifact type filter
         :param engine: Engine filter
-        :param completed_before: Cut-off timestamp (never search beyond this)
+        :param completed_before: Timestamp filter - only return builds that started before this time
         :param embargoed: Embargoed status filter
         :param extra_patterns: Extra pattern matching (regex)
         :return: First matching build or None
@@ -935,17 +937,19 @@ class KonfluxDb:
         # Order by start_time descending (newest first)
         order_by_clause = Column('start_time', quote=True).desc()
 
-        # Determine search boundary (never search before this)
+        # Determine search starting point
+        # If completed_before is set, start searching from that point instead of now
+        # (no valid results can exist after completed_before)
         end_search = datetime.now(tz=timezone.utc)
-        earliest_search = completed_before.astimezone(timezone.utc) if completed_before else None
+        if completed_before:
+            completed_before_utc = completed_before.astimezone(timezone.utc)
+            if end_search > completed_before_utc:
+                end_search = completed_before_utc
 
         # Exponential window search: 7, 14, 28, 56, 112, 224, 448 days
+        # Continue expanding backwards through all windows until we find a result
         for window_days in EXPONENTIAL_SEARCH_WINDOWS:
             start_window = end_search - timedelta(days=window_days)
-
-            # Respect completed_before constraint - never search beyond it
-            if earliest_search and start_window < earliest_search:
-                start_window = earliest_search
 
             # Build time range WHERE clause
             where_clauses = base_clauses + [
@@ -976,11 +980,6 @@ class KonfluxDb:
             except Exception as e:
                 self.logger.error(f"Failed querying {window_days}-day window: {e}")
                 raise
-
-            # If we hit the completed_before boundary, stop searching
-            if earliest_search and start_window <= earliest_search:
-                self.logger.debug(f"Reached completed_before boundary at {window_days}-day window, stopping search")
-                break
 
         # No results found in any window
         self.logger.debug(f"No builds found in exponential search up to {EXPONENTIAL_SEARCH_WINDOWS[-1]} days")
