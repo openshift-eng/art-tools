@@ -1153,7 +1153,11 @@ class GenPayloadCli:
 
         for payload_tag_name, payload_entry in payload_entries.items():
             # Skip mismatched siblings - they were not mirrored and should not be in the imagestream
-            if payload_entry.image_meta and payload_entry.image_meta.distgit_key in self.mismatched_siblings and self.runtime.assembly_type == AssemblyTypes.STREAM:
+            if (
+                payload_entry.image_meta
+                and payload_entry.image_meta.distgit_key in self.mismatched_siblings
+                and self.runtime.assembly_type == AssemblyTypes.STREAM
+            ):
                 self.logger.warning(
                     f"Skipping imagestream tag for {payload_entry.image_meta.distgit_key} "
                     f"due to mismatched sibling source commits."
