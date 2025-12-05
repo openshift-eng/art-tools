@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=65.5.1", "setuptools_scm[toml]>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["validator", "validator.schema"]
+
+[project]
+name = "rh-ocp-build-data-validator"
+version = "0.2.5"
+authors = [{ name = "AOS ART Team", email = "aos-team-art@redhat.com" }]
+description = "Validation of ocp-build-data Image & RPM declarations"
+readme = "README.rst"
+requires-python = ">=3.8"
+license-files = ["LICENSE"]
+dependencies = [
+    "appdirs",
+    "bleach",
+    "certifi",
+    "cffi",
+    "chardet",
+    "contextlib2",
+    "cryptography",
+    "distlib",
+    "docutils",
+    "filelock",
+    "future",
+    "idna",
+    "importlib-metadata",
+    "importlib-resources",
+    "jeepney",
+    "jsonschema~=4.0.0",
+    "keyring",
+    "packaging",
+    "pip_system_certs",
+    "pkginfo",
+    "pluggy",
+    "py",
+    "pycparser",
+    "pygit2>=1.11.1",      # https://github.com/libgit2/pygit2/issues/1176
+    "Pygments",
+    "pyparsing",
+    "PyYAML",
+    "readme-renderer",
+    "requests",
+    "requests-toolbelt",
+    "rpm",
+    "ruamel.yaml",
+    "schema",
+    "SecretStorage",
+    "six",
+    "toml",
+    "tqdm",
+    "twine",
+    "urllib3",
+    "virtualenv",
+    "webencodings",
+    "zipp",
+]
+
+[dependency-groups]
+dev = [
+    "flexmock",
+    "mock",
+    "ruff",
+    # tox reqs
+    "coverage~=5.3",
+    "tox~=3.20.1",
+    "zipp>=3.19.1",  # not directly required, pinned by Snyk to avoid a vulnerability
+]
+
+[project.scripts]
+validate-ocp-build-data = "validator.__main__:main"
+
+[project.urls]
+homepage = "https://github.com/openshift-eng/art-tools/tree/main/ocp-build-data-validator"
+repository = "https://github.com/openshift-eng/art-tools.git"

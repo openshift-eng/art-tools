@@ -4,26 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["elliottlib*"]
-namespaces = false
 
 [tool.setuptools_scm]
 root = ".."
 
 [project]
 dynamic = ["version"]
-name="rh-elliott"
-authors = [
-    {name = "AOS ART Team", email = "aos-team-art@redhat.com"},
-]
+name = "rh-elliott"
+authors = [{ name = "AOS ART Team", email = "aos-team-art@redhat.com" }]
 description = "CLI tool for managing and automating Red Hat software releases"
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = ["openshift", "errata", "advisory"]
-license.file = "LICENSE"
+license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -43,33 +39,26 @@ classifiers = [
 ]
 dependencies = [
     "aiohttp[speedups] >= 3.6",
-    "pycares >= 4.0.0, < 5.0.0",  # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
+    "pycares >= 4.0.0, < 5.0.0", # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
     "click == 8.1.8",
     "errata-tool ~= 1.31.0",
     "future",
     "koji >= 1.18",
     "semver",
     "pip_system_certs",
-    "pygit2 >= 1.11.1",  # https://github.com/libgit2/pygit2/issues/1176
+    "pygit2 >= 1.11.1",          # https://github.com/libgit2/pygit2/issues/1176
     "python-bugzilla >= 3.2",
     "pyyaml",
     "requests",
     "requests-gssapi ~= 1.2.3",
     "ruamel.yaml",
-    "tenacity ~= 8.4, != 8.4.0",  # https://github.com/jd/tenacity/issues/471
-    "jira >= 3.4.1",  # https://github.com/pycontribs/jira/issues/1486
-    "prettytable"
+    "tenacity ~= 8.4, != 8.4.0", # https://github.com/jd/tenacity/issues/471
+    "jira >= 3.4.1",             # https://github.com/pycontribs/jira/issues/1486
+    "prettytable",
 ]
 
-[project.scripts]
-elliott = "elliottlib.cli.__main__:main"
-
-[project.urls]
-homepage = "https://github.com/openshift-eng/art-tools/tree/main/elliott"
-repository = "https://github.com/openshift-eng/art-tools.git"
-
-[project.optional-dependencies]
-tests = [
+[dependency-groups]
+dev = [
     # test reqs
     "flexmock",
     # tox reqs
@@ -83,3 +72,10 @@ tests = [
     "pylint",
     "ruff",
 ]
+
+[project.scripts]
+elliott = "elliottlib.cli.__main__:main"
+
+[project.urls]
+homepage = "https://github.com/openshift-eng/art-tools/tree/main/elliott"
+repository = "https://github.com/openshift-eng/art-tools.git"
