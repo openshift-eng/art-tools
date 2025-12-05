@@ -1152,7 +1152,18 @@ class GenPayloadCli:
             incomplete_payload_update = True
 
         for payload_tag_name, payload_entry in payload_entries.items():
-            multi_specs[private_mode].setdefault(payload_tag_name, dict())
+            # Skip mismatched siblings - they were not mirrored and should not be in the imagestream
+            if (
+                payload_entry.image_meta
+                and payload_entry.image_meta.distgit_key in self.mismatched_siblings
+                and self.runtime.assembly_type == AssemblyTypes.STREAM
+            ):
+                self.logger.warning(
+                    f"Skipping imagestream tag for {payload_entry.image_meta.distgit_key} "
+                    f"due to mismatched sibling source commits."
+                )
+                incomplete_payload_update = True
+                continue
 
             if (
                 private_mode is False
@@ -1166,6 +1177,8 @@ class GenPayloadCli:
                 incomplete_payload_update = True
                 continue
 
+            # Only add to multi_specs after we've passed all the skip checks
+            multi_specs[private_mode].setdefault(payload_tag_name, dict())
             istags.append(self.payload_generator.build_payload_istag(payload_tag_name, payload_entry))
             multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
@@ -1619,6 +1632,17 @@ class GenPayloadCli:
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
+
+        # CVO is required for multi-arch releases - if it's missing (e.g., due to embargo),
+        # we cannot build a release payload
+        if "cluster-version-operator" not in multi_specs[private_mode]:
+            raise DoozerFatalError(
+                "cluster-version-operator is missing from multi-arch payload specs. "
+                "Cannot build multi-arch release without CVO. "
+                f"This may be due to embargo (for {'public' if not private_mode else 'private'} payload), "
+                "or other filtering."
+            )
+
         for arch, cvo_entry in multi_specs[private_mode]["cluster-version-operator"].items():
             arch_release_dests[arch] = f"{multi_release_dest}-{arch}"
             # Create the arch specific release payload containing tags pointing to manifest list
