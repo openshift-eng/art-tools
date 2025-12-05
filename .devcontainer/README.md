@@ -2,13 +2,13 @@
 
 This directory contains the `Containerfile` and `devcontainer.json` file
 that allows you to develop and debug `doozer` inside a development container
-using Visual Studio Code. See [https://code.visualstudio.com/docs/remote/containers]() for more information.
+using Visual Studio Code. See [vs code remote containers](https://code.visualstudio.com/docs/devcontainers/containers) for more information.
 
 ## Quick Start
 
 1. `doozer` needs to access internal resources, make sure you are connected to the redhat vpn.
 2. `doozer` needs access resources from quay.io and registry.ci.openshift.org, it achieves this by using your local docker configuration.
-Ensure you are [logged to quay.io](https://answers.redhat.com/cloud-services/discussion/346/how-do-i-access-quay-io-openshift-release-dev-ocp-v4-0-art-dev) and registry.ci.openshift.org before procedding to start up the container. 
+Ensure you are [logged to quay.io](https://answers.redhat.com/cloud-services/discussion/346/how-do-i-access-quay-io-openshift-release-dev-ocp-v4-0-art-dev) and registry.ci.openshift.org before procedding to start up the container.
 3. Install the [Remote Development Extension Pack][] on Visual Studio Code.
 4. Open `doozer` project locally.
 5. If you are using Linux, make sure the `USER_UID` `USER_GID` arguments in `Containerfile` match your actual UID and GID. Ignore this step if you are using macOS or Windows.
