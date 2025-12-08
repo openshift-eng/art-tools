@@ -33,6 +33,7 @@ from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from doozerlib import release_inspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import (
@@ -44,7 +45,6 @@ from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
-from doozerlib import release_inspector
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 from doozerlib.util import (
@@ -228,7 +228,7 @@ read and propagate/expose this annotation in its display of the release image.
 
     # For multi-model mode, we don't need to clone sources - just introspect an existing nightly
     if multi_model:
-        runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+        runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system='konflux')
     elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
@@ -479,14 +479,14 @@ class GenPayloadCli:
 
             self.logger.info(f"Multi-model mode: generating assembly definition from {resolved_nightly}")
             assembly_def = await self._create_assembly_from_model(resolved_nightly)
-            
+
             # Apply the assembly definition to runtime
             self._apply_multi_model_assembly(assembly_def)
 
             # Automatically permit all issues in multi-model mode since we're modeling an existing tested nightly
             self.emergency_ignore_issues = True
             self.logger.info("Multi-model mode: automatically permitting all issues (emergency_ignore_issues=True)")
-            
+
             # Now proceed with normal assembly-based multi-arch payload generation
             # Fall through to normal flow below
 
@@ -551,9 +551,17 @@ class GenPayloadCli:
                         return False
                     streams_data = await resp.json()
 
+            # Handle different API response formats
+            if not isinstance(streams_data, list):
+                self.logger.debug(f"Unexpected streams_data type: {type(streams_data)}, treating as non-existent")
+                return False
+
             # Find the matching stream
             matching_stream = None
             for stream in streams_data:
+                if not isinstance(stream, dict):
+                    self.logger.debug(f"Skipping non-dict stream entry: {type(stream)}")
+                    continue
                 if stream.get('name') == stream_name:
                     matching_stream = stream
                     break
@@ -564,7 +572,13 @@ class GenPayloadCli:
 
             # Check if target name exists in the releases list
             releases = matching_stream.get('releases', [])
+            if not isinstance(releases, list):
+                self.logger.debug(f"Unexpected releases type: {type(releases)}, treating as empty")
+                releases = []
             for release in releases:
+                if not isinstance(release, dict):
+                    self.logger.debug(f"Skipping non-dict release entry: {type(release)}")
+                    continue
                 if release.get('name') == target_multi_name:
                     self.logger.info(f"Found existing multi payload: {target_multi_name}")
                     return True
@@ -599,11 +613,8 @@ class GenPayloadCli:
                 f"Multi-model mode requires Konflux build system, but runtime is set to '{rt.build_system}'. "
                 f"Overriding to 'konflux' for multi-model processing."
             )
-            # Temporarily override for gen-assembly processing
-            original_build_system = rt.build_system
+            # Override for multi-model processing (not restored - keep as 'konflux' for entire payload generation)
             rt.build_system = 'konflux'
-        else:
-            original_build_system = None
 
         # Create a temporary assembly name for the multi-model
         # Use a simple name that won't be parsed as a SemVer version
@@ -611,7 +622,7 @@ class GenPayloadCli:
         parts = multi_model_nightly.split('-')
         timestamp_suffix = '-'.join(parts[-4:]) if len(parts) >= 4 else multi_model_nightly
         multi_model_assembly_name = f"multi_model.{timestamp_suffix}"
-        
+
         # Create GenAssemblyCli instance to generate the assembly definition
         # Use a dummy release_date to prevent gen-assembly from querying the release schedule
         dummy_release_date = datetime.now(tz=timezone.utc).strftime("%Y-%b-%d")
@@ -638,11 +649,11 @@ class GenPayloadCli:
         self.logger.info(f"Running gen-assembly logic to analyze {multi_model_nightly}")
         assembly_def = await gen_assembly.run()
 
-        self.logger.info(f"Generated assembly definition from multi-model nightly")
-        
+        self.logger.info("Generated assembly definition from multi-model nightly")
+
         # Don't restore build_system - keep it as 'konflux' for the rest of payload generation
         return assembly_def
-    
+
     def _apply_multi_model_assembly(self, assembly_def: Dict):
         """
         Apply the multi-model-generated assembly definition to runtime so gen-payload
