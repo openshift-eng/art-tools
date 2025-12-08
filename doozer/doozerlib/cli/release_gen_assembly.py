@@ -271,7 +271,8 @@ class GenAssemblyCli:
             self.gen_microshift = True
 
         # Bind Konflux DB to the "builds" table
-        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+        if self.runtime.konflux_db:
+            self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
 
