@@ -398,7 +398,7 @@ class GenAssemblyCli:
             name, version, release_ver = await release_inspector.extract_nvr_from_pullspec(payload_tag_pullspec)
             package_name = name
             build_nvr = f"{name}-{version}-{release_ver}"
-            
+
             # For Konflux, use shared utility to get build inspector
             build_inspector = await release_inspector.get_build_inspector_from_nvr(self.runtime, build_nvr)
 

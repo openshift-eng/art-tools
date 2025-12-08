@@ -150,9 +150,9 @@ class RepositoryType(Enum):
     metavar="SPEC",
     required=False,
     help="Model nightly to introspect and create multi-arch payload from. "
-         "Accepts either a direct nightly name (e.g., '4.21.0-0.nightly-2025-11-12-194750') "
-         "or an architecture with offset (e.g., 'amd64:0' for latest amd64 nightly, 'amd64:1' for previous). "
-         "Supported architectures: amd64, s390x, ppc64le, arm64.",
+    "Accepts either a direct nightly name (e.g., '4.21.0-0.nightly-2025-11-12-194750') "
+    "or an architecture with offset (e.g., 'amd64:0' for latest amd64 nightly, 'amd64:1' for previous). "
+    "Supported architectures: amd64, s390x, ppc64le, arm64.",
 )
 @click_coroutine
 @pass_runtime
@@ -228,7 +228,9 @@ read and propagate/expose this annotation in its display of the release image.
 
     # For multi-model mode, we don't need to clone sources - just introspect an existing nightly
     if multi_model:
-        runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system='konflux')
+        runtime.initialize(
+            mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system='konflux'
+        )
     elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
@@ -430,7 +432,8 @@ class GenPayloadCli:
         self.apply = apply  # actually update the IS
         self.apply_multi_arch = apply_multi_arch  # update the "multi" IS as well
         self.moist_run = moist_run  # mirror the images but do not update the IS
-        self.multi_model = multi_model  # multi-model nightly to introspect for multi-arch payload creation
+        self.multi_model = multi_model  # multi-model spec (e.g., "amd64:0" or full nightly name)
+        self.resolved_multi_model_nightly = None  # resolved nightly name after processing multi_model spec
 
         # store generated payload entries: {arch -> dict of payload entries}
         self.payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
@@ -471,6 +474,9 @@ class GenPayloadCli:
             # Resolve the multi-model specification (could be 'arch:offset' or direct nightly name)
             resolved_nightly = await self._resolve_multi_model_spec(self.multi_model)
             self.logger.info(f"Resolved multi-model spec '{self.multi_model}' to nightly: {resolved_nightly}")
+
+            # Store the resolved nightly for later use
+            self.resolved_multi_model_nightly = resolved_nightly
 
             # Check if the target multi-arch payload already exists
             if await self._check_multi_payload_exists(resolved_nightly):
@@ -702,7 +708,9 @@ class GenPayloadCli:
         if ':' in multi_model_spec and not multi_model_spec.startswith('4.'):
             parts = multi_model_spec.split(':', 1)
             if len(parts) != 2:
-                raise DoozerFatalError(f"Invalid multi-model specification: {multi_model_spec}. Expected 'arch:offset' or nightly name.")
+                raise DoozerFatalError(
+                    f"Invalid multi-model specification: {multi_model_spec}. Expected 'arch:offset' or nightly name."
+                )
 
             arch, offset_str = parts
 
@@ -740,7 +748,9 @@ class GenPayloadCli:
             async with aiohttp.ClientSession() as session:
                 if offset == 0:
                     # For offset 0, we can use the latest release endpoint directly
-                    release_controller_url = f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestream/{stream_name}/latest"
+                    release_controller_url = (
+                        f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestream/{stream_name}/latest"
+                    )
                     self.logger.info(f"Querying release controller for {arch} latest nightly: {release_controller_url}")
 
                     async with session.get(release_controller_url) as resp:
@@ -775,7 +785,9 @@ class GenPayloadCli:
                             break
 
                     if not matching_stream:
-                        raise DoozerFatalError(f"Could not find stream '{stream_name}' in release controller for {arch}")
+                        raise DoozerFatalError(
+                            f"Could not find stream '{stream_name}' in release controller for {arch}"
+                        )
 
                     # Get the releases list
                     releases = matching_stream.get('releases', [])
@@ -1395,7 +1407,9 @@ class GenPayloadCli:
         else:
             # In multi-model mode, still populate multi_specs for multi-arch creation
             # but don't write/update single-arch imagestreams
-            self.logger.info("Multi-model mode: skipping single-arch imagestream updates, only creating multi-arch payload")
+            self.logger.info(
+                "Multi-model mode: skipping single-arch imagestream updates, only creating multi-arch payload"
+            )
             for private_mode, payload_entries_for_each_arch_iter in [
                 (False, self.payload_entries_for_arch),
                 (True, self.private_payload_entries_for_arch),
@@ -1831,16 +1845,18 @@ class GenPayloadCli:
         the same.
         """
 
-        # For multi-model mode, extract timestamp from the multi-model nightly name
+        # For multi-model mode, extract timestamp from the resolved multi-model nightly name
         if self.multi_model:
             # Multi-model nightly format: 4.21.0-0.nightly-2025-11-12-194750
             # Extract the timestamp: 2025-11-12-194750 (skip the "nightly" part)
-            parts = self.multi_model.split('-')
+            # Use the resolved nightly name, not the original spec
+            nightly_name = self.resolved_multi_model_nightly or self.multi_model
+            parts = nightly_name.split('-')
             if len(parts) >= 6:
                 # Last 4 parts are: YYYY, MM, DD, HHMMSS (skip "nightly" which is 5th from last)
                 multi_ts = '-'.join(parts[-4:])
             else:
-                raise DoozerFatalError(f"Could not extract timestamp from multi-model nightly {self.multi_model}")
+                raise DoozerFatalError(f"Could not extract timestamp from multi-model nightly {nightly_name}")
         else:
             multi_ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d-%H%M%S")
 
@@ -2142,7 +2158,8 @@ class GenPayloadCli:
                             # More frequent nightlies for master
                             next_nightly_delay = timedelta(hours=6)
 
-                        if current_time < last_nightly_time + next_nightly_delay:
+                        # In multi-model mode, skip rate-limiting to allow on-demand multi-arch payload generation
+                        if not self.multi_model and current_time < last_nightly_time + next_nightly_delay:
                             self.logger.info(
                                 f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update'
                             )
