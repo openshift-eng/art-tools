@@ -10,7 +10,7 @@ import requests
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import ART_PROD_IMAGE_REPO, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
@@ -624,13 +624,16 @@ class GenAssemblyCli:
                     )
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
                 for tag in rhcos.get_container_configs(self.runtime):
+                    if self.rhcos_by_tag[tag.name].get(arch):
+                        continue
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                        if not self.rhcos_node_id:
+                        if not self.rhcos_by_tag[tag.name].get("x86_64"):
                             self._exit_with_error(
-                                f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}"
+                                f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
                             )
+                        amd64_rhcos_info = util.oc_image_info_for_arch(self.rhcos_by_tag[tag.name]["x86_64"], "amd64")
                         rhcos_info = util.oc_image_info_for_arch(
-                            tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'),
+                            f"{ART_PROD_IMAGE_REPO}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
                         )
                         self.rhcos_by_tag[tag.name][arch] = (
