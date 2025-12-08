@@ -399,8 +399,10 @@ class GenAssemblyCli:
             package_name = name
             build_nvr = f"{name}-{version}-{release_ver}"
 
-            # For Konflux, use shared utility to get build inspector
-            build_inspector = await release_inspector.get_build_inspector_from_nvr(self.runtime, build_nvr)
+            # Get build inspector (supports both Brew and Konflux)
+            build_inspector = await release_inspector.get_build_inspector_from_nvr(
+                self.runtime, build_nvr, pullspec=payload_tag_pullspec
+            )
 
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are

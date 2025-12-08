@@ -14,11 +14,12 @@ from pathlib import Path
 from sys import getsizeof, stderr
 from typing import Dict, List, Optional, Union
 
+import aiohttp
 import artcommonlib
 import semver
 import yaml
 from artcommonlib import constants, exectools
-from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
@@ -845,3 +846,96 @@ def get_konflux_build_priority(metadata, group):
     # Default
     logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
     return str(constants.KONFLUX_DEFAULT_BUILD_PRIORITY)
+
+
+def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
+    """
+    Get the base URL for a release tag in the release controller.
+
+    :param tag: The RC release stream as a string (e.g. "4.9.0-0.nightly")
+    :param arch: Architecture we are interested in (e.g. "s390x")
+    :param private_nightly: Whether this is a private nightly
+    :return: e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
+    """
+    from doozerlib import constants as doozer_constants
+
+    arch = go_arch_for_brew_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch, private_nightly)
+
+    if private_nightly:
+        return f"{doozer_constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+    return f"{doozer_constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+
+async def check_nightly_exists(nightly_name: str, private_nightly: bool = False) -> bool:
+    """
+    Check if a nightly payload exists in the release controller.
+
+    :param nightly_name: Nightly name to check (e.g., '4.21.0-0.nightly-2025-11-12-194750' or '4.21.0-0.nightly-multi-2025-11-12-194750')
+    :param private_nightly: Whether this is a private nightly
+    :return: True if the nightly exists, False otherwise
+    """
+    # Extract version and arch from nightly name
+    major_minor, arch, _ = isolate_nightly_name_components(nightly_name)
+
+    # If no arch was found in the name, default to multi
+    if not arch:
+        arch = 'multi'
+
+    # Construct tag base (e.g., "4.21.0-0.nightly" or "4.21.0-0.nightly-multi")
+    if arch == 'multi':
+        tag_base = f"{major_minor}.0-0.nightly-multi"
+    else:
+        tag_base = f"{major_minor}.0-0.nightly"
+
+    # Query the release controller API
+    rc_url = f"{rc_api_url(tag_base, arch, private_nightly)}/tags"
+    logger.debug(f"Checking if {nightly_name} exists at {rc_url}")
+
+    try:
+        headers = {}
+        if private_nightly:
+            # Get the token
+            rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
+            if rc != 0 or err:
+                logger.warning(f"Error while trying to get token for private nightlies: {err}")
+                return False
+            if not token:
+                logger.warning("Token empty, might not be logged in to correct cluster")
+                return False
+            headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_url, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Could not query release controller: HTTP {resp.status}")
+                    return False
+                data = await resp.json()
+
+        # Check if the nightly name exists in the tags list
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            logger.debug(f"Unexpected tags type: {type(tags)}, treating as non-existent")
+            return False
+
+        for tag in tags:
+            if not isinstance(tag, dict):
+                logger.debug(f"Skipping non-dict tag entry: {type(tag)}")
+                continue
+            if tag.get('name') == nightly_name:
+                logger.info(f"Found existing nightly: {nightly_name}")
+                return True
+
+        logger.info(f"Nightly {nightly_name} does not exist")
+        return False
+
+    except aiohttp.ClientError as e:
+        logger.warning(f"HTTP client error checking for nightly: {e}")
+        return False
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON response from release controller: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking for nightly: {e}")
+        return False

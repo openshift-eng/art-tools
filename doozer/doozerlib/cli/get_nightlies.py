@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import aiohttp
 import click
@@ -15,6 +15,7 @@ from doozerlib import constants
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
+from doozerlib.util import isolate_nightly_name_components, rc_api_url
 
 logger = logutil.get_logger(__name__)
 
@@ -290,23 +291,6 @@ def get_nightly_tag_base(major: int, minor: int, build_system: str) -> str:
     if build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
         nightly_suffix = "konflux-nightly"
     return f"{major}.{minor}.0-0.{nightly_suffix}"
-
-
-def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
-    """
-    base url for a release tag in release controller.
-
-    @param tag  The RC release stream as a string (e.g. "4.9.0-0.nightly")
-    @param arch  architecture we are interested in (e.g. "s390x")
-    @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
-    """
-    arch = go_arch_for_brew_arch(arch)
-    arch_suffix = go_suffix_for_arch(arch, private_nightly)
-
-    if private_nightly:
-        return f"{constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
-
-    return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 
 # only look up the same container image info once and store it here
