@@ -15,6 +15,7 @@ from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
 
 OCP4_VERSIONS = [
+    "4.22",
     "4.21",
     "4.20",
     "4.19",
