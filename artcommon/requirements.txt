@@ -10,3 +10,4 @@ googleapis-common-protos
 opentelemetry-api
 sqlalchemy
 pip-system-certs>=5.2
+requests-gssapi
