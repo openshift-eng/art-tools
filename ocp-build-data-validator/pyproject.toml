@@ -58,7 +58,7 @@ dependencies = [
     "zipp",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "flexmock",
     "mock",

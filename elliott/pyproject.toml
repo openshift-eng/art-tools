@@ -57,7 +57,7 @@ dependencies = [
     "prettytable",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     # test reqs
     "flexmock",
