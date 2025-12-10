@@ -444,14 +444,14 @@ class ConfigScanSources:
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
-        # Check if there has been a config change since last build
-        await self.scan_for_config_changes(image_meta)
-
         # Check for dependency changes
         await self.scan_dependency_changes(image_meta)
 
         # Check for changes in builders
         await self.scan_builders_changes(image_meta)
+
+        # Check if there has been a config change since last build
+        await self.scan_for_config_changes(image_meta)
 
         # Check for RPM changes
         await self.scan_rpm_changes(image_meta)
@@ -777,8 +777,7 @@ class ConfigScanSources:
         # eliminating the need to extract timestamps from NVRs or specify search windows.
         build = await self.runtime.konflux_db.get_latest_build(
             nvr=builder_build_nvr,
-            group=self.runtime.group,
-            assembly=self.runtime.assembly,
+            group='',
         )
         if build:
             return build.start_time
