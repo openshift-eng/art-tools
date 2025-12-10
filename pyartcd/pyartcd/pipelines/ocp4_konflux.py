@@ -183,8 +183,9 @@ class KonfluxOcp4Pipeline:
         )
 
         # Increment fail counters for failing images
+        job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
-            *[increment_rebase_fail_counter(image, self.version, 'konflux') for image in failed_images]
+            *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url) for image in failed_images]
         )
 
     def building_images(self):

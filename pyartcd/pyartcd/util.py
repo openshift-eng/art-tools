@@ -851,16 +851,21 @@ async def get_group_rpms(
         return out.splitlines()
 
 
-async def increment_rebase_fail_counter(image, version, build_system):
+async def increment_rebase_fail_counter(image, version, build_system, job_url=None):
     """
     Increment the fail counter for a given image in Redis.
+    Optionally store the job URL where the failure occurred.
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}'
-    redis_key = f'{redis_branch}:{image}'
-    fail_count = await redis.get_value(redis_key)
+    redis_branch = f'count:rebase-failure:{build_system}:{version}:{image}'
+    failure_key = f'{redis_branch}:failure'
+    fail_count = await redis.get_value(failure_key)
     fail_count = int(fail_count) if fail_count else 0
-    await redis.set_value(key=redis_key, value=fail_count + 1)
+    await redis.set_value(key=failure_key, value=fail_count + 1)
+
+    # Store the job URL if provided
+    if job_url:
+        await redis.set_value(key=f'{redis_branch}:url', value=job_url)
 
 
 @limit_concurrency(50)
@@ -871,4 +876,7 @@ async def reset_rebase_fail_counter(image, version, build_system):
     """
 
     redis_branch = f'count:rebase-failure:{build_system}:{version}'
-    await redis.delete_key(f'{redis_branch}:{image}')
+    redis_key = f'{redis_branch}:{image}'
+    await redis.delete_key(redis_key)
+    # Also delete the associated job URL
+    await redis.delete_key(f'{redis_key}:url')
