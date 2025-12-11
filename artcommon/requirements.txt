@@ -1,5 +1,7 @@
 pydantic >= 2.11
 future
+aiohttp
+pycares >= 4.0.0, < 5.0.0  # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
 google-api-core
 google-auth
 google-cloud-bigquery
