@@ -43,6 +43,7 @@ classifiers = [
 ]
 dependencies = [
     "aiohttp[speedups] >= 3.6",
+    "pycares >= 4.0.0, < 5.0.0",  # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
     "click == 8.1.8",
     "errata-tool ~= 1.31.0",
     "future",

@@ -30,6 +30,7 @@ openshift-client ~= 2.0.1
 ruamel.yaml
 setuptools>=78.1.1 # not directly required, pinned by Snyk to avoid a vulnerability
 aiohttp
+pycares >= 4.0.0, < 5.0.0  # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
 jira>=3.4.1
 ghapi ~= 1.0.6, != 1.0.7  # https://github.com/AnswerDotAI/ghapi/issues/197
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability

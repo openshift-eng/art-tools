@@ -28,6 +28,7 @@ tenacity ~= 8.4, != 8.4.0 # https://github.com/jd/tenacity/issues/471
 tomli ~= 2.0.1
 specfile; sys_platform == "linux"
 aiohttp>=3.10.2 # not directly required, pinned by Snyk to avoid a vulnerability
+pycares >= 4.0.0, < 5.0.0  # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
 requests>=2.32.4 # not directly required, pinned by Snyk to avoid a vulnerability
 setuptools>=78.1.1 # not directly required, pinned by Snyk to avoid a vulnerability
 mysql-connector-python>=9.1.0 # not directly required, pinned by Snyk to avoid a vulnerability
