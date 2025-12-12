@@ -94,9 +94,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         datetime_mock.now.return_value = datetime(2024, 9, 30, 9, 0, 0, tzinfo=timezone.utc)
         start_search = datetime(2024, 9, 23, 9, 0, 0, 0, tzinfo=timezone.utc)
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={}), None)
-        # Verify query uses EXCEPT to exclude large columns (default behavior)
+        # Default behavior is to NOT exclude large columns (exclude_large_columns=False by default)
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC"
         )
@@ -105,7 +105,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         end_search = start_search + timedelta(days=7)
         await anext(self.db.search_builds_by_fields(start_search=start_search, end_search=end_search, where={}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             f"ORDER BY `start_time` DESC"
         )
@@ -113,7 +113,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search, where=None), None)
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC"
         )
@@ -126,7 +126,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'ironic' AND `group` = 'openshift-4.18' AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
             " ORDER BY `start_time` DESC"
@@ -135,7 +135,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={'name': None}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name IS NULL AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
             " ORDER BY `start_time` DESC"
         )
@@ -145,7 +145,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             self.db.search_builds_by_fields(start_search=start_search, where={'name': None, 'group': None}), None
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name IS NULL AND `group` IS NULL "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC"
@@ -159,7 +159,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'ironic' AND `group` = 'openshift-4.18' "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC"
@@ -176,7 +176,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'ironic' AND `group` = 'openshift-4.18' "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC"
@@ -194,7 +194,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'ironic' AND `group` = 'openshift-4.18' "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 0"
@@ -212,7 +212,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'ironic' AND `group` = 'openshift-4.18' "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 10"
@@ -243,7 +243,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"REGEXP_CONTAINS(name, 'installer') "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 10"
@@ -261,7 +261,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"REGEXP_CONTAINS(name, '^ose-installer$') "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 10"
@@ -279,7 +279,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift') "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 10"
@@ -300,7 +300,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             "engine IN ('brew', 'konflux') AND name IN ('ironic', 'ose-installer') AND "
             "start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` ASC LIMIT 10"
@@ -319,7 +319,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             None,
         )
         query_mock.assert_called_once_with(
-            f"SELECT * EXCEPT (installed_rpms, installed_packages) FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name = 'test-operator-fbc' AND `group` = 'openshift-4.18' AND "
             f"'test-operator-bundle-container-v4.18.0-123' IN UNNEST(bundle_nvrs) AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "

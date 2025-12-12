@@ -711,7 +711,7 @@ class KonfluxDb:
         sorting: str = 'DESC',
         limit: typing.Optional[int] = None,
         strict: bool = False,
-        exclude_large_columns: bool = True,
+        exclude_large_columns: bool = False,
     ) -> typing.AsyncIterator[KonfluxRecord]:
         """
         Execute a SELECT * from the BigQuery table using exponential window expansion.
@@ -728,7 +728,7 @@ class KonfluxDb:
         :param sorting: Sorting order ('DESC' or 'ASC').
         :param limit: Maximum number of results to return.
         :param strict: If True, raise IOError if no results found.
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages
+        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages
                                       columns from the query to reduce query cost and latency.
         :return: AsyncIterator yielding KonfluxRecord objects.
         """
