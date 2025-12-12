@@ -11,7 +11,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
 )
-from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
 from google.cloud.bigquery import Row, SchemaField
 
 
@@ -94,6 +94,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         datetime_mock.now.return_value = datetime(2024, 9, 30, 9, 0, 0, tzinfo=timezone.utc)
         start_search = datetime(2024, 9, 23, 9, 0, 0, 0, tzinfo=timezone.utc)
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={}), None)
+        # Default behavior is to NOT exclude large columns (exclude_large_columns=False by default)
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
@@ -442,7 +443,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         self.assertEqual(result.nvr, 'ironic-1.2.3-4.el8')
         self.assertEqual(result.name, 'ironic')
-        ensure_cached_mock.assert_called_once_with('openshift-4.18')
+        # Verify cache was loaded with correct cache_type (SMALL_COLUMNS by default since exclude_large_columns=True)
+        ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.SMALL_COLUMNS)
         select_mock.assert_called_once()
 
         # Test with assembly parameter
@@ -458,7 +460,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.nvr, 'ironic-1.2.3-4.el8')
-        ensure_cached_mock.assert_called_once_with('openshift-4.18')
+        ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.SMALL_COLUMNS)
         select_mock.assert_called_once()
 
         # Test cache disabled
@@ -575,7 +577,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             self.assertEqual(result.nvr, 'old-build-2.0.0-5.el8')
 
             # Cache should be checked/loaded
-            ensure_cached_mock.assert_called_once_with('openshift-4.18')
+            ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.SMALL_COLUMNS)
 
             # Should have queried 2 windows (7 days empty, then 14 days with result)
             self.assertEqual(select_mock.call_count, 2)
