@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=65.5.1", "setuptools_scm[toml]>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pyartcd*"]
+
+[tool.setuptools_scm]
+root = ".."
+
+[project]
+dynamic = ["version"]
+name = "pyartcd"
+authors = [{ name = "AOS ART Team", email = "aos-team-art@redhat.com" }]
+description = "Python based pipeline library for managing and automating Red Hat OpenShift Container Platform releases"
+readme = "README.md"
+requires-python = ">=3.8"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Environment :: Console",
+    "Operating System :: POSIX",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Natural Language :: English",
+]
+dependencies = [
+    "Jinja2",
+    "aiofiles",
+    "aiohttp[speedups] >= 3.6",
+    "aiohttp_retry",
+    "aioredlock >= 0.7.3",
+    "asyncstdlib",
+    "click == 8.1.8",
+    "awscli >= 1.37.0",
+    "contextvars",
+    "errata-tool ~= 1.31.0",
+    "cryptography",
+    "ghapi ~= 1.0.6, != 1.0.7",               # https://github.com/AnswerDotAI/ghapi/issues/197
+    "jenkinsapi >= 0.3.13",                   # https://github.com/pycontribs/jenkinsapi/issues/833
+    "jira >= 3.4.1",                          # https://github.com/pycontribs/jira/issues/1486
+    "openshift-client ~= 2.0.1",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-grpc",
+    "pygit2 >= 1.11.1",                       # https://github.com/libgit2/pygit2/issues/1176
+    "redis >= 5.0.1",
+    "rh-doozer",
+    "rh-elliott",
+    "ruamel.yaml",
+    "semver ~= 3.0.1",
+    "slack_bolt >= 1.23.0",
+    "slack_sdk >= 3.13.0",
+    "stomp.py ~= 8.1.0",
+    "tenacity ~= 8.4, != 8.4.0",              # https://github.com/jd/tenacity/issues/471
+    "tomli ~= 2.0.1",
+    "specfile; sys_platform == 'linux'",
+    "aiohttp >= 3.10.2",                      # not directly required, pinned by Snyk to avoid a vulnerability
+    "pycares >= 4.0.0, < 5.0.0",              # Pin to 4.x until aiodns supports pycares 5.0 breaking changes
+    "requests >= 2.32.4",                     # not directly required, pinned by Snyk to avoid a vulnerability
+    "setuptools >= 78.1.1",                   # not directly required, pinned by Snyk to avoid a vulnerability
+    "mysql-connector-python >= 9.1.0",        # not directly required, pinned by Snyk to avoid a vulnerability
+    "zipp >= 3.19.1",                         # not directly required, pinned by Snyk to avoid a vulnerability
+    "async_lru",
+    "packageurl-python",
+    "python-gitlab",
+    "protobuf >= 4.25.8",                     # not directly required, pinned by Snyk to avoid a vulnerability
+]
+
+[project.optional-dependencies]
+dev = ["coverage", "pytest == 8.0.2", "tox", "ruff"]
+
+
+[project.scripts]
+artcd = "pyartcd.__main__:main"
+
+[project.urls]
+homepage = "https://github.com/openshift-eng/art-tools/tree/main/pyartcd"
+repository = "https://github.com/openshift-eng/art-tools.git"

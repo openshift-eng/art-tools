@@ -1,3 +1,2 @@
-include requirements.txt
 include README.rst
 include validator/json_schemas/*
