@@ -1,6 +1,6 @@
 import errno
 import os
-import pipes
+import shlex
 import shutil
 import tempfile
 from typing import Dict, Set
@@ -167,5 +167,5 @@ To send all tarball sources to spmm-utils, run:
 Then notify RCM (https://projects.engineering.redhat.com/projects/RCM/issues) that the following tarball sources have been uploaded to spmm-utils:
 
 {}
-    """.format(pipes.quote(os.path.abspath(out_dir) + "/"), "\n".join(relative_paths))
+    """.format(shlex.quote(os.path.abspath(out_dir) + "/"), "\n".join(relative_paths))
     )
