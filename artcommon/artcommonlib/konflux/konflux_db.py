@@ -8,9 +8,7 @@ import re
 import threading
 import typing
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -30,104 +28,42 @@ EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
 BUILDER_BASE_IMAGE_GROUP = "builder_base_image"
 
 
-class CacheRecordsType(Enum):
-    """
-    Enum representing the two types of cached records.
-
-    SMALL_COLUMNS: Records without large columns (installed_rpms, installed_packages) - optimized for most queries
-    ALL_COLUMNS: Records with all columns including installed_rpms and installed_packages - used when needed
-    """
-
-    SMALL_COLUMNS = "small_columns"
-    ALL_COLUMNS = "all_columns"
-
-    def __str__(self):
-        return self.value
-
-    @property
-    def display_name(self):
-        """Return capitalized display name for logging."""
-        return self.value.replace('_', ' ').title()
-
-
-@dataclass
-class CacheMetrics:
-    """Metrics for cache hits and misses."""
-
-    hits: int = 0
-    misses: int = 0
-
-
 class BuildCache:
     """
     Thread-safe in-memory cache of recent builds, per-group.
 
-    Maintains TWO separate caches for each group, lazy-loaded on first access:
-    1. Small columns cache: Records without installed_rpms/installed_packages (optimized, most queries)
-    2. All columns cache: Records with all columns including installed_rpms/installed_packages
+    Maintains separate caches for each group, lazy-loaded on first access.
 
     Stores builds indexed by:
     - group → { name → [builds sorted by start_time desc], nvr → build }
     """
 
     def __init__(self, cache_days: int = 30):
-        # Cache groups indexed by cache type
-        # Each cache type has: group → { 'by_name': {}, 'by_nvr': {}, 'oldest': datetime, 'newest': datetime }
-        self.cache_groups = {
-            CacheRecordsType.SMALL_COLUMNS: {},  # Records without installed_rpms/installed_packages
-            CacheRecordsType.ALL_COLUMNS: {},  # Records with all columns
-        }
-
-        # Cache metrics indexed by cache type
-        self.cache_metrics = {
-            CacheRecordsType.SMALL_COLUMNS: CacheMetrics(),
-            CacheRecordsType.ALL_COLUMNS: CacheMetrics(),
-        }
-
+        self._groups = {}  # group → { 'by_name': {}, 'by_nvr': {}, 'oldest': datetime, 'newest': datetime }
         self._lock = threading.RLock()
+        self._cache_hits = 0
+        self._cache_misses = 0
         self._cache_days = cache_days
         self.logger = logging.getLogger(__name__)
 
-    def _increment_hit(self, cache_type: CacheRecordsType):
-        """Increment the appropriate hit counter."""
-        self.cache_metrics[cache_type].hits += 1
-
-    def _increment_miss(self, cache_type: CacheRecordsType):
-        """Increment the appropriate miss counter."""
-        self.cache_metrics[cache_type].misses += 1
-
-    def get_group_cache(self, group: str, cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS) -> dict:
-        """
-        Get the cache for a specific group, creating it if it doesn't exist.
-
-        :param group: Group name
-        :param cache_type: Type of cache (SMALL_COLUMNS or ALL_COLUMNS)
-        :return: The group's cache dict
-        """
-        groups = self.cache_groups[cache_type]
-        if group not in groups:
-            groups[group] = {
-                "by_name": defaultdict(list),
-                "by_nvr": {},
-                "oldest": None,
-                "newest": None,
-                "total_builds": 0,
+    def _ensure_group(self, group: str):
+        """Ensure group cache exists."""
+        if group not in self._groups:
+            self._groups[group] = {
+                'by_name': defaultdict(list),
+                'by_nvr': {},
+                'oldest': None,
+                'newest': None,
+                'total_builds': 0,
             }
-        return groups[group]
 
-    def add_builds(
-        self,
-        builds: typing.List[KonfluxRecord],
-        group: typing.Optional[str] = None,
-        cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS,
-    ):
+    def add_builds(self, builds: typing.List[KonfluxRecord], group: typing.Optional[str] = None):
         """
         Add multiple builds to cache. All builds must be from the same group, except for
         the special builder_base_image group which can contain builds from multiple groups.
 
         :param builds: List of KonfluxBuildRecord objects to cache (all must have same group unless group is builder_base_image)
         :param group: Optional group name (e.g., 'openshift-4.18'). If not provided, uses builds[0].group
-        :param cache_type: Type of cache to add to (SMALL_COLUMNS or ALL_COLUMNS)
         :raises ValueError: If builds are from different groups or group cannot be determined (except for builder_base_image)
         """
         if not builds:
@@ -151,7 +87,8 @@ class BuildCache:
                 )
 
         with self._lock:
-            group_cache = self.get_group_cache(group, cache_type=cache_type)
+            self._ensure_group(group)
+            group_cache = self._groups[group]
 
             for build in builds:
                 # Index by name
@@ -185,16 +122,10 @@ class BuildCache:
                 group_cache['by_name'][name].sort(key=lambda b: b.start_time or datetime.min, reverse=True)
 
             self.logger.info(
-                f"{cache_type.display_name} cache loaded {len(builds)} builds for group '{group}' "
-                f"(total: {group_cache['total_builds']})"
+                f"Cache loaded {len(builds)} builds for group '{group}' (total: {group_cache['total_builds']})"
             )
 
-    def get_by_nvr(
-        self,
-        nvr: str,
-        group: typing.Optional[str] = None,
-        cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS,
-    ) -> typing.Optional[KonfluxRecord]:
+    def get_by_nvr(self, nvr: str, group: typing.Optional[str] = None) -> typing.Optional[KonfluxRecord]:
         """
         Get specific build by NVR.
 
@@ -202,31 +133,29 @@ class BuildCache:
 
         :param nvr: Build NVR
         :param group: Optional group to search in
-        :param cache_type: Type of cache to search (SMALL_COLUMNS or ALL_COLUMNS)
         :return: Build record or None
         """
         with self._lock:
-            groups = self.cache_groups[cache_type]
             # If group specified, only search that group
             if group:
-                if group in groups:
-                    build = groups[group]["by_nvr"].get(nvr)
+                if group in self._groups:
+                    build = self._groups[group]['by_nvr'].get(nvr)
                     if build:
-                        self._increment_hit(cache_type)
-                        self.logger.debug(f"{cache_type.display_name} cache HIT: NVR {nvr} in group {group}")
+                        self._cache_hits += 1
+                        self.logger.debug(f"Cache HIT: NVR {nvr} in group {group}")
                         return build
 
             # No group specified - search all groups. This includes the builder_base_image group if it has been loaded.
             else:
-                for group_name, group_cache in groups.items():
-                    build = group_cache["by_nvr"].get(nvr)
+                for group_name, group_cache in self._groups.items():
+                    build = group_cache['by_nvr'].get(nvr)
                     if build:
-                        self._increment_hit(cache_type)
-                        self.logger.debug(f"{cache_type.display_name} cache HIT: NVR {nvr} in group {group_name}")
+                        self._cache_hits += 1
+                        self.logger.debug(f"Cache HIT: NVR {nvr} in group {group_name}")
                         return build
 
-            self._increment_miss(cache_type)
-            self.logger.debug(f"{cache_type.display_name} cache MISS: NVR {nvr}")
+            self._cache_misses += 1
+            self.logger.debug(f"Cache MISS: NVR {nvr}")
             return None
 
     def get_by_name(
@@ -240,7 +169,6 @@ class BuildCache:
         engine: typing.Optional[typing.Union[Engine, str]] = None,
         embargoed: typing.Optional[bool] = None,
         completed_before: typing.Optional[datetime] = None,
-        cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build for name with optional filters from specified group.
@@ -256,7 +184,6 @@ class BuildCache:
         :param engine: Filter by engine (brew/konflux) - accepts enum or string
         :param embargoed: Filter by embargoed status
         :param completed_before: Filter by completion time (only return builds completed before this time)
-        :param cache_type: Type of cache to search (SMALL_COLUMNS or ALL_COLUMNS)
         :return: Latest matching build or None
         """
         # Normalize enum parameters - accept strings or enums
@@ -268,18 +195,17 @@ class BuildCache:
             engine = Engine(engine)
 
         with self._lock:
-            groups = self.cache_groups[cache_type]
             # Check if group cached
-            if group not in groups:
-                self._increment_miss(cache_type)
-                self.logger.warning(f"{cache_type.display_name} cache MISS: Group {group} not cached")
+            if group not in self._groups:
+                self._cache_misses += 1
+                self.logger.warning(f"Cache MISS: Group {group} not cached")
                 return None
 
-            group_cache = groups[group]
+            group_cache = self._groups[group]
             builds = group_cache['by_name'].get(name, [])
             if not builds:
-                self._increment_miss(cache_type)
-                self.logger.debug(f"{cache_type.display_name} cache MISS: No builds for name {name} in group {group}")
+                self._cache_misses += 1
+                self.logger.debug(f"Cache MISS: No builds for name {name} in group {group}")
                 return None
 
             # Filter builds by criteria
@@ -313,27 +239,24 @@ class BuildCache:
                         continue
 
                 # Found matching build
-                self._increment_hit(cache_type)
-                self.logger.debug(f"{cache_type.display_name} cache HIT: {name} in group {group} with filters")
+                self._cache_hits += 1
+                self.logger.debug(f"Cache HIT: {name} in group {group} with filters")
                 return build
 
             # No matching build found
-            self._increment_miss(cache_type)
-            self.logger.debug(
-                f"{cache_type.display_name} cache MISS: {name} in group {group} with filters (have builds but none match)"
-            )
+            self._cache_misses += 1
+            self.logger.debug(f"Cache MISS: {name} in group {group} with filters (have builds but none match)")
             return None
 
-    def is_group_loaded(self, group: str, cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS) -> bool:
+    def is_group_loaded(self, group: str) -> bool:
         """
         Check if group is already loaded in cache.
 
         :param group: Group name
-        :param cache_type: Type of cache to check (SMALL_COLUMNS or ALL_COLUMNS)
         :return: True if group is cached
         """
         with self._lock:
-            return group in self.cache_groups[cache_type]
+            return group in self._groups
 
     def stats(self, group: typing.Optional[str] = None) -> dict:
         """
@@ -343,97 +266,53 @@ class BuildCache:
         :return: Dictionary with cache stats
         """
         with self._lock:
-            # Calculate hit rates for each cache type
-            hit_rates = {}
-            for cache_type in CacheRecordsType:
-                metrics = self.cache_metrics[cache_type]
-                total_queries = metrics.hits + metrics.misses
-                hit_rates[cache_type] = (metrics.hits / total_queries * 100) if total_queries > 0 else 0
+            total_queries = self._cache_hits + self._cache_misses
+            hit_rate = (self._cache_hits / total_queries * 100) if total_queries > 0 else 0
 
-            if group:
+            if group and group in self._groups:
                 # Group-specific stats
-                stats = {"group": group}
-
-                # Add stats for each cache type
-                for cache_type in CacheRecordsType:
-                    if group in self.cache_groups[cache_type]:
-                        group_cache = self.cache_groups[cache_type][group]
-                        stats[str(cache_type)] = {
-                            "total_builds": group_cache["total_builds"],
-                            "unique_names": len(group_cache["by_name"]),
-                            "unique_nvrs": len(group_cache["by_nvr"]),
-                            "oldest_build": group_cache["oldest"].isoformat() if group_cache["oldest"] else None,
-                            "newest_build": group_cache["newest"].isoformat() if group_cache["newest"] else None,
-                        }
-
-                # Add global metrics for each cache type
-                for cache_type in CacheRecordsType:
-                    metrics = self.cache_metrics[cache_type]
-                    stats[f"{cache_type}_cache_hits"] = metrics.hits
-                    stats[f"{cache_type}_cache_misses"] = metrics.misses
-                    stats[f"{cache_type}_hit_rate"] = f"{hit_rates[cache_type]:.1f}%"
-
-                return stats
+                group_cache = self._groups[group]
+                return {
+                    'group': group,
+                    'total_builds': group_cache['total_builds'],
+                    'unique_names': len(group_cache['by_name']),
+                    'unique_nvrs': len(group_cache['by_nvr']),
+                    'oldest_build': group_cache['oldest'].isoformat() if group_cache['oldest'] else None,
+                    'newest_build': group_cache['newest'].isoformat() if group_cache['newest'] else None,
+                    'cache_hits': self._cache_hits,
+                    'cache_misses': self._cache_misses,
+                    'hit_rate': f"{hit_rate:.1f}%",
+                }
             else:
                 # Aggregate stats across all groups
-                stats = {}
+                total_builds = sum(g['total_builds'] for g in self._groups.values())
+                total_nvrs = sum(len(g['by_nvr']) for g in self._groups.values())
 
-                # Add groups cached list for each cache type
-                for cache_type in CacheRecordsType:
-                    stats[f"{cache_type}_groups_cached"] = list(self.cache_groups[cache_type].keys())
+                return {
+                    'groups_cached': list(self._groups.keys()),
+                    'total_builds': total_builds,
+                    'unique_nvrs': total_nvrs,
+                    'cache_hits': self._cache_hits,
+                    'cache_misses': self._cache_misses,
+                    'hit_rate': f"{hit_rate:.1f}%",
+                }
 
-                # Add aggregate stats for each cache type
-                for cache_type in CacheRecordsType:
-                    groups = self.cache_groups[cache_type]
-                    metrics = self.cache_metrics[cache_type]
-                    total_builds = sum(g["total_builds"] for g in groups.values())
-                    unique_nvrs = sum(len(g["by_nvr"]) for g in groups.values())
-
-                    stats[f"{cache_type}_cache"] = {
-                        "total_builds": total_builds,
-                        "unique_nvrs": unique_nvrs,
-                        "cache_hits": metrics.hits,
-                        "cache_misses": metrics.misses,
-                        "hit_rate": f"{hit_rates[cache_type]:.1f}%",
-                    }
-
-                return stats
-
-    def clear(
-        self,
-        group: typing.Optional[str] = None,
-        cache_type: typing.Optional[CacheRecordsType] = None,
-    ):
+    def clear(self, group: typing.Optional[str] = None):
         """
         Clear cached data.
 
         :param group: Optional group to clear. If None, clears all groups.
-        :param cache_type: If specified, clear only that cache type (SMALL_COLUMNS or ALL_COLUMNS).
-                          If None, clear both caches.
         """
         with self._lock:
-            # Determine which cache types to clear
-            types_to_clear = [cache_type] if cache_type else list(CacheRecordsType)
-
             if group:
-                # Clear specific group
-                cleared = []
-                for ct in types_to_clear:
-                    if group in self.cache_groups[ct]:
-                        del self.cache_groups[ct][group]
-                        cleared.append(ct.display_name)
-
-                if cleared:
-                    self.logger.info(f"Cache cleared for group '{group}': {', '.join(cleared)}")
+                if group in self._groups:
+                    del self._groups[group]
+                    self.logger.info(f"Cache cleared for group '{group}'")
             else:
-                # Clear all groups
-                for ct in types_to_clear:
-                    self.cache_groups[ct].clear()
-                    self.cache_metrics[ct].hits = 0
-                    self.cache_metrics[ct].misses = 0
-
-                type_desc = "both" if cache_type is None else cache_type.display_name
-                self.logger.info(f"Cache cleared for all groups ({type_desc})")
+                self._groups.clear()
+                self._cache_hits = 0
+                self._cache_misses = 0
+                self.logger.info("Cache cleared for all groups")
 
 
 class KonfluxDb:
@@ -477,9 +356,7 @@ class KonfluxDb:
         self.bq_client.bind(record_cls.TABLE_ID)
         self.record_cls = record_cls
 
-    async def _ensure_group_cached(
-        self, group: typing.Optional[str], cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS
-    ):
+    async def _ensure_group_cached(self, group: typing.Optional[str]):
         """
         Lazy-load cache for group if not already loaded.
 
@@ -492,7 +369,6 @@ class KonfluxDb:
         This should match all of our builder and base images in ocp-build-data.
 
         :param group: Group name (e.g., 'openshift-4.18') or None/empty for builder_base_image
-        :param cache_type: Type of cache to load (SMALL_COLUMNS or ALL_COLUMNS)
         """
         if not self.cache:
             return
@@ -501,33 +377,31 @@ class KonfluxDb:
         if not group:
             group = BUILDER_BASE_IMAGE_GROUP
 
-        event_key = f"{group}:{cache_type}"  # Separate events for small_columns vs all_columns cache loading
-
         # Quick check - if already loaded, return immediately
-        if self.cache.is_group_loaded(group, cache_type=cache_type):
-            self.logger.debug(f"{cache_type.display_name} cache already loaded for group '{group}'")
+        if self.cache.is_group_loaded(group):
+            self.logger.debug(f"Cache already loaded for group '{group}'")
             return
 
         while True:
             # Quick check - if already loaded, return immediately
-            if self.cache.is_group_loaded(group, cache_type=cache_type):
-                self.logger.debug(f"{cache_type.display_name} cache already loaded for group '{group}'")
+            if self.cache.is_group_loaded(group):
+                self.logger.debug(f"Cache already loaded for group '{group}'")
                 return
             # Get or create an event for this group (thread-safe)
             with KonfluxDb._cache_lock:
-                if event_key not in KonfluxDb._group_loading_events:
-                    # Create new event for this group+type
+                if group not in KonfluxDb._group_loading_events:
+                    # Create new event for this group
                     event = asyncio.Event()
-                    KonfluxDb._group_loading_events[event_key] = event
+                    KonfluxDb._group_loading_events[group] = event
                     should_load = True
                 else:
                     # Another coroutine is already loading
-                    event = KonfluxDb._group_loading_events[event_key]
+                    event = KonfluxDb._group_loading_events[group]
                     should_load = False
 
             if not should_load:
                 # Wait for the other coroutine to finish loading
-                self.logger.debug(f"Waiting for another coroutine to load {cache_type} cache for group '{group}'...")
+                self.logger.debug(f"Waiting for another coroutine to load group '{group}'...")
                 await event.wait()
                 continue
             else:
@@ -535,9 +409,7 @@ class KonfluxDb:
 
         # We're the one who will load
         try:
-            self.logger.info(
-                f"Lazy-loading {cache_type} cache for group '{group}' (last {self.cache._cache_days} days)..."
-            )
+            self.logger.info(f"Lazy-loading cache for group '{group}' (last {self.cache._cache_days} days)...")
 
             # Build query for last N days of builds in this group
             start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
@@ -559,31 +431,26 @@ class KonfluxDb:
             order_by_clause = Column('start_time', quote=True).desc()
 
             # Execute single large query
-            # For small_columns cache: exclude large columns (installed_rpms, installed_packages)
-            # For all_columns cache: fetch all columns
             rows = await self.bq_client.select(
                 where_clauses=where_clauses,
                 order_by_clause=order_by_clause,
                 limit=None,  # Get all results
-                exclude_columns=['installed_rpms', 'installed_packages']
-                if cache_type == CacheRecordsType.SMALL_COLUMNS
-                else None,
             )
 
             # Load all rows into cache (thread-safe operation)
             builds = [self.from_result_row(row) for row in rows]
-            self.cache.add_builds(builds, group, cache_type=cache_type)
+            self.cache.add_builds(builds, group)
 
-            self.logger.info(f"{cache_type.display_name} cache loaded for group '{group}': {len(builds)} builds")
+            self.logger.info(f"Cache loaded for group '{group}': {len(builds)} builds")
 
         except Exception as e:
-            self.logger.error(f"Failed to load {cache_type} cache for group '{group}': {e}")
+            self.logger.error(f"Failed to load cache for group '{group}': {e}")
             raise
         finally:
             # Signal completion to any waiting coroutines
             event.set()
             with KonfluxDb._cache_lock:
-                del KonfluxDb._group_loading_events[event_key]
+                del KonfluxDb._group_loading_events[group]
 
     def cache_stats(self, group: typing.Optional[str] = None) -> dict:
         """
@@ -711,7 +578,6 @@ class KonfluxDb:
         sorting: str = 'DESC',
         limit: typing.Optional[int] = None,
         strict: bool = False,
-        exclude_large_columns: bool = True,
     ) -> typing.AsyncIterator[KonfluxRecord]:
         """
         Execute a SELECT * from the BigQuery table using exponential window expansion.
@@ -728,8 +594,6 @@ class KonfluxDb:
         :param sorting: Sorting order ('DESC' or 'ASC').
         :param limit: Maximum number of results to return.
         :param strict: If True, raise IOError if no results found.
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages
-                                      columns from the query to reduce query cost and latency.
         :return: AsyncIterator yielding KonfluxRecord objects.
         """
 
@@ -799,7 +663,6 @@ class KonfluxDb:
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
                     limit=limit - total_rows if limit is not None else None,
-                    exclude_columns=['installed_rpms', 'installed_packages'] if exclude_large_columns else None,
                 )
             except Exception as e:
                 self.logger.error(f'Failed executing query for {window_days}-day window: {e}')
@@ -893,7 +756,6 @@ class KonfluxDb:
         extra_patterns: dict = {},
         strict: bool = False,
         use_cache: bool = True,
-        exclude_large_columns: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build with optimized caching and exponential window search.
@@ -916,11 +778,7 @@ class KonfluxDb:
         :param embargoed: filter by embargoed status
         :param extra_patterns: e.g. {'release': 'b45ea65'} for LIKE queries
         :param strict: If True, raise IOError if build not found
-        :param use_cache: If True, check appropriate cache first (small_columns or all_columns based on exclude_large_columns).
-                         Default True.
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages
-                                      columns from BigQuery queries and use small_columns cache to reduce cost and latency.
-                                      Set to False when you know you'll need these columns (uses all_columns cache).
+        :param use_cache: If True, check cache first. Always updates cache with result. Default True.
         :return: Latest matching build or None
         :raise: IOError if build not found and strict=True
         :raise: ValueError if neither name nor nvr provided, or if name provided without group
@@ -946,18 +804,15 @@ class KonfluxDb:
             if group:
                 self.logger.debug(f"Extracted group '{group}' from NVR {nvr}")
 
-        # Determine which cache type to use based on exclude_large_columns
-        cache_type = CacheRecordsType.SMALL_COLUMNS if exclude_large_columns else CacheRecordsType.ALL_COLUMNS
-
         # Lazy-load cache for group if needed (or builder_base_image if group still None)
         if use_cache:
-            await self._ensure_group_cached(group, cache_type=cache_type)
+            await self._ensure_group_cached(group)
 
         # NVR lookup (fast path)
         if nvr:
             if use_cache and self.cache:
-                # Try group-specific lookup first if group provided
-                cached = self.cache.get_by_nvr(nvr, group=group, cache_type=cache_type)
+                # Try group-specific lookup first if group provided, otherwise builder_base_image
+                cached = self.cache.get_by_nvr(nvr, group=group)
                 if cached:
                     # Verify the cached build matches the requested outcome
                     if outcome is None or cached.outcome == outcome:
@@ -968,8 +823,8 @@ class KonfluxDb:
                             "Falling through to BigQuery."
                         )
 
-            # Cache miss - fall through to BigQuery NVR search
-            self.logger.debug(f"NVR {nvr} not in {cache_type} cache, querying BigQuery")
+            # Cache miss or disabled - fall through to BigQuery NVR search
+            self.logger.debug(f"NVR {nvr} not in cache, querying BigQuery")
 
         # Name lookup with filters (common path)
         if name and use_cache and self.cache:
@@ -983,7 +838,6 @@ class KonfluxDb:
                 engine=engine,
                 embargoed=embargoed,
                 completed_before=completed_before,
-                cache_type=cache_type,
             )
             if cached:
                 # Verify extra_patterns if specified
@@ -1024,12 +878,11 @@ class KonfluxDb:
             completed_before=completed_before,
             embargoed=embargoed,
             extra_patterns=extra_patterns,
-            exclude_large_columns=exclude_large_columns,
         )
 
-        # Update appropriate cache if use_cache=True
+        # Update cache only if use_cache=True
         if result and self.cache and result.group and use_cache:
-            self.cache.add_builds([result], result.group, cache_type=cache_type)
+            self.cache.add_builds([result], result.group)
 
         if not result and strict:
             raise IOError(f"Build record not found for name={name}, nvr={nvr}")
@@ -1049,7 +902,6 @@ class KonfluxDb:
         completed_before: typing.Optional[datetime] = None,
         embargoed: typing.Optional[bool] = None,
         extra_patterns: typing.Optional[dict] = None,
-        exclude_large_columns: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Query BigQuery with exponential window expansion.
@@ -1146,7 +998,6 @@ class KonfluxDb:
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
                     limit=1,  # Only need first result
-                    exclude_columns=['installed_rpms', 'installed_packages'] if exclude_large_columns else None,
                 )
 
                 if rows.total_rows > 0:
