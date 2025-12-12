@@ -10,6 +10,7 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.variants import BuildVariant
+from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
 from pyartcd import jenkins, locks
@@ -89,7 +90,6 @@ class KonfluxOkd4Pipeline:
     async def run(self):
         await self.initialize()
         await self.rebase_and_build_images()
-        await self.mirror_images()
         self.finalize()
 
     async def initialize(self):
@@ -178,6 +178,7 @@ class KonfluxOkd4Pipeline:
                 f'--version={version}',
                 f'--release={input_release}',
                 f"--message='Updating Dockerfile version and release {version}-{input_release}'",
+                f'--image-repo={OKD_DEFAULT_IMAGE_REPO}',
             ]
         )
 
@@ -198,11 +199,18 @@ class KonfluxOkd4Pipeline:
 
         # Some images failed to rebase: log them, and track them in Redis
         rebase_failures = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'failure']
-        LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
-        jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
+
+        if rebase_failures:
+            LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
+            jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
 
         # OKD disabled images have not been rebased and must not be built
         skipped_images = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'skipped']
+        if skipped_images:
+            LOGGER.warning(
+                f'Following images are disabled in OKD and have not been rebased: {",".join(skipped_images)}'
+            )
+            jenkins.update_description(f'Skipped images: {", ".join(skipped_images)}<br>')
 
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -237,6 +245,7 @@ class KonfluxOkd4Pipeline:
                 f'--variant={BuildVariant.OKD.value}',
                 '--network-mode=open',
                 '--konflux-namespace=ocp-art-tenant',
+                f'--image-repo={OKD_DEFAULT_IMAGE_REPO}',
             ]
         )
 
@@ -274,21 +283,22 @@ class KonfluxOkd4Pipeline:
             return
 
         self.built_images = [
-            entry['name'] for entry in record_log.get('image_build_okd', []) if not int(entry['status'])
+            {
+                'name': entry['name'],
+                'nvr': entry['nvrs'],
+                'image_pullspec': entry.get('image_pullspec'),
+                'image_tag': entry.get('image_tag'),
+            }
+            for entry in record_log.get('image_build_okd', [])
+            if not int(entry['status'])
         ]
         if self.built_images:
-            jenkins.update_description(f'Built images: {", ".join(self.built_images)}<br>')
+            LOGGER.info('Built images: %s', self.built_images)
+            jenkins.update_description(f'Built images: {self.built_images}<br>')
 
         failed_images = [entry['name'] for entry in record_log.get('image_build_okd', []) if int(entry['status'])]
         if failed_images:
             jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
-
-    async def mirror_images(self):
-        if not self.built_images:
-            LOGGER.info('Nothing to mirror')
-            return
-
-        LOGGER.info(f'Would have mirrored {self.built_images}')
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')

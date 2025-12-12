@@ -42,13 +42,12 @@ from doozerlib.cli import (
     pass_runtime,
     validate_semver_major_minor_patch,
 )
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.state import STATE_FAIL, STATE_PASS
 from doozerlib.util import extract_version_fields, what_is_in_master
 
-OKD_DEFAULT_IMAGE_REPO = 'quay.io/okd/scos-content'
+OKD_DEFAULT_IMAGE_REPO = 'quay.io/redhat-user-workloads/ocp-art-tenant/art-okd-images'
 
 
 class ImageCoordinate(NamedTuple):
@@ -192,7 +191,7 @@ class OkdRebaseCli:
     help="Version string to populate in Dockerfiles.",
 )
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
-@click.option('--image-repo', default=KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option('--image-repo', default=OKD_DEFAULT_IMAGE_REPO, help='Image repo for base images')
 @option_commit_message
 @option_push
 @pass_runtime
