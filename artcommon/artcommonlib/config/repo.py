@@ -1,4 +1,5 @@
 import string
+import warnings
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, RootModel
@@ -107,8 +108,6 @@ class Repo(BaseModel):
 
             # Legacy support: Check if deprecated download_url is set
             if plashet_config.download_url:
-                import warnings
-
                 warnings.warn(
                     "PlashetConfig.download_url is deprecated and will be removed in a future version. "
                     "The download URL is now constructed dynamically from base_url and other fields.",
