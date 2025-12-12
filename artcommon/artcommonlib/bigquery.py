@@ -91,7 +91,6 @@ class BigQueryClient:
         where_clauses: typing.List[BinaryExpression] = None,
         order_by_clause: typing.Optional[UnaryExpression] = None,
         limit=None,
-        exclude_columns: typing.Optional[typing.List[str]] = None,
     ) -> RowIterator:
         """
         Execute a SELECT statement and return a generator object with the results.
@@ -102,18 +101,9 @@ class BigQueryClient:
         order_by_clause is an optional sqlalchemy.UnaryExpression that translates into '"start_time" DESC' or the like
 
         limit is an optional value to include in a LIMIT clause
-
-        exclude_columns is an optional list of column names to exclude from the SELECT statement
-        (using BigQuery's EXCEPT syntax). Useful for excluding large columns like installed_rpms
-        and installed_packages to reduce query costs and latency.
         """
 
-        if exclude_columns:
-            # Use BigQuery's EXCEPT syntax to exclude specified columns
-            exclude_clause = ', '.join(exclude_columns)
-            query = f"SELECT * EXCEPT ({exclude_clause}) FROM `{self.table_ref}`"
-        else:
-            query = f"SELECT * FROM `{self.table_ref}`"
+        query = f"SELECT * FROM `{self.table_ref}`"
 
         if where_clauses:
             where_conditions = " AND ".join(

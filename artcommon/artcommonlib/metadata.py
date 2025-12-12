@@ -433,7 +433,6 @@ class MetadataBase(object):
         honor_is: bool = True,
         completed_before: Optional[datetime.datetime] = None,
         extra_patterns: dict = {},
-        exclude_large_columns: bool = True,
         **kwargs,
     ) -> Optional[KonfluxBuildRecord]:
         """
@@ -449,8 +448,6 @@ class MetadataBase(object):
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages from
-                                      BigQuery queries. Set to False if you need these columns (e.g., for RPM analysis).
         """
 
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
@@ -487,9 +484,7 @@ class MetadataBase(object):
         assembly = assembly if assembly else self.runtime.assembly
         if not assembly:
             # if assembly is '' (by parameter) or still None after runtime.assembly, get true latest
-            build_record = await self.runtime.konflux_db.get_latest_build(
-                **base_search_params, exclude_large_columns=exclude_large_columns
-            )
+            build_record = await self.runtime.konflux_db.get_latest_build(**base_search_params)
 
         else:
             basis_event = assembly_basis_event(
@@ -504,7 +499,6 @@ class MetadataBase(object):
             build_record = await self.runtime.konflux_db.get_latest_build(
                 **base_search_params,
                 assembly=assembly,
-                exclude_large_columns=exclude_large_columns,
             )
 
             # If not builds were found and assembly != stream, look for 'stream' builds
@@ -512,7 +506,6 @@ class MetadataBase(object):
                 build_record = await self.runtime.konflux_db.get_latest_build(
                     **base_search_params,
                     assembly='stream',
-                    exclude_large_columns=exclude_large_columns,
                 )
 
         if not build_record:
