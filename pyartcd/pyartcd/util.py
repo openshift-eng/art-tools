@@ -875,8 +875,5 @@ async def reset_rebase_fail_counter(image, version, build_system):
     Limit concurrency as we might have a lot of images to reset
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}'
-    redis_key = f'{redis_branch}:{image}'
-    await redis.delete_key(redis_key)
-    # Also delete the associated job URL
-    await redis.delete_key(f'{redis_key}:url')
+    redis_branch = f'count:rebase-failure:{build_system}:{version}:{image}'
+    await redis.delete_key(redis_branch)
