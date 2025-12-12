@@ -38,11 +38,12 @@ class OpmRegistryAuth:
     registry_url: Optional[str] = None
 
 
-async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, **kwargs):
+async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, check: bool = True, **kwargs):
     """Run opm with the given arguments and return the result.
 
     :param args: The arguments to pass to opm.
     :param auth: The registry authentication information to use.
+    :param check: If True, raises an error if the command fails. If False, returns the result regardless of exit code.
     :param kwargs: Additional keyword arguments to pass to exectools.cmd_gather_async.
     :return: The return code, stdout, and stderr of the opm command.
     """
@@ -72,7 +73,7 @@ async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, **
 
     if not auth_content:
         LOGGER.warning("No registry auth provided. Running opm without auth.")
-        rc, out, err = await exectools.cmd_gather_async(["opm", *args], **kwargs)
+        rc, out, err = await exectools.cmd_gather_async(["opm", *args], check=check, **kwargs)
         return rc, out, err
 
     with TemporaryDirectory(prefix="_doozer_") as auth_dir:
@@ -81,7 +82,7 @@ async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, **
         env = kwargs.pop("env", None)
         env = env.copy() if env is not None else os.environ.copy()
         env["DOCKER_CONFIG"] = str(auth_dir)  # Set the DOCKER_CONFIG environment variable to the auth directory for opm
-        rc, out, err = await exectools.cmd_gather_async(["opm", *args], env=env, **kwargs)
+        rc, out, err = await exectools.cmd_gather_async(["opm", *args], env=env, check=check, **kwargs)
     return rc, out, err
 
 
@@ -101,8 +102,12 @@ async def verify_opm():
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
 async def render(
-    *input: str, output_format: str = "yaml", migrate_level: str = "none", auth: Optional[OpmRegistryAuth] = None
-) -> List[dict]:
+    *input: str,
+    output_format: str = "yaml",
+    migrate_level: str = "none",
+    auth: Optional[OpmRegistryAuth] = None,
+    strict: bool = True,
+) -> List[dict] | None:
     """
         Run `opm render` on the given input and return the parsed file-based catalog blobs.
 
@@ -111,16 +116,24 @@ async def render(
         :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
         :param migrate_level: The migration level to use when rendering the catalog. One of "none" or "bundle-object-to-csv-metadata".
         :param auth: The registry authentication information to use.
-        :return: The parsed file-based catalog blobs.
+        :param strict: If True, raises an error if the index image is not found. If False, returns None.
+        :return: The parsed file-based catalog blobs, or None if strict=False and the image is not found.
     """
     if not input:
         raise ValueError("input must not be empty.")
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
-    _, out, _ = await gather_opm(
-        ["render", "--migrate-level", migrate_level, "-o", output_format, "--", *input], auth=auth
+    rc, out, err = await gather_opm(
+        ["render", "--migrate-level", migrate_level, "-o", output_format, "--", *input], auth=auth, check=False
     )
+    if rc != 0:
+        # Check if the error is due to image not found
+        if not strict and "not found" in err.lower():
+            LOGGER.debug(f"Failed to render index image {', '.join(input)}: {err}")
+            return None
+        # For other errors or when strict=True, raise an exception
+        raise IOError(f"opm render failed with exit code {rc}: {err}")
     blobs = yaml.load_all(StringIO(out))
     return list(blobs)
 
