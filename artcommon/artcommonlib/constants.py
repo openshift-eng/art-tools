@@ -9,6 +9,7 @@ RHCOS_RELEASES_STREAM_URL = (
 BREW_HUB = "https://brewhub.engineering.redhat.com/brewhub"
 BREW_DOWNLOAD_URL = "https://download.devel.redhat.com/brewroot"
 RELEASE_SCHEDULES = "https://pp.engineering.redhat.com/api/v7/releases"
+DEFAULT_PLASHET_BASE_URL = "https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets"
 
 # Environment variables to disable Git stdin prompts for username, password, etc
 GIT_NO_PROMPTS = {
