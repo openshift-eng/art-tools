@@ -434,7 +434,7 @@ class MetadataBase(object):
         honor_is: bool = True,
         completed_before: Optional[datetime.datetime] = None,
         extra_patterns: dict = {},
-        exclude_large_columns: Optional[List[str]] = LARGE_COLUMNS,
+        exclude_large_columns: Optional[List[str]] = None,
         **kwargs,
     ) -> Optional[KonfluxBuildRecord]:
         """
@@ -451,8 +451,8 @@ class MetadataBase(object):
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         :param exclude_large_columns: List of column names to exclude from BigQuery queries (e.g., LARGE_COLUMNS).
-                                      Defaults to LARGE_COLUMNS which excludes installed_rpms and installed_packages.
-                                      Set to None if you need these columns (e.g., for RPM analysis).
+                                      Default is None (include all columns). Pass LARGE_COLUMNS to exclude
+                                      installed_rpms and installed_packages to reduce query cost when not needed.
         """
 
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
