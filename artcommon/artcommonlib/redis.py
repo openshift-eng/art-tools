@@ -155,6 +155,47 @@ def delete_key_sync(conn: redis.asyncio.client.Redis, key: str) -> int:
 
 
 @handle_connection
+async def delete_keys_by_pattern(conn: redis.asyncio.client.Redis, pattern: str) -> int:
+    """
+    Deletes all keys matching the given pattern from Redis DB.
+
+    Arg(s):
+        pattern (str): Redis key pattern (e.g., "count:*", "prefix:*:suffix")
+    Return Value(s):
+        int: Number of keys deleted
+    """
+    logger.debug('Finding keys matching pattern %s', pattern)
+    keys = await conn.keys(pattern)
+
+    if not keys:
+        logger.debug('No keys found matching pattern %s', pattern)
+        return 0
+
+    logger.debug('Deleting %d keys matching pattern %s', len(keys), pattern)
+    res = await conn.delete(*keys)
+    logger.debug('%d keys deleted', res)
+    return res
+
+
+@handle_connection_sync
+def delete_keys_by_pattern_sync(conn: redis.client.Redis, pattern: str) -> int:
+    """
+    Same as delete_keys_by_pattern, but synchronous
+    """
+    logger.debug('Finding keys matching pattern %s', pattern)
+    keys = conn.keys(pattern)
+
+    if not keys:
+        logger.debug('No keys found matching pattern %s', pattern)
+        return 0
+
+    logger.debug('Deleting %d keys matching pattern %s', len(keys), pattern)
+    res = conn.delete(*keys)
+    logger.debug('%d keys deleted', res)
+    return res
+
+
+@handle_connection
 async def list_push(conn: redis.asyncio.client.Redis, key: str, value: str) -> None:
     """
     Push to a list in Redis, like a queue (FIFO). Docs: https://redis.io/docs/data-types/lists/
