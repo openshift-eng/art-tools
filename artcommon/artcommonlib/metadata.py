@@ -10,7 +10,6 @@ from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxRecord
-from artcommonlib.konflux.konflux_db import LARGE_COLUMNS
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
 
