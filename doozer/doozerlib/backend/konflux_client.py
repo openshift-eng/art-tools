@@ -15,6 +15,7 @@ from artcommonlib import util as art_util
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from async_lru import alru_cache
 from doozerlib import constants
+from doozerlib.backend.constants import USER_AGENT
 from doozerlib.backend.konflux_watcher import KonfluxWatcher
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from kubernetes import config, watch
@@ -78,6 +79,7 @@ class KonfluxClient:
         self, default_namespace: str, config: Configuration, dry_run: bool = False, logger: logging.Logger = LOGGER
     ) -> None:
         self.api_client = ApiClient(configuration=config)
+        self.api_client.user_agent = USER_AGENT
         self.dyn_client = DynamicClient(self.api_client)
         self.corev1_client = CoreV1Api(self.api_client)
         self.default_namespace = default_namespace

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from dateutil import parser
+from doozerlib.backend.constants import USER_AGENT
 from kubernetes import config
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -65,6 +66,7 @@ class KonfluxWatcher:
 
         # Initialize Kubernetes clients from Configuration
         self.api_client = ApiClient(configuration=cfg)
+        self.api_client.user_agent = USER_AGENT
         self.dyn_client = DynamicClient(self.api_client)
         self.corev1_client = CoreV1Api(self.api_client)
         self.request_timeout = 60 * 5  # 5 minutes
