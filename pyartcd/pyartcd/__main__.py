@@ -13,6 +13,7 @@ from pyartcd.pipelines import (
     build_plashets,
     build_rhcos,
     build_sync,
+    build_sync_multi,
     check_bugs,
     cleanup_locks,
     fbc_import_from_index,
