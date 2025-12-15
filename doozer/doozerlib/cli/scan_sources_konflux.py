@@ -385,7 +385,7 @@ class ConfigScanSources:
         # Need installed_packages column for RPM analysis in scan_rpm_changes, so don't exclude any columns
         latest_image_builds = await asyncio.gather(
             *[
-                self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value, exclude_large_columns=None)
+                self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value)
                 for name in image_names
             ]
         )
