@@ -29,6 +29,9 @@ EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
 # Special group name for builder base image cache that aggregates all RHEL specific ocp-build-data groups
 BUILDER_BASE_IMAGE_GROUP = "builder_base_image"
 
+# Large columns that can be excluded from queries to reduce cost and latency
+LARGE_COLUMNS = ['installed_rpms', 'installed_packages']
+
 
 class CacheRecordsType(Enum):
     """
@@ -711,7 +714,7 @@ class KonfluxDb:
         sorting: str = 'DESC',
         limit: typing.Optional[int] = None,
         strict: bool = False,
-        exclude_large_columns: bool = False,
+        exclude_large_columns: typing.Optional[typing.List[str]] = None,
     ) -> typing.AsyncIterator[KonfluxRecord]:
         """
         Execute a SELECT * from the BigQuery table using exponential window expansion.
@@ -728,8 +731,9 @@ class KonfluxDb:
         :param sorting: Sorting order ('DESC' or 'ASC').
         :param limit: Maximum number of results to return.
         :param strict: If True, raise IOError if no results found.
-        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages
-                                      columns from the query to reduce query cost and latency.
+        :param exclude_large_columns: List of column names to exclude from the query (e.g., LARGE_COLUMNS).
+                                      Pass LARGE_COLUMNS to exclude installed_rpms and installed_packages
+                                      to reduce query cost and latency. Default is None (include all columns).
         :return: AsyncIterator yielding KonfluxRecord objects.
         """
 
@@ -799,7 +803,7 @@ class KonfluxDb:
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
                     limit=limit - total_rows if limit is not None else None,
-                    exclude_columns=['installed_rpms', 'installed_packages'] if exclude_large_columns else None,
+                    exclude_columns=exclude_large_columns,
                 )
             except Exception as e:
                 self.logger.error(f'Failed executing query for {window_days}-day window: {e}')
@@ -893,7 +897,7 @@ class KonfluxDb:
         extra_patterns: dict = {},
         strict: bool = False,
         use_cache: bool = True,
-        exclude_large_columns: bool = True,
+        exclude_large_columns: typing.Optional[typing.List[str]] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build with optimized caching and exponential window search.
@@ -918,9 +922,10 @@ class KonfluxDb:
         :param strict: If True, raise IOError if build not found
         :param use_cache: If True, check appropriate cache first (small_columns or all_columns based on exclude_large_columns).
                          Default True.
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages
-                                      columns from BigQuery queries and use small_columns cache to reduce cost and latency.
-                                      Set to False when you know you'll need these columns (uses all_columns cache).
+        :param exclude_large_columns: List of column names to exclude from BigQuery queries (e.g., LARGE_COLUMNS).
+                                      Pass LARGE_COLUMNS to exclude installed_rpms and installed_packages
+                                      to reduce query cost and latency. Uses small_columns cache when set.
+                                      Default is None (include all columns, uses all_columns cache).
         :return: Latest matching build or None
         :raise: IOError if build not found and strict=True
         :raise: ValueError if neither name nor nvr provided, or if name provided without group
@@ -947,6 +952,7 @@ class KonfluxDb:
                 self.logger.debug(f"Extracted group '{group}' from NVR {nvr}")
 
         # Determine which cache type to use based on exclude_large_columns
+        # If exclude_large_columns is set (non-empty list), use small_columns cache
         cache_type = CacheRecordsType.SMALL_COLUMNS if exclude_large_columns else CacheRecordsType.ALL_COLUMNS
 
         # Lazy-load cache for group if needed (or builder_base_image if group still None)
@@ -1049,7 +1055,7 @@ class KonfluxDb:
         completed_before: typing.Optional[datetime] = None,
         embargoed: typing.Optional[bool] = None,
         extra_patterns: typing.Optional[dict] = None,
-        exclude_large_columns: bool = True,
+        exclude_large_columns: typing.Optional[typing.List[str]] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Query BigQuery with exponential window expansion.
@@ -1070,6 +1076,7 @@ class KonfluxDb:
         :param completed_before: Timestamp filter - only return builds that started before this time
         :param embargoed: Embargoed status filter
         :param extra_patterns: Extra pattern matching (regex)
+        :param exclude_large_columns: List of column names to exclude from the query (e.g., LARGE_COLUMNS).
         :return: First matching build or None
         """
         # Build base WHERE clauses
@@ -1146,7 +1153,7 @@ class KonfluxDb:
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
                     limit=1,  # Only need first result
-                    exclude_columns=['installed_rpms', 'installed_packages'] if exclude_large_columns else None,
+                    exclude_columns=exclude_large_columns,
                 )
 
                 if rows.total_rows > 0:
