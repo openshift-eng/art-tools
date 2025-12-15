@@ -496,21 +496,35 @@ class RHCOSBuildInspector:
         """
         # Get enabled repos for the image
         enabled_repos = self.runtime.group_config.rhcos.enabled_repos
+        exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
         if not enabled_repos:
             raise ValueError("RHCOS build repos need to be defined in group config rhcos.enabled_repos.")
         enabled_repos = enabled_repos.primitive()
+
+        enabled_repos_rhel10 = [repo for repo in enabled_repos if "rhel-10" in repo]
+        enabled_repos_rhel9 = [repo for repo in enabled_repos if "rhel-10" not in repo]
+
         group_repos = self.runtime.repos
         arch = self.brew_arch
+
         logger.info(
             "Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos)
         )
-        repodatas: List[Repodata] = await asyncio.gather(
-            *[group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos]
-        )
+
+        # Fetch all repodatas concurrently
+        tasks_rhel9 = [group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos_rhel9]
+        tasks_rhel10 = [group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos_rhel10]
+
+        all_repodatas = await asyncio.gather(*(tasks_rhel9 + tasks_rhel10))
+
+        repodatas_rhel9 = all_repodatas[: len(tasks_rhel9)]
+        repodatas_rhel10 = all_repodatas[len(tasks_rhel9) :]
 
         # Get all installed rpms
-        rpms_to_check = [
-            {
+        rpms_to_check_rhel10 = []
+        rpms_to_check_rhel9 = []
+        for name, epoch, version, release, arch, repo_name in self.get_os_metadata_rpm_list(exclude_rhel):
+            rpm_dict = {
                 "name": name,
                 "epoch": epoch,
                 "version": version,
@@ -518,9 +532,21 @@ class RHCOSBuildInspector:
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
             }
-            for name, epoch, version, release, arch, repo_name in self.get_os_metadata_rpm_list(exclude_rhel)
-        ]
+            if name in exclude_rpms:
+                logger.info(
+                    f"Exempting rpm {rpm_dict['nvr']} from non-latest check because its in the rhcos exempt list"
+                )
+                continue
+            if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+                rpms_to_check_rhel10.append(rpm_dict)
+            else:
+                rpms_to_check_rhel9.append(rpm_dict)
 
-        logger.info("Determining outdated rpms...")
-        results = OutdatedRPMFinder().find_non_latest_rpms(rpms_to_check, repodatas, logger=logger)
+        logger.info("Determining outdated rpms for RHEL 9...")
+        results = OutdatedRPMFinder().find_non_latest_rpms(rpms_to_check_rhel9, repodatas_rhel9, logger=logger)
+        if enabled_repos_rhel10:
+            logger.info("Determining outdated rpms for RHEL 10...")
+            results.extend(
+                OutdatedRPMFinder().find_non_latest_rpms(rpms_to_check_rhel10, repodatas_rhel10, logger=logger)
+            )
         return results

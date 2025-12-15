@@ -25,7 +25,7 @@ from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
-from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation
 from async_lru import alru_cache
@@ -1371,30 +1371,17 @@ class ConfigScanSources:
                 pullspec_for_tag = dict()
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
-                    build_id, pullspec = rhcos.RHCOSBuildFinder(
-                        self.runtime, version, brew_arch, private
-                    ).latest_container(container_conf)
+                    build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
                     pullspec_for_tag[container_conf.name] = pullspec
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
                     self.runtime, pullspec_for_tag, brew_arch, build_id
                 ).find_non_latest_rpms(exclude_rhel=True)
-                non_latest_rpms_filtered = []
-
-                # exclude rpm if non_latest_rpms in rhel image rpm list
-                exclude_rpms = self.runtime.group_config.rhcos.get("exempt_rpms", [])
-                for installed_rpm, latest_rpm, repo in non_latest_rpms:
-                    if any(excluded in installed_rpm for excluded in exclude_rpms):
-                        self.logger.info(
-                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
-                        )
-                    else:
-                        non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
-                if non_latest_rpms_filtered:
+                if non_latest_rpms:
                     status['outdated'] = True
                     status['changed'] = True
                     status['reason'] = ";\n".join(
                         f"Outdated RPM {installed_rpm} installed in RHCOS ({brew_arch}) when {latest_rpm} was available in repo {repo}"
-                        for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
+                        for installed_rpm, latest_rpm, repo in non_latest_rpms
                     )
                     statuses.append(status)
 

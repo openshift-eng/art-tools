@@ -42,6 +42,7 @@ class BuildRhcosPipeline:
         self.job = job
         self.api_token = None
         self.dry_run = self.runtime.dry_run
+        self.multi_rhel = None
         self.request_session = requests.Session()
         self._stream = self.get_stream()  # rhcos stream the version maps to
         retries = Retry(
@@ -115,6 +116,9 @@ class BuildRhcosPipeline:
         group_file = asyncio.run(load_group_config(group=f"openshift-{self.version}", assembly="stream"))
         if "layered_rhcos" in group_file['rhcos'].keys():  # for layered rhcos job
             if self.job == 'build-node-image':  # for build node job release value is 4.x-9.x
+                rhel_versions = [tag['rhel_version'] for tag in group_file['rhcos']['payload_tags']]
+                if len(set(rhel_versions)) > 1:
+                    self.multi_rhel = rhel_versions
                 return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
             else:  # for build job release value is rhel-9.x
                 return f"rhel-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
@@ -129,9 +133,19 @@ class BuildRhcosPipeline:
         """Start a new build for the given version"""
         job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
         if self.job == 'build-node-image':
-            params = dict(RELEASE=self._stream)
+            if self.multi_rhel:
+                result = []
+                for rhel_version in self.multi_rhel:
+                    result.append(self.get_build_with_params_result(dict(RELEASE=f"{self.version}-{rhel_version}")))
+                return result
+            return self.get_build_with_params_result(dict(RELEASE=self._stream))
         else:  # buld job params
-            params = dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)
+            return self.get_build_with_params_result(
+                dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)
+            )
+
+    def get_build_with_params_result(self, params):
+        job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
         build_number = self.trigger_build(job_url, params)
         build = self.request_session.get(f"{JENKINS_BASE_URL}/job/{self.job}/{build_number}/api/json").json()
         return dict(url=build['url'], result=build['result'], description=build['description'])
