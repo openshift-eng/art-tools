@@ -384,10 +384,7 @@ class ConfigScanSources:
         self.logger.info('Gathering latest image build records information...')
         # Need installed_packages column for RPM analysis in scan_rpm_changes, so don't exclude any columns
         latest_image_builds = await asyncio.gather(
-            *[
-                self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value)
-                for name in image_names
-            ]
+            *[self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names]
         )
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
