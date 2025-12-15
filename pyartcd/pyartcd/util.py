@@ -876,4 +876,5 @@ async def reset_rebase_fail_counter(image, version, build_system):
     """
 
     redis_branch = f'count:rebase-failure:{build_system}:{version}:{image}'
-    await redis.delete_key(redis_branch)
+    await redis.delete_key(f'{redis_branch}:failure')
+    await redis.delete_key(f'{redis_branch}:url')
