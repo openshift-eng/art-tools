@@ -538,7 +538,7 @@ class FbcRebaseAndBuildCli:
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
         bundle_build = await anext(
-            self._db_for_bundles.search_builds_by_fields(where=where, limit=1, exclude_large_columns=False), None
+            self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None
         )
         if not bundle_build:
             if strict:
@@ -589,7 +589,7 @@ class FbcRebaseAndBuildCli:
         # Search for FBC builds that contain this bundle build NVR
         existing_fbc_build = await anext(
             self._fbc_db.search_builds_by_fields(
-                where=where, array_contains={"bundle_nvrs": bundle_build.nvr}, limit=1, exclude_large_columns=False
+                where=where, array_contains={"bundle_nvrs": bundle_build.nvr}, limit=1
             ),
             None,
         )

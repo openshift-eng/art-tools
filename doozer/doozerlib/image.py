@@ -842,8 +842,8 @@ class ImageMetadata(Metadata):
             }
 
             base_search_params['name'] = self.distgit_key
-            # Need installed_rpms column for this operation
-            build = await self.runtime.konflux_db.get_latest_build(**base_search_params, exclude_large_columns=False)
+            # Need installed_rpms column for this operation, so don't exclude any columns
+            build = await self.runtime.konflux_db.get_latest_build(**base_search_params, exclude_large_columns=None)
             if not build:
                 self.logger.debug(f"No build record found for {self.distgit_key}/{self.runtime.group}")
                 self.installed_rpms = []

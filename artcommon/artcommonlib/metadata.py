@@ -10,6 +10,7 @@ from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxRecord
+from artcommonlib.konflux.konflux_db import LARGE_COLUMNS
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
 
@@ -433,7 +434,7 @@ class MetadataBase(object):
         honor_is: bool = True,
         completed_before: Optional[datetime.datetime] = None,
         extra_patterns: dict = {},
-        exclude_large_columns: bool = True,
+        exclude_large_columns: Optional[List[str]] = LARGE_COLUMNS,
         **kwargs,
     ) -> Optional[KonfluxBuildRecord]:
         """
@@ -449,8 +450,9 @@ class MetadataBase(object):
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
-        :param exclude_large_columns: If True (default), exclude installed_rpms and installed_packages from
-                                      BigQuery queries. Set to False if you need these columns (e.g., for RPM analysis).
+        :param exclude_large_columns: List of column names to exclude from BigQuery queries (e.g., LARGE_COLUMNS).
+                                      Defaults to LARGE_COLUMNS which excludes installed_rpms and installed_packages.
+                                      Set to None if you need these columns (e.g., for RPM analysis).
         """
 
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
