@@ -85,6 +85,7 @@ class ConfigScanSources:
 
         self.changing_image_names = set()
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
+        self.assessment_code = dict()  # maps metadata qualified_key => RebuildHintCode
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
@@ -1299,6 +1300,7 @@ class ConfigScanSources:
         # than subsequent reasons (e.g. changing because of ancestry)
         if key not in self.assessment_reason:
             self.assessment_reason[key] = rebuild_hint.reason
+            self.assessment_code[key] = rebuild_hint.code
 
     def add_image_meta_change(self, meta: ImageMetadata, rebuild_hint: RebuildHint):
         # If the rebuild hint does not require a rebuild, do nothing
@@ -1482,11 +1484,14 @@ class ConfigScanSources:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names
             if is_changing:
+                key = f'{image_meta.qualified_key}+{is_changing}'
+                code = self.assessment_code.get(key)
                 image_results.append(
                     {
                         'name': dgk,
                         'changed': is_changing,
-                        'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}'),
+                        'code': code.name if code else None,
+                        'reason': self.assessment_reason.get(key),
                     }
                 )
 
@@ -1522,10 +1527,12 @@ class ConfigScanSources:
                     continue
                 click.echo(kind.upper() + ":")
                 for item in items:
+                    code_str = f" [code: {item['code']}]" if item.get('code') else ''
                     click.echo(
                         '  {} is {} (reason: {})'.format(
                             item['name'], 'changed' if item['changed'] else 'the same', item['reason']
                         )
+                        + code_str
                     )
             # Log issues
             click.echo("ISSUES:")
