@@ -1,10 +1,10 @@
-import asyncio
 import logging
 import os
 
 import click
 import yaml
 from artcommonlib import exectools
+from doozerlib.metadata import RebuildHintCode
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -25,6 +25,7 @@ class Ocp4ScanPipeline:
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.changes = {}
+        self.report = {}
 
         self.rhcos_updated = False
         self.rhcos_outdated = False
@@ -101,8 +102,8 @@ class Ocp4ScanPipeline:
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
-        yaml_data = yaml.safe_load(out)
-        self.changes = util.get_changes(yaml_data)
+        self.report = yaml.safe_load(out)
+        self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
@@ -143,13 +144,19 @@ class Ocp4ScanPipeline:
         jenkins.update_title(' [SOURCE CHANGES]')
         self.logger.info('Detected at least one updated image')
 
-        image_list = self.changes.get('images', [])
-        rpm_list = self.changes.get('rpms', [])
-
-        # Do NOT trigger konflux builds in dry-run mode
+        # Trigger ocp4/okd4 jobs
+        # Do NOT trigger builds in dry-run mode
         if self.runtime.dry_run:
             self.logger.info('Would have triggered a %s ocp4 build', self.version)
+            self.logger.info('Would have triggered a %s okd4 build', self.version)
             return
+
+        self.trigger_ocp4()
+        self.trigger_okd4()
+
+    def trigger_ocp4(self):
+        image_list = self.changes.get('images', [])
+        rpm_list = self.changes.get('rpms', [])
 
         # Update build description
         jenkins.update_description(f'Changed {len(image_list)} images<br/>')
@@ -161,6 +168,53 @@ class Ocp4ScanPipeline:
             assembly='stream',
             image_list=image_list,
             rpm_list=rpm_list,
+        )
+
+    def trigger_okd4(self):
+        # Valid reasons to rebuild an image in OKD
+        rebuild_reasons = [
+            RebuildHintCode.NO_LATEST_BUILD,
+            RebuildHintCode.LAST_BUILD_FAILED,
+            RebuildHintCode.NEW_UPSTREAM_COMMIT,
+            RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
+            RebuildHintCode.ANCESTOR_CHANGING,
+            RebuildHintCode.CONFIG_CHANGE,
+            RebuildHintCode.BUILDER_CHANGING,
+            RebuildHintCode.ARCHES_CHANGE,
+            RebuildHintCode.DEPENDENCY_NEWER,
+        ]
+
+        # Filter images to only those with valid rebuild hint codes
+        filtered_images = []
+        for image in self.report.get('images', []):
+            if not image.get('changed'):
+                continue
+            code_str = image.get('code')
+            if not code_str:
+                continue
+            try:
+                # Access enum member by name using bracket notation
+                code = RebuildHintCode[code_str]
+                if code in rebuild_reasons:
+                    filtered_images.append(image['name'])
+            except (KeyError, TypeError):
+                # Skip images with invalid or missing codes
+                self.logger.warning(f"Invalid rebuild hint code '{code_str}' for image {image.get('name', 'unknown')}")
+                continue
+
+        if not filtered_images:
+            self.logger.info('No images found with valid rebuild reasons for OKD4')
+            return
+
+        # Update build description
+        jenkins.update_description(f'Changed {len(filtered_images)} images for OKD4<br/>')
+
+        # Trigger okd4 build
+        self.logger.info('Triggering a %s okd4 build with %d images', self.version, len(filtered_images))
+        jenkins.start_okd4(
+            build_version=self.version,
+            assembly='stream',
+            image_list=filtered_images,
         )
 
     async def handle_rhcos_changes(self):
