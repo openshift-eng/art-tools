@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from json import JSONDecodeError
@@ -641,6 +642,179 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
                     f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} after 30 minutes"
                 )
                 raise
+
+
+async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
+    """
+    Extract related image pullspecs from FBC image using ORAS workflow.
+
+    :param fbc_pullspec: FBC image pullspec
+    :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
+    :return: List of image pullspecs from art-images repository
+    """
+    logger = LOGGER.getChild("extract_related_images_from_fbc")
+    logger.info(f"Extracting related images from FBC: {fbc_pullspec}")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Step 1: Discover attached artifacts using ORAS
+        logger.info("Discovering attached artifacts...")
+        discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
+        rc, discover_output, discover_stderr = await cmd_gather_async(discover_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS discover command failed: {' '.join(discover_cmd)}\nReturn code: {rc}\nStdout: {discover_output}\nStderr: {discover_stderr}"
+            )
+
+        # Parse JSON and extract digest for the attached artifact
+        discover_data = json.loads(discover_output)
+        logger.debug(f"ORAS discover response: {discover_data}")
+
+        digest = None
+        referrers = discover_data.get('referrers', [])
+        logger.info(f"Found {len(referrers)} referrers")
+
+        for i, referrer in enumerate(referrers):
+            artifact_type = referrer.get('artifactType')
+            annotations = referrer.get('annotations', {})
+            attached_media_type = annotations.get('attachedMediaType', '')
+            logger.debug(
+                f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
+            )
+
+            # Look specifically for the related-images artifact
+            if (
+                artifact_type == 'application/vnd.konflux-ci.attached-artifact'
+                and 'related-images' in attached_media_type
+            ):
+                digest = referrer.get('digest')
+                logger.info(f"Found related-images artifact with digest: {digest}")
+                break
+
+        if not digest:
+            available_types = [r.get('artifactType') for r in referrers]
+            raise RuntimeError(
+                f"No attached artifact found with expected type 'application/vnd.konflux-ci.attached-artifact'. Available types: {available_types}"
+            )
+
+        # Step 2: Pull the attached artifact
+        logger.info(f"Pulling attached artifact with digest: {digest}")
+        # Extract the base registry and repo from the original FBC pullspec
+        # We need to preserve the full repository path, only remove the tag/digest
+        if '@' in fbc_pullspec:
+            # Format: repo@digest
+            base_pullspec = fbc_pullspec.split('@')[0]
+        elif ':' in fbc_pullspec:
+            # Format: repo:tag - need to find the last : that separates tag
+            # Split by : and rejoin all but the last part (which is the tag)
+            parts = fbc_pullspec.split(':')
+            if len(parts) > 2:  # registry:port/repo:tag format
+                # Find the tag part (everything after the last / and :)
+                base_pullspec = ':'.join(parts[:-1])
+            else:
+                base_pullspec = parts[0]
+        else:
+            base_pullspec = fbc_pullspec
+        artifact_pullspec = f"{base_pullspec}@{digest}"
+        pull_cmd = ['oras', 'pull', artifact_pullspec]
+        logger.info(f"Pulling from: {artifact_pullspec}")
+        rc, pull_output, pull_stderr = await cmd_gather_async(pull_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS pull command failed: {' '.join(pull_cmd)}\nReturn code: {rc}\nStdout: {pull_output}\nStderr: {pull_stderr}"
+            )
+
+        # Step 3: Read and process the catalog file
+        pulled_files = os.listdir(temp_dir)
+        logger.info(f"Files found in pulled artifact: {pulled_files}")
+
+        # Debug: Show the contents of each file for analysis
+        for file in pulled_files:
+            if file.endswith('.json'):
+                logger.debug(f"Contents of {file}:")
+                with open(os.path.join(temp_dir, file), 'r') as f:
+                    content = f.read()
+                    logger.debug(f"{file}: {content[:200]}...")  # First 200 chars
+
+        # Transform the URLs - require product name to be specified
+        if not product:
+            raise ValueError(
+                "Product parameter is required to determine the registry namespace for image transformation"
+            )
+        registry_transform_pattern = rf'registry\.redhat\.io/{product}/[^@]*'
+
+        related_images = []
+        related_images_path = os.path.join(temp_dir, 'related-images.json')
+        if os.path.exists(related_images_path):
+            logger.info("Reading related-images.json...")
+            with open(related_images_path, 'r') as f:
+                raw_images = json.load(f)
+
+            logger.info(f"Found {len(raw_images)} images in related-images.json")
+
+            for img_url in raw_images:
+                # Check if the URL matches the product namespace pattern
+                if f'registry.redhat.io/{product}/' in img_url:
+                    # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
+                    transformed_url = re.sub(
+                        registry_transform_pattern,
+                        'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                        img_url,
+                    )
+                    related_images.append(transformed_url)
+                    logger.debug(f"Transformed: {img_url} -> {transformed_url}")
+                else:
+                    related_images.append(img_url)
+                    logger.debug(f"Using as-is: {img_url}")
+
+            logger.info(f"Processed {len(related_images)} images from related-images.json")
+
+            # Print all transformed pull specs for debugging
+            logger.info("=== TRANSFORMED PULL SPECS ===")
+            for i, img in enumerate(related_images, 1):
+                logger.info(f"{i:2d}. {img}")
+            logger.info("=== END TRANSFORMED PULL SPECS ===")
+
+        else:
+            catalog_json_path = os.path.join(temp_dir, 'catalog.json')
+            if os.path.exists(catalog_json_path):
+                logger.warning(
+                    "related-images.json not found, falling back to catalog.json (this may extract many images)"
+                )
+                with open(catalog_json_path, 'r') as f:
+                    catalog_content = f.read()
+
+            registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
+            found_images = re.findall(registry_pattern, catalog_content)
+
+            # Use the same product namespace for catalog.json fallback
+            for img_url in found_images:
+                img_url = img_url.rstrip('",')
+                # Check if the URL matches the product namespace pattern
+                if f'registry.redhat.io/{product}/' in img_url:
+                    transformed_url = re.sub(
+                        registry_transform_pattern,
+                        'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                        img_url,
+                    )
+                    related_images.append(transformed_url)
+                else:
+                    related_images.append(img_url)
+
+                related_images = list(set(related_images))
+                logger.warning(f"Extracted {len(related_images)} unique images from catalog.json")
+            else:
+                raise RuntimeError(
+                    f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
+                )
+
+        if not related_images:
+            logger.error("No image URLs found in catalog file")
+            raise RuntimeError("No image URLs extracted from FBC catalog")
+
+    logger.info(f"Extracted {len(related_images)} image pullspecs from FBC")
+    return related_images
 
 
 def validate_build_priority(build_priority):
