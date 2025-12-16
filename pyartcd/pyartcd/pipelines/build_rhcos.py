@@ -118,7 +118,7 @@ class BuildRhcosPipeline:
             if self.job == 'build-node-image':  # for build node job release value is 4.x-9.x
                 rhel_versions = [tag['rhel_version'] for tag in group_file['rhcos']['payload_tags']]
                 if len(set(rhel_versions)) > 1:
-                    self.multi_rhel = rhel_versions
+                    self.multi_rhel = list(set(rhel_versions))
                 return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
             else:  # for build job release value is rhel-9.x
                 return f"rhel-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
