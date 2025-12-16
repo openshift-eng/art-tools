@@ -368,6 +368,8 @@ class RHCOSBuildInspector:
         """
         rpm_nvrs: List[str] = list()
         for rpm_entry in self.get_os_metadata_rpm_list():
+            if rpm_entry[-1] in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+                continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
             rpm_nvrs.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}')
@@ -382,6 +384,8 @@ class RHCOSBuildInspector:
         """
         rpm_nvras: List[str] = list()
         for rpm_entry in self.get_os_metadata_rpm_list():
+            if rpm_entry[-1] in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+                continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
             rpm_nvras.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}.{rpm_entry[4]}')
@@ -391,7 +395,7 @@ class RHCOSBuildInspector:
     def get_package_build_objects(self) -> Dict[str, Dict]:
         """
         :return: Returns a Dict containing records for package builds corresponding to
-                 RPMs used by this RHCOS build.
+                 RPMs used by this rhel9 RHCOS build.
                  Maps package_name -> brew build dict for package.
         """
 
