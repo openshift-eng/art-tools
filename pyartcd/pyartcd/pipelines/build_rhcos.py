@@ -105,7 +105,8 @@ class BuildRhcosPipeline:
             for build in builds_info
             if build["result"] is None
             and any(
-                param["name"] == param_name and param["value"] == self._stream  # check build parameter with given stream
+                param["name"] == param_name
+                and param["value"] == self._stream  # check build parameter with given stream
                 for action in build["actions"]
                 if "parameters" in action
                 for param in action["parameters"]
