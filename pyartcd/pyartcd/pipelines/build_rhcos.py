@@ -137,11 +137,13 @@ class BuildRhcosPipeline:
                 for rhel_version in self.multi_rhel:
                     result.append(self.get_build_with_params_result(dict(RELEASE=f"{self.version}-{rhel_version}")))
                 return result
-            return self.get_build_with_params_result(dict(RELEASE=self._stream))
+            return [self.get_build_with_params_result(dict(RELEASE=self._stream))]
         else:  # buld job params
-            return self.get_build_with_params_result(
-                dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)
-            )
+            return [
+                self.get_build_with_params_result(
+                    dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)
+                )
+            ]
 
     def get_build_with_params_result(self, params):
         job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
