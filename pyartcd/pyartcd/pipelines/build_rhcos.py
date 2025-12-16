@@ -131,7 +131,6 @@ class BuildRhcosPipeline:
 
     def start_build(self):
         """Start a new build for the given version"""
-        job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
         if self.job == 'build-node-image':
             if self.multi_rhel:
                 result = []
