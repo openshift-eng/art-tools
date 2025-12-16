@@ -99,12 +99,13 @@ class BuildRhcosPipeline:
             f"{JENKINS_BASE_URL}/job/{self.job}/api/json?tree=builds[number,description,url,result,actions[parameters[name,value]]]",
         )
         builds_info = response.json()["builds"]
+        param_name = "RELEASE" if self.job == "build-node-image" else "STREAM"
         return [
             {"result": None, "description": build["description"], "url": build["url"]}
             for build in builds_info
             if build["result"] is None
             and any(
-                param["name"] == "STREAM" and param["value"] == self._stream  # check build parameter with given stream
+                param["name"] == param_name and param["value"] == self._stream  # check build parameter with given stream
                 for action in build["actions"]
                 if "parameters" in action
                 for param in action["parameters"]
