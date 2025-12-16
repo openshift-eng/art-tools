@@ -785,22 +785,22 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 with open(catalog_json_path, 'r') as f:
                     catalog_content = f.read()
 
-            registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
-            found_images = re.findall(registry_pattern, catalog_content)
+                registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
+                found_images = re.findall(registry_pattern, catalog_content)
 
-            # Use the same product namespace for catalog.json fallback
-            for img_url in found_images:
-                img_url = img_url.rstrip('",')
-                # Check if the URL matches the product namespace pattern
-                if f'registry.redhat.io/{product}/' in img_url:
-                    transformed_url = re.sub(
-                        registry_transform_pattern,
-                        'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
-                        img_url,
-                    )
-                    related_images.append(transformed_url)
-                else:
-                    related_images.append(img_url)
+                # Use the same product namespace for catalog.json fallback
+                for img_url in found_images:
+                    img_url = img_url.rstrip('",')
+                    # Check if the URL matches the product namespace pattern
+                    if f'registry.redhat.io/{product}/' in img_url:
+                        transformed_url = re.sub(
+                            registry_transform_pattern,
+                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                            img_url,
+                        )
+                        related_images.append(transformed_url)
+                    else:
+                        related_images.append(img_url)
 
                 related_images = list(set(related_images))
                 logger.warning(f"Extracted {len(related_images)} unique images from catalog.json")
