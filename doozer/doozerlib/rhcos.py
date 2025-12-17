@@ -9,7 +9,7 @@ from urllib.error import URLError
 import koji
 from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL, COREOS_RHEL10_STREAMS
+from artcommonlib.constants import COREOS_RHEL10_STREAMS, RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec

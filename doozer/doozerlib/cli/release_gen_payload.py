@@ -18,7 +18,7 @@ import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, COREOS_RHEL10_STREAMS
+from artcommonlib.constants import COREOS_RHEL10_STREAMS, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -1925,11 +1925,7 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {
-            entry[0]: entry[:-1]
-            for entry in rpm_list
-            if entry[-1] not in COREOS_RHEL10_STREAMS
-        }
+        rpms_dict = {entry[0]: entry[:-1] for entry in rpm_list if entry[-1] not in COREOS_RHEL10_STREAMS}
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
