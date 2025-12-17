@@ -1366,7 +1366,12 @@ class ConfigScanSources:
                 pullspec_for_tag = dict()
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
-                    build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
+                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                        build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
+                    else:
+                        build_id, pullspec = rhcos.RHCOSBuildFinder(
+                            self.runtime, version, brew_arch, private
+                        ).latest_container(container_conf)
                     pullspec_for_tag[container_conf.name] = pullspec
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
                     self.runtime, pullspec_for_tag, brew_arch, build_id
