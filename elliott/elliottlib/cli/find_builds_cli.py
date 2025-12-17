@@ -12,11 +12,11 @@ import requests
 from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
-from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.rpm_utils import parse_nvr
 from errata_tool import ErrataException
 
