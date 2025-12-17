@@ -77,5 +77,8 @@ PRODUCT_KUBECONFIG_MAP = {
 
 # Default namespace for Konflux operations
 KONFLUX_DEFAULT_NAMESPACE = "ocp-art-tenant"
-
+COREOS_RHEL10_STREAMS = [
+    "rhel-coreos-10",
+    "rhel-coreos-10-extensions",
+]
 ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"

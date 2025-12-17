@@ -127,7 +127,6 @@ class ConfigScanSources:
         if (
             self.ci_kubeconfig
             and self.runtime.group.startswith("openshift-")
-            and self.runtime.group != 'openshift-4.21'
         ):
             await self.detect_rhcos_status()
 

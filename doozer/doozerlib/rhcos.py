@@ -9,7 +9,7 @@ from urllib.error import URLError
 import koji
 from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, RHCOS_RELEASES_STREAM_URL, COREOS_RHEL10_STREAMS
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
@@ -368,6 +368,8 @@ class RHCOSBuildInspector:
         """
         rpm_nvrs: List[str] = list()
         for rpm_entry in self.get_os_metadata_rpm_list():
+            if rpm_entry[-1] in COREOS_RHEL10_STREAMS:
+                continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
             rpm_nvrs.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}')
@@ -382,6 +384,8 @@ class RHCOSBuildInspector:
         """
         rpm_nvras: List[str] = list()
         for rpm_entry in self.get_os_metadata_rpm_list():
+            if rpm_entry[-1] in COREOS_RHEL10_STREAMS:
+                continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
             rpm_nvras.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}.{rpm_entry[4]}')
@@ -391,7 +395,7 @@ class RHCOSBuildInspector:
     def get_package_build_objects(self) -> Dict[str, Dict]:
         """
         :return: Returns a Dict containing records for package builds corresponding to
-                 RPMs used by this RHCOS build.
+                 RPMs used by this rhel9 RHCOS build.
                  Maps package_name -> brew build dict for package.
         """
 
@@ -537,7 +541,7 @@ class RHCOSBuildInspector:
                     f"Exempting rpm {rpm_dict['nvr']} from non-latest check because its in the rhcos exempt list"
                 )
                 continue
-            if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+            if repo_name in COREOS_RHEL10_STREAMS:
                 rpms_to_check_rhel10.append(rpm_dict)
             else:
                 rpms_to_check_rhel9.append(rpm_dict)
