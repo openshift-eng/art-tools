@@ -17,7 +17,6 @@ import truststore
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -32,6 +31,7 @@ from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from kubernetes.dynamic import resource
@@ -1191,10 +1191,7 @@ class KonfluxFbcBuilder:
 
             # Check each image and sync if missing from art-images-share
             for image_pullspec in related_images:
-                share_pullspec = image_pullspec.replace(
-                    KONFLUX_DEFAULT_IMAGE_REPO,
-                    KONFLUX_ART_IMAGES_SHARE
-                )
+                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_ART_IMAGES_SHARE)
 
                 if await self._check_image_exists(share_pullspec, logger):
                     logger.debug(f"Image already exists in art-images-share: {share_pullspec}")
@@ -1367,23 +1364,24 @@ class KonfluxFbcBuilder:
                     record["status"] = 0
 
                     # Sync FBC related images to art-images-share
-                    try:
-                        results = pipelinerun_dict.get('status', {}).get('results', [])
-                        image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                    if not self.dry_run:
+                        try:
+                            results = pipelinerun_dict.get('status', {}).get('results', [])
+                            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                        if image_pullspec and image_digest:
-                            fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                            await self._sync_fbc_related_images_to_share(
-                                fbc_pullspec, self.product, logger=logger
-                            )
-                        else:
-                            logger.warning(
-                                "Could not extract FBC pullspec from pipelinerun results, "
-                                "skipping related images sync"
-                            )
-                    except Exception as e:
-                        logger.warning(f"Failed to sync FBC related images: {e}")
+                            if image_pullspec and image_digest:
+                                fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                                await self._sync_fbc_related_images_to_share(fbc_pullspec, self.product, logger=logger)
+                            else:
+                                logger.warning(
+                                    "Could not extract FBC pullspec from pipelinerun results, "
+                                    "skipping related images sync"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to sync FBC related images: {e}")
+                    else:
+                        logger.info("Dry run: Would have synced FBC related images to art-images-share")
 
                     break
             if error:
