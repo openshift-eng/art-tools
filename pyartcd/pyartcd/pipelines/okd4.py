@@ -294,7 +294,7 @@ class KonfluxOkd4Pipeline:
         ]
         if self.built_images:
             LOGGER.info('Built images: %s', self.built_images)
-            jenkins.update_description(f'Built images: {self.built_images}<br>')
+            jenkins.update_description(f'Built images: {",".join([image["name"] for image in self.built_images])}<br>')
 
         failed_images = [entry['name'] for entry in record_log.get('image_build_okd', []) if int(entry['status'])]
         if failed_images:
