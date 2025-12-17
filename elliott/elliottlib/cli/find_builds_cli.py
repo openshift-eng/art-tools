@@ -16,6 +16,7 @@ from artcommonlib.format_util import green_prefix, green_print, red_print, yello
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
+from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.rpm_utils import parse_nvr
 from errata_tool import ErrataException
 
@@ -350,7 +351,8 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
 
     # Keys under rhcos_config are not necessary payload tags. One exception is `dependencies`
     # make sure we only process payload tags
-    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime)]
+    # Exclude rhcos_payload_tags that are in COREOS_RHEL10_STREAMS
+    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime) if c['name'] not in COREOS_RHEL10_STREAMS]
     for key, config in rhcos_config.items():
         if key not in rhcos_payload_tags:
             continue
