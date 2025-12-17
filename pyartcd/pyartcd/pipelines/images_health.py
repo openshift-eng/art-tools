@@ -130,10 +130,6 @@ class ImagesHealthPipeline:
     async def notify_forum_ocp_art(self):
         self.slack_client.bind_channel('#forum-ocp-art')
 
-        if not self.report:
-            await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
-            return
-
         image_concerns = {}
         for concern in self.report:
             if (
@@ -144,6 +140,10 @@ class ImagesHealthPipeline:
                 continue
             image_name = concern['image_name']
             image_concerns.setdefault(image_name, []).append(concern)
+
+        if not image_concerns:
+            await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
+            return
 
         response = await self.slack_client.say(
             f':alert: There are some issues to look into for Openshift builds:  {self.get_component_tag(image_concerns)}',
