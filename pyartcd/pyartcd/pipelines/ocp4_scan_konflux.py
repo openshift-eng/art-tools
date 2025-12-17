@@ -171,6 +171,15 @@ class Ocp4ScanPipeline:
         )
 
     def trigger_okd4(self):
+        # Only trigger OKD builds for enabled versions
+        if self.version not in constants.OKD_ENABLED_VERSIONS:
+            self.logger.info(
+                'Skipping OKD4 build for version %s (enabled versions: %s)',
+                self.version,
+                constants.OKD_ENABLED_VERSIONS,
+            )
+            return
+
         # Valid reasons to rebuild an image in OKD
         rebuild_reasons = [
             RebuildHintCode.NO_LATEST_BUILD,
