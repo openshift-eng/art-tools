@@ -14,7 +14,7 @@ from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay, validate_build_priority
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -369,6 +369,33 @@ class KonfluxOcp4Pipeline:
             SKIP_MULTI_ARCH_PAYLOAD=False,
         )
 
+    async def mirror_streams_to_ci(self):
+        # If the API server builds, we mirror out the streams to CI. If ART builds a bad golang builder image it will
+        # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
+        # bellwether to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
+        # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
+        record_log = self.parse_record_log()
+        if not record_log:
+            LOGGER.warning('record.log not found, skipping CI mirroring check')
+            return
+
+        built_images = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
+        }
+        if built_images.get('ose-openshift-apiserver', None):
+            LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
+
+            # Make sure our api.ci token is fresh
+            await oc.registry_login()
+
+            # Log into QCI registry
+            await oc.qci_registry_login()
+
+            # Mirror out ART equivalent images to CI
+            cmd = self._doozer_base_command.copy()
+            cmd.extend(['images:streams', 'mirror'])
+            await exectools.cmd_assert_async(cmd)
+
     async def sweep_bugs(self):
         """
         Find MODIFIED bugs for the target-releases, and set them to ON_QA
@@ -701,6 +728,7 @@ class KonfluxOcp4Pipeline:
         finally:
             await self.mirror_images()
             await self.sync_images()
+            await self.mirror_streams_to_ci()
 
             if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
                 await self.sweep_bugs()
