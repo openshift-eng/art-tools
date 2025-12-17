@@ -444,6 +444,98 @@ class TestImageMetadata(unittest.TestCase):
         self.assertEqual(result, {'repo1', 'repo2'})
         mock_config.get.assert_called_once_with("enabled_repos", [])
 
+    def test_calculate_config_digest_old_style_repos(self):
+        """
+        Test calculate_config_digest with old-style repos (dict format).
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_old')
+
+        # Mock image config with enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': ['repo1', 'repo2'], 'non_shipping_repos': []})
+
+        # Old-style group_config with repos as dict
+        group_config = Model(
+            {
+                'repos': {
+                    'repo1': {'conf': {'baseurl': 'http://example.com/repo1'}, 'content_set': {'default': 'cs1'}},
+                    'repo2': {'conf': {'baseurl': 'http://example.com/repo2'}, 'content_set': {'default': 'cs2'}},
+                }
+            }
+        )
+
+        streams = Model({})
+
+        # Should not raise KeyError
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
+    def test_calculate_config_digest_new_style_repos(self):
+        """
+        Test calculate_config_digest with new-style repos (list format).
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_new')
+
+        # Mock image config with enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': ['repo1', 'repo2'], 'non_shipping_repos': []})
+
+        # New-style group_config with all_repos as list
+        group_config = Model(
+            {
+                'all_repos': [
+                    {
+                        'name': 'repo1',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo1'},
+                        'content_set': {'default': 'cs1'},
+                    },
+                    {
+                        'name': 'repo2',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo2'},
+                        'content_set': {'default': 'cs2'},
+                    },
+                    {
+                        'name': 'repo3',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo3'},
+                        'content_set': {'default': 'cs3'},
+                    },
+                ]
+            }
+        )
+
+        streams = Model({})
+
+        # Should not raise KeyError
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
+    def test_calculate_config_digest_no_repos(self):
+        """
+        Test calculate_config_digest with no repos enabled.
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_no_repos')
+
+        # Mock image config with no enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': [], 'non_shipping_repos': []})
+
+        # Group config doesn't matter when no repos are enabled
+        group_config = Model({})
+        streams = Model({})
+
+        # Should not raise any errors
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
