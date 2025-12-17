@@ -48,11 +48,11 @@ class KonfluxOkd4Pipeline:
         data_path: Optional[str],
         data_gitref: Optional[str],
         version: str,
-        kubeconfig: Optional[str],
         ignore_locks: bool,
         plr_template: str,
         lock_identifier: Optional[str],
         build_priority: Optional[str],
+        imagestream_namespace: str,
     ):
         self.runtime = runtime
         self.image_build_strategy = image_build_strategy
@@ -62,11 +62,12 @@ class KonfluxOkd4Pipeline:
         self.data_gitref = data_gitref
         self.version = version
         self.release = default_release_suffix()
-        self.kubeconfig = kubeconfig
+        self.konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         self.ignore_locks = ignore_locks
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.build_priority = build_priority
+        self.imagestream_namespace = imagestream_namespace
 
         self.group_images = []
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy))
@@ -90,6 +91,7 @@ class KonfluxOkd4Pipeline:
     async def run(self):
         await self.initialize()
         await self.rebase_and_build_images()
+        await self.update_imagestreams()
         self.finalize()
 
     async def initialize(self):
@@ -249,8 +251,8 @@ class KonfluxOkd4Pipeline:
             ]
         )
 
-        if self.kubeconfig:
-            cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
+        if self.konflux_kubeconfig:
+            cmd.extend(['--konflux-kubeconfig', self.konflux_kubeconfig])
 
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
@@ -272,6 +274,9 @@ class KonfluxOkd4Pipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            pass
 
         finally:
             self.handle_built_images()
@@ -299,6 +304,84 @@ class KonfluxOkd4Pipeline:
         failed_images = [entry['name'] for entry in record_log.get('image_build_okd', []) if int(entry['status'])]
         if failed_images:
             jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
+
+    async def update_imagestreams(self):
+        """
+        Update static OKD imagestream with successfully built images:
+        scos-{version}-art - accumulates all successfully built images
+        """
+
+        if self.assembly != 'stream':
+            LOGGER.info('Assembly is not "stream"; skipping imagestream updates')
+            return
+
+        if not self.built_images:
+            LOGGER.warning('No images were successfully built; skipping imagestream updates')
+            return
+
+        if self.runtime.dry_run:
+            LOGGER.info('[DRY RUN] Would update imagestreams in namespace %s', self.imagestream_namespace)
+            LOGGER.info('[DRY RUN] Would tag %d images', len(self.built_images))
+            return
+
+        is_name = f'scos-{self.version}-art'
+        env = os.environ.copy()
+        successful_tags = []
+        failed_tags = []
+
+        # Tag each newly built image into the imagestream
+        LOGGER.info('Updating imagestream: %s in namespace %s', is_name, self.imagestream_namespace)
+        for image in self.built_images:
+            image_name = image['name']
+            image_pullspec = image.get('image_pullspec')
+            image_tag = image.get('image_tag')
+
+            if not image_pullspec or not image_tag:
+                LOGGER.warning('Image %s missing pullspec or tag; skipping', image_name)
+                failed_tags.append(image_name)
+                continue
+
+            # Tag into imagestream
+            target = f'{self.imagestream_namespace}/{is_name}:{image_name}'
+            try:
+                await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
+                LOGGER.info('Tagged %s into %s', image_name, target)
+                successful_tags.append(image_name)
+            except Exception as e:
+                LOGGER.warning('Failed to tag %s into imagestream: %s', image_name, e)
+                failed_tags.append(image_name)
+
+        # Update Jenkins description with results
+        if successful_tags:
+            success_msg = f'Updated {is_name} with {len(successful_tags)} images'
+            jenkins.update_description(f'{success_msg}<br>')
+            LOGGER.info(success_msg)
+
+        if failed_tags:
+            failure_msg = f'Imagestream update failures: {", ".join(failed_tags)}'
+            jenkins.update_description(f'{failure_msg}<br>')
+            LOGGER.warning(failure_msg)
+
+    async def _tag_image_to_stream(self, source_pullspec: str, target_tag: str, env: dict):
+        """
+        Helper method to tag an image into an imagestream.
+
+        Arg(s):
+            source_pullspec (str): Full pullspec of source image
+            target_tag (str): Target in format 'namespace/imagestream:tag'
+            env (dict): Environment variables for oc command
+        """
+        cmd = [
+            'oc',
+            'tag',
+            '--import-mode=PreserveOriginal',
+            '--',
+            source_pullspec,
+            target_tag,
+        ]
+
+        LOGGER.debug('Running: %s', ' '.join(cmd))
+        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
@@ -378,7 +461,6 @@ class KonfluxOkd4Pipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--version', required=True, help='OCP version to build, e.g. 4.21')
-@click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
     '--ignore-locks',
     is_flag=True,
@@ -399,6 +481,12 @@ class KonfluxOkd4Pipeline:
     required=False,
     help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
 )
+@click.option(
+    '--imagestream-namespace',
+    required=False,
+    default='ocp',
+    help='Namespace for OKD imagestream updates (default: ocp)',
+)
 @pass_runtime
 @click_coroutine
 async def okd4(
@@ -409,14 +497,11 @@ async def okd4(
     data_path: Optional[str],
     data_gitref: Optional[str],
     version: str,
-    kubeconfig: Optional[str],
     ignore_locks: bool,
     plr_template: str,
     build_priority: Optional[str],
+    imagestream_namespace: str,
 ):
-    if not kubeconfig:
-        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
@@ -429,11 +514,11 @@ async def okd4(
         data_path=data_path,
         data_gitref=data_gitref,
         version=version,
-        kubeconfig=kubeconfig,
         ignore_locks=ignore_locks,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
         build_priority=build_priority,
+        imagestream_namespace=imagestream_namespace,
     )
 
     if ignore_locks:
