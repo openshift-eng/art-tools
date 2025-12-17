@@ -16,6 +16,8 @@ import httpx
 import truststore
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
+from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -1069,6 +1071,7 @@ class KonfluxFbcBuilder:
         base_dir: Path,
         group: str,
         assembly: str,
+        product: str,
         db: KonfluxDb,
         fbc_repo: str,
         konflux_namespace: str,
@@ -1085,6 +1088,7 @@ class KonfluxFbcBuilder:
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
+        self.product = product
         self._db = db
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.konflux_namespace = konflux_namespace
@@ -1146,6 +1150,67 @@ class KonfluxFbcBuilder:
                         commits.append(commit)
 
         return commits
+
+    async def _check_image_exists(self, pullspec: str, logger: Optional[logging.Logger] = None) -> bool:
+        """Check if an image exists in the registry.
+
+        :param pullspec: Image pullspec to check
+        :param logger: Logger instance
+        :return: True if image exists, False otherwise
+        """
+        logger = logger or self._logger
+        try:
+            logger.debug(f"Checking if image exists: {pullspec}")
+            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            await util.oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
+            logger.debug(f"Image exists: {pullspec}")
+            return True
+        except Exception as e:
+            logger.debug(f"Image does not exist or is not accessible: {pullspec} - {e}")
+            return False
+
+    async def _sync_fbc_related_images_to_share(
+        self, fbc_pullspec: str, product: str, logger: Optional[logging.Logger] = None
+    ):
+        """Sync FBC related images to art-images-share repository if they don't exist.
+
+        :param fbc_pullspec: FBC image pullspec
+        :param product: Product name (e.g., 'openshift', 'oadp')
+        :param logger: Logger instance
+        """
+        logger = logger or self._logger
+
+        try:
+            logger.info("Extracting related images from FBC...")
+            related_images = await artlib_util.extract_related_images_from_fbc(fbc_pullspec, product)
+            logger.info(f"Found {len(related_images)} related images in FBC")
+
+            if not related_images:
+                logger.info("No related images to sync")
+                return
+
+            # Check each image and sync if missing from art-images-share
+            for image_pullspec in related_images:
+                share_pullspec = image_pullspec.replace(
+                    KONFLUX_DEFAULT_IMAGE_REPO,
+                    KONFLUX_ART_IMAGES_SHARE
+                )
+
+                if await self._check_image_exists(share_pullspec, logger):
+                    logger.debug(f"Image already exists in art-images-share: {share_pullspec}")
+                else:
+                    logger.info(f"Syncing {image_pullspec} to art-images-share")
+                    try:
+                        destination_repo = share_pullspec.split('@')[0]  # Remove digest for destination
+                        await artlib_util.sync_to_quay(image_pullspec, destination_repo)
+                        logger.info(f"Successfully synced to art-images-share: {share_pullspec}")
+                    except Exception as e:
+                        logger.warning(f"Failed to sync {image_pullspec} to art-images-share: {e}")
+
+            logger.info("FBC related images sync complete")
+
+        except Exception as e:
+            logger.exception(f"Error while syncing FBC related images to art-images-share: {e}")
 
     async def build(self, metadata: ImageMetadata, operator_nvr: Optional[str] = None):
         bundle_short_name = metadata.get_olm_bundle_short_name()
@@ -1300,6 +1365,26 @@ class KonfluxFbcBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
+
+                    # Sync FBC related images to art-images-share
+                    try:
+                        results = pipelinerun_dict.get('status', {}).get('results', [])
+                        image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                        if image_pullspec and image_digest:
+                            fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                            await self._sync_fbc_related_images_to_share(
+                                fbc_pullspec, self.product, logger=logger
+                            )
+                        else:
+                            logger.warning(
+                                "Could not extract FBC pullspec from pipelinerun results, "
+                                "skipping related images sync"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to sync FBC related images: {e}")
+
                     break
             if error:
                 record['message'] = str(error)
