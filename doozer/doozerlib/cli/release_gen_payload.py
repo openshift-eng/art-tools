@@ -18,7 +18,7 @@ import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.constants import COREOS_RHEL10_STREAMS, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -1897,7 +1897,7 @@ class PayloadGenerator:
 
         for rhcos_build in rhcos_builds:
             for name, epoch, version, release, arch, repo_name in rhcos_build.get_os_metadata_rpm_list():
-                if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+                if repo_name in COREOS_RHEL10_STREAMS:
                     continue
                 rpm_name = name
                 nvr = f"{name}-{version}-{release}"
@@ -1925,11 +1925,7 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {
-            entry[0]: entry[:-1]
-            for entry in rpm_list
-            if entry[-1] not in ["rhel-coreos-10", "rhel-coreos-10-extensions"]
-        }
+        rpms_dict = {entry[0]: entry[:-1] for entry in rpm_list if entry[-1] not in COREOS_RHEL10_STREAMS}
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
@@ -1987,7 +1983,7 @@ class PayloadGenerator:
         rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
             name, _, version, release, _, repo_name = rpm
-            if repo_name in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+            if repo_name in COREOS_RHEL10_STREAMS:
                 # skip el10 rhcos kernels check
                 continue
             rhcos_rpm_vrs[name] = f"{version}-{release}"
