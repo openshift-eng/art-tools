@@ -363,6 +363,95 @@ Some description
         self.assertIn("Version:        1.2.3\n", specfile_content)
         self.assertIn("AOS Automation Release Team <noreply@redhat.com>", specfile_content[17])
 
+    @mock.patch("aiofiles.open")
+    async def test_populate_specfile_async_autosetup_with_s_git(self, mocked_open: mock.Mock):
+        """Test that %autosetup -S git option is preserved"""
+        source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
+        distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
+        runtime = self._make_runtime()
+        rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
+        version = "1.2.3"
+        release = "202104070000.yuxzhu_test.p0"
+        rpm.set_nvr(version, release)
+        rpm.get_jira_info = mock.MagicMock(return_value=("My Product", "My Component"))
+        mocked_file = mocked_open.return_value.__aenter__.return_value
+
+        # Test case 1: %autosetup with -n and -S git
+        mocked_file.readlines.return_value = """
+Name:           foo
+Version:        %{version}
+Release:        %{release}%{dist}
+%description
+Some description
+%prep
+%autosetup -n %{service}-%{upstream_version} -S git
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm, "foo-1.2.3.tar.gz", "https://example.com/foo/archive/commit/shasum"
+        )
+
+        # Should preserve -S git and add -p1, replace -n
+        self.assertIn("%autosetup -n foo-1.2.3 -S git -p1\n", specfile_content)
+
+        # Test case 2: %autosetup with -S git but no -n
+        mocked_file.readlines.return_value = """
+Name:           foo
+Version:        %{version}
+Release:        %{release}%{dist}
+%description
+Some description
+%prep
+%autosetup -S git
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm, "foo-1.2.3.tar.gz", "https://example.com/foo/archive/commit/shasum"
+        )
+
+        # Should preserve -S git, add -n and -p1
+        self.assertIn("%autosetup -n foo-1.2.3 -S git -p1\n", specfile_content)
+
+        # Test case 3: %autosetup with -S git and -p2
+        mocked_file.readlines.return_value = """
+Name:           foo
+Version:        %{version}
+Release:        %{release}%{dist}
+%description
+Some description
+%prep
+%autosetup -n something -S git -p2
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm, "foo-1.2.3.tar.gz", "https://example.com/foo/archive/commit/shasum"
+        )
+
+        # Should preserve -S git and -p2, replace -n
+        self.assertIn("%autosetup -n foo-1.2.3 -S git -p2\n", specfile_content)
+
+        # Test case 4: %autosetup with other options
+        mocked_file.readlines.return_value = """
+Name:           foo
+Version:        %{version}
+Release:        %{release}%{dist}
+%description
+Some description
+%prep
+%autosetup -v -N
+%changelog
+        """.splitlines()
+
+        specfile_content = await RPMBuilder._populate_specfile_async(
+            rpm, "foo-1.2.3.tar.gz", "https://example.com/foo/archive/commit/shasum"
+        )
+
+        # Should preserve -v -N, add -n and -p1
+        self.assertIn("%autosetup -n foo-1.2.3 -v -N -p1\n", specfile_content)
+
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_gather_async")
     async def test_build_target_async(self, mocked_cmd_gather_async: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"

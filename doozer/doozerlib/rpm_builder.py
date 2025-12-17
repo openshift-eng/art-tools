@@ -377,7 +377,22 @@ class RPMBuilder:
             elif line.startswith("%setup"):
                 lines[i] = f"%setup -q -n {rpm.config.name}-{rpm.version}\n"
             elif line.startswith("%autosetup"):
-                lines[i] = f"%autosetup -n {rpm.config.name}-{rpm.version} -p1\n"
+                # Preserve original options, only override -n and add -p1 if -p not present
+                original_line = lines[i].strip()
+
+                # Replace -n option with our value, or add it if not present
+                if re.search(r'-n\s+\S+', original_line):
+                    # Replace existing -n option
+                    new_line = re.sub(r'-n\s+\S+', f'-n {rpm.config.name}-{rpm.version}', original_line)
+                else:
+                    # Add -n option after %autosetup
+                    new_line = original_line.replace('%autosetup', f'%autosetup -n {rpm.config.name}-{rpm.version}', 1)
+
+                # Add -p1 if no -p option is present
+                if not re.search(r'-p\d*', new_line):
+                    new_line = new_line + ' -p1'
+
+                lines[i] = new_line + '\n'
             elif line.startswith("%changelog"):
                 changelog_added = True
                 lines[i] = f"{lines[i].strip()}\n{changelog_title}\n- Update to source commit {source_commit_url}\n"
