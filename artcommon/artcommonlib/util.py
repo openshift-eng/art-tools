@@ -742,7 +742,16 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             raise ValueError(
                 "Product parameter is required to determine the registry namespace for image transformation"
             )
-        registry_transform_pattern = rf'registry\.redhat\.io/{product}/[^@]*'
+
+        # Map product names to registry namespaces
+        # OCP uses 'openshift4' namespace in registry.redhat.io
+        product_to_namespace = {
+            'ocp': 'openshift4',
+        }
+        registry_namespace = product_to_namespace.get(product, product)
+        logger.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
+
+        registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
 
         related_images = []
         related_images_path = os.path.join(temp_dir, 'related-images.json')
@@ -754,8 +763,8 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             logger.info(f"Found {len(raw_images)} images in related-images.json")
 
             for img_url in raw_images:
-                # Check if the URL matches the product namespace pattern
-                if f'registry.redhat.io/{product}/' in img_url:
+                # Check if the URL matches the registry namespace pattern
+                if f'registry.redhat.io/{registry_namespace}/' in img_url:
                     # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                     transformed_url = re.sub(
                         registry_transform_pattern,
@@ -788,11 +797,11 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
                 found_images = re.findall(registry_pattern, catalog_content)
 
-                # Use the same product namespace for catalog.json fallback
+                # Use the same registry namespace for catalog.json fallback
                 for img_url in found_images:
                     img_url = img_url.rstrip('",')
-                    # Check if the URL matches the product namespace pattern
-                    if f'registry.redhat.io/{product}/' in img_url:
+                    # Check if the URL matches the registry namespace pattern
+                    if f'registry.redhat.io/{registry_namespace}/' in img_url:
                         transformed_url = re.sub(
                             registry_transform_pattern,
                             'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
