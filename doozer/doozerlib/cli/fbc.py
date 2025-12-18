@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -721,18 +722,42 @@ class FbcRebaseAndBuildCli:
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        successful_nvrs = []
         failed_tasks = []
+        errors = []
+
         for dgk, result in zip(dgk_bundle_builds, results):
             if isinstance(result, Exception):
                 failed_tasks.append(dgk)
                 stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to rebase/build FBC for {dgk}: {result}; {stack_trace}")
+                error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
+                error_details = {
+                    "operator": dgk,
+                    "operator_nvr": dgk_operator_builds[dgk].nvr,
+                    "bundle_nvr": dgk_bundle_builds[dgk].nvr,
+                    "error": str(result),
+                    "traceback": stack_trace,
+                }
+                errors.append(error_details)
+                LOGGER.error(f"{error_msg}; {stack_trace}")
+            else:
+                successful_nvrs.append(result)
 
-        if failed_tasks:
-            raise DoozerFatalError(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
         if self.output == 'json':
-            click.echo(json.dumps({"nvrs": results}, indent=4))
-        LOGGER.info("FBC rebase and build process completed successfully for all operators")
+            output_data = {
+                "nvrs": successful_nvrs,
+                "errors": errors,
+                "failed_count": len(failed_tasks),
+                "success_count": len(successful_nvrs),
+            }
+            click.echo(json.dumps(output_data, indent=4))
+            if failed_tasks:
+                LOGGER.error(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+                sys.exit(1)
+        else:
+            if failed_tasks:
+                raise DoozerFatalError(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+            LOGGER.info("FBC rebase and build process completed successfully for all operators")
 
 
 @cli.command("beta:fbc:rebase-and-build", short_help="Rebase FBC source content and then build it")

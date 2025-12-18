@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -106,6 +107,7 @@ class PrepareReleaseKonfluxPipeline:
         self.updated_assembly_group_config = None
         self.olm_operators = None
         self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
+        self.fbc_build_errors = []  # Track FBC build errors for UNSTABLE marking
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -226,6 +228,23 @@ class PrepareReleaseKonfluxPipeline:
 
         await self.set_shipment_mr_ready()
         await self.verify_payload()
+
+        # Check for FBC build errors and exit with code 2 for UNSTABLE status
+        if self.fbc_build_errors:
+            error_count = len(self.fbc_build_errors)
+            error_summary = f"Completed with {error_count} FBC build error(s):\n" + "\n".join(
+                f"  - {error.split(chr(10))[0]}"
+                for error in self.fbc_build_errors  # Only include first line of each error
+            )
+            self.logger.warning(error_summary)
+            await self._slack_client.say_in_thread(
+                f":warning: prepare-release-konflux completed with {error_count} FBC build error(s). "
+                f"Successfully built FBC builds have been attached. Job marked as UNSTABLE.\n"
+                f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in self.fbc_build_errors)}"
+            )
+            # Exit with code 2 to mark Jenkins job as UNSTABLE
+            # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
+            sys.exit(2)
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -509,9 +528,20 @@ class PrepareReleaseKonfluxPipeline:
         # make sure that fbc shipment needs to be prepared
         # find and build any missing fbc builds
         if "fbc" in shipments_by_kind:
-            kind_to_builds["fbc"] = await self.find_or_build_fbc_builds(
+            fbc_builds, fbc_errors = await self.find_or_build_fbc_builds(
                 kind_to_builds["extras"] + kind_to_builds["image"]
             )
+            kind_to_builds["fbc"] = fbc_builds
+            if fbc_errors:
+                # Track FBC build errors for later reporting
+                for error in fbc_errors:
+                    error_summary = (
+                        f"FBC build failed for operator={error.get('operator')}, "
+                        f"operator_nvr={error.get('operator_nvr')}, "
+                        f"bundle_nvr={error.get('bundle_nvr')}: {error.get('error')}\n"
+                        f"Traceback: {error.get('traceback')}"
+                    )
+                    self.fbc_build_errors.append(error_summary)
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
@@ -604,7 +634,7 @@ class PrepareReleaseKonfluxPipeline:
         olm_operators = await get_olm_operators()
         return [nvr for nvr in nvrs if parse_nvr(nvr)["name"] in olm_operators]
 
-    async def find_or_build_fbc_builds(self, nvrs: list[str]) -> list[str]:
+    async def find_or_build_fbc_builds(self, nvrs: list[str]) -> tuple[list[str], list[dict]]:
         """
         For the given list of NVRs, determine which are OLM operators and fetch FBC builds for them.
         Trigger FBC builds for them if needed.
@@ -613,7 +643,12 @@ class PrepareReleaseKonfluxPipeline:
             nvrs (list[str]): List of NVRs to check and build FBC for.
 
         Returns:
-            list[str]: List of FBC NVRs that were found or built.
+            tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
+                - successful_nvrs: List of FBC NVRs that were successfully found or built.
+                - errors: List of error dictionaries with details about failed builds.
+
+        Raises:
+            IOError: If the command produces no parseable output.
         """
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
 
@@ -633,8 +668,42 @@ class PrepareReleaseKonfluxPipeline:
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
-        stdout = await self.execute_command_with_logging(cmd)
-        return json.loads(stdout).get("nvrs", []) if stdout else []
+
+        # Run command and tolerate non-zero exit code
+        # The doozer command returns partial results in JSON even on failure
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+
+        # Parse JSON output to get both successful builds and errors
+        try:
+            output_data = json.loads(stdout)
+        except json.JSONDecodeError as ex:
+            error_msg = f"Failed to parse FBC rebase-and-build JSON output (rc={rc}): {ex}"
+            if stdout:
+                error_msg += f"\nStdout: {stdout}"
+            if stderr:
+                error_msg += f"\nStderr: {stderr}"
+            self.logger.error(error_msg)
+            raise IOError(error_msg)
+
+        successful_nvrs = output_data.get("nvrs", [])
+        errors = output_data.get("errors", [])
+        failed_count = output_data.get("failed_count", 0)
+        success_count = output_data.get("success_count", 0)
+
+        if errors:
+            self.logger.warning(
+                f"FBC rebase-and-build completed with {failed_count} failure(s) and {success_count} success(es)"
+            )
+            for error in errors:
+                error_msg = (
+                    f"Failed to build FBC for operator={error.get('operator')}, "
+                    f"operator_nvr={error.get('operator_nvr')}, "
+                    f"bundle_nvr={error.get('bundle_nvr')}: {error.get('error')}"
+                )
+                self.logger.error(error_msg)
+
+        self.logger.info(f"Returning {len(successful_nvrs)} successful FBC build(s)")
+        return successful_nvrs, errors
 
     async def find_or_build_bundle_builds(self, nvrs: list[str]) -> list[str]:
         """
