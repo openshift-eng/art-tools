@@ -356,6 +356,8 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
     for key, config in rhcos_config.items():
         if key not in rhcos_payload_tags:
             continue
+        if key in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+            continue
 
         for arch, pullspec in config['images'].items():
             build_id = get_build_id_from_rhcos_pullspec(pullspec)
