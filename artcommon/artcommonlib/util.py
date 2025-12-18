@@ -652,12 +652,11 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :return: List of image pullspecs from art-images repository
     """
-    logger = LOGGER.getChild("extract_related_images_from_fbc")
-    logger.info(f"Extracting related images from FBC: {fbc_pullspec}")
+    LOGGER.info(f"Extracting related images from FBC: {fbc_pullspec}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Step 1: Discover attached artifacts using ORAS
-        logger.info("Discovering attached artifacts...")
+        LOGGER.info("Discovering attached artifacts...")
         discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
         rc, discover_output, discover_stderr = await cmd_gather_async(discover_cmd, cwd=temp_dir)
 
@@ -668,17 +667,17 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
         # Parse JSON and extract digest for the attached artifact
         discover_data = json.loads(discover_output)
-        logger.debug(f"ORAS discover response: {discover_data}")
+        LOGGER.debug(f"ORAS discover response: {discover_data}")
 
         digest = None
         referrers = discover_data.get('referrers', [])
-        logger.info(f"Found {len(referrers)} referrers")
+        LOGGER.info(f"Found {len(referrers)} referrers")
 
         for i, referrer in enumerate(referrers):
             artifact_type = referrer.get('artifactType')
             annotations = referrer.get('annotations', {})
             attached_media_type = annotations.get('attachedMediaType', '')
-            logger.debug(
+            LOGGER.debug(
                 f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
             )
 
@@ -688,7 +687,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 and 'related-images' in attached_media_type
             ):
                 digest = referrer.get('digest')
-                logger.info(f"Found related-images artifact with digest: {digest}")
+                LOGGER.info(f"Found related-images artifact with digest: {digest}")
                 break
 
         if not digest:
@@ -698,7 +697,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             )
 
         # Step 2: Pull the attached artifact
-        logger.info(f"Pulling attached artifact with digest: {digest}")
+        LOGGER.info(f"Pulling attached artifact with digest: {digest}")
         # Extract the base registry and repo from the original FBC pullspec
         # We need to preserve the full repository path, only remove the tag/digest
         if '@' in fbc_pullspec:
@@ -717,7 +716,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             base_pullspec = fbc_pullspec
         artifact_pullspec = f"{base_pullspec}@{digest}"
         pull_cmd = ['oras', 'pull', artifact_pullspec]
-        logger.info(f"Pulling from: {artifact_pullspec}")
+        LOGGER.info(f"Pulling from: {artifact_pullspec}")
         rc, pull_output, pull_stderr = await cmd_gather_async(pull_cmd, cwd=temp_dir)
 
         if rc != 0:
@@ -727,15 +726,15 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
         # Step 3: Read and process the catalog file
         pulled_files = os.listdir(temp_dir)
-        logger.info(f"Files found in pulled artifact: {pulled_files}")
+        LOGGER.info(f"Files found in pulled artifact: {pulled_files}")
 
         # Debug: Show the contents of each file for analysis
         for file in pulled_files:
             if file.endswith('.json'):
-                logger.debug(f"Contents of {file}:")
+                LOGGER.debug(f"Contents of {file}:")
                 with open(os.path.join(temp_dir, file), 'r') as f:
                     content = f.read()
-                    logger.debug(f"{file}: {content[:200]}...")  # First 200 chars
+                    LOGGER.debug(f"{file}: {content[:200]}...")  # First 200 chars
 
         # Transform the URLs - require product name to be specified
         if not product:
@@ -749,18 +748,18 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             'ocp': 'openshift4',
         }
         registry_namespace = product_to_namespace.get(product, product)
-        logger.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
+        LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
 
         registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
 
         related_images = []
         related_images_path = os.path.join(temp_dir, 'related-images.json')
         if os.path.exists(related_images_path):
-            logger.info("Reading related-images.json...")
+            LOGGER.info("Reading related-images.json...")
             with open(related_images_path, 'r') as f:
                 raw_images = json.load(f)
 
-            logger.info(f"Found {len(raw_images)} images in related-images.json")
+            LOGGER.info(f"Found {len(raw_images)} images in related-images.json")
 
             for img_url in raw_images:
                 # Check if the URL matches the registry namespace pattern
@@ -772,23 +771,23 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                         img_url,
                     )
                     related_images.append(transformed_url)
-                    logger.debug(f"Transformed: {img_url} -> {transformed_url}")
+                    LOGGER.debug(f"Transformed: {img_url} -> {transformed_url}")
                 else:
                     related_images.append(img_url)
-                    logger.debug(f"Using as-is: {img_url}")
+                    LOGGER.debug(f"Using as-is: {img_url}")
 
-            logger.info(f"Processed {len(related_images)} images from related-images.json")
+            LOGGER.info(f"Processed {len(related_images)} images from related-images.json")
 
             # Print all transformed pull specs for debugging
-            logger.info("=== TRANSFORMED PULL SPECS ===")
+            LOGGER.info("=== TRANSFORMED PULL SPECS ===")
             for i, img in enumerate(related_images, 1):
-                logger.info(f"{i:2d}. {img}")
-            logger.info("=== END TRANSFORMED PULL SPECS ===")
+                LOGGER.info(f"{i:2d}. {img}")
+            LOGGER.info("=== END TRANSFORMED PULL SPECS ===")
 
         else:
             catalog_json_path = os.path.join(temp_dir, 'catalog.json')
             if os.path.exists(catalog_json_path):
-                logger.warning(
+                LOGGER.warning(
                     "related-images.json not found, falling back to catalog.json (this may extract many images)"
                 )
                 with open(catalog_json_path, 'r') as f:
@@ -812,17 +811,17 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                         related_images.append(img_url)
 
                 related_images = list(set(related_images))
-                logger.warning(f"Extracted {len(related_images)} unique images from catalog.json")
+                LOGGER.warning(f"Extracted {len(related_images)} unique images from catalog.json")
             else:
                 raise RuntimeError(
                     f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
                 )
 
         if not related_images:
-            logger.error("No image URLs found in catalog file")
+            LOGGER.error("No image URLs found in catalog file")
             raise RuntimeError("No image URLs extracted from FBC catalog")
 
-    logger.info(f"Extracted {len(related_images)} image pullspecs from FBC")
+    LOGGER.info(f"Extracted {len(related_images)} image pullspecs from FBC")
     return related_images
 
 
