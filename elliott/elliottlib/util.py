@@ -491,6 +491,7 @@ def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) 
 
     logger.info(f'Getting build records for {len(nvrs)} nvrs from KonfluxDB')
 
+    # Need installed_packages column for golang builder image detection
     all_build_objs = _executor.submit(
         lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
     ).result()

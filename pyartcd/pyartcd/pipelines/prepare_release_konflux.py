@@ -566,7 +566,10 @@ class PrepareReleaseKonfluxPipeline:
         image_builds = kind_to_builds['image'] + kind_to_builds['extras']
         kdb = KonfluxDb()
         kdb.bind(KonfluxBundleBuildRecord)
-        tasks = [kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS) for build in olm_builds]
+        tasks = [
+            kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True)
+            for build in olm_builds
+        ]
         olm_records = await asyncio.gather(*tasks)
         missing_references = []
         for record in filter(None, olm_records):

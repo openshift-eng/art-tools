@@ -270,6 +270,7 @@ class ImageMetadata(Metadata):
                     artifact_type=ArtifactType.IMAGE,
                     engine=Engine.KONFLUX,
                     outcome=KonfluxBuildOutcome.SUCCESS,
+                    exclude_large_columns=True,
                 )
 
             build = asyncio.run(get_latest_konflux_build())

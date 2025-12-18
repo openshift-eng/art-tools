@@ -114,7 +114,9 @@ class FindUnconsumedRpms:
             image for image in self._runtime.image_metas() if not image.base_only and image.is_release
         ]
         logger.info("Fetching Brew builds for %s component(s)...", len(image_metas))
-        brew_builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
+        brew_builds: List[Dict] = await asyncio.gather(
+            *[image.get_latest_build(exclude_large_columns=True) for image in image_metas]
+        )
 
         logger.info("Retrieve RPMs in %s image build(s)...", len(brew_builds))
         build_archives = FindUnconsumedRpms._list_archives_by_builds([b["id"] for b in brew_builds], "image", koji_api)

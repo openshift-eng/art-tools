@@ -493,7 +493,7 @@ class FbcRebaseAndBuildCli:
         if operator_nvrs:
             # Get build records for the given operator nvrs
             LOGGER.info("Fetching given nvrs from Konflux DB...")
-            records = await self.runtime.konflux_db.get_build_records_by_nvrs(operator_nvrs)
+            records = await self.runtime.konflux_db.get_build_records_by_nvrs(operator_nvrs, exclude_large_columns=True)
             for record in records:
                 assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
                 dgk_records[record.name] = record
@@ -511,7 +511,9 @@ class FbcRebaseAndBuildCli:
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in self.runtime.ordered_image_metas() if operator_meta.is_olm_operator
             ]
-            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            records = await asyncio.gather(
+                *(metadata.get_latest_build(exclude_large_columns=True) for metadata in operator_metas)
+            )
             not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
             if not_found:
                 raise DoozerFatalError(f"Couldn't find build records for {not_found}")

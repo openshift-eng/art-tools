@@ -498,7 +498,9 @@ async def _fetch_builds_by_kind_image(
         'Generating list of images: ', f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...'
     )
 
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+    tasks = [
+        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
+    ]
     brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
@@ -580,7 +582,7 @@ async def _fetch_builds_by_kind_rpm(
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
             tasks = [
-                rpm.get_latest_build(default=None, el_target=tag)
+                rpm.get_latest_build(default=None, el_target=tag, exclude_large_columns=True)
                 for rpm in runtime.rpm_metas()
                 if tag in rpm.determine_targets()
             ]
@@ -721,7 +723,9 @@ async def find_builds_konflux(runtime, payload):
         image_metas.append(image)
 
     LOGGER.info("Fetching NVRs from DB...")
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+    tasks = [
+        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
+    ]
     records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
     if len(records) != len(image_metas):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
@@ -770,7 +774,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target()))
+        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
     results = await asyncio.gather(*[task for task in tasks])
     records_with_olm = [
         (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None

@@ -58,7 +58,7 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[s
 
     async def _get(db: KonfluxDb, nvrs: list[str]) -> list[KonfluxRecord]:
         try:
-            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+            records = await db.get_build_records_by_nvrs(nvrs, where=where, strict=True, exclude_large_columns=True)
         except IOError as e:
             LOGGER.warning(
                 "A snapshot is expected to exclusively contain ART built image builds "

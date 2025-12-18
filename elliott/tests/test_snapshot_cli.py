@@ -168,7 +168,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
         records = await cli.fetch_build_records()
         self.assertEqual(records, mock_records)
-        db.get_build_records_by_nvrs.assert_called_once_with(builds, where=ANY, strict=True)
+        db.get_build_records_by_nvrs.assert_called_once_with(builds, where=ANY, strict=True, exclude_large_columns=True)
 
 
 class TestGetSnapshotCli(IsolatedAsyncioTestCase):

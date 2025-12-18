@@ -440,6 +440,7 @@ class KonfluxRebaser:
                     el_target=f'el{parent_metadata.branch_el_target()}',
                     engine=Engine.KONFLUX,
                     group=self.group,
+                    exclude_large_columns=True,
                 )
 
                 if not build:
@@ -2205,6 +2206,7 @@ class KonfluxRebaser:
                 build = await meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
                     engine=Engine.KONFLUX,
+                    exclude_large_columns=True,
                 )
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')

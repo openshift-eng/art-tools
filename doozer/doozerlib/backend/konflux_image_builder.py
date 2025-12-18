@@ -19,6 +19,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -135,18 +136,24 @@ class KonfluxImageBuilder:
             uuid_tag, component_name, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
             nvr = f"{component_name}-{version}-{release}"
 
-            # Sanity check to make sure a successful NVR build doesn't already exist in DB
-            where = {"engine": Engine.KONFLUX.value}
-            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs(
-                [nvr], outcome=KonfluxBuildOutcome.SUCCESS, where=where, strict=False
+            # Sanity check to ensure we're not rebuilding an existing or older NVR
+            latest_build = await metadata.get_latest_build(
+                engine=Engine.KONFLUX.value,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                exclude_large_columns=True,
             )
-            build_records = [b for b in build_records if b]
-            if build_records:
-                raise ValueError(
-                    f"Successful NVR build {nvr} already exists in DB! "
-                    f"pullspec: {build_records[0].image_pullspec}. "
-                    "To rebuild, please do another rebase"
-                )
+            if latest_build:
+                # Parse both NVRs and compare them
+                target_nvr_dict = parse_nvr(nvr)
+                latest_nvr_dict = parse_nvr(latest_build.nvr)
+
+                # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
+                if compare_nvr(target_nvr_dict, latest_nvr_dict) <= 0:
+                    raise ValueError(
+                        f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
+                        f"Latest build pullspec: {latest_build.image_pullspec}. "
+                        "To rebuild, please do another rebase to get a newer NVR"
+                    )
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
