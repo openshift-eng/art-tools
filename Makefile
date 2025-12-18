@@ -7,15 +7,15 @@ venv:
 
 
 format-check:
-	uv run ruff check --select I --output-format concise --config ruff.toml
-	uv run ruff format --check --config ruff.toml
+	uv run ruff check --select I --output-format concise
+	uv run ruff format --check
 
 format:
-	uv run ruff check --select I --fix --config ruff.toml
-	uv run ruff format --config ruff.toml
+	uv run ruff check --select I --fix
+	uv run ruff format
 
 lint: format-check
-	uv run ruff check --output-format concise --config ruff.toml
+	uv run ruff check --output-format concise
 
 pylint:
 	uv run pylint --errors-only .
@@ -37,7 +37,7 @@ test: lint unit
 
 reinstall:
 	# Force reinstall all editable packages (use when source code structure changes)
-	uv pip install --force-reinstall -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
+	uv sync --reinstall
 
 clean-reinstall:
 	# Complete clean reinstall (removes venv and recreates)

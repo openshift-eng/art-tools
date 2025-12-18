@@ -1,0 +1,219 @@
+[project]
+name = "rh-art-tools"
+dynamic = ["version"]
+authors = [{ name = "AOS ART Team", email = "aos-team-art@redhat.com" }]
+description = "Collection of Release tools for managing OpenShift Container Platform (OCP) releases"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["openshift", "errata", "advisory", "release", "build"]
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Environment :: Console",
+    "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Bug Tracking",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+    "Natural Language :: English",
+]
+
+dependencies = [
+    "aiofiles>=25.1.0",
+    "aiohttp[speedups]>=3.13.2",
+    "aiohttp-retry>=2.9.1",
+    "aioredlock>=0.7.3",
+    "async-lru>=2.0.5",
+    "asyncstdlib>=3.13.1",
+    "awscli>=1.44.2",
+    "bashlex>=0.18",
+    "click>=8.1.8",
+    "cryptography>=46.0.3",
+    "defusedxml>=0.7.1",
+    "dockerfile-parse>=2.0.1",
+    "errata-tool~=1.31.0",
+    "future>=1.0.0",
+    "ghapi>=1.0.8",
+    "google-cloud-bigquery>=3.39.0",
+    "gssapi>=1.10.1",
+    "httpx>=0.28.1",
+    "importlib-resources>=6.5.2",
+    "jenkinsapi>=0.3.17",
+    "jinja2>=3.1.6",
+    "jira>=3.10.5",
+    "jsonschema~=4.0.0",
+    "koji>=1.35.3",
+    "kubernetes~=28.0",
+    "mysql-connector-python>=9.5.0",
+    "nest-asyncio>=1.6.0",
+    "openshift~=0.13.2",
+    "openshift-client~=2.0.1",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
+    "packageurl-python>=0.17.6",
+    "packaging>=25.0",
+    "pip-system-certs>=5.3",
+    "prettytable>=3.17.0",
+    "pycares>=4.0.0,<5.0.0",
+    "pydantic>=2.12.5",
+    "pygit2>=1.19.0",
+    "pygithub==1.59.1",
+    "python-bugzilla>=3.3.0",
+    "python-dateutil>=2.9.0.post0",
+    "python-gitlab>=7.0.0",
+    "pyyaml>=6.0.3",
+    "redis>=7.1.0",
+    "requests>=2.32.5",
+    "requests-gssapi~=1.2.3",
+    "requests-kerberos>=0.15.0",
+    "ruamel-yaml>=0.18.16",
+    "schema>=0.7.8",
+    "semver~=3.0.1",
+    "slack-bolt>=1.27.0",
+    "slack-sdk>=3.39.0",
+    "specfile>=0.37.1; sys_platform == 'linux'",
+    "sqlalchemy>=2.0.45",
+    "stomp-py~=8.1.0",
+    "tenacity>=8.5.0",
+    "tomli~=2.0.1",
+    "truststore>=0.10.4",
+    "urllib3>=1.26.20",
+]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.13.0",
+    "flexmock>=0.12.2",
+    "mock>=5.2.0",
+    "mypy>=1.19.1",
+    "parameterized>=0.9.0",
+    "pylint>=4.0.4",
+    "pytest>=8.0.2",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.14.9",
+    "tox>=4.32.0",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "artcommon/artcommonlib",
+    "doozer/doozerlib",
+    "elliott/elliottlib",
+    "pyartcd/pyartcd",
+    "ocp-build-data-validator/validator",
+]
+
+[tool.hatch.build.targets.wheel.sources]
+"artcommon/artcommonlib" = "artcommonlib"
+"doozer/doozerlib" = "doozerlib"
+"elliott/elliottlib" = "elliottlib"
+"pyartcd/pyartcd" = "pyartcd"
+"ocp-build-data-validator/validator" = "validator"
+
+[project.scripts]
+artcd = "pyartcd.__main__:main"
+doozer = "doozerlib.cli.__main__:main"
+elliott = "elliottlib.cli.__main__:main"
+validate-ocp-build-data = "validator.__main__:main"
+
+[project.urls]
+homepage = "https://github.com/openshift-eng/art-tools"
+repository = "https://github.com/openshift-eng/art-tools.git"
+
+
+[tool.ruff]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+line-length = 120
+indent-width = 4
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # isort
+    "I",
+    # pyupgrade
+    # "UP",
+    # flake8-bugbear
+    # "B",
+    # flake8-simplify
+    # "SIM",
+]
+ignore = [
+    # imported but unused
+    # __init__ often imports to make available
+    # but does not use
+    "F401",
+    # bare except
+    "E722",
+    # ignore pyflakes lint warning about line too long
+    # which affects only string values
+    # does not affect code as that is auto-formatted to
+    # max line length
+    "E501",
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
