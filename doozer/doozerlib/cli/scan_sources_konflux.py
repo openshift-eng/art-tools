@@ -367,7 +367,7 @@ class ConfigScanSources:
 
         async def _find_target_build(rpm_meta, el_target):
             rpm_name = rpm_meta.rpm_name
-            build_record = await rpm_meta.get_latest_build(el_target=el_target, engine=Engine.BREW.value)
+            build_record = await rpm_meta.get_latest_build(default=None, el_target=el_target, engine=Engine.BREW.value)
             if not self.latest_rpm_build_records_map.get(rpm_name):
                 self.latest_rpm_build_records_map[rpm_name] = {}
             self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
@@ -381,7 +381,10 @@ class ConfigScanSources:
         self.logger.info('Gathering latest image build records information...')
         # Need installed_packages column for RPM analysis in scan_rpm_changes, so don't exclude any columns
         latest_image_builds = await asyncio.gather(
-            *[self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names]
+            *[
+                self.runtime.image_map[name].get_latest_build(default=None, engine=Engine.KONFLUX.value)
+                for name in image_names
+            ]
         )
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
@@ -538,7 +541,7 @@ class ConfigScanSources:
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
-            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}
+            default=None, engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -573,7 +576,7 @@ class ConfigScanSources:
 
         # Check whether a build attempt with this commit has failed before.
         failed_commit_build_record = await image_meta.get_latest_build(
-            extra_patterns={'commitish': upstream_commit_hash}, outcome=KonfluxBuildOutcome.FAILURE
+            default=None, extra_patterns={'commitish': upstream_commit_hash}, outcome=KonfluxBuildOutcome.FAILURE
         )
 
         # If not, this is a net-new upstream commit. Build it.
@@ -1211,7 +1214,7 @@ class ConfigScanSources:
 
             # Check if most recent build failed
             latest_failed_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target, engine=Engine.BREW.value, outcome=KonfluxBuildOutcome.FAILURE
+                default=None, el_target=el_target, engine=Engine.BREW.value, outcome=KonfluxBuildOutcome.FAILURE
             )
             rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or 6
             now = datetime.now(timezone.utc)
@@ -1244,7 +1247,10 @@ class ConfigScanSources:
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
             upstream_commit_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target, extra_patterns={'commitish': upstream_commit_hash}, engine=Engine.BREW.value
+                default=None,
+                el_target=el_target,
+                extra_patterns={'commitish': upstream_commit_hash},
+                engine=Engine.BREW.value,
             )
 
             if not upstream_commit_build_record:

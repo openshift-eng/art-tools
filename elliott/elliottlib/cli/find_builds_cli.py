@@ -721,7 +721,7 @@ async def find_builds_konflux(runtime, payload):
         image_metas.append(image)
 
     LOGGER.info("Fetching NVRs from DB...")
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+    tasks = [image.get_latest_build(default=None, el_target=image.branch_el_target()) for image in image_metas]
     records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
     if len(records) != len(image_metas):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
@@ -770,7 +770,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target()))
+        tasks.append(image.get_latest_build(default=None, el_target=image.branch_el_target()))
     results = await asyncio.gather(*[task for task in tasks])
     records_with_olm = [
         (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None

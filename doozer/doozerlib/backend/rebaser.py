@@ -442,8 +442,6 @@ class KonfluxRebaser:
                     group=self.group,
                 )
 
-                if not build:
-                    raise IOError(f"A build of parent image {member} is not found.")
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False
@@ -2202,8 +2200,6 @@ class KonfluxRebaser:
                     el_target=f'el{meta.branch_el_target()}',
                     engine=Engine.KONFLUX,
                 )
-                if not build:
-                    raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version
                 r = build.release
                 image_tag = '{}:{}-{}'.format(meta.image_name_short, v, r)
