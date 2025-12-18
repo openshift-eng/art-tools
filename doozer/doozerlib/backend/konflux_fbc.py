@@ -1194,7 +1194,7 @@ class KonfluxFbcBuilder:
                 share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_ART_IMAGES_SHARE)
 
                 if await self._check_image_exists(share_pullspec, logger):
-                    logger.debug(f"Image already exists in art-images-share: {share_pullspec}")
+                    logger.info(f"Image already exists in art-images-share: {share_pullspec}")
                 else:
                     logger.info(f"Syncing {image_pullspec} to art-images-share")
                     try:
