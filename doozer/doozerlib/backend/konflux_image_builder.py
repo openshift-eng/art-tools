@@ -18,7 +18,7 @@ from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
-from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -692,11 +692,15 @@ class KonfluxImageBuilder:
         build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
         build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
 
+        # Extract the el_target (e.g., 'el9' for OCP or 'scos9' for OKD) from the release string
+        _, el_suffix = split_el_suffix_in_release(release)
+        el_target_value = el_suffix if el_suffix else f'el{isolate_el_version_in_release(release)}'
+
         build_record_params = {
             'name': metadata.distgit_key,
             'version': version,
             'release': release,
-            'el_target': f'el{isolate_el_version_in_release(release)}',
+            'el_target': el_target_value,
             'arches': building_arches,
             'embargoed': is_release_embargoed(release, 'konflux'),
             'hermetic': metadata.get_konflux_network_mode() == "hermetic",
