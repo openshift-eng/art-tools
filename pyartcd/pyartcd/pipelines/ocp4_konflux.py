@@ -27,8 +27,6 @@ from pyartcd.util import (
     reset_rebase_fail_counter,
 )
 
-LOGGER = logging.getLogger(__name__)
-
 
 class BuildStrategy(Enum):
     ALL = 'all'
@@ -86,6 +84,7 @@ class KonfluxOcp4Pipeline:
         use_mass_rebuild_locks: bool = False,
         network_mode: Optional[str] = None,
     ):
+        self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.version = version
@@ -208,15 +207,15 @@ class KonfluxOcp4Pipeline:
     async def rebase_images(self, version: str, input_release: str):
         # Skip rebase if the flag is set
         if self.skip_rebase:
-            LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
+            self.logger.warning("Skipping rebase step because --skip-rebase flag is set")
             return
 
         # If no images are being built, skip the rebase step
         if not self.building_images():
-            LOGGER.warning('No images will be rebased')
+            self.logger.warning('No images will be rebased')
             return
 
-        LOGGER.info(f"Rebasing images for OCP {self.version} with release {self.release}")
+        self.logger.info(f"Rebasing images for OCP {self.version} with release {self.release}")
 
         cmd = self._doozer_base_command.copy()
         if self.arches:
@@ -250,7 +249,7 @@ class KonfluxOcp4Pipeline:
                 raise  # Something else went wrong
 
             # Some images failed to rebase: log them, and track them in Redis
-            LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
+            self.logger.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
             await self.update_rebase_fail_counters(failed_images)
 
             # Exclude images that failed to rebase from the build step
@@ -272,10 +271,10 @@ class KonfluxOcp4Pipeline:
 
     async def build_images(self):
         if not self.building_images():
-            LOGGER.warning('No images will be built')
+            self.logger.warning('No images will be built')
             return
 
-        LOGGER.info(f"Building images for OCP {self.version} with release {self.release}")
+        self.logger.info(f"Building images for OCP {self.version} with release {self.release}")
 
         cmd = self._doozer_base_command.copy()
         if self.arches:
@@ -306,27 +305,27 @@ class KonfluxOcp4Pipeline:
             cmd.append('--dry-run')
 
         # Add build priority. Can be a str between "1" (highest priority) - "10" or "auto"
-        LOGGER.info(f"Using build priority: {self.build_priority}")
+        self.logger.info(f"Using build priority: {self.build_priority}")
         cmd.extend(['--build-priority', self.build_priority])
 
         await exectools.cmd_assert_async(cmd)
 
-        LOGGER.info("All builds completed successfully")
+        self.logger.info("All builds completed successfully")
 
     async def sync_images(self):
         if not self.building_images():
-            LOGGER.warning('No images will be synced')
+            self.logger.warning('No images will be synced')
             return
 
         if self.runtime.dry_run:
-            LOGGER.info('Not syncing images in dry run mode')
+            self.logger.info('Not syncing images in dry run mode')
             return
 
-        LOGGER.info('Syncing images...')
+        self.logger.info('Syncing images...')
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.error('record.log not found!')
+            self.logger.error('record.log not found!')
             return
 
         built_images = [entry['name'] for entry in record_log['image_build_konflux'] if not int(entry['status'])]
@@ -338,7 +337,7 @@ class KonfluxOcp4Pipeline:
 
         if not built_images:
             # Nothing to do, skipping build-sync
-            LOGGER.info('All image builds failed, nothing to sync')
+            self.logger.info('All image builds failed, nothing to sync')
             return
 
         if self.assembly == 'test':
@@ -376,24 +375,90 @@ class KonfluxOcp4Pipeline:
         # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.warning('record.log not found, skipping CI mirroring check')
+            self.logger.warning('record.log not found, skipping CI mirroring check')
             return
 
         built_images = {
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
         }
         if built_images.get('ose-openshift-apiserver', None):
-            LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
+            self.logger.warning('apiserver rebuilt: mirroring streams to CI...')
 
-            # Make sure our api.ci token is fresh
-            await oc.registry_login()
+            # The default auth.json already has working credentials for QCI/Release/CI registries
+            # We just need to add the Konflux credentials to it
+            runtime_dir = os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')
+            default_auth_file = os.path.join(runtime_dir, 'containers', 'auth.json')
 
-            # Log into QCI registry
-            await oc.qci_registry_login()
+            # Read existing credentials
+            existing_auths = {}
+            if os.path.exists(default_auth_file):
+                try:
+                    with open(default_auth_file, 'r') as f:
+                        existing_config = json.load(f)
+                        existing_auths = existing_config.get('auths', {})
+                        if existing_auths:
+                            sample_registry = list(existing_auths.keys())[0]
+
+                except Exception as e:
+                    self.logger.error(f'Failed to read existing auth file: {e}')
+                    raise
+
+            else:
+                self.logger.warning(f'No existing credentials found at {default_auth_file}')
+
+            # Add Konflux credentials (filtered to avoid conflicts)
+            konflux_auth_file = os.environ.get('KONFLUX_ART_IMAGES_AUTH_FILE')
+            if konflux_auth_file and os.path.exists(konflux_auth_file):
+                try:
+                    with open(konflux_auth_file, 'r') as f:
+                        konflux_config = json.load(f)
+                        konflux_auths = konflux_config.get('auths', {})
+
+                        # Only add redhat-user-workloads credentials (Konflux source images)
+                        # Skip any openshift-release-dev or openshift org credentials to avoid conflicts
+                        added_count = 0
+                        for registry, creds in konflux_auths.items():
+                            if registry.startswith('quay.io/redhat-user-workloads/'):
+                                existing_auths[registry] = creds
+                                added_count += 1
+                                self.logger.info(f'Added Konflux credential for {registry}')
+                            else:
+                                self.logger.debug(
+                                    f'Skipping Konflux credential for {registry} (using existing credentials)'
+                                )
+                        self.logger.info(f'Added {added_count} Konflux credentials for redhat-user-workloads')
+
+                except Exception as e:
+                    self.logger.error(f'Failed to read Konflux auth file: {e}')
+                    raise
+            else:
+                self.logger.warning(f'Konflux auth file not found or not set: {konflux_auth_file}')
+
+            # Write merged credentials back to the default location
+            try:
+                merged_config = {'auths': existing_auths}
+                with open(default_auth_file, 'w') as f:
+                    json.dump(merged_config, f, indent=2)
+
+                # Verify the writing was successful
+                with open(default_auth_file, 'r') as f:
+                    verify_config = json.load(f)
+                    verify_auths = verify_config.get('auths', {})
+                    if len(verify_auths) != len(existing_auths):
+                        self.logger.error(
+                            f'VERIFICATION FAILED - Expected {len(existing_auths)} entries, got {len(verify_auths)}'
+                        )
+
+            except Exception as e:
+                self.logger.error(f'Failed to write merged auth file: {e}')
+                raise
 
             # Mirror out ART equivalent images to CI
+            # Don't pass --registry-auth; let doozer use the default credentials location
             cmd = self._doozer_base_command.copy()
             cmd.extend(['images:streams', 'mirror'])
+            cmd_str = ' '.join(cmd)
+            self.logger.info(f'Executing doozer command: {cmd_str}')
             await exectools.cmd_assert_async(cmd)
 
     async def sweep_bugs(self):
@@ -580,7 +645,7 @@ class KonfluxOcp4Pipeline:
         await self.init_build_plan()
 
     async def clean_up(self):
-        LOGGER.info('Cleaning up Doozer source dirs')
+        self.logger.info('Cleaning up Doozer source dirs')
         await asyncio.gather(
             *[
                 self.runtime.cleanup_sources('sources'),
@@ -594,12 +659,12 @@ class KonfluxOcp4Pipeline:
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
-            LOGGER.warning("Skipping bundle build step because --skip-bundle-build flag is set")
+            self.logger.warning("Skipping bundle build step because --skip-bundle-build flag is set")
             return
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.warning('record.log not found, skipping bundle build')
+            self.logger.warning('record.log not found, skipping bundle build')
             return
 
         try:
@@ -617,7 +682,7 @@ class KonfluxOcp4Pipeline:
                     doozer_data_gitref=self.data_gitref or '',
                 )
         except Exception as e:
-            LOGGER.exception(f"Failed to trigger bundle build: {e}")
+            self.logger.exception(f"Failed to trigger bundle build: {e}")
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
@@ -665,18 +730,18 @@ class KonfluxOcp4Pipeline:
         """
 
         if not self.building_images():
-            LOGGER.warning('No images will be mirrored')
+            self.logger.warning('No images will be mirrored')
             return
 
         if self.runtime.dry_run:
-            LOGGER.info('Not mirroring images in dry run mode')
+            self.logger.info('Not mirroring images in dry run mode')
             return
 
-        LOGGER.info(f'Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...')
+        self.logger.info(f'Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...')
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.error('record.log not found!')
+            self.logger.error('record.log not found!')
             return
 
         # Get the list of successful builds
@@ -687,11 +752,11 @@ class KonfluxOcp4Pipeline:
             image_pullspec = build["image_pullspec"]
 
             if self.assembly != "stream":
-                LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
+                self.logger.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
                 return
 
             if is_release_embargoed(release=release, build_system="konflux"):
-                LOGGER.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
+                self.logger.info(f"Not syncing {image_pullspec} because it is in an embargoed release")
                 return
 
             image_tag = build["image_tag"]
@@ -734,7 +799,7 @@ class KonfluxOcp4Pipeline:
                 await self.sweep_bugs()
                 await self.sweep_golang_bugs()
             else:
-                LOGGER.info(
+                self.logger.info(
                     f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
                 )
 
@@ -745,7 +810,7 @@ class KonfluxOcp4Pipeline:
         if (
             self.build_plan.rpm_build_strategy == BuildStrategy.ONLY and not self.build_plan.rpms_included
         ) or self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
-            LOGGER.warning('No RPMs will be built')
+            self.logger.warning('No RPMs will be built')
             return
 
         cmd = self._doozer_base_command.copy()
