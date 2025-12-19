@@ -819,7 +819,8 @@ class KonfluxRebaser:
     ) -> str:
         """Given a input_release string (may contain .p?), make an actual release string.
 
-        e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.el9
+        e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.el9 (OCP)
+             4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9 (OKD)
         """
         sb = io.StringIO()
         if input_release.endswith(".p?"):
@@ -848,7 +849,10 @@ class KonfluxRebaser:
         except ValueError:
             pass
         if el_ver:
-            sb.write(".el")
+            if self.variant is BuildVariant.OKD:
+                sb.write(".scos")
+            else:
+                sb.write(".el")
             sb.write(str(el_ver))
         return sb.getvalue()
 
