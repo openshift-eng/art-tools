@@ -609,3 +609,118 @@ USER 3000
         mock_metadata.is_dnf_modules_enable_enabled.assert_called_once()
         mock_metadata.branch_el_target.assert_called_once()
         mock_metadata.get_lockfile_modules_to_install.assert_called_once()
+
+    def test_make_actual_release_string_ocp_with_el_suffix(self):
+        """Test _make_actual_release_string uses el# suffix for OCP builds"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OCP,
+        )
+
+        metadata = MagicMock()
+        metadata.branch_el_target.return_value = 9
+
+        source = MagicMock()
+        source.commit_hash = "abc123def456"
+        source.commit_hash_short = "abc123d"
+
+        result = rebaser._make_actual_release_string(
+            metadata=metadata,
+            input_release="4.17.0-202407241200.p?",
+            private_fix=False,
+            source=source,
+        )
+
+        # Should use .el9 suffix for OCP
+        self.assertIn(".el9", result)
+        self.assertNotIn(".scos", result)
+        self.assertIn(".gabc123d", result)
+        self.assertIn(".assembly.stream", result)
+
+    def test_make_actual_release_string_okd_with_scos_suffix(self):
+        """Test _make_actual_release_string uses scos# suffix for OKD builds"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+        runtime.get_major_minor_fields.return_value = (4, 17)
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OKD,
+        )
+
+        metadata = MagicMock()
+        metadata.branch_el_target.return_value = 9
+
+        source = MagicMock()
+        source.commit_hash = "abc123def456"
+        source.commit_hash_short = "abc123d"
+
+        result = rebaser._make_actual_release_string(
+            metadata=metadata,
+            input_release="4.17.0-202407241200.p?",
+            private_fix=False,
+            source=source,
+        )
+
+        # Should use .scos9 suffix for OKD
+        self.assertIn(".scos9", result)
+        self.assertNotIn(".el", result)
+        self.assertIn(".gabc123d", result)
+        self.assertIn(".assembly.stream", result)
+
+    def test_make_actual_release_string_okd_different_versions(self):
+        """Test _make_actual_release_string uses correct scos# for different RHEL versions"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+        runtime.get_major_minor_fields.return_value = (4, 17)
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        for el_version in [8, 9, 10]:
+            with self.subTest(el_version=el_version):
+                rebaser = KonfluxRebaser(
+                    runtime=runtime,
+                    base_dir=Path("/tmp"),
+                    source_resolver=MagicMock(),
+                    repo_type="test",
+                    variant=BuildVariant.OKD,
+                )
+
+                metadata = MagicMock()
+                metadata.branch_el_target.return_value = el_version
+
+                source = MagicMock()
+                source.commit_hash = "abc123def456"
+                source.commit_hash_short = "abc123d"
+
+                result = rebaser._make_actual_release_string(
+                    metadata=metadata,
+                    input_release="4.17.0-202407241200.p?",
+                    private_fix=False,
+                    source=source,
+                )
+
+                # Should use .scos{el_version} suffix for OKD
+                expected_suffix = f".scos{el_version}"
+                self.assertIn(expected_suffix, result)
+                self.assertNotIn(".el", result)
