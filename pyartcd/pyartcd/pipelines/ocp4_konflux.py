@@ -12,6 +12,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay, validate_build_priority
 
 from pyartcd import constants, jenkins, locks, oc, util
@@ -391,10 +392,12 @@ class KonfluxOcp4Pipeline:
             # Log into QCI registry
             await oc.qci_registry_login()
 
-            # Mirror out ART equivalent images to CI
-            cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror'])
-            await exectools.cmd_assert_async(cmd)
+            # Use RegistryConfig to create a temporary auth file with merged credentials
+            with RegistryConfig() as auth_file:
+                # Mirror out ART equivalent images to CI
+                cmd = self._doozer_base_command.copy()
+                cmd.extend(['images:streams', 'mirror', '--registry-auth', auth_file])
+                await exectools.cmd_assert_async(cmd)
 
     async def sweep_bugs(self):
         """
