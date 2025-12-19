@@ -6,11 +6,13 @@ from typing import Optional, Tuple
 def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
     """
     Given a release field, this will method will split out any
-    .el### or +el### suffix and return (prefix, el_suffix) where el_suffix
-    is None if there .el### is not detected.
+    .el### or +el### or .scos### or +scos### suffix and return (prefix, el_suffix) where el_suffix
+    is None if there .el### or .scos### is not detected.
+    For OKD builds, this returns the scos suffix (e.g., 'scos9').
+    For OCP builds, this returns the el suffix (e.g., 'el9').
     """
 
-    el_suffix_match = re.match(r'(.*)[.+](el\d+)(?:.*|$)', release)
+    el_suffix_match = re.match(r'(.*)[.+]((?:el|scos)\d+)(?:.*|$)', release)
     if el_suffix_match:
         prefix = el_suffix_match.group(1)
         el_suffix = el_suffix_match.group(2)
@@ -30,10 +32,10 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
     if asm_pos == -1:
         return None
 
-    # Our rpm release fields will usually have ".el?" after ".assembly.name"
-    # But some of our base images can have ".el?" before ".assembly.name"
-    # If ".el?" appears after assembly name, then strip it off
-    el_pos = release.rfind('.el')
+    # Our rpm release fields will usually have ".el?" or ".scos?" after ".assembly.name"
+    # But some of our base images can have ".el?" or ".scos?" before ".assembly.name"
+    # If ".el?" or ".scos?" appears after assembly name, then strip it off
+    el_pos = max(release.rfind('.el'), release.rfind('.scos'))
     if el_pos > asm_pos:
         release, _ = split_el_suffix_in_release(release)
 
@@ -43,12 +45,16 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
 def isolate_el_version_in_release(release: str) -> Optional[int]:
     """
     Given a release field, determines whether it contains
-    a RHEL version. If it does, it returns the version value as an int.
+    a RHEL version (el### or scos###). If it does, it returns the version value as an int.
     If it is not found, None is returned.
     """
     _, el_suffix = split_el_suffix_in_release(release)
     if el_suffix:
-        return int(el_suffix[2:])
+        # Strip the prefix ('el' or 'scos') and return the numeric version
+        if el_suffix.startswith('scos'):
+            return int(el_suffix[4:])
+        else:  # starts with 'el'
+            return int(el_suffix[2:])
     return None
 
 

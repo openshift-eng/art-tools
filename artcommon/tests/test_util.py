@@ -142,6 +142,28 @@ class TestUtil(unittest.TestCase):
             expected = t[1]
             self.assertEqual(actual, expected)
 
+    def test_split_el_suffix_in_release(self):
+        test_cases = [
+            # (release_string, expected_prefix, expected_suffix)
+            ('1.2.3-y.p.p1.assembly.4.9.99.el7', '1.2.3-y.p.p1.assembly.4.9.99', 'el7'),
+            ('ansible-runner-http-1.0.0-2.el8ar', 'ansible-runner-http-1.0.0-2', 'el8'),
+            ('1.2.3-y.p.p1.assembly.art12398.el199', '1.2.3-y.p.p1.assembly.art12398', 'el199'),
+            ('1.2.3-y.p.p1.assembly.art12398', '1.2.3-y.p.p1.assembly.art12398', None),
+            # OKD/SCOS test cases
+            (
+                '4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9',
+                '4.17.0-202407241200.p0.assembly.stream.gdeadbee',
+                'scos9',
+            ),
+            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', '1.2.3-y.p.p1.assembly.4.9.99', 'scos8'),
+            ('1.2.3-y.p.p1.assembly.art12398.scos10', '1.2.3-y.p.p1.assembly.art12398', 'scos10'),
+        ]
+
+        for t in test_cases:
+            prefix, suffix = release_util.split_el_suffix_in_release(t[0])
+            self.assertEqual(prefix, t[1])
+            self.assertEqual(suffix, t[2])
+
     def test_isolate_el_version_in_release(self):
         test_cases = [
             ('container-selinux-2.167.0-1.module+el8.5.0+12397+bf23b712:2', 8),
@@ -151,6 +173,10 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
             ('1.2.3-y.p.p1.assembly.art12398', None),
             ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
+            # OKD/SCOS test cases
+            ('4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9', 9),
+            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', 8),
+            ('1.2.3-y.p.p1.assembly.art12398.scos10', 10),
         ]
 
         for t in test_cases:
