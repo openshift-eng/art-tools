@@ -4,7 +4,6 @@ import datetime
 import json
 import os
 import re
-import tempfile
 from collections import deque
 from itertools import chain
 from multiprocessing import cpu_count
@@ -747,96 +746,89 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
     logger = get_logger(__name__)
     logger.info(f"Extracting NVRs from FBC image: {fbc_pullspec}")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
+
+    # Transform image URLs and extract NVRs in parallel
+    logger.info(f"Extracting NVRs from {len(related_images)} related images in parallel...")
+
+    async def extract_nvr_from_image(image_url: str) -> tuple[str, str, str]:
+        """Extract NVR from a single image. Returns (image_url, nvr_or_empty, error_msg_or_empty)"""
         try:
-            related_images = await extract_related_images_from_fbc(fbc_pullspec, product)
+            logger.debug(f"Running oc image info for: {image_url}")
+            oc_cmd = ['oc', 'image', 'info', image_url, '--filter-by-os', 'amd64', '-o', 'json']
 
-            # Step 4: Transform image URLs and extract NVRs in parallel
-            logger.info(f"Extracting NVRs from {len(related_images)} related images in parallel...")
+            # Add registry config for authentication if available
+            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            if konflux_art_images_auth_file:
+                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
 
-            async def extract_nvr_from_image(image_url: str) -> tuple[str, str, str]:
-                """Extract NVR from a single image. Returns (image_url, nvr_or_empty, error_msg_or_empty)"""
-                try:
-                    logger.debug(f"Running oc image info for: {image_url}")
-                    oc_cmd = ['oc', 'image', 'info', image_url, '--filter-by-os', 'amd64', '-o', 'json']
+            _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd)
+            image_info = json.loads(image_info_output)
 
-                    # Add registry config for authentication if available
-                    konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-                    if konflux_art_images_auth_file:
-                        oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+            # Extract labels
+            labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
+            component = labels.get('com.redhat.component')
+            version = labels.get('version')
+            release = labels.get('release')
 
-                    _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd, cwd=temp_dir)
-                    image_info = json.loads(image_info_output)
+            logger.debug(
+                f"Image labels for {image_url} - component: {component}, version: {version}, release: {release}"
+            )
 
-                    # Extract labels
-                    labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
-                    component = labels.get('com.redhat.component')
-                    version = labels.get('version')
-                    release = labels.get('release')
+            if component and version and release:
+                nvr = f"{component}-{version}-{release}"
+                logger.debug(f"✓ Extracted NVR from {image_url}: {nvr}")
+                return (image_url, nvr, "")
+            else:
+                missing_labels = []
+                if not component:
+                    missing_labels.append('com.redhat.component')
+                if not version:
+                    missing_labels.append('version')
+                if not release:
+                    missing_labels.append('release')
+                error_msg = f"Missing required labels: {', '.join(missing_labels)}"
+                logger.debug(f"✗ {error_msg} for {image_url}")
+                return (image_url, "", error_msg)
 
-                    logger.debug(
-                        f"Image labels for {image_url} - component: {component}, version: {version}, release: {release}"
-                    )
+        except Exception as e:
+            error_msg = f"Failed to get image info: {e}"
+            logger.debug(f"✗ {error_msg} for {image_url}")
+            return (image_url, "", error_msg)
 
-                    if component and version and release:
-                        nvr = f"{component}-{version}-{release}"
-                        logger.debug(f"✓ Extracted NVR from {image_url}: {nvr}")
-                        return (image_url, nvr, "")
-                    else:
-                        missing_labels = []
-                        if not component:
-                            missing_labels.append('com.redhat.component')
-                        if not version:
-                            missing_labels.append('version')
-                        if not release:
-                            missing_labels.append('release')
-                        error_msg = f"Missing required labels: {', '.join(missing_labels)}"
-                        logger.debug(f"✗ {error_msg} for {image_url}")
-                        return (image_url, "", error_msg)
+    # Run all oc image info commands in parallel
+    tasks = [extract_nvr_from_image(image_url) for image_url in related_images]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                except Exception as e:
-                    error_msg = f"Failed to get image info: {e}"
-                    logger.debug(f"✗ {error_msg} for {image_url}")
-                    return (image_url, "", error_msg)
+    # Process results
+    nvrs = []
+    failed_images = []
 
-            # Run all oc image info commands in parallel
-            tasks = [extract_nvr_from_image(image_url) for image_url in related_images]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            failed_images.append(f"{related_images[i]} (exception: {result})")
+            continue
 
-            # Process results
-            nvrs = []
-            failed_images = []
+        image_url, nvr, error_msg = result
+        if nvr:
+            nvrs.append(nvr)
+            logger.info(f"✓ Extracted NVR: {nvr}")
+        else:
+            failed_images.append(f"{image_url} ({error_msg})")
+            logger.warning(f"✗ Failed to extract NVR from {image_url}: {error_msg}")
 
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    failed_images.append(f"{related_images[i]} (exception: {result})")
-                    continue
+    logger.info(f"NVR extraction completed: {len(nvrs)} successful, {len(failed_images)} failed")
+    if failed_images:
+        logger.warning(f"Failed images: {failed_images}")
 
-                image_url, nvr, error_msg = result
-                if nvr:
-                    nvrs.append(nvr)
-                    logger.info(f"✓ Extracted NVR: {nvr}")
-                else:
-                    failed_images.append(f"{image_url} ({error_msg})")
-                    logger.warning(f"✗ Failed to extract NVR from {image_url}: {error_msg}")
-
-            logger.info(f"NVR extraction completed: {len(nvrs)} successful, {len(failed_images)} failed")
-            if failed_images:
-                logger.warning(f"Failed images: {failed_images}")
-
-            if not nvrs:
-                logger.error("No NVRs could be extracted from any images")
-                logger.error("This could be due to:")
-                logger.error("1. Images not being accessible (authentication required)")
-                logger.error("2. Incorrect image URL transformation")
-                logger.error("3. Images missing required labels")
-                logger.error("4. Network connectivity issues")
-                raise RuntimeError(
-                    f"Failed to extract NVRs from all {len(related_images)} images. Check logs for details."
-                )
-
-        except Exception:
-            raise
+    if not nvrs:
+        logger.error("No NVRs could be extracted from any images")
+        logger.error("This could be due to:")
+        logger.error("1. Images not being accessible (authentication required)")
+        logger.error("2. Incorrect image URL transformation")
+        logger.error("3. Images missing required labels")
+        logger.error("4. Network connectivity issues")
+        raise RuntimeError(f"Failed to extract NVRs from all {len(related_images)} images. Check logs for details.")
 
     logger.info(f"Extracted {len(nvrs)} NVRs from FBC image")
     return nvrs

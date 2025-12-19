@@ -1206,8 +1206,8 @@ class KonfluxFbcBuilder:
 
             logger.info("FBC related images sync complete")
 
-        except Exception as e:
-            logger.exception(f"Error while syncing FBC related images to art-images-share: {e}")
+        except Exception:
+            logger.exception("Error while syncing FBC related images to art-images-share")
 
     async def build(self, metadata: ImageMetadata, operator_nvr: Optional[str] = None):
         bundle_short_name = metadata.get_olm_bundle_short_name()
@@ -1364,24 +1364,29 @@ class KonfluxFbcBuilder:
                     record["status"] = 0
 
                     # Sync FBC related images to art-images-share
-                    if not self.dry_run:
-                        try:
-                            results = pipelinerun_dict.get('status', {}).get('results', [])
-                            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                    if self.assembly == "stream":
+                        if not self.dry_run:
+                            try:
+                                results = pipelinerun_dict.get('status', {}).get('results', [])
+                                image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                            if image_pullspec and image_digest:
-                                fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                                await self._sync_fbc_related_images_to_share(fbc_pullspec, self.product, logger=logger)
-                            else:
-                                logger.warning(
-                                    "Could not extract FBC pullspec from pipelinerun results, "
-                                    "skipping related images sync"
-                                )
-                        except Exception as e:
-                            logger.warning(f"Failed to sync FBC related images: {e}")
+                                if image_pullspec and image_digest:
+                                    fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                                    await self._sync_fbc_related_images_to_share(
+                                        fbc_pullspec, self.product, logger=logger
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Could not extract FBC pullspec from pipelinerun results, "
+                                        "skipping related images sync"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Failed to sync FBC related images: {e}")
+                        else:
+                            logger.info("Dry run: Would have synced FBC related images to art-images-share")
                     else:
-                        logger.info("Dry run: Would have synced FBC related images to art-images-share")
+                        logger.info(f"Skipping FBC related images sync for non-stream assembly '{self.assembly}'")
 
                     break
             if error:
