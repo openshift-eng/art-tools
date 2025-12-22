@@ -538,7 +538,7 @@ class ConfigScanSources:
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
-            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}
+            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}, exclude_large_columns=True
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -573,7 +573,9 @@ class ConfigScanSources:
 
         # Check whether a build attempt with this commit has failed before.
         failed_commit_build_record = await image_meta.get_latest_build(
-            extra_patterns={'commitish': upstream_commit_hash}, outcome=KonfluxBuildOutcome.FAILURE
+            extra_patterns={'commitish': upstream_commit_hash},
+            outcome=KonfluxBuildOutcome.FAILURE,
+            exclude_large_columns=True,
         )
 
         # If not, this is a net-new upstream commit. Build it.
@@ -776,6 +778,7 @@ class ConfigScanSources:
         build = await self.runtime.konflux_db.get_latest_build(
             nvr=builder_build_nvr,
             group='',
+            exclude_large_columns=True,
         )
         if build:
             return build.start_time

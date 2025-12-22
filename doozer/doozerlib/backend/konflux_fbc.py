@@ -673,7 +673,7 @@ class KonfluxFbcRebaser:
         if bundle_build.operand_nvrs:
             nvrs |= set(bundle_build.operand_nvrs)
         assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
-        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs))
+        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs), exclude_large_columns=True)
         return ref_builds
 
     async def _rebase_dir(

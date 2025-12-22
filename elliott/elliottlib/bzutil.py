@@ -1408,7 +1408,12 @@ def to_timestamp(dt: xmlrpc.client.DateTime):
 async def approximate_cutoff_timestamp(basis_event: int, koji_api: ClientSession, metas: Iterable[Metadata]) -> float:
     """Calculate an approximate sweep cutoff timestamp from the given basis event"""
     basis_timestamp = koji_api.getEvent(basis_event)["ts"]
-    tasks = [meta.get_latest_build(default=None, complete_before_event=basis_event, honor_is=False) for meta in metas]
+    tasks = [
+        meta.get_latest_build(
+            default=None, complete_before_event=basis_event, honor_is=False, exclude_large_columns=True
+        )
+        for meta in metas
+    ]
     builds: List[Dict] = await asyncio.gather(*tasks)
     nvrs = [b["nvr"] for b in builds if b]
     rebase_timestamp_strings = filter(

@@ -175,7 +175,9 @@ class AssemblyPinBuildsCli:
     async def validate_nvrs_in_konflux_db(self, nvrs_to_fetch):
         LOGGER.info("Fetching NVRs from DB...")
         where = {"group": self.runtime.group, "engine": self.runtime.build_system}
-        await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs_to_fetch, where=where, strict=True)
+        await self.runtime.konflux_db.get_build_records_by_nvrs(
+            nvrs_to_fetch, where=where, strict=True, exclude_large_columns=True
+        )
 
     def pin_images(self, art_images_by_comp, images):
         changed = False

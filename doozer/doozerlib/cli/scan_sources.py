@@ -357,7 +357,7 @@ class ConfigScanSources:
             if image_meta in self.changing_image_metas:
                 return
 
-            build_info = await image_meta.get_latest_build(default=None)
+            build_info = await image_meta.get_latest_build(default=None, exclude_large_columns=True)
 
             if build_info is None:
                 return

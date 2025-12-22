@@ -251,5 +251,7 @@ async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
         seq=image_metas,
         file=sys.stderr,
     )
-    builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
+    builds: List[Dict] = await asyncio.gather(
+        *[image.get_latest_build(exclude_large_columns=True) for image in image_metas]
+    )
     return builds

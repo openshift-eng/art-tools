@@ -433,7 +433,7 @@ class MetadataBase(object):
         honor_is: bool = True,
         completed_before: Optional[datetime.datetime] = None,
         extra_patterns: dict = {},
-        exclude_large_columns: Optional[List[str]] = None,
+        exclude_large_columns: bool = False,
         **kwargs,
     ) -> Optional[KonfluxBuildRecord]:
         """
@@ -449,9 +449,9 @@ class MetadataBase(object):
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
-        :param exclude_large_columns: List of column names to exclude from BigQuery queries (e.g., LARGE_COLUMNS).
-                                      Default is None (include all columns). Pass LARGE_COLUMNS to exclude
-                                      installed_rpms and installed_packages to reduce query cost when not needed.
+        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
+                                      BigQuery queries to reduce query cost and latency.
+                                      Default is False (include all columns).
         """
 
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
