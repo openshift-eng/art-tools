@@ -182,29 +182,6 @@ def images_streams_mirror(
             if upstream_dest is Missing:
                 raise IOError(f'Unable to mirror {upstream_entry_name} since upstream_image is not defined')
 
-            # If upstream_image_mirror is set, try to mirror the upstream_image
-            # to the locations specified. Note that this is NOT upstream_image_base .
-            # This should be the fully transformed result. Usually this is used
-            # to mirror public builder images to the private image builders.
-            # It is also important to note that there is no guarantee that the upstream_image
-            # image exists yet. If the image does not yet exist, this code should fail
-            # quietly.
-            if config.upstream_image_mirror is not Missing:
-                image_info = oc_image_info_for_arch(
-                    config.upstream_image, go_arch='amd64', registry_config=registry_config_file, strict=False
-                )
-
-                if image_info is None:
-                    print(
-                        f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.'
-                    )
-                else:
-                    for upstream_image_mirror_dest in config.upstream_image_mirror:
-                        priv_cmd = f'oc image mirror {config.upstream_image}'
-                        if registry_config_file is not None:
-                            priv_cmd += f" --registry-config={registry_config_file}"
-                        mirror_image(priv_cmd, upstream_image_mirror_dest)
-
             # If the configuration specifies an upstream_image_base, then ART is responsible for mirroring
             # that location and NOT the upstream_image. A buildconfig from gen-buildconfig is responsible
             # for transforming upstream_image_base to upstream_image.
@@ -265,6 +242,19 @@ def images_streams_mirror(
                 if registry_config_file is not None:
                     arm_cmd += f" --registry-config={registry_config_file}"
                 mirror_image(arm_cmd, f'{upstream_dest}-arm64')
+
+            # If upstream_image_mirror is set, mirror the upstream_image (which we just updated above)
+            # to the locations specified. Note that this is NOT upstream_image_base.
+            # This should be the fully transformed result. Usually this is used
+            # to mirror public builder images to the private image builders.
+            # Now that we've mirrored the source to upstream_image, we mirror
+            # upstream_image to all the upstream_image_mirror destinations so they all get the same version.
+            if config.upstream_image_mirror is not Missing:
+                for upstream_image_mirror_dest in config.upstream_image_mirror:
+                    priv_cmd = f'oc image mirror {config.upstream_image}'
+                    if registry_config_file is not None:
+                        priv_cmd += f" --registry-config={registry_config_file}"
+                    mirror_image(priv_cmd, upstream_image_mirror_dest)
 
 
 @images_streams.command(
