@@ -205,7 +205,10 @@ class KonfluxOkd4Pipeline:
 
         if rebase_failures:
             LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
-            jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
+            if len(rebase_failures) <= 10:
+                jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
+            else:
+                jenkins.update_description(f'Rebase failures: {len(rebase_failures)} images.<br>')
 
         # OKD disabled images have not been rebased and must not be built
         skipped_images = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'skipped']
@@ -213,7 +216,10 @@ class KonfluxOkd4Pipeline:
             LOGGER.warning(
                 f'Following images are disabled in OKD and have not been rebased: {",".join(skipped_images)}'
             )
-            jenkins.update_description(f'Skipped images: {", ".join(skipped_images)}<br>')
+            if len(skipped_images) <= 10:
+                jenkins.update_description(f'Skipped images: {", ".join(skipped_images)}<br>')
+            else:
+                jenkins.update_description(f'Skipped {len(skipped_images)} images.<br>')
 
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
@@ -300,11 +306,19 @@ class KonfluxOkd4Pipeline:
         ]
         if self.built_images:
             LOGGER.info('Built images: %s', self.built_images)
-            jenkins.update_description(f'Built images: {",".join([image["name"] for image in self.built_images])}<br>')
+            if len(self.built_images) <= 10:
+                jenkins.update_description(
+                    f'Built images: {", ".join([image["name"] for image in self.built_images])}<br>'
+                )
+            else:
+                jenkins.update_description(f'Built {len(self.built_images)} images.<br>')
 
         failed_images = [entry['name'] for entry in record_log.get('image_build_okd', []) if int(entry['status'])]
         if failed_images:
-            jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
+            if len(failed_images) <= 10:
+                jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
+            else:
+                jenkins.update_description(f'Build failures: {len(failed_images)} images<br>')
 
     async def update_imagestreams(self):
         """
