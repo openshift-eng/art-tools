@@ -724,3 +724,44 @@ USER 3000
                 expected_suffix = f".scos{el_version}"
                 self.assertIn(expected_suffix, result)
                 self.assertNotIn(".el", result)
+
+    def test_get_el_target_string_ocp(self):
+        """Test _get_el_target_string returns el# for OCP builds"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OCP,
+        )
+
+        self.assertEqual(rebaser._get_el_target_string(8), "el8")
+        self.assertEqual(rebaser._get_el_target_string(9), "el9")
+        self.assertEqual(rebaser._get_el_target_string(10), "el10")
+
+    def test_get_el_target_string_okd(self):
+        """Test _get_el_target_string returns scos# for OKD builds"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.get_major_minor_fields.return_value = (4, 17)
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OKD,
+        )
+
+        self.assertEqual(rebaser._get_el_target_string(8), "scos8")
+        self.assertEqual(rebaser._get_el_target_string(9), "scos9")
+        self.assertEqual(rebaser._get_el_target_string(10), "scos10")

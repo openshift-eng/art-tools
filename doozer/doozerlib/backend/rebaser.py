@@ -121,6 +121,18 @@ class KonfluxRebaser:
             return f"art-{group}-dgk-{distgit_key}"
         return f"art-{group}-assembly-{assembly_name}-dgk-{distgit_key}"
 
+    def _get_el_target_string(self, el_version: int) -> str:
+        """
+        Generate the el_target string based on the build variant.
+
+        Arg(s):
+            el_version (int): The EL version number (e.g., 9 for el9/scos9)
+        Return Value(s):
+            str: The el_target string (e.g., 'scos9' for OKD, 'el9' for OCP)
+        """
+        prefix = 'scos' if self.variant is BuildVariant.OKD else 'el'
+        return f'{prefix}{el_version}'
+
     @start_as_current_span_async(TRACER, "rebase.rebase_to")
     async def rebase_to(
         self,
@@ -437,7 +449,7 @@ class KonfluxRebaser:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
                 build = await parent_metadata.get_latest_build(
-                    el_target=f'el{parent_metadata.branch_el_target()}',
+                    el_target=self._get_el_target_string(parent_metadata.branch_el_target()),
                     engine=Engine.KONFLUX,
                     group=self.group,
                     exclude_large_columns=True,
@@ -2204,7 +2216,7 @@ class KonfluxRebaser:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
                 build = await meta.get_latest_build(
-                    el_target=f'el{meta.branch_el_target()}',
+                    el_target=self._get_el_target_string(meta.branch_el_target()),
                     engine=Engine.KONFLUX,
                     exclude_large_columns=True,
                 )
