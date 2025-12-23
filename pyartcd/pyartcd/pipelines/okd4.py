@@ -109,6 +109,7 @@ class KonfluxOkd4Pipeline:
         self.group_images = await get_group_images(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
+            build_system='konflux',
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )

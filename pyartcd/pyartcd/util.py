@@ -797,11 +797,19 @@ def mass_rebuild_score(version: str, okd: bool = False) -> int:
 async def get_group_images(
     group: str,
     assembly: str,
+    build_system: str,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
 ) -> List[str]:
     """
     Get the list of images for a given group and assembly.
+
+    :param group: The group name (e.g. 'openshift-4.21')
+    :param assembly: The assembly name (e.g. 'stream', 'rc.1')
+    :param build_system: Build system to use ('brew' or 'konflux'). If empty string, doozer will use its default.
+    :param doozer_data_path: Path to ocp-build-data repository
+    :param doozer_data_gitref: Git reference to use in ocp-build-data
+    :return: List of image distgit keys
     """
 
     with TemporaryDirectory() as doozer_working:
@@ -812,12 +820,18 @@ async def get_group_images(
             'doozer',
             f'--working-dir={doozer_working}',
             f'--data-path={doozer_data_path}',
-            group_param,
-            '--assembly',
-            assembly,
-            'images:list',
-            '--json',
         ]
+        if build_system:
+            command.append(f'--build-system={build_system}')
+        command.extend(
+            [
+                group_param,
+                '--assembly',
+                assembly,
+                'images:list',
+                '--json',
+            ]
+        )
         _, out, _ = await exectools.cmd_gather_async(command)
         return json.loads(out)['images']
 
