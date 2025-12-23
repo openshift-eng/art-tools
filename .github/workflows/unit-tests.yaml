@@ -1,10 +1,9 @@
-
 name: unit-tests
 
 on:
   pull_request:
     paths:
-      - '**'
+      - "**"
 
 jobs:
   tests:
@@ -12,18 +11,30 @@ jobs:
     container: registry.access.redhat.com/ubi9/ubi:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y git clang
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - name: Verify uv installation
-        run: uv --version
+        run: dnf install -y git clang gcc krb5-devel make glibc
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
-      - name: Install packages
-        run: dnf install -y gcc krb5-devel make glibc
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Verify uv installation
+        run: uv --version
+
       - name: Create venv and install dependencies
         run: make venv
+
       - name: Run tests
         run: make test
