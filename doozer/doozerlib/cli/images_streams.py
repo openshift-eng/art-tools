@@ -198,29 +198,45 @@ def images_streams_mirror(
                 # appears to be short image name like: openshift/golang-builder:v1.19.13-202404160932.g3172d57.el9
                 src_image_pullspec = runtime.resolve_brew_image_url(src_image)
 
+            # Check all destinations: maps destination -> exists boolean
+            destinations_to_check = {}
+
             if only_if_missing:
-                # Check if AMD64 destination image exists
+                # Check main destination (AMD64)
                 amd64_info = oc_image_info_for_arch(
                     upstream_dest, go_arch='amd64', registry_config=registry_config_file, strict=False
                 )
-                amd64_exists = amd64_info is not None
+                destinations_to_check[upstream_dest] = amd64_info is not None
 
+                # Check ARM64 if needed
                 if mirror_arm:
-                    # Check if ARM64 destination image exists
                     arm64_info = oc_image_info(
                         f'{upstream_dest}-arm64', registry_config=registry_config_file, strict=False
                     )
-                    arm64_exists = arm64_info is not None
+                    destinations_to_check[f'{upstream_dest}-arm64'] = arm64_info is not None
 
-                    if amd64_exists and arm64_exists:
-                        print(
-                            f'Image {upstream_dest} and {upstream_dest}-arm64 seems to exist already; skipping because of --only-if-missing'
-                        )
-                        continue
+                # Check upstream_image_mirror destinations
+                if config.upstream_image_mirror is not Missing:
+                    for mirror_dest in config.upstream_image_mirror:
+                        mirror_info = oc_image_info(mirror_dest, registry_config=registry_config_file, strict=False)
+                        destinations_to_check[mirror_dest] = mirror_info is not None
+
+                # Check if ALL destinations exist
+                all_exist = all(destinations_to_check.values())
+
+                if all_exist:
+                    runtime.logger.info(
+                        f'All destinations for {upstream_entry_name} exist; skipping because of --only-if-missing'
+                    )
+                    continue
+
                 else:
-                    if amd64_exists:
-                        print(f'Image {upstream_dest} seems to exist already; skipping because of --only-if-missing')
-                        continue
+                    runtime.logger.info(
+                        f'Some destinations for {upstream_entry_name} are missing; will proceed with mirroring:'
+                    )
+                    for dest, exists in destinations_to_check.items():
+                        status = '✓ exists' if exists else '✗ missing'
+                        runtime.logger.info(f'  - {dest} ({status})')
 
             if live_test_mode:
                 upstream_dest += '.test'
@@ -233,7 +249,10 @@ def images_streams_mirror(
 
             if registry_config_file is not None:
                 cmd += f" --registry-config={registry_config_file}"
-            mirror_image(cmd, upstream_dest)
+
+            # Mirror to main destination only if not in only-if-missing mode OR destination doesn't exist
+            if not only_if_missing or not destinations_to_check.get(upstream_dest, False):
+                mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
@@ -241,7 +260,9 @@ def images_streams_mirror(
                 arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec}'
                 if registry_config_file is not None:
                     arm_cmd += f" --registry-config={registry_config_file}"
-                mirror_image(arm_cmd, f'{upstream_dest}-arm64')
+                # Mirror ARM64 only if not in only-if-missing mode OR destination doesn't exist
+                if not only_if_missing or not destinations_to_check.get(f'{upstream_dest}-arm64', False):
+                    mirror_image(arm_cmd, f'{upstream_dest}-arm64')
 
             # If upstream_image_mirror is set, mirror the upstream_image (which we just updated above)
             # to the locations specified. Note that this is NOT upstream_image_base.
@@ -251,10 +272,12 @@ def images_streams_mirror(
             # upstream_image to all the upstream_image_mirror destinations so they all get the same version.
             if config.upstream_image_mirror is not Missing:
                 for upstream_image_mirror_dest in config.upstream_image_mirror:
-                    priv_cmd = f'oc image mirror {config.upstream_image}'
-                    if registry_config_file is not None:
-                        priv_cmd += f" --registry-config={registry_config_file}"
-                    mirror_image(priv_cmd, upstream_image_mirror_dest)
+                    # Mirror to each destination only if not in only-if-missing mode OR destination doesn't exist
+                    if not only_if_missing or not destinations_to_check.get(upstream_image_mirror_dest, False):
+                        priv_cmd = f'oc image mirror {config.upstream_image}'
+                        if registry_config_file is not None:
+                            priv_cmd += f" --registry-config={registry_config_file}"
+                        mirror_image(priv_cmd, upstream_image_mirror_dest)
 
 
 @images_streams.command(
@@ -827,7 +850,7 @@ def prs_list(runtime, as_user, include_master):
     runtime.logger.info(f'Total PRs: {prs.totalCount}')
     for pr in prs:
         current_pr = pr.repository.get_pull(pr.number)
-        branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}
+        branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}g
         if runtime.group_config.name in branch:
             owners_email = next(
                 (
