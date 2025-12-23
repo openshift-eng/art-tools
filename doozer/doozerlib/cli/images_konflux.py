@@ -224,7 +224,7 @@ class KonfluxBuildCli:
 
         if self.variant is BuildVariant.OKD:
             group_config = self.runtime.group_config.copy()
-            if group_config['okd']:
+            if group_config.get('okd'):
                 LOGGER.info('Build images using OKD group configuration')
                 group_config = deep_merge(group_config, group_config['okd'])
                 runtime.group_config = Model(group_config)
