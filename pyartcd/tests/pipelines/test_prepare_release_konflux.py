@@ -701,7 +701,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
 
         def find_or_build_fbc_builds(nvrs):
-            return ["fbc-nvr"]
+            return ["fbc-nvr"], []  # Return tuple of (successful_nvrs, errors)
 
         mock_find_or_build_fbc_builds.side_effect = find_or_build_fbc_builds
 
