@@ -12,7 +12,7 @@ import errata_tool
 from elliottlib import brew, constants, errata, exceptions
 from flexmock import flexmock
 
-from tests import test_structures
+from . import test_structures
 
 unshipped_builds = [
     Mock(
