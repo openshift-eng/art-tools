@@ -39,18 +39,6 @@ logger: logging.Logger = None
 plashet_concerns = []
 
 
-def is_el10_nvr(nvre):
-    """
-    Check if an NVR is for RHEL 10 (EL10).
-    :param nvre: NVR or NVRE string
-    :return: True if the NVR is for EL10, False otherwise
-    """
-    parsed_nvr = parse_nvr(nvre)
-    package_release = parsed_nvr["release"]
-    el_version = isolate_el_version_in_release(package_release)
-    return el_version == 10
-
-
 def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_product_version):
     """
     Attempts to get a specific set of RPM nvrs attached to an advisory
@@ -97,11 +85,6 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
 
         if package_name in config.exclude_package:
             logger.info(f'Skipping advisory attach for excluded package: {nvr}')
-            continue
-
-        # Exclude el10 NVRs from being added to advisories
-        if is_el10_nvr(nvr):
-            logger.info(f'Skipping advisory attach for rhel-10 NVR: {nvr}')
             continue
 
         add_builds_payload.append(
@@ -844,10 +827,6 @@ def from_tags(
                 nvres_for_advisory = []
 
                 for nvre in nvre_set:
-                    # Skip EL10 NVRs - they should not be signed via advisories
-                    if is_el10_nvr(nvre):
-                        logger.info(f'Skipping signing attempt for rhel-10 NVR: {nvre}')
-                        continue
                     nvre_obj = parse_nvr(nvre)
                     if nvre_obj["name"] in signable_components and not is_signed(config, nvre, koji_proxy):
                         logger.info(f'Found an unsigned nvr in nvre set {set_name} (will attempt to sign): {nvre}')
@@ -865,10 +844,6 @@ def from_tags(
             # or throw exception on timeout.
             logger.info(f'Waiting for all nvres in set {set_name} to be signed..')
             for nvre in desired_nvres:
-                # Skip EL10 NVRs - they should not be signed via advisories
-                if is_el10_nvr(nvre):
-                    logger.info(f'Skipping signing check for rhel-10 NVR: {nvre}')
-                    continue
                 poll_for -= assert_signed(config, nvre, koji_proxy)
 
     if possible_signing_needed and signing_advisory_id and signing_advisory_mode == 'clean':
@@ -1055,10 +1030,6 @@ def for_assembly(
             nvres_for_advisory = []
 
             for nvre in desired_nvres:
-                # Skip EL10 NVRs - they should not be signed via advisories
-                if is_el10_nvr(nvre):
-                    logger.info(f'Skipping signing attempt for rhel-10 NVR: {nvre}')
-                    continue
                 if strip_epoch(nvre) in nvr_product_version and not is_signed(config, nvre, koji_proxy):
                     logger.info(f'Found an unsigned nvr (will attempt to sign): {nvre}')
                     nvres_for_advisory.append(nvre)
@@ -1073,10 +1044,6 @@ def for_assembly(
         # or throw exception on timeout.
         logger.info(f'Waiting for {len(desired_nvres)} nvre(s) to be signed..')
         for nvre in desired_nvres:
-            # Skip EL10 NVRs - they should not be signed via advisories
-            if is_el10_nvr(nvre):
-                logger.info(f'Skipping signing check for rhel-10 NVR: {nvre}')
-                continue
             poll_for -= assert_signed(config, nvre, koji_proxy, poll_for)
 
     if signed_desired(config) and signing_advisory_id and signing_advisory_mode == 'clean':
