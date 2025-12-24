@@ -9,7 +9,7 @@ from elliottlib import brew, constants, errata, exceptions
 from flexmock import flexmock
 from tenacity import wait_none
 
-from tests import test_structures
+from . import test_structures
 
 
 class TestBrew(unittest.TestCase):

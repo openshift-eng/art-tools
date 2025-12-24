@@ -10,7 +10,7 @@ Collection of Release tools for managing OCP releases
 
 ## Setup
 
-- Requires Python >= 3.8
+- Requires Python >= 3.11
 - `git clone https://github.com/openshift-eng/art-tools.git`
 - You will need to install local package dependencies, redhat certificates and configure kerberos for authentication before we get to installing python dependencies. See [Containerfile](./.devcontainer/Containerfile) for details
 - `make venv`
