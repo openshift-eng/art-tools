@@ -658,6 +658,35 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
+    def test_update_image_config(self):
+        self.img_dg.metadata = MagicMock()
+        # 'when' clause matching upstream rhel version: override
+        self.img_dg.should_match_upstream = True
+        self.img_dg.config = Model(
+            {
+                'canonical_builders_from_upstream': True,
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+        self.img_dg.upstream_intended_el_version = '8'
+        self.img_dg._update_image_config()
+        self.assertTrue(self.img_dg.should_match_upstream)
+        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+
+        # no 'when' clause matching upstream rhel version: do not match upstream
+        self.img_dg.should_match_upstream = True
+        self.img_dg.config = Model(
+            {
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+        self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
+        self.img_dg._update_image_config()
+        self.assertFalse(self.img_dg.should_match_upstream)
+        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
+
 
 if __name__ == "__main__":
     unittest.main()
