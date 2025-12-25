@@ -493,6 +493,8 @@ class KonfluxClient:
         artifact_type: Optional[str] = None,
         service_account: Optional[str] = None,
         rebuild: Optional[bool] = None,
+        group: Optional[str] = None,
+        is_image_build: Optional[bool] = None,
     ) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -630,55 +632,59 @@ class KonfluxClient:
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
-        task_run_specs = []
-        if has_build_images_task:
-            task_run_specs += [
-                {
-                    "pipelineTaskName": "build-images",
-                    "stepSpecs": [
-                        {
-                            "name": "sbom-syft-generate",
-                            "computeResources": {
-                                "requests": {
-                                    "memory": "5Gi",
+        # But we don't need to request this much resource for all build types.
+        # Restricting to only image builds of openshift-* groups. All other builds types (FBC / bundle) and groups
+        # oadp-* / mta-* can use the default configs
+        if group.startswith("openshift-") and is_image_build:
+            task_run_specs = []
+            if has_build_images_task:
+                task_run_specs += [
+                    {
+                        "pipelineTaskName": "build-images",
+                        "stepSpecs": [
+                            {
+                                "name": "sbom-syft-generate",
+                                "computeResources": {
+                                    "requests": {
+                                        "memory": "5Gi",
+                                    },
+                                    "limits": {
+                                        "memory": "10Gi",
+                                    },
                                 },
-                                "limits": {
-                                    "memory": "10Gi",
-                                },
+                            }
+                        ],
+                    }
+                ]
+                task_run_specs += [
+                    {
+                        "pipelineTaskName": "prefetch-dependencies",
+                        "computeResources": {
+                            "requests": {
+                                "memory": "10Gi",
                             },
-                        }
-                    ],
-                }
-            ]
-            task_run_specs += [
-                {
-                    "pipelineTaskName": "prefetch-dependencies",
-                    "computeResources": {
-                        "requests": {
-                            "memory": "10Gi",
+                            "limits": {
+                                "memory": "10Gi",
+                            },
                         },
-                        "limits": {
-                            "memory": "10Gi",
+                    }
+                ]
+            if has_sast_task:
+                task_run_specs += [
+                    {
+                        "pipelineTaskName": "sast-shell-check",
+                        "computeResources": {
+                            "requests": {
+                                "memory": "10Gi",
+                            },
+                            "limits": {
+                                "memory": "10Gi",
+                            },
                         },
-                    },
-                }
-            ]
-        if has_sast_task:
-            task_run_specs += [
-                {
-                    "pipelineTaskName": "sast-shell-check",
-                    "computeResources": {
-                        "requests": {
-                            "memory": "10Gi",
-                        },
-                        "limits": {
-                            "memory": "10Gi",
-                        },
-                    },
-                }
-            ]
+                    }
+                ]
 
-        obj["spec"]["taskRunSpecs"] = task_run_specs
+            obj["spec"]["taskRunSpecs"] = task_run_specs
 
         return obj
 
@@ -707,6 +713,8 @@ class KonfluxClient:
         artifact_type: Optional[str] = None,
         service_account: Optional[str] = None,
         rebuild: Optional[bool] = None,
+        group: Optional[str] = None,
+        is_image_build: Optional[bool] = None,
     ) -> PipelineRunInfo:
         """
         Start a PipelineRun for building an image.
@@ -734,6 +742,8 @@ class KonfluxClient:
         :param service_account: The service account to use for the PipelineRun.
         :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
         :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
+        :param group: The doozer group eg: "openshift-4.19" or "oadp-1.5"
+        :param is_image_build: Is the PLR being triggered for an image build or not
         :return: The PipelineRun resource as a PipelineRunInfo.
         """
 
@@ -770,6 +780,8 @@ class KonfluxClient:
             service_account=service_account,
             rebuild=rebuild,
             build_priority=build_priority,
+            group=group,
+            is_image_build=is_image_build,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
