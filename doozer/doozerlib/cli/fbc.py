@@ -705,6 +705,7 @@ class FbcRebaseAndBuildCli:
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
             assembly=runtime.assembly,
+            product=runtime.product,
             db=self._fbc_db,
             fbc_repo=self.fbc_repo,
             konflux_kubeconfig=self.konflux_kubeconfig,

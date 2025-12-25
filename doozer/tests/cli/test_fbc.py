@@ -62,6 +62,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.working_dir = "/tmp"
         self.runtime.group = "test-group"
         self.runtime.assembly = "test-assembly"
+        self.runtime.product = "ocp"
         self.runtime.upcycle = False
         self.runtime.source_resolver = mock.Mock(spec=SourceResolver)
         self.runtime.konflux_db = mock.AsyncMock()

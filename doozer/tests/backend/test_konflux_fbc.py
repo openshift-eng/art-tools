@@ -706,6 +706,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.base_dir = Path("/tmp/konflux_fbc_builder")
         self.group = "test-group"
         self.assembly = "test-assembly"
+        self.product = "test-product"
         self.db = MagicMock()
         self.fbc_repo = "https://example.com/fbc-repo.git"
         self.konflux_namespace = "test-namespace"
@@ -724,6 +725,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 base_dir=self.base_dir,
                 group=self.group,
                 assembly=self.assembly,
+                product=self.product,
                 db=self.db,
                 fbc_repo=self.fbc_repo,
                 konflux_namespace=self.konflux_namespace,
