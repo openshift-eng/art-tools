@@ -73,8 +73,10 @@ class GenAssemblyPipeline:
         self.date = date
         self.skip_get_nightlies = skip_get_nightlies
         self.gen_microshift = gen_microshift
-        if in_flight:
+        if in_flight and in_flight != "none":
             self.in_flight = in_flight
+        elif in_flight == "none":
+            self.in_flight = None
         elif not custom and not pre_ga_mode:
             self.in_flight = get_inflight(assembly, group)
         else:
