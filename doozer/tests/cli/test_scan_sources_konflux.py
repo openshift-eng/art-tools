@@ -331,16 +331,27 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
     async def test_get_current_task_bundle_shas_success(self):
         """Test successful fetching and parsing of task bundle SHAs."""
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(self.sample_yaml)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64"
+        }
+        
         # Mock successful HTTP response
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(self.sample_yaml))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
         result = await self.scanner.get_current_task_bundle_shas()
 
-        expected = {"git-clone@sha256": "abc123def456", "buildah@sha256": "def456ghi789"}
+        expected = {"git-clone": "abc123def456", "buildah": "def456ghi789"}
         self.assertEqual(result, expected)
 
         # Verify correct URL and headers were used
@@ -364,10 +375,19 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
     async def test_get_current_task_bundle_shas_yaml_parse_error(self):
         """Test handling of YAML parsing errors."""
-        # Mock successful HTTP response with invalid YAML
+        # Mock GitHub response with invalid base64-encoded YAML content
+        invalid_yaml = "invalid: yaml: content: [unclosed"
+        encoded_content = base64.b64encode(invalid_yaml.encode('utf-8')).decode('utf-8')
+        
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64"
+        }
+        
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value="invalid: yaml: content: [unclosed")
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
@@ -379,9 +399,20 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test handling when YAML contains no task references."""
         yaml_without_tasks = {"spec": {"resources": []}}
 
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(yaml_without_tasks)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64"
+        }
+
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(yaml_without_tasks))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
@@ -427,15 +458,26 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
             },
         }
 
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(nested_yaml)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64"
+        }
+
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(nested_yaml))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
         result = await self.scanner.get_current_task_bundle_shas()
 
-        expected = {"nested-task@sha256": "nested123", "cleanup@sha256": "cleanup456"}
+        expected = {"nested-task": "nested123", "cleanup": "cleanup456"}
         self.assertEqual(result, expected)
 
 
