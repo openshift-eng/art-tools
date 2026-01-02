@@ -630,19 +630,8 @@ class ImageMetadata(Metadata):
 
         repos = set(image_config.get("enabled_repos", []) + image_config.get("non_shipping_repos", []))
         if repos:
-            # Support both old-style (repos dict) and new-style (all_repos list) configurations
-            if "repos" in group_config:
-                # Old-style: repos are stored as a dict in group_config["repos"]
-                message["repos"] = {repo: group_config["repos"][repo] for repo in repos}
-            elif "all_repos" in group_config:
-                # New-style: repos are stored as a list in group_config["all_repos"]
-                # Build a dict from the list by matching repo names
-                all_repos_list = group_config["all_repos"]
-                message["repos"] = {
-                    repo_config["name"]: repo_config
-                    for repo_config in all_repos_list
-                    if repo_config.get("name") in repos
-                }
+            # Use runtime.repos which handles both old-style and new-style configurations
+            message["repos"] = {repo: self.runtime.repos[repo].to_dict() for repo in repos}
 
         builders = image_config.get("from", {}).get("builder", [])
         from_stream = image_config.get("from", {}).get("stream")
