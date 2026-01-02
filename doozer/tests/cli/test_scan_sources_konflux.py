@@ -293,27 +293,53 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
             "spec": {
                 "tasks": [
                     {
-                        "name": "git-clone",
+                        "name": "init",
                         "taskRef": {
                             "resolver": "bundles",
                             "params": [
-                                {"name": "name", "value": "git-clone"},
+                                {"name": "name", "value": "init"},
                                 {
                                     "name": "bundle",
-                                    "value": "quay.io/konflux-ci/tekton-catalog/git-clone@sha256:abc123def456",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:abc123def456",
                                 },
                             ],
                         },
                     },
                     {
-                        "name": "buildah",
+                        "name": "git-clone-oci-ta",
                         "taskRef": {
                             "resolver": "bundles",
                             "params": [
-                                {"name": "name", "value": "buildah"},
+                                {"name": "name", "value": "git-clone-oci-ta"},
                                 {
                                     "name": "bundle",
-                                    "value": "quay.io/konflux-ci/tekton-catalog/buildah@sha256:def456ghi789",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:def456ghi789",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "buildah-remote-oci-ta",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "buildah-remote-oci-ta"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.7@sha256:ghi789jkl012",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "non-task-bundle",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "non-task-bundle"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/git-clone@sha256:shouldnotbeextracted",
                                 },
                             ],
                         },
@@ -331,16 +357,31 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
     async def test_get_current_task_bundle_shas_success(self):
         """Test successful fetching and parsing of task bundle SHAs."""
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(self.sample_yaml)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64",
+        }
+
         # Mock successful HTTP response
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(self.sample_yaml))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
         result = await self.scanner.get_current_task_bundle_shas()
 
-        expected = {"git-clone@sha256": "abc123def456", "buildah@sha256": "def456ghi789"}
+        expected = {
+            "task-init": "abc123def456",
+            "task-git-clone-oci-ta": "def456ghi789",
+            "task-buildah-remote-oci-ta": "ghi789jkl012",
+        }
         self.assertEqual(result, expected)
 
         # Verify correct URL and headers were used
@@ -364,10 +405,19 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
     async def test_get_current_task_bundle_shas_yaml_parse_error(self):
         """Test handling of YAML parsing errors."""
-        # Mock successful HTTP response with invalid YAML
+        # Mock GitHub response with invalid base64-encoded YAML content
+        invalid_yaml = "invalid: yaml: content: [unclosed"
+        encoded_content = base64.b64encode(invalid_yaml.encode('utf-8')).decode('utf-8')
+
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64",
+        }
+
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value="invalid: yaml: content: [unclosed")
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
@@ -379,9 +429,20 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test handling when YAML contains no task references."""
         yaml_without_tasks = {"spec": {"resources": []}}
 
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(yaml_without_tasks)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64",
+        }
+
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(yaml_without_tasks))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
@@ -403,7 +464,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
                                 {"name": "name", "value": "nested-task"},
                                 {
                                     "name": "bundle",
-                                    "value": "quay.io/konflux-ci/tekton-catalog/nested-task@sha256:nested123",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-nested-task:0.1@sha256:nested123",
                                 },
                             ],
                         },
@@ -418,7 +479,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
                                 {"name": "name", "value": "cleanup"},
                                 {
                                     "name": "bundle",
-                                    "value": "quay.io/konflux-ci/tekton-catalog/cleanup@sha256:cleanup456",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-cleanup:0.2@sha256:cleanup456",
                                 },
                             ],
                         },
@@ -427,15 +488,26 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
             },
         }
 
+        # Convert YAML to base64-encoded content (like GitHub API)
+        yaml_content = yaml.dump(nested_yaml)
+        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+
+        # Mock GitHub API response with base64-encoded content
+        mock_github_response = {
+            "name": "art-konflux-template-push.yaml",
+            "content": encoded_content,
+            "encoding": "base64",
+        }
+
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.text = AsyncMock(return_value=yaml.dump(nested_yaml))
+        mock_response.json = AsyncMock(return_value=mock_github_response)
 
         self.session.get.return_value.__aenter__.return_value = mock_response
 
         result = await self.scanner.get_current_task_bundle_shas()
 
-        expected = {"nested-task@sha256": "nested123", "cleanup@sha256": "cleanup456"}
+        expected = {"task-nested-task": "nested123", "task-cleanup": "cleanup456"}
         self.assertEqual(result, expected)
 
 
