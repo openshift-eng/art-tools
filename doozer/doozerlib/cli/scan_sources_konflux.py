@@ -1108,7 +1108,7 @@ class ConfigScanSources:
             # GitHub API returns base64-encoded content, decode it first
             if 'content' not in response_data:
                 raise ValueError('Response does not contain content field')
-            
+
             encoded_content = response_data['content']
             yaml_content = base64.b64decode(encoded_content).decode('utf-8')
 
@@ -1141,16 +1141,21 @@ class ConfigScanSources:
                         if name_param and bundle_param:
                             bundle_url = bundle_param.get('value', '')
                             if 'quay.io/konflux-ci/tekton-catalog/' in bundle_url and '@sha256:' in bundle_url:
-                                # Extract task name from bundle URL like "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:..."
-                                # or "quay.io/konflux-ci/tekton-catalog/git-clone@sha256:..."
+                                # Only extract tasks that start with "task-" and have version numbers
+                                # e.g., "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:..."
                                 url_parts = bundle_url.split('/')
                                 if len(url_parts) >= 4:
-                                    task_part = url_parts[-1]  # e.g., "task-init:0.2@sha256:..." or "git-clone@sha256:..."
-                                    # Extract task name: split at '@sha256:' first, then handle version if present
-                                    task_with_version = task_part.split('@sha256:')[0]  # e.g., "task-init:0.2" or "git-clone"
-                                    actual_task_name = task_with_version.split(':')[0]  # e.g., "task-init" or "git-clone"
-                                    sha = bundle_url.split('@sha256:')[1]
-                                    task_bundles[actual_task_name] = sha
+                                    task_part = url_parts[-1]  # e.g., "task-git-clone-oci-ta:0.1@sha256:..."
+                                    # Only process if it starts with "task-" and has a version (contains ":")
+                                    if task_part.startswith('task-') and ':' in task_part and '@sha256:' in task_part:
+                                        task_with_version = task_part.split('@sha256:')[
+                                            0
+                                        ]  # e.g., "task-git-clone-oci-ta:0.1"
+                                        actual_task_name = task_with_version.split(':')[
+                                            0
+                                        ]  # e.g., "task-git-clone-oci-ta"
+                                        sha = bundle_url.split('@sha256:')[1]
+                                        task_bundles[actual_task_name] = sha
                 else:
                     self._extract_task_refs(value, task_bundles)
         elif isinstance(obj, list):
