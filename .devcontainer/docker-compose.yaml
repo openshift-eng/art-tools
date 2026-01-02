@@ -1,24 +1,35 @@
 services:
-  doozer:
+  art-tools:
     build:
       context: ..
       dockerfile: .devcontainer/Containerfile
-    image: local/doozer-dev:latest
+    image: local/art-tools-dev:latest
     command: /bin/bash
     volumes:
-    - ../:/workspaces/art-tools:cached,z
+    - ./../:/workspaces/art-tools:cached,z
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/dev/.ssh:ro,cached,z
     - ${HOME:-}${USERPROFILE:-}/.gitconfig:/home/dev/.gitconfig
     - ${HOME:-}${USERPROFILE:-}/.docker:/home/dev/.docker:ro,cached,z
+    - ${HOME:-}${USERPROFILE:-}/.config/python-bugzilla:/home/dev/.config/python-bugzilla:ro,cached,z
+
     - ./doozer.settings.yaml:/home/dev/.config/doozer/settings.yaml:ro,cached,z
-    - ../artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
+    - ./elliott.settings.yaml:/home/dev/.config/elliott/settings.yaml:ro,cached,z
+
     - ./brewkoji.conf:/etc/koji.conf.d/brewkoji.conf:ro,cached,z
+    - ./../artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
+
     - dev-doozer-working-dir:/workspaces/doozer-working-dir:delegated,z
     - dev-doozer-cache-dir:/workspaces/doozer-cache:delegated,z
-    - /var/run/docker.sock:/var/run/docker.sock:z
+    - dev-elliott-working-dir:/workspaces/elliott-working-dir:delegated,z
+
+    - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/var/run/docker.sock:z
+
+    - /workspaces/art-tools/.venv
     working_dir: /workspaces/art-tools
     tty: true
     stdin_open: true
+
 volumes:
   dev-doozer-working-dir:
   dev-doozer-cache-dir:
+  dev-elliott-working-dir:
