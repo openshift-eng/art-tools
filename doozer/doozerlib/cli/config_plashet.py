@@ -1,6 +1,7 @@
 import itertools
 import logging
 import os
+import re
 import ssl
 import sys
 import time
@@ -17,7 +18,7 @@ from artcommonlib.build_util import find_latest_builds
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from artcommonlib.rpm_utils import _rpmvercmp, compare_nvr, parse_nvr
 from artcommonlib.util import isolate_el_version_in_brew_tag
 from elliottlib import errata
 from requests_kerberos import HTTPKerberosAuth
@@ -49,6 +50,70 @@ def is_el10_nvr(nvre):
     package_release = parsed_nvr["release"]
     el_version = isolate_el_version_in_release(package_release)
     return el_version == 10
+
+
+def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2):
+    """
+    Compare two NVR objects with OpenShift version semantics.
+
+    This function handles the case where OpenShift versions should take precedence
+    over build numbers when comparing releases. For example:
+    - haproxy-2.8.10-1.rhaos4.21.el9 should be considered newer than
+    - haproxy-2.8.10-2.rhaos4.20.el9
+
+    :param nvre_obj1: First NVR object from parse_nvr
+    :param nvre_obj2: Second NVR object from parse_nvr
+    :return: 1 if nvre_obj1 > nvre_obj2, 0 if equal, -1 if nvre_obj1 < nvre_obj2
+    """
+    # First check if names match
+    if nvre_obj1["name"] != nvre_obj2["name"]:
+        raise ValueError(f"Package names don't match: {nvre_obj1['name']}, {nvre_obj2['name']}")
+
+    # Compare epoch first
+    epoch1 = nvre_obj1.get("epoch") or ""
+    epoch2 = nvre_obj2.get("epoch") or ""
+    if epoch1 != epoch2:
+        # Convert to int for comparison, treating empty as 0
+        e1 = int(epoch1) if epoch1 else 0
+        e2 = int(epoch2) if epoch2 else 0
+        return 1 if e1 > e2 else -1
+
+    # Compare version
+    version1 = nvre_obj1["version"]
+    version2 = nvre_obj2["version"]
+    if version1 != version2:
+        # Use proper RPM version comparison instead of lexicographic string comparison
+        version_cmp = _rpmvercmp(version1, version2)
+        if version_cmp != 0:
+            return version_cmp
+
+    # Both have same name, epoch, and version - now compare releases with OpenShift semantics
+    release1 = nvre_obj1["release"]
+    release2 = nvre_obj2["release"]
+
+    # Extract OpenShift version from release strings (rhaos4.XX format)
+    rhaos_pattern = r'\.rhaos(\d+)\.(\d+)\.'
+
+    match1 = re.search(rhaos_pattern, release1)
+    match2 = re.search(rhaos_pattern, release2)
+
+    if match1 and match2:
+        # Both have OpenShift version patterns
+        major1, minor1 = int(match1.group(1)), int(match1.group(2))
+        major2, minor2 = int(match2.group(1)), int(match2.group(2))
+
+        # Compare OpenShift versions first
+        if major1 != major2:
+            return 1 if major1 > major2 else -1
+        if minor1 != minor2:
+            return 1 if minor1 > minor2 else -1
+
+        # OpenShift versions are the same, fall back to standard release comparison
+        # for things like build numbers, etc.
+        return _rpmvercmp(release1, release2)
+
+    # If one or both don't have OpenShift version patterns, use standard comparison
+    return _rpmvercmp(release1, release2)
 
 
 def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_product_version):
@@ -769,8 +834,10 @@ def from_tags(
             nvre_obj = parse_nvr(nvre)
 
             if (
-                package_name not in pinned_nvres and released_nvre_obj and compare_nvr(nvre_obj, released_nvre_obj) < 0
-            ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR
+                package_name not in pinned_nvres
+                and released_nvre_obj
+                and compare_nvr_openshift_aware(nvre_obj, released_nvre_obj) < 0
+            ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR (OpenShift-aware)
                 msg = f'Skipping tagged {nvre} because it is older than a released version: {released_nvre_obj}'
                 plashet_concerns.append(msg)
                 logger.error(msg)
