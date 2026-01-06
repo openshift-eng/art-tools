@@ -665,9 +665,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         build = await self.db.get_build_record_by_nvr(nvr)
 
         self.assertEqual(build.nvr, nvr)
-        get_latest_build_mock.assert_called_once_with(
-            nvr=nvr, outcome=KonfluxBuildOutcome.SUCCESS, strict=True, exclude_large_columns=False
-        )
+        get_latest_build_mock.assert_called_once_with(nvr=nvr, outcome=KonfluxBuildOutcome.SUCCESS, strict=True)
 
     def test_get_latest_build_with_string_enums(self):
         """Test that string enum parameters can be converted to enums for cache comparisons"""
