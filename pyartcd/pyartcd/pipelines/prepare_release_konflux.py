@@ -344,7 +344,7 @@ class PrepareReleaseKonfluxPipeline:
         5. Attempts to change the advisory state to QE.
         6. Attempts to trigger a push of the advisory to the CDN stage.
         """
-        SUPPORTED_IMPETUSES = {"rpm", "rhcos"}
+        SUPPORTED_IMPETUSES = {"rpm", "rhcos", "microshift"}
         impetus_advisories = self.assembly_group_config.get("advisories", {}).copy()
         if not impetus_advisories:
             self.logger.warning("No advisories configured for assembly %s", self.assembly)
@@ -374,6 +374,10 @@ class PrepareReleaseKonfluxPipeline:
         for impetus, advisory_num in impetus_advisories.items():
             if advisory_num <= 0:
                 raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
+            # Skip populating microshift advisory since that is done later after promote
+            if impetus == "microshift":
+                self.logger.info("Skipping build sweep for %s advisory (populated after promote)", impetus)
+                continue
             self.logger.info("Sweep builds into the the %s advisory ...", impetus)
             sweep_opts = []
             match impetus:
@@ -400,6 +404,9 @@ class PrepareReleaseKonfluxPipeline:
 
         # Process bugs
         for impetus, advisory_num in impetus_advisories.items():
+            # microshift advisory is special, and it will not be ready at this time
+            if impetus == 'microshift':
+                continue
             bug_ids = impetus_bugs.get(impetus)
             if not bug_ids:
                 self.logger.info("No bugs found for %s advisory.", impetus)
