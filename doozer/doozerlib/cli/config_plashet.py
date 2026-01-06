@@ -113,8 +113,14 @@ def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2, target_openshift_version=N
             version1_matches_target = (major1, minor1) == (target_major, target_minor)
             version2_matches_target = (major2, minor2) == (target_major, target_minor)
 
-            if version1_matches_target or version2_matches_target:
-                # At least one matches target - apply OpenShift version semantics
+            if version1_matches_target and not version2_matches_target:
+                # Only first matches target → first wins
+                return 1
+            elif not version1_matches_target and version2_matches_target:
+                # Only second matches target → second wins
+                return -1
+            elif version1_matches_target and version2_matches_target:
+                # Both match target → use standard OpenShift comparison
                 if major1 != major2:
                     return 1 if major1 > major2 else -1
                 if minor1 != minor2:
@@ -696,11 +702,8 @@ def from_tags(
 
     # Extract target OpenShift version from the group to scope OpenShift version semantics
     target_openshift_version = None
-    if runtime.group:
-        # Match patterns like 'openshift-4.21', 'openshift-4.20', etc.
-        match = re.match(r'openshift-(\d+)\.(\d+)', runtime.group)
-        if match:
-            target_openshift_version = (int(match.group(1)), int(match.group(2)))
+    if runtime.group and runtime.group.startswith('openshift-'):
+        target_openshift_version = runtime.get_major_minor_fields()
 
     # Gather up all nvrs tagged in the embargoed brew tags into a set.
     embargoed_tag_nvrs = set()

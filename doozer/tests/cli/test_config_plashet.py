@@ -287,9 +287,7 @@ class TestCompareNvrOpenshiftAwareWithTarget(unittest.TestCase):
         target_version = (4, 20)
 
         result = compare_nvr_openshift_aware(obj1, obj2, target_version)
-        self.assertEqual(
-            result, 1, "rhaos4.21 should still be newer than rhaos4.20 (standard OpenShift version comparison)"
-        )
+        self.assertEqual(result, -1, "rhaos4.20 should beat rhaos4.21 when target is (4, 20)")
 
     def test_no_target_version_original_behavior(self):
         """Test that original behavior is preserved when target_version is None."""
@@ -309,6 +307,20 @@ class TestCompareNvrOpenshiftAwareWithTarget(unittest.TestCase):
 
         result = compare_nvr_openshift_aware(obj1, obj2, target_version)
         self.assertEqual(result, -1, "When both match target, higher build number should win")
+
+    def test_target_version_always_beats_non_target(self):
+        """Test that target version always beats non-target, regardless of version number."""
+        # When using -g openshift-4.21, rhaos4.21 should beat rhaos4.22
+        obj1 = parse_nvr("haproxy-2.8.10-1.rhaos4.22.el9")  # doesn't match target 4.21
+        obj2 = parse_nvr("haproxy-2.8.10-1.rhaos4.21.el9")  # matches target 4.21
+        target_version = (4, 21)
+
+        result = compare_nvr_openshift_aware(obj1, obj2, target_version)
+        self.assertEqual(result, -1, "rhaos4.21 should beat rhaos4.22 when target is (4, 21)")
+
+        # Also test the reverse order
+        result = compare_nvr_openshift_aware(obj2, obj1, target_version)
+        self.assertEqual(result, 1, "rhaos4.21 should beat rhaos4.22 when target is (4, 21)")
 
 
 if __name__ == '__main__':
