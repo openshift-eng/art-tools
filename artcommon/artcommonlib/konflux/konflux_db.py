@@ -564,13 +564,19 @@ class KonfluxDb:
             # Execute single large query
             # For small_columns cache: exclude large columns (installed_rpms, installed_packages)
             # For all_columns cache: fetch all columns
+            # Only exclude these columns if the table actually has them (only builds table has them)
+            exclude_cols = None
+            if (
+                cache_type == CacheRecordsType.SMALL_COLUMNS
+                and self.record_cls == konflux_build_record.KonfluxBuildRecord
+            ):
+                exclude_cols = LARGE_COLUMNS
+
             rows = await self.bq_client.select(
                 where_clauses=where_clauses,
                 order_by_clause=order_by_clause,
                 limit=None,  # Get all results
-                exclude_columns=['installed_rpms', 'installed_packages']
-                if cache_type == CacheRecordsType.SMALL_COLUMNS
-                else None,
+                exclude_columns=exclude_cols,
             )
 
             # Load all rows into cache (thread-safe operation)
@@ -956,7 +962,10 @@ class KonfluxDb:
 
         # Determine which cache type to use based on exclude_large_columns
         # Convert boolean to column list for internal methods
-        exclude_columns = LARGE_COLUMNS if exclude_large_columns else None
+        # Only exclude LARGE_COLUMNS if the table actually has them (only builds table has them)
+        exclude_columns = None
+        if exclude_large_columns and self.record_cls == konflux_build_record.KonfluxBuildRecord:
+            exclude_columns = LARGE_COLUMNS
         cache_type = CacheRecordsType.SMALL_COLUMNS if exclude_large_columns else CacheRecordsType.ALL_COLUMNS
 
         # Lazy-load cache for group if needed (or builder_base_image if group still None)
