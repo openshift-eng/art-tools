@@ -120,11 +120,8 @@ def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2, target_openshift_version=N
                 # Only second matches target → second wins
                 return -1
             elif version1_matches_target and version2_matches_target:
-                # Both match target → use standard OpenShift comparison
-                if major1 != major2:
-                    return 1 if major1 > major2 else -1
-                if minor1 != minor2:
-                    return 1 if minor1 > minor2 else -1
+                # Both match target → OpenShift versions are identical, fall through to standard release comparison
+                pass
             # If neither matches target, fall through to standard comparison
         else:
             # No target specified - use original behavior (always prioritize OpenShift versions)
