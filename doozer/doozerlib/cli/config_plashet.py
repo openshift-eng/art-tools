@@ -52,7 +52,7 @@ def is_el10_nvr(nvre):
     return el_version == 10
 
 
-def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2):
+def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2, target_openshift_version=None):
     """
     Compare two NVR objects with OpenShift version semantics.
 
@@ -61,8 +61,12 @@ def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2):
     - haproxy-2.8.10-1.rhaos4.21.el9 should be considered newer than
     - haproxy-2.8.10-2.rhaos4.20.el9
 
+    When target_openshift_version is provided, OpenShift version priority is only
+    applied when at least one package matches the target group version.
+
     :param nvre_obj1: First NVR object from parse_nvr
     :param nvre_obj2: Second NVR object from parse_nvr
+    :param target_openshift_version: Tuple (major, minor) for the target OpenShift version (e.g., (4, 21))
     :return: 1 if nvre_obj1 > nvre_obj2, 0 if equal, -1 if nvre_obj1 < nvre_obj2
     """
     # First check if names match
@@ -102,11 +106,26 @@ def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2):
         major1, minor1 = int(match1.group(1)), int(match1.group(2))
         major2, minor2 = int(match2.group(1)), int(match2.group(2))
 
-        # Compare OpenShift versions first
-        if major1 != major2:
-            return 1 if major1 > major2 else -1
-        if minor1 != minor2:
-            return 1 if minor1 > minor2 else -1
+        # If target version is specified, only apply OpenShift version priority
+        # when at least one package matches the target group version
+        if target_openshift_version:
+            target_major, target_minor = target_openshift_version
+            version1_matches_target = (major1, minor1) == (target_major, target_minor)
+            version2_matches_target = (major2, minor2) == (target_major, target_minor)
+
+            if version1_matches_target or version2_matches_target:
+                # At least one matches target - apply OpenShift version semantics
+                if major1 != major2:
+                    return 1 if major1 > major2 else -1
+                if minor1 != minor2:
+                    return 1 if minor1 > minor2 else -1
+            # If neither matches target, fall through to standard comparison
+        else:
+            # No target specified - use original behavior (always prioritize OpenShift versions)
+            if major1 != major2:
+                return 1 if major1 > major2 else -1
+            if minor1 != minor2:
+                return 1 if minor1 > minor2 else -1
 
         # OpenShift versions are the same, fall back to standard release comparison
         # for things like build numbers, etc.
@@ -675,6 +694,14 @@ def from_tags(
     errata_session = requests.session()
     builder = PlashetBuilder(koji_proxy, logger=logger)
 
+    # Extract target OpenShift version from the group to scope OpenShift version semantics
+    target_openshift_version = None
+    if runtime.group:
+        # Match patterns like 'openshift-4.21', 'openshift-4.20', etc.
+        match = re.match(r'openshift-(\d+)\.(\d+)', runtime.group)
+        if match:
+            target_openshift_version = (int(match.group(1)), int(match.group(2)))
+
     # Gather up all nvrs tagged in the embargoed brew tags into a set.
     embargoed_tag_nvrs = set()
     embargoed_tag_nvrs.update(embargoed_nvr)
@@ -836,7 +863,7 @@ def from_tags(
             if (
                 package_name not in pinned_nvres
                 and released_nvre_obj
-                and compare_nvr_openshift_aware(nvre_obj, released_nvre_obj) < 0
+                and compare_nvr_openshift_aware(nvre_obj, released_nvre_obj, target_openshift_version) < 0
             ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR (OpenShift-aware)
                 msg = f'Skipping tagged {nvre} because it is older than a released version: {released_nvre_obj}'
                 plashet_concerns.append(msg)
