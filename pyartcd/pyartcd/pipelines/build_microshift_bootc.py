@@ -292,7 +292,6 @@ class BuildMicroShiftBootcPipeline:
             engine=Engine.KONFLUX,
             artifact_type=ArtifactType.IMAGE,
             el_target='el9',
-            exclude_large_columns=True,
         )
         return cast(Optional[KonfluxBuildRecord], build)
 
@@ -408,9 +407,7 @@ class BuildMicroShiftBootcPipeline:
                     self.konflux_db.bind(KonfluxBuildRecord)
                     self._logger.info('Konflux DB initialized for pinned build lookup')
 
-                build = await self.konflux_db.get_build_record_by_nvr(
-                    pinned_nvr, strict=True, exclude_large_columns=True
-                )
+                build = await self.konflux_db.get_build_record_by_nvr(pinned_nvr, strict=True)
                 self._logger.info("Found existing build record for pinned NVR: %s", pinned_nvr)
                 return build
 

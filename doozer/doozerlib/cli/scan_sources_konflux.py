@@ -367,9 +367,7 @@ class ConfigScanSources:
 
         async def _find_target_build(rpm_meta, el_target):
             rpm_name = rpm_meta.rpm_name
-            build_record = await rpm_meta.get_latest_build(
-                el_target=el_target, engine=Engine.BREW.value, exclude_large_columns=True
-            )
+            build_record = await rpm_meta.get_latest_build(el_target=el_target, engine=Engine.BREW.value)
             if not self.latest_rpm_build_records_map.get(rpm_name):
                 self.latest_rpm_build_records_map[rpm_name] = {}
             self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
@@ -1227,18 +1225,10 @@ class ConfigScanSources:
                 return
 
             # Check if most recent build failed
-            # Only need to check failures within a recent window based on rebuild_interval
-            # (rebuild backoff only cares about failures within rebuild_interval, typically 6 hours)
-            rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or 6
-            # Convert hours to days with 1-day buffer: for 6 hours → 1 day, for 24 hours → 2 days
-            max_failure_window_days = (rebuild_interval // 24) + 1
             latest_failed_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target,
-                engine=Engine.BREW.value,
-                outcome=KonfluxBuildOutcome.FAILURE,
-                exclude_large_columns=True,
-                max_window_days=max_failure_window_days,
+                el_target=el_target, engine=Engine.BREW.value, outcome=KonfluxBuildOutcome.FAILURE
             )
+            rebuild_interval = self.runtime.group_config.scan_freshness.threshold_hours or 6
             now = datetime.now(timezone.utc)
 
             if latest_failed_build_record and latest_failed_build_record.start_time > latest_build_record.start_time:
@@ -1269,10 +1259,7 @@ class ConfigScanSources:
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
             upstream_commit_build_record = await rpm_meta.get_latest_build(
-                el_target=el_target,
-                extra_patterns={'commitish': upstream_commit_hash},
-                engine=Engine.BREW.value,
-                exclude_large_columns=True,
+                el_target=el_target, extra_patterns={'commitish': upstream_commit_hash}, engine=Engine.BREW.value
             )
 
             if not upstream_commit_build_record:

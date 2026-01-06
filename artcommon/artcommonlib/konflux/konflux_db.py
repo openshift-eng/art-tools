@@ -898,7 +898,6 @@ class KonfluxDb:
         strict: bool = False,
         use_cache: bool = True,
         exclude_large_columns: bool = False,
-        max_window_days: typing.Optional[int] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Get latest build with optimized caching and exponential window search.
@@ -926,9 +925,6 @@ class KonfluxDb:
         :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
                                       BigQuery queries to reduce query cost and latency. Uses small_columns cache.
                                       Default is False (include all columns, uses all_columns cache).
-        :param max_window_days: Maximum window size in days to search. If set, limits exponential window search
-                               to windows up to this size. Useful for queries that only need recent data
-                               (e.g., failure checks within 30 days). Default is None (search all windows up to 448 days).
         :return: Latest matching build or None
         :raise: IOError if build not found and strict=True
         :raise: ValueError if neither name nor nvr provided, or if name provided without group
@@ -1035,7 +1031,6 @@ class KonfluxDb:
             embargoed=embargoed,
             extra_patterns=extra_patterns,
             exclude_columns=exclude_columns,
-            max_window_days=max_window_days,
         )
 
         # Update appropriate cache if use_cache=True
@@ -1061,24 +1056,14 @@ class KonfluxDb:
         embargoed: typing.Optional[bool] = None,
         extra_patterns: typing.Optional[dict] = None,
         exclude_columns: typing.Optional[typing.List[str]] = None,
-        max_window_days: typing.Optional[int] = None,
     ) -> typing.Optional[KonfluxRecord]:
         """
         Query BigQuery with exponential window expansion.
 
         Searches progressively expanding windows: 7, 14, 28, 56, 112, 224, 448 days.
-        Each window only scans the incremental new data not covered by previous windows,
-        avoiding re-scanning. For example:
-        - 7-day window: searches [now - 7 days, now)
-        - 14-day window: searches [now - 14 days, now - 7 days)  ← Only new data
-        - 28-day window: searches [now - 28 days, now - 14 days)  ← Only new data
-
         If completed_before is set, optimizes by starting search from that timestamp
         instead of now (since no valid results exist after it). Continues expanding
         backwards through all windows until first result is found.
-
-        If max_window_days is set, limits the search to only windows up to that size.
-        This is useful for queries that only need recent data (e.g., failure checks).
 
         :param name: Component name
         :param nvr: Build NVR (alternative to name search)
@@ -1092,8 +1077,6 @@ class KonfluxDb:
         :param embargoed: Embargoed status filter
         :param extra_patterns: Extra pattern matching (regex)
         :param exclude_columns: List of column names to exclude from the query (e.g., LARGE_COLUMNS).
-        :param max_window_days: Maximum window size in days to search. If set, stops searching once
-                                this window size is reached, even if no result is found.
         :return: First matching build or None
         """
         # Build base WHERE clauses
@@ -1148,26 +1131,13 @@ class KonfluxDb:
 
         # Exponential window search: 7, 14, 28, 56, 112, 224, 448 days
         # Continue expanding backwards through all windows until we find a result
-        # If max_window_days is set, only search windows up to that size
-        windows_to_search = EXPONENTIAL_SEARCH_WINDOWS
-        if max_window_days is not None:
-            windows_to_search = [w for w in EXPONENTIAL_SEARCH_WINDOWS if w <= max_window_days]
-            if not windows_to_search:
-                # If max_window_days is smaller than smallest window, use it directly
-                windows_to_search = [max_window_days]
-
-        # Track the previous window's start time to avoid re-scanning
-        previous_start = end_search
-
-        for window_days in windows_to_search:
+        for window_days in EXPONENTIAL_SEARCH_WINDOWS:
             start_window = end_search - timedelta(days=window_days)
 
             # Build time range WHERE clause
-            # Only scan the incremental new range [start_window, previous_start)
-            # This avoids re-scanning data from previous windows
             where_clauses = base_clauses + [
                 Column('start_time', DateTime) >= start_window,
-                Column('start_time', DateTime) < previous_start,
+                Column('start_time', DateTime) < end_search,
             ]
 
             # Add completed_before filter if specified
@@ -1176,7 +1146,7 @@ class KonfluxDb:
 
             try:
                 self.logger.debug(
-                    f"Querying BigQuery: window={window_days}d, range=[{start_window.date()}, {previous_start.date()})"
+                    f"Querying BigQuery: window={window_days}d, range=[{start_window.date()}, {end_search.date()})"
                 )
 
                 rows = await self.bq_client.select(
@@ -1191,16 +1161,12 @@ class KonfluxDb:
                     self.logger.debug(f"Found build in {window_days}-day window: {result.nvr}")
                     return result
 
-                # Update previous_start for next iteration to avoid re-scanning
-                previous_start = start_window
-
             except Exception as e:
                 self.logger.error(f"Failed querying {window_days}-day window: {e}")
                 raise
 
         # No results found in any window
-        max_searched = windows_to_search[-1] if windows_to_search else 0
-        self.logger.debug(f"No builds found in exponential search up to {max_searched} days")
+        self.logger.debug(f"No builds found in exponential search up to {EXPONENTIAL_SEARCH_WINDOWS[-1]} days")
         return None
 
     def from_result_row(self, row: Row) -> KonfluxRecord:
@@ -1222,7 +1188,6 @@ class KonfluxDb:
         nvr: str,
         outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
         strict: bool = True,
-        exclude_large_columns: bool = False,
     ) -> typing.Optional[KonfluxRecord]:
         """Get a build record by NVR.
 
@@ -1231,17 +1196,12 @@ class KonfluxDb:
         :param nvr: The NVR of the build.
         :param outcome: The outcome of the build.
         :param strict: If True, raise an exception if the build record is not found.
-        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
-                                      BigQuery queries to reduce query cost and latency.
-                                      Defaults to False for backwards compatibility.
         :return: The build record; None if the build record is not found.
         :raise: IOError if the build record is not found and strict is True.
         """
         # Use optimized get_latest_build with NVR parameter
         # This will check cache first, then use exponential windows
-        return await self.get_latest_build(
-            nvr=nvr, outcome=outcome, strict=strict, exclude_large_columns=exclude_large_columns
-        )
+        return await self.get_latest_build(nvr=nvr, outcome=outcome, strict=strict)
 
     async def get_build_records_by_nvrs(
         self,
