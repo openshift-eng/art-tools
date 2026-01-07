@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import inspect
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
 import aiohttp
 import requests
@@ -948,3 +949,24 @@ def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optio
         f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
     )
     return KONFLUX_DEFAULT_NAMESPACE
+
+
+async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[str, Exception]]] = None) -> Any:
+    """
+    Execute a function (sync or async) and catch exceptions.
+    Logs exception and optionally appends (func_name, exception) to failures_list.
+    Returns the function's return value on success, or None on failure.
+
+    :param func: The function to execute (sync or async)
+    :param failures_list: Optional list to append (func.__name__, exception) tuples on failure
+    :return: Function's return value on success, None on failure
+    """
+    try:
+        if inspect.iscoroutinefunction(func):
+            return await func()
+        return func()
+    except Exception as e:
+        LOGGER.exception("Failed to %s", func.__name__)
+        if failures_list is not None:
+            failures_list.append((func.__name__, e))
+        return None
