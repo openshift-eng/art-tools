@@ -865,13 +865,20 @@ async def get_group_rpms(
         return out.splitlines()
 
 
-async def increment_rebase_fail_counter(image, version, build_system, job_url=None):
+async def increment_rebase_fail_counter(image, version, build_system, branch='rebase-failure', job_url=None):
     """
     Increment the fail counter for a given image in Redis.
     Optionally store the job URL where the failure occurred.
+
+    Arg(s):
+        image (str): Image name
+        version (str): OCP version (e.g., '4.17')
+        build_system (str): Build system ('brew', 'konflux')
+        branch (str): Branch identifier for the counter (default: 'rebase-failure')
+        job_url (str): Optional job URL where the failure occurred
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}:{image}'
+    redis_branch = f'count:{branch}:{build_system}:{version}:{image}'
     failure_key = f'{redis_branch}:failure'
     fail_count = await redis.get_value(failure_key)
     fail_count = int(fail_count) if fail_count else 0
@@ -883,11 +890,17 @@ async def increment_rebase_fail_counter(image, version, build_system, job_url=No
 
 
 @limit_concurrency(50)
-async def reset_rebase_fail_counter(image, version, build_system):
+async def reset_rebase_fail_counter(image, version, build_system, branch='rebase-failure'):
     """
     Reset the fail counter for a given image in Redis.
-    Limit concurrency as we might have a lot of images to reset
+    Limit concurrency as we might have a lot of images to reset.
+
+    Arg(s):
+        image (str): Image name
+        version (str): OCP version (e.g., '4.17')
+        build_system (str): Build system ('brew', 'konflux')
+        branch (str): Branch identifier for the counter (default: 'rebase-failure')
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}:{image}:*'
+    redis_branch = f'count:{branch}:{build_system}:{version}:{image}:*'
     await redis.delete_keys_by_pattern(redis_branch)

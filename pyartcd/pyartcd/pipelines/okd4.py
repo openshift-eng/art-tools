@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -20,7 +21,12 @@ from pyartcd.constants import KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT, OCP_B
 from pyartcd.locks import Lock
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy, EnumEncoder
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, get_group_images
+from pyartcd.util import (
+    default_release_suffix,
+    get_group_images,
+    increment_rebase_fail_counter,
+    reset_rebase_fail_counter,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -195,9 +201,9 @@ class KonfluxOkd4Pipeline:
             pass
 
         finally:
-            self.handle_rebase_failures()
+            await self.handle_rebase_failures()
 
-    def handle_rebase_failures(self):
+    async def handle_rebase_failures(self):
         state = self.load_state_yaml()
 
         # Some images failed to rebase: log them, and track them in Redis
@@ -221,6 +227,9 @@ class KonfluxOkd4Pipeline:
             else:
                 jenkins.update_description(f'Skipped {len(skipped_images)} images.<br>')
 
+        # Update rebase fail counters in Redis
+        await self.update_rebase_fail_counters(rebase_failures)
+
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
             # Move from building all to excluding failed images
@@ -236,6 +245,50 @@ class KonfluxOkd4Pipeline:
         else:  # strategy = EXCLUDE
             # Append failed images to excluded ones
             self.build_plan.images_excluded.extend(rebase_failures + skipped_images)
+
+    async def update_rebase_fail_counters(self, failed_images):
+        """
+        Update rebase fail counters for images that failed to rebase.
+        """
+
+        if self.assembly == 'test':
+            # Ignore for test assembly
+            return
+
+        # Reset fail counters for images that were rebased successfully
+        match self.build_plan.image_build_strategy:
+            case BuildStrategy.ALL:
+                successful_images = [image for image in self.group_images if image not in failed_images]
+            case BuildStrategy.EXCEPT:
+                successful_images = [
+                    image
+                    for image in self.group_images
+                    if image not in self.build_plan.images_excluded and image not in failed_images
+                ]
+            case BuildStrategy.ONLY:
+                successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
+            case _:
+                raise ValueError(
+                    f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
+                )
+
+        await asyncio.gather(
+            *[
+                reset_rebase_fail_counter(image, self.version, 'konflux', branch='okd-rebase-failure')
+                for image in successful_images
+            ]
+        )
+
+        # Increment fail counters for failing images
+        job_url = os.getenv('BUILD_URL')
+        await asyncio.gather(
+            *[
+                increment_rebase_fail_counter(
+                    image, self.version, 'konflux', branch='okd-rebase-failure', job_url=job_url
+                )
+                for image in failed_images
+            ]
+        )
 
     async def build_images(self):
         if not self.building_images():
