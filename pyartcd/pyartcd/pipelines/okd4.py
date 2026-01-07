@@ -19,7 +19,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT, OCP_BUILD_DATA_URL
 from pyartcd.locks import Lock
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy, EnumEncoder
-from pyartcd.runtime import Runtime
+from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import default_release_suffix, get_group_images
 
 LOGGER = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ class KonfluxOkd4Pipeline:
         self.slack_client = runtime.new_slack_client()
 
         self.built_images = []
+        self.group_runtime = None  # Will be initialized in initialize()
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -102,6 +103,16 @@ class KonfluxOkd4Pipeline:
 
         await self.init_build_plan()
         self.slack_client.bind_channel(f'openshift-{self.version}')
+
+        # Initialize GroupRuntime for accessing group configuration
+        self.group_runtime = await GroupRuntime.create(
+            self.runtime.config,
+            self.runtime.working_dir,
+            f'openshift-{self.version}',
+            self.assembly,
+            self.data_path,
+            self.data_gitref,
+        )
 
     async def init_build_plan(self):
         # Get number of images in current group
@@ -377,6 +388,9 @@ class KonfluxOkd4Pipeline:
             jenkins.update_description(f'{failure_msg}<br>')
             LOGGER.warning(failure_msg)
 
+        # Tag stream-coreos images (similar to how OCP tags rhel-coreos)
+        await self._tag_stream_coreos_images()
+
     async def _tag_image_to_stream(self, source_pullspec: str, target_tag: str, env: dict):
         """
         Helper method to tag an image into an imagestream.
@@ -397,6 +411,75 @@ class KonfluxOkd4Pipeline:
 
         LOGGER.debug('Running: %s', ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
+
+    async def _tag_stream_coreos_images(self):
+        """
+        Tag stream-coreos and stream-coreos-extensions images into the OKD imagestream.
+        This mirrors how OCP tags rhel-coreos images.
+
+        For OKD, we need to determine where stream-coreos images come from. Options:
+        1. From group config (similar to OCP rhcos.payload_tags)
+        2. From a specific build process or upstream source
+        3. From the legacy origin/scos imagestream
+
+        This implementation provides a flexible approach that can be adapted based on
+        your specific requirements.
+        """
+
+        if self.assembly != 'stream':
+            LOGGER.info('Assembly is not "stream"; skipping stream-coreos imagestream updates')
+            return
+
+        if self.runtime.dry_run:
+            LOGGER.info('[DRY RUN] Would tag stream-coreos images into imagestream')
+            return
+
+        # Check if group config has OKD-specific coreos configuration
+        # Similar to how OCP uses rhcos.payload_tags
+        okd_config = self.group_runtime.group_config.get('okd', {})
+
+        # Check for explicit coreos configuration in group.yml
+        coreos_config = okd_config.get('coreos', {})
+        payload_tags = coreos_config.get('payload_tags', [])
+
+        if not payload_tags:
+            LOGGER.warning('No OKD coreos configuration found in group config')
+            return
+
+        is_name = f'scos-{self.version}-art'
+        env = os.environ.copy()
+        successful_tags = []
+        failed_tags = []
+
+        LOGGER.info('Tagging stream-coreos images into imagestream: %s', is_name)
+
+        for tag_config in payload_tags:
+            tag_name = tag_config.get('name')
+            source_pullspec = tag_config.get('source_pullspec')
+
+            if not tag_name or not source_pullspec:
+                LOGGER.warning('Invalid coreos tag configuration: %s', tag_config)
+                continue
+
+            target = f'{self.imagestream_namespace}/{is_name}:{tag_name}'
+
+            try:
+                await self._tag_image_to_stream(source_pullspec=source_pullspec, target_tag=target, env=env)
+                LOGGER.info('Tagged %s into %s', tag_name, target)
+                successful_tags.append(tag_name)
+            except Exception as e:
+                LOGGER.warning('Failed to tag %s into imagestream: %s', tag_name, e)
+                failed_tags.append(tag_name)
+
+        if successful_tags:
+            success_msg = f'Tagged stream-coreos images: {", ".join(successful_tags)}'
+            jenkins.update_description(f'{success_msg}<br>')
+            LOGGER.info(success_msg)
+
+        if failed_tags:
+            failure_msg = f'Stream-coreos tagging failures: {", ".join(failed_tags)}'
+            jenkins.update_description(f'{failure_msg}<br>')
+            LOGGER.warning(failure_msg)
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
