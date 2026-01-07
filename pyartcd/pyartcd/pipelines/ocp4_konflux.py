@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -727,20 +728,41 @@ class KonfluxOcp4Pipeline:
                 await self.rebase_and_build_images()
 
         finally:
-            await self.mirror_images()
-            await self.sync_images()
-            await self.mirror_streams_to_ci()
+            # Track critical failures while ensuring all steps in this finally block attempt to run
+            critical_failures = []
+
+            # Helper function to run a function and collect its error messages
+            # We want to run all functions in this finally block even if one (or more) of the earlier funcs raise an Exception
+            async def run_safe(func, critical: bool = True):
+                try:
+                    if inspect.iscoroutinefunction(func):
+                        await func()
+                    else:
+                        func()
+                except Exception as e:
+                    LOGGER.exception(f"Failed to {func.__name__}: %s", e)
+                    if critical:
+                        critical_failures.append((func.__name__, e))
+
+            await run_safe(self.mirror_images)
+            await run_safe(self.sync_images)
+            await run_safe(self.mirror_streams_to_ci)
 
             if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-                await self.sweep_bugs()
-                await self.sweep_golang_bugs()
+                await run_safe(self.sweep_bugs)
+                await run_safe(self.sweep_golang_bugs)
             else:
                 LOGGER.info(
                     f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
                 )
 
-            self.trigger_bundle_build()
-            await self.clean_up()
+            await run_safe(self.trigger_bundle_build)
+            await run_safe(self.clean_up)
+
+            # Re-raise to mark as unstable if any critical operations failed
+            if critical_failures:
+                failed_ops = ", ".join(f"{name}: {str(err)}" for name, err in critical_failures)
+                raise RuntimeError(f"Critical operations failed in finally block: {failed_ops}")
 
     async def rebase_and_build_rpms(self, input_release: str):
         if (
