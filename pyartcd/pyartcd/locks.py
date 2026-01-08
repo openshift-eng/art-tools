@@ -22,6 +22,7 @@ class Lock(enum.Enum):
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
+    BUILD_SYNC_MULTI = 'lock:build-sync-multi:{version}'
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
     FBC_BUILD = 'lock:fbc-build:{group}'
@@ -97,6 +98,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC_KONFLUX: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.BUILD_SYNC_MULTI: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

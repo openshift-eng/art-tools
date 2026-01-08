@@ -21,7 +21,7 @@ from ruamel.yaml import YAML
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
-from doozerlib import brew, util
+from doozerlib import brew, release_inspector, util
 from doozerlib.brew import brew_event_from_datetime
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -271,7 +271,8 @@ class GenAssemblyCli:
             self.gen_microshift = True
 
         # Bind Konflux DB to the "builds" table
-        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+        if self.runtime.konflux_db:
+            self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
 
@@ -362,11 +363,9 @@ class GenAssemblyCli:
     async def _process_release(self, brew_cpu_arch, pullspec, rhcos_tag_names):
         self.runtime.logger.info(f'Processing release: {pullspec}')
 
-        _, release_json_str, _ = await exectools.cmd_gather_async(f'oc adm release info {pullspec} -o=json')
-        release_info = Model(dict_to_model=json.loads(release_json_str))
+        # Use shared utility to introspect release
+        release_info = await release_inspector.introspect_release(pullspec)
 
-        if not release_info.references.spec.tags:
-            self._exit_with_error(f'Could not find any imagestream tags in release: {pullspec}')
         if not release_info["displayVersions"]["machine-os"]["Version"]:
             self._exit_with_error(f'Could not find machine-os version in release: {pullspec}')
         # get rhcos version eg. 417.94.202410250757-0
@@ -395,22 +394,15 @@ class GenAssemblyCli:
                     self.runtime.logger.info(f'Find rhcos node image id {self.rhcos_node_id}')
                 continue
 
-            # The brew_build_inspector will take this archive image and find the actual
-            # brew build which created it.
-            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
-            image_labels = image_info['config']['config']['Labels']
-            package_name = image_labels['com.redhat.component']
-            if self.runtime.build_system == 'brew':
-                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-                build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
-            else:
-                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-                build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
-                    nvr=build_nvr,
-                    outcome=KonfluxBuildOutcome.SUCCESS,
-                    exclude_large_columns=True,
-                )
-                build_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
+            # Use shared utility to extract NVR and get build inspector
+            name, version, release_ver = await release_inspector.extract_nvr_from_pullspec(payload_tag_pullspec)
+            package_name = name
+            build_nvr = f"{name}-{version}-{release_ver}"
+
+            # Get build inspector (supports both Brew and Konflux)
+            build_inspector = await release_inspector.get_build_inspector_from_nvr(
+                self.runtime, build_nvr, pullspec=payload_tag_pullspec
+            )
 
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are
