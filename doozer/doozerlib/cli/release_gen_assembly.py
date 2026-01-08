@@ -408,7 +408,7 @@ class GenAssemblyCli:
                 build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
                     nvr=build_nvr,
                     outcome=KonfluxBuildOutcome.SUCCESS,
-                    exclude_large_columns=False,
+                    exclude_large_columns=True,
                 )
                 build_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
 
