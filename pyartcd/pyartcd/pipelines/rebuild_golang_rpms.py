@@ -145,14 +145,18 @@ class RebuildGolangRPMsPipeline:
         if failed_rpms:
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
             await self.notify_failed_rpms(failed_rpms)
-            raise RuntimeError(f'Bumping and rebuilding failed for these rpms: {failed_rpms}')
 
+        # bugs will only be moved if good builds are found
+        # so we can run this even if some rpms failed
         await move_golang_bugs(
             ocp_version=self.ocp_version,
             cves=self.cves,
             nvrs=self.go_nvrs if self.cves else None,
             dry_run=self.runtime.dry_run,
         )
+
+        if failed_rpms:
+            raise RuntimeError(f'Bumping and rebuilding failed for these rpms: {failed_rpms}')
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
