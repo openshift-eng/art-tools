@@ -36,8 +36,10 @@ class ConfigScanSources:
         self.changing_rpm_metas = set()
         self.changing_image_metas = set()
         self.changing_rpm_packages = set()
-        self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
-        self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
+        # maps metadata qualified_key => message describing change
+        self.assessment_reason = dict()
+        # tracks issues that arose during the scan, which did not interrupt the job
+        self.issues = list()
 
         self.all_rpm_metas = set(runtime.rpm_metas())
         self.all_image_metas = set(runtime.image_metas())
@@ -323,7 +325,9 @@ class ConfigScanSources:
                             eldest_rpm_build = latest_rpm_build
 
                     self.runtime.logger.info(
-                        f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {eldest_rpm_build}'
+                        f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {
+                            eldest_rpm_build
+                        }'
                     )
                     # Detect if our buildroot changed since the oldest rpm of the package latest build of was built.
                     build_root_change = brew.has_tag_changed_since_build(
@@ -454,7 +458,7 @@ class ConfigScanSources:
                     if rc != 0:
                         raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
 
-                if 'scan-sources:noop' in commit_message.lower():
+                if 'scan-sources:noop' in commit_message.lower() or 'scan-sources-osbs:noop' in commit_message.lower():
                     self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
                     self.add_image_meta_change(
@@ -666,7 +670,9 @@ class ConfigScanSources:
                 for installed_rpm, latest_rpm, repo in non_latest_rpms:
                     if any(excluded in installed_rpm for excluded in exclude_rpms):
                         self.runtime.logger.info(
-                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {latest_rpm} was available in repo {repo}"
+                            f"[EXEMPT SKIPPED] Exclude {installed_rpm} because its in the exempt list when {
+                                latest_rpm
+                            } was available in repo {repo}"
                         )
                     else:
                         non_latest_rpms_filtered.append((installed_rpm, latest_rpm, repo))
@@ -674,7 +680,9 @@ class ConfigScanSources:
                     status['outdated'] = True
                     status['changed'] = True
                     status['reason'] = ";\n".join(
-                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {latest_rpm} was available in repo {repo}"
+                        f"Outdated RPM {installed_rpm} installed in RHCOS ({arch}) when {
+                            latest_rpm
+                        } was available in repo {repo}"
                         for installed_rpm, latest_rpm, repo in non_latest_rpms_filtered
                     )
                     statuses.append(status)
@@ -686,7 +694,9 @@ class ConfigScanSources:
         base_name = rgp.default_imagestream_base_name(version, self.runtime)
         namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
         stdout, _ = exectools.cmd_assert(
-            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{
+                container_name
+            }' -o json",
             retries=3,
             pollrate=5,
             strip=True,
@@ -713,7 +723,9 @@ class ConfigScanSources:
         base_name = rgp.default_imagestream_base_name(version, self.runtime)
         namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
         stdout, _ = exectools.cmd_assert(
-            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{
+                container_name
+            }' -o json",
             retries=3,
             pollrate=5,
             strip=True,
