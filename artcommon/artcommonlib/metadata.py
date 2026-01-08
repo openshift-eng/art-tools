@@ -424,7 +424,7 @@ class MetadataBase(object):
                 raise ValueError(f'Did not find nvr field in pinned Image component {self.distgit_key}')
 
         # strict means raise an exception if not found.
-        return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True, exclude_large_columns=True)
+        return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True, exclude_large_columns=False)
 
     async def get_latest_konflux_build(
         self,
