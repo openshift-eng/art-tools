@@ -453,6 +453,7 @@ class BuildMicroShiftBootcPipeline:
             "--lock-upstream",
             bootc_image_name,
             "HEAD",
+            "--build-system", "konflux",
             "beta:images:konflux:rebase",
             "--version",
             version,
