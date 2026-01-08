@@ -410,14 +410,13 @@ class PrepareReleaseKonfluxPipeline:
             bug_ids = impetus_bugs.get(impetus)
             if not bug_ids:
                 self.logger.info("No bugs found for %s advisory.", impetus)
-                continue
-
-            # attach bugs
-            self.logger.info("Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids)
-            operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={advisory_num}"]
-            if self.dry_run:
-                operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+            else:
+                # attach bugs
+                self.logger.info("Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids)
+                operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={advisory_num}"]
+                if self.dry_run:
+                    operate_cmd += ["--dry-run"]
+                await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
 
             # unconditionally attach cve flaws
             self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
