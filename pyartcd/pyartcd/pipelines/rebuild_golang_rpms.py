@@ -179,7 +179,7 @@ class RebuildGolangRPMsPipeline:
             assembly='stream',
             image_list=[],
             rpm_list=rpms,
-            dry_run=self.runtime.dry_run
+            dry_run=self.runtime.dry_run,
         )
 
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
