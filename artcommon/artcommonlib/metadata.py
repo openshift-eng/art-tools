@@ -187,7 +187,6 @@ class MetadataBase(object):
         complete_before_event: Optional[int] = None,
         exclude_large_columns: bool = False,  # Ignored for Brew builds (Konflux-only parameter)
         max_window_days: Optional[int] = None,  # Ignored for Brew builds (Konflux-only parameter)
-        engine: Engine = Engine.BREW,  # Ignored for Brew builds (Konflux-only parameter)
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
