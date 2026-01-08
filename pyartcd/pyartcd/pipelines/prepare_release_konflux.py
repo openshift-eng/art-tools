@@ -412,7 +412,9 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("No bugs found for %s advisory.", impetus)
             else:
                 # attach bugs
-                self.logger.info("Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids)
+                self.logger.info(
+                    "Attaching %s bugs to %s advisory %s: %s", len(bug_ids), impetus, advisory_num, bug_ids
+                )
                 operate_cmd = ["attach-bugs"] + bug_ids + [f"--advisory={advisory_num}"]
                 if self.dry_run:
                     operate_cmd += ["--dry-run"]
