@@ -182,6 +182,7 @@ class RebuildGolangRPMsPipeline:
         jenkins.start_ocp4_konflux(
             build_version=self.ocp_version,
             assembly='stream',
+            image_list=[],
             rpm_list=rpms,
             dry_run=self.runtime.dry_run
         )
