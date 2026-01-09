@@ -1008,8 +1008,18 @@ class PrepareReleasePipeline:
         try:
             # Fetch the policy file
             _LOGGER.info("Fetching policy file from %s", policy_url)
-            async with aiohttp.ClientSession() as session:
-                async with session.get(policy_url) as response:
+
+            # Configure timeout for the request
+            timeout = aiohttp.ClientTimeout(total=30, sock_read=10)
+
+            # Prepare authentication headers if GitLab token is available
+            headers = {}
+            gitlab_token = os.environ.get("GITLAB_TOKEN")
+            if gitlab_token:
+                headers["Private-Token"] = gitlab_token
+
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(policy_url, headers=headers) as response:
                     if response.status != 200:
                         raise ValueError(f"Failed to fetch policy file: HTTP {response.status}")
                     policy_content = await response.text()
@@ -1025,16 +1035,15 @@ class PrepareReleasePipeline:
                     f"Expected '{expected_policy}', but found '{actual_policy}' in {policy_filename}"
                 )
                 _LOGGER.error(error_msg)
-                await self._slack_client.say_in_thread(f":warning: {error_msg}")
                 raise ValueError(error_msg)
 
             _LOGGER.info("Advisory stage policy validation passed: %s", actual_policy)
 
         except Exception as ex:
             error_msg = f"Failed to validate advisory stage policy: {ex}"
-            _LOGGER.error(error_msg)
+            _LOGGER.exception(error_msg)
             await self._slack_client.say_in_thread(f":warning: {error_msg}")
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from ex
 
 
 @cli.command("prepare-release")
