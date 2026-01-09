@@ -9,13 +9,9 @@ from artcommonlib.release_util import isolate_timestamp_in_release
 from doozerlib.cli.images_health import DELTA_DAYS, ConcernCode
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.constants import OCP_BUILD_DATA_URL, OKD_ENABLED_VERSIONS
 from pyartcd.runtime import Runtime
 
-OCP4_VERSIONS = [
-    "4.21",
-    "4.20",
-]
 OKD_GROUP_TEMPLATE = "okd-{}"
 
 
@@ -31,7 +27,7 @@ class ImagesHealthPipeline:
         assembly: str,
     ):
         self.runtime = runtime
-        self.versions = versions.split(',') if versions else OCP4_VERSIONS
+        self.versions = versions.split(',') if versions else OKD_ENABLED_VERSIONS
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
         self.data_path = data_path
