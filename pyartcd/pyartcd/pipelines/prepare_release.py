@@ -16,6 +16,7 @@ import aiofiles
 import aiohttp
 import click
 import semver
+import yaml as pyyaml
 from artcommonlib import exectools, git_helper
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
@@ -1025,7 +1026,7 @@ class PrepareReleasePipeline:
                     policy_content = await response.text()
 
             # Parse the YAML content
-            policy_data = yaml.load(policy_content)
+            policy_data = pyyaml.safe_load(policy_content) or {}
             actual_policy = policy_data.get("spec", {}).get("policy", "")
 
             # Validate the policy
