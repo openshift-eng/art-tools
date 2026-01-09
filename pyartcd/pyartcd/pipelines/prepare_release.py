@@ -13,6 +13,7 @@ from subprocess import PIPE
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import aiofiles
+import aiohttp
 import click
 import semver
 from artcommonlib import exectools, git_helper
@@ -156,6 +157,9 @@ class PrepareReleasePipeline:
         if assembly_type == AssemblyTypes.STREAM:
             if self.release_version[0] >= 4:
                 raise ValueError("Preparing a release from a stream assembly for OCP4+ is no longer supported.")
+
+        # Check advisory stage policy before proceeding
+        await self.check_advisory_stage_policy(assembly_type)
 
         release_config = releases_config.get("releases", {}).get(self.assembly, {})
         self.release_name = get_release_name_for_assembly(self.group_name, releases_config, self.assembly)
@@ -982,6 +986,55 @@ class PrepareReleasePipeline:
 
         _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
+
+    async def check_advisory_stage_policy(self, assembly_type: AssemblyTypes):
+        """
+        Check that the advisory stage policy is correct for EC vs non-EC releases.
+        For EC releases: expect 'registry-ocp-art-ec-stage' policy
+        For non-EC releases: expect 'registry-ocp-art-stage' policy
+        """
+        _LOGGER.info("Checking advisory stage policy...")
+
+        # Determine expected policy based on assembly type
+        is_ec_release = assembly_type == AssemblyTypes.PREVIEW
+        expected_policy = "registry-ocp-art-ec-stage" if is_ec_release else "registry-ocp-art-stage"
+
+        # Construct URL to the advisory stage policy file
+        version_major = self.release_version[0]
+        version_minor = self.release_version[1]
+        policy_filename = f"ocp-art-advisory-stage-{version_major}-{version_minor}.yaml"
+        policy_url = f"https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art/{policy_filename}"
+
+        try:
+            # Fetch the policy file
+            _LOGGER.info("Fetching policy file from %s", policy_url)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(policy_url) as response:
+                    if response.status != 200:
+                        raise ValueError(f"Failed to fetch policy file: HTTP {response.status}")
+                    policy_content = await response.text()
+
+            # Parse the YAML content
+            policy_data = yaml.load(policy_content)
+            actual_policy = policy_data.get("spec", {}).get("policy", "")
+
+            # Validate the policy
+            if actual_policy != expected_policy:
+                error_msg = (
+                    f"Advisory stage policy mismatch for {'EC' if is_ec_release else 'non-EC'} release. "
+                    f"Expected '{expected_policy}', but found '{actual_policy}' in {policy_filename}"
+                )
+                _LOGGER.error(error_msg)
+                await self._slack_client.say_in_thread(f":warning: {error_msg}")
+                raise ValueError(error_msg)
+
+            _LOGGER.info("Advisory stage policy validation passed: %s", actual_policy)
+
+        except Exception as ex:
+            error_msg = f"Failed to validate advisory stage policy: {ex}"
+            _LOGGER.error(error_msg)
+            await self._slack_client.say_in_thread(f":warning: {error_msg}")
+            raise ValueError(error_msg)
 
 
 @cli.command("prepare-release")
