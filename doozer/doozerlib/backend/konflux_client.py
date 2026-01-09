@@ -1,12 +1,17 @@
 import asyncio
 import datetime
+import hashlib
 import logging
 import os
 import random
+import re
+import tempfile
 import threading
 import time
 import traceback
-from typing import Dict, List, Optional, Sequence, Union, cast
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Union, cast
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 import jinja2
@@ -48,6 +53,109 @@ def get_common_runtime_watcher_labels() -> Dict[str, str]:
             # Use nanoseconds since epoch for uniqueness
             _COMMON_RUNTIME_LABEL_VALUE = str(time.time_ns())
         return {_COMMON_RUNTIME_LABEL_KEY: _COMMON_RUNTIME_LABEL_VALUE}
+
+
+class GitHubApiUrlInfo(NamedTuple):
+    """Parsed GitHub API URL components."""
+    owner: str
+    repo: str
+    file_path: str
+    ref: str
+
+
+def parse_github_api_url(api_url: str) -> GitHubApiUrlInfo:
+    """Parse a GitHub API contents URL into its components.
+
+    Expected format: https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+
+    :param api_url: GitHub API URL for file contents
+    :return: GitHubApiUrlInfo with owner, repo, file_path, and ref
+    :raises ValueError: If the URL doesn't match the expected format
+    """
+    parsed = urlparse(api_url)
+
+    if parsed.netloc != 'api.github.com':
+        raise ValueError(f'Expected api.github.com URL, got: {parsed.netloc}')
+
+    # Path format: /repos/{owner}/{repo}/contents/{file_path}
+    match = re.match(r'^/repos/([^/]+)/([^/]+)/contents/(.+)$', parsed.path)
+    if not match:
+        raise ValueError(f'URL path does not match expected format: {parsed.path}')
+
+    owner, repo, file_path = match.groups()
+
+    # Parse query string for ref
+    query_params = parse_qs(parsed.query)
+    ref = query_params.get('ref', ['main'])[0]
+
+    return GitHubApiUrlInfo(owner=owner, repo=repo, file_path=file_path, ref=ref)
+
+
+# Global lock and cache for template repository clones
+_TEMPLATE_REPO_LOCK = threading.Lock()
+_TEMPLATE_REPO_CACHE: Dict[str, Path] = {}  # Maps repo URL to local path
+
+
+def _get_template_cache_dir() -> Path:
+    """Get or create the cache directory for template repositories.
+
+    Uses DOOZER_CACHE_DIR if set, otherwise uses system temp directory.
+
+    :return: Path to the cache directory
+    """
+    cache_base = os.getenv('DOOZER_CACHE_DIR') or tempfile.gettempdir()
+    cache_dir = Path(cache_base) / 'konflux-plr-templates'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
+    """Clone or update a template repository locally.
+
+    Uses a global cache to avoid cloning the same repo multiple times.
+    The repo is cloned once and then fetched/checked out to the desired ref.
+
+    :param git_url: SSH or HTTPS URL to the git repository
+    :param ref: Branch, tag, or commit to checkout
+    :return: Path to the local repository clone
+    """
+    # Create a unique directory name based on the repo URL
+    repo_hash = hashlib.sha256(git_url.encode()).hexdigest()[:12]
+    # Extract repo name for readability
+    repo_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
+    cache_key = f"{repo_name}-{repo_hash}"
+
+    with _TEMPLATE_REPO_LOCK:
+        if cache_key in _TEMPLATE_REPO_CACHE:
+            repo_path = _TEMPLATE_REPO_CACHE[cache_key]
+            if repo_path.exists():
+                LOGGER.debug(f"Using cached template repo at {repo_path}")
+                # Fetch latest and checkout the ref
+                try:
+                    exectools.cmd_assert(f'git -C {repo_path} fetch --all --prune', retries=3)
+                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                    # If ref is a branch, pull latest
+                    exectools.cmd_gather(f'git -C {repo_path} pull --ff-only 2>/dev/null || true')
+                    return repo_path
+                except Exception as e:
+                    LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
+                    # Fall through to clone
+
+        # Clone the repository
+        cache_dir = _get_template_cache_dir()
+        repo_path = cache_dir / cache_key
+
+        if repo_path.exists():
+            # Remove stale clone
+            import shutil
+            shutil.rmtree(repo_path, ignore_errors=True)
+
+        LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
+        exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
+        exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+
+        _TEMPLATE_REPO_CACHE[cache_key] = repo_path
+        return repo_path
 
 
 API_VERSION = "appstudio.redhat.com/v1alpha1"
@@ -440,34 +548,50 @@ class KonfluxClient:
 
     @staticmethod
     @alru_cache
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def _get_pipelinerun_template(template_url: str):
-        """Get a PipelineRun template.
+        """Get a PipelineRun template by cloning the repository locally.
 
-        :param template_url: The URL to the template.
-        :return: The template.
+        This method clones the template repository locally instead of using the GitHub API,
+        which avoids authentication issues and rate limiting. The repository is cached
+        for subsequent calls.
+
+        :param template_url: The GitHub API URL to the template (for backwards compatibility).
+                            Format: https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+        :return: The jinja2 template.
+        :raises ValueError: If the URL format is invalid.
+        :raises FileNotFoundError: If the template file doesn't exist in the repo.
         """
         LOGGER.info(f"Pulling Konflux PLR template from: {template_url}")
-        # In order to not be rate limited, requests for raw files from github
-        # need to go through the API and be authenticated with a bearer token.
+
+        # Parse the GitHub API URL to extract components
         if not template_url.startswith('https://api.github.com'):
-            raise ValueError('Template URL must be accessed through api.github.com')
+            raise ValueError('Template URL must be a GitHub API URL (https://api.github.com/...)')
 
-        headers = {
-            "Accept": "application/vnd.github.v3.raw",  # Request raw file contents
-        }
-        if os.getenv("GITHUB_TOKEN"):
-            # Use a github token to avoid rate limiting when avaialble.
-            headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
-        else:
-            LOGGER.warning('GITHUB_TOKEN not set. Template retrieval may be rate limited.')
+        url_info = parse_github_api_url(template_url)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(template_url, headers=headers) as response:
-                response.raise_for_status()
-                template_text = await response.text()
-                template = jinja2.Template(template_text, autoescape=True)
-                return template
+        # Construct the git URL for cloning (use SSH for private repos)
+        # SSH is preferred as it uses the user's SSH key for authentication
+        git_url = f'git@github.com:{url_info.owner}/{url_info.repo}.git'
+
+        # Clone or update the repository
+        # Run the blocking git operations in a thread pool to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        repo_path = await loop.run_in_executor(
+            None,
+            _clone_or_update_template_repo,
+            git_url,
+            url_info.ref
+        )
+
+        # Read the template file from the local clone
+        template_file = repo_path / url_info.file_path
+        if not template_file.exists():
+            raise FileNotFoundError(f'Template file not found: {template_file}')
+
+        LOGGER.debug(f"Reading template from local file: {template_file}")
+        template_text = template_file.read_text()
+        template = jinja2.Template(template_text, autoescape=True)
+        return template
 
     async def _new_pipelinerun_for_image_build(
         self,
