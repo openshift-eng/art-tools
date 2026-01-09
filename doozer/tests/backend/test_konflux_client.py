@@ -86,6 +86,6 @@ class TestParseGitHubApiUrl(TestCase):
         self.assertIsInstance(result, GitHubApiUrlInfo)
         # Test named tuple access
         self.assertEqual(result[0], "owner")  # owner
-        self.assertEqual(result[1], "repo")   # repo
+        self.assertEqual(result[1], "repo")  # repo
         self.assertEqual(result[2], "file.yaml")  # file_path
-        self.assertEqual(result[3], "main")   # ref
+        self.assertEqual(result[3], "main")  # ref

@@ -57,6 +57,7 @@ def get_common_runtime_watcher_labels() -> Dict[str, str]:
 
 class GitHubApiUrlInfo(NamedTuple):
     """Parsed GitHub API URL components."""
+
     owner: str
     repo: str
     file_path: str
@@ -148,6 +149,7 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
         if repo_path.exists():
             # Remove stale clone
             import shutil
+
             shutil.rmtree(repo_path, ignore_errors=True)
 
         LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
@@ -576,12 +578,7 @@ class KonfluxClient:
         # Clone or update the repository
         # Run the blocking git operations in a thread pool to avoid blocking the event loop
         loop = asyncio.get_event_loop()
-        repo_path = await loop.run_in_executor(
-            None,
-            _clone_or_update_template_repo,
-            git_url,
-            url_info.ref
-        )
+        repo_path = await loop.run_in_executor(None, _clone_or_update_template_repo, git_url, url_info.ref)
 
         # Read the template file from the local clone
         template_file = repo_path / url_info.file_path
