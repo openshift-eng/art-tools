@@ -207,6 +207,10 @@ class Repo(object):
         """For debugging mainly, to display contents as a dict"""
         return str(self._data)
 
+    def to_dict(self) -> Dict:
+        """Export repo configuration as a dictionary."""
+        return self._data.primitive()
+
     def baseurl(self, repotype, arch):
         if not repotype:
             repotype = 'unsigned'
