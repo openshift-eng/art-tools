@@ -115,7 +115,7 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
     Uses a global cache to avoid cloning the same repo multiple times.
     The repo is cloned once and then fetched/checked out to the desired ref.
 
-    :param git_url: SSH or HTTPS URL to the git repository
+    :param git_url: HTTPS URL to the git repository
     :param ref: Branch, tag, or commit to checkout
     :return: Path to the local repository clone
     """
@@ -569,9 +569,9 @@ class KonfluxClient:
 
         url_info = parse_github_api_url(template_url)
 
-        # Construct the git URL for cloning (use SSH for private repos)
-        # SSH is preferred as it uses the user's SSH key for authentication
-        git_url = f'git@github.com:{url_info.owner}/{url_info.repo}.git'
+        # Construct the git URL for cloning using HTTPS
+        # For private repos, git will use credentials from git credential helper or GITHUB_TOKEN
+        git_url = f'https://github.com/{url_info.owner}/{url_info.repo}.git'
 
         # Clone or update the repository
         # Run the blocking git operations in a thread pool to avoid blocking the event loop
