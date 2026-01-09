@@ -1022,7 +1022,13 @@ class PrepareReleasePipeline:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(policy_url, headers=headers) as response:
                     if response.status != 200:
-                        raise ValueError(f"Failed to fetch policy file: HTTP {response.status}")
+                        error_details = [
+                            f"Failed to fetch policy file from {policy_url}: HTTP {response.status}",
+                            "This requires konflux-release-data MR 13498 to be merged and deployed.",
+                        ]
+                        if response.status == 403:
+                            error_details.append("403 Forbidden may indicate missing GITLAB_TOKEN environment variable.")
+                        raise ValueError(" ".join(error_details))
                     policy_content = await response.text()
 
             # Parse the YAML content
