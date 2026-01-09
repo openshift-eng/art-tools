@@ -536,10 +536,20 @@ def get_golang_container_nvrs_for_konflux_record(
 
         parents = build.parent_images
         for p in parents:
+            # verify it's a pullspec
+            if '/' not in p:
+                continue
+
+            spec = p.split('/')[-1]
+
+            # construct nvr from pullspec, examples:
             # brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.24.4-202507171054.g2f6f49f.el9
-            if 'openshift-golang-builder' in p or 'go-toolset' in p:
-                temp = p.split('/')[-1]
-                go_version = temp.replace(':', '-container-')
+            # quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.24.6-202511041143.g4284440.el9
+            if spec.startswith('openshift-golang-builder:'):
+                go_version = spec.replace(':', '-container-')
+                break
+            elif spec.startswith('art-images:golang-builder-'):
+                go_version = spec.replace('art-images:golang-builder-', 'openshift-golang-builder-container-')
                 break
 
         if not go_version:
