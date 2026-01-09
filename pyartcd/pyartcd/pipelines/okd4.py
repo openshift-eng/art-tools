@@ -552,7 +552,7 @@ class KonfluxOkd4Pipeline:
 @click.option(
     '--imagestream-namespace',
     required=False,
-    default='ocp',
+    default='origin',
     help='Namespace for OKD imagestream updates (default: ocp)',
 )
 @pass_runtime
