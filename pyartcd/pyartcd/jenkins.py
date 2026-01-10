@@ -399,6 +399,7 @@ def start_ocp4_konflux(
     image_list: list,
     rpm_list: list = None,
     limit_arches: list = None,
+    dry_run: bool = False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -421,6 +422,8 @@ def start_ocp4_konflux(
 
     # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
     params['SKIP_PLASHETS'] = False
+
+    params['DRY_RUN'] = dry_run
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
