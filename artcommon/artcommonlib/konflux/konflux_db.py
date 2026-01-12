@@ -772,8 +772,12 @@ class KonfluxDb:
                 base_clauses.append(Column(col_name, String).is_(None))
         extra_patterns = extra_patterns or {}
         for col_name, col_value in extra_patterns.items():
-            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
-            base_clauses.append(regexp_condition)
+            # Use exact match for art_job_url since URLs contain regex special characters
+            if col_name == 'art_job_url':
+                base_clauses.append(Column(col_name, String) == col_value)
+            else:
+                regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+                base_clauses.append(regexp_condition)
 
         array_contains = array_contains or {}
         for array_field, search_value in array_contains.items():
@@ -1138,6 +1142,9 @@ class KonfluxDb:
                 else:
                     bool_value = bool(col_value)
                 base_clauses.append(Column(col_name, Boolean) == bool_value)
+            # Use exact match for art_job_url since URLs contain regex special characters
+            elif col_name == 'art_job_url':
+                base_clauses.append(Column(col_name, String) == col_value)
             else:
                 # String columns use regex matching
                 regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
