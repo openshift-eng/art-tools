@@ -122,10 +122,16 @@ class BigQueryClient:
                     for where_clause in where_clauses
                 ]
             )
+            # Un-escape %% to % - BigQuery doesn't need MySQL-style percent escaping
+            where_conditions = where_conditions.replace('%%', '%')
             query += f' WHERE {where_conditions}'
 
         if order_by_clause is not None:
-            order_by_string = order_by_clause.compile(dialect=mysql.dialect(), compile_kwargs={'literal_binds': True})
+            order_by_string = str(
+                order_by_clause.compile(dialect=mysql.dialect(), compile_kwargs={'literal_binds': True})
+            )
+            # Un-escape %% to % - BigQuery doesn't need MySQL-style percent escaping
+            order_by_string = order_by_string.replace('%%', '%')
             query += f' ORDER BY {order_by_string}'
 
         if limit is not None:
