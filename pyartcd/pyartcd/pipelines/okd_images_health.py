@@ -7,13 +7,13 @@ from urllib.parse import quote
 import click
 from artcommonlib import exectools, redis
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
-from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL, OKD_ENABLED_VERSIONS
 from pyartcd.runtime import Runtime
 
 OKD_GROUP_TEMPLATE = "okd-{}"
+OKD_BUILD_HISTORY_URL = 'https://okd-build-history-okd-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
 
 
 class ImagesHealthPipeline:
@@ -230,7 +230,7 @@ class ImagesHealthPipeline:
     @staticmethod
     def get_search_url(concern):
         """
-        Build the ART build history search page URL for a component.
+        Build the OKD build history search page URL for a component.
 
         Arg(s):
             concern (dict): Concern data containing image name and group
@@ -239,12 +239,14 @@ class ImagesHealthPipeline:
         """
         image_name = concern['image_name']
         group = concern['group']
-        return f'{ART_BUILD_HISTORY_URL}/?name={image_name}&group={group}'
+        # Transform openshift-X.Y to okd-X.Y for the OKD dashboard
+        okd_group = group.replace('openshift-', 'okd-')
+        return f'{OKD_BUILD_HISTORY_URL}/?name={image_name}&group={okd_group}'
 
     @staticmethod
     def get_logs_url(concern):
         """
-        Build the ART build history logs URL for a failed build.
+        Build the OKD build history logs URL for a failed build.
 
         Arg(s):
             concern (dict): Concern data containing build failure details
@@ -253,7 +255,7 @@ class ImagesHealthPipeline:
         """
         dt = datetime.fromisoformat(concern['latest_failed_build_time'])
         formatted = dt.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        logs_url = f'{ART_BUILD_HISTORY_URL}/logs?nvr={concern["latest_failed_nvr"]}&record_id={concern["latest_failed_build_record_id"]}&after={formatted}'
+        logs_url = f'{OKD_BUILD_HISTORY_URL}/logs?nvr={concern["latest_failed_nvr"]}&record_id={concern["latest_failed_build_record_id"]}&after={formatted}'
         return logs_url
 
     @staticmethod
