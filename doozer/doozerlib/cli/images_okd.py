@@ -103,6 +103,12 @@ class OkdRebaseCli:
             group_config = deep_merge(group_config, group_config['okd'])
             self.runtime.group_config = Model(group_config)
 
+        # For OKD, we need to use the OKD group variant (e.g., okd-4.20 instead of openshift-4.20)
+        # This ensures the Konflux DB cache is loaded for the correct group
+        major, minor = self.runtime.get_major_minor_fields()
+        self.runtime.group = f'okd-{major}.{minor}'
+        self.logger.info(f'Changed runtime group to OKD variant: {self.runtime.group}')
+
         base_dir = Path(self.runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_OKD_SOURCES)
         rebaser = KonfluxRebaser(
             runtime=self.runtime,
