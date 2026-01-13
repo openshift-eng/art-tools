@@ -27,6 +27,7 @@ jenkins_client: Optional[Jenkins] = None
 class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_SYNC_KONFLUX = 'aos-cd-builds/build%2Fbuild-sync-konflux'
+    BUILD_SYNC_MULTI = 'aos-cd-builds/build%2Fbuild-sync-multi'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
@@ -492,6 +493,35 @@ def start_build_sync(
             job=Jobs.BUILD_SYNC_KONFLUX,
             params=params | kwargs,
         )
+
+
+def start_build_sync_multi(
+    version: str,
+    multi_model: Optional[str] = None,
+    assembly: str = 'stream',
+    doozer_data_path: Optional[str] = None,
+    doozer_data_gitref: Optional[str] = None,
+    exclude_arches: list = None,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    if multi_model:
+        params['MULTI_MODEL'] = multi_model
+    if doozer_data_path:
+        params['DOOZER_DATA_PATH'] = doozer_data_path
+    if doozer_data_gitref:
+        params['DOOZER_DATA_GITREF'] = doozer_data_gitref
+    if exclude_arches:
+        params['EXCLUDE_ARCHES'] = ','.join(exclude_arches)
+
+    return start_build(
+        job=Jobs.BUILD_SYNC_MULTI,
+        params=params,
+        **kwargs,
+    )
 
 
 def start_cincinnati_prs(
