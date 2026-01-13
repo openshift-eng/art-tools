@@ -883,11 +883,9 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
     if not arch:
         arch = 'multi'
 
-    # Construct tag base (e.g., "4.21.0-0.nightly" or "4.21.0-0.nightly-multi")
-    if arch == 'multi':
-        tag_base = f"{major_minor}.0-0.nightly-multi"
-    else:
-        tag_base = f"{major_minor}.0-0.nightly"
+    # Construct tag base (e.g., "4.21.0-0.nightly")
+    # Note: rc_api_url will add the appropriate arch suffix (e.g., -s390x, -multi)
+    tag_base = f"{major_minor}.0-0.nightly"
 
     # Query the release controller API
     rc_url = f"{rc_api_url(tag_base, arch, private_nightly)}/tags"
