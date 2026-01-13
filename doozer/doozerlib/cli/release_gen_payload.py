@@ -18,7 +18,7 @@ import openshift_client as oc
 import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
     KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS,
@@ -641,6 +641,14 @@ class GenPayloadCli:
         rt.assembly = multi_model_assembly_name
         # Keep assembly_type as STREAM to avoid SemVer parsing issues
         rt.assembly_type = AssemblyTypes.STREAM
+
+        # CRITICAL: Recalculate assembly_basis_event after changing the assembly
+        # Without this, get_latest_build() won't filter to the basis time and will
+        # return the absolute latest Konflux builds instead of the builds from the nightly
+        rt.assembly_basis_event = assembly_basis_event(
+            rt.get_releases_config(), rt.assembly, strict=False, build_system=rt.build_system
+        )
+        self.logger.info(f"Recalculated assembly_basis_event: {rt.assembly_basis_event}")
 
         self.logger.info(f"Applied multi-model assembly '{multi_model_assembly_name}' to runtime (as STREAM type)")
 
