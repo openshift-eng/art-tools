@@ -241,7 +241,7 @@ class ImagesHealthPipeline:
         group = concern['group']
         # Transform openshift-X.Y to okd-X.Y for the OKD dashboard
         okd_group = group.replace('openshift-', 'okd-')
-        return f'{OKD_BUILD_HISTORY_URL}/?name={image_name}&group={okd_group}'
+        return f'{OKD_BUILD_HISTORY_URL}/?name=^{image_name}$&group={okd_group}'
 
     @staticmethod
     def get_logs_url(concern):
