@@ -180,7 +180,7 @@ class ImagesHealthPipeline:
         group = concern['group']
 
         after = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
-        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name={concern["image_name"]}&group={group}&assembly=stream&outcome=completed&engine=konflux&after={after}'
+        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={group}&assembly=stream&outcome=completed&engine=konflux&after={after}'
         logs_link = self.url_text(self.get_logs_url(concern), "logs")
 
         message = f'{self.url_text(art_dash_link, f"{group}")}: '
