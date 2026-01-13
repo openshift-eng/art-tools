@@ -12,7 +12,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-from artcommonlib.util import new_roundtrip_yaml_handler, sync_to_quay, validate_build_priority
+from artcommonlib.util import new_roundtrip_yaml_handler, run_safe, sync_to_quay, validate_build_priority
 
 from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
@@ -727,9 +727,10 @@ class KonfluxOcp4Pipeline:
                 await self.rebase_and_build_images()
 
         finally:
-            await self.mirror_images()
+            # Track critical failures while ensuring problematic operations attempt to run
+            critical_failures = []
+
             await self.sync_images()
-            await self.mirror_streams_to_ci()
 
             if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
                 await self.sweep_bugs()
@@ -740,7 +741,17 @@ class KonfluxOcp4Pipeline:
                 )
 
             self.trigger_bundle_build()
+
+            # Wrap problematic operations to prevent them from blocking each other or clean_up
+            await run_safe(self.mirror_images, critical_failures)
+            await run_safe(self.mirror_streams_to_ci, critical_failures)
+
             await self.clean_up()
+
+            # Re-raise to mark build as UNSTABLE if any critical operations failed
+            if critical_failures:
+                failed_ops = ", ".join(f"{name}: {err}" for name, err in critical_failures)
+                raise RuntimeError(f"Critical operations failed in finally block: {failed_ops}")
 
     async def rebase_and_build_rpms(self, input_release: str):
         if (
