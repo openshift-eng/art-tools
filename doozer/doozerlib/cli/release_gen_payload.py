@@ -18,7 +18,7 @@ import openshift_client as oc
 import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
     KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS,
@@ -642,6 +642,14 @@ class GenPayloadCli:
         # Keep assembly_type as STREAM to avoid SemVer parsing issues
         rt.assembly_type = AssemblyTypes.STREAM
 
+        # CRITICAL: Recalculate assembly_basis_event after changing the assembly
+        # Without this, get_latest_build() won't filter to the basis time and will
+        # return the absolute latest Konflux builds instead of the builds from the nightly
+        rt.assembly_basis_event = assembly_basis_event(
+            rt.get_releases_config(), rt.assembly, strict=False, build_system=rt.build_system
+        )
+        self.logger.info(f"Recalculated assembly_basis_event: {rt.assembly_basis_event}")
+
         self.logger.info(f"Applied multi-model assembly '{multi_model_assembly_name}' to runtime (as STREAM type)")
 
     async def _resolve_multi_model_spec(self, multi_model_spec: str) -> str:
@@ -696,65 +704,30 @@ class GenPayloadCli:
         """
         minor_version = self.runtime.get_minor_version()
         stream_name = f"{minor_version}.0-0.nightly"
+        tags_url = f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestream/{stream_name}/tags"
 
         try:
             async with aiohttp.ClientSession() as session:
-                if offset == 0:
-                    # For offset 0, we can use the latest release endpoint directly
-                    release_controller_url = (
-                        f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestream/{stream_name}/latest"
+                self.logger.info(f"Querying release stream tags: {tags_url}")
+
+                async with session.get(tags_url) as resp:
+                    if resp.status != 200:
+                        raise DoozerFatalError(f"Failed to query release stream tags at {tags_url}: HTTP {resp.status}")
+                    stream_data = await resp.json()
+
+                # Get the tags list (releases are called "tags" in this API)
+                releases = stream_data.get('tags', [])
+                if not releases:
+                    raise DoozerFatalError(f"No releases found in stream '{stream_name}' for {arch}")
+
+                if offset >= len(releases):
+                    raise DoozerFatalError(
+                        f"Offset {offset} is out of range. Stream '{stream_name}' only has {len(releases)} releases."
                     )
-                    self.logger.info(f"Querying release controller for {arch} latest nightly: {release_controller_url}")
 
-                    async with session.get(release_controller_url) as resp:
-                        if resp.status != 200:
-                            raise DoozerFatalError(
-                                f"Failed to query release controller at {release_controller_url}: HTTP {resp.status}"
-                            )
-                        release_data = await resp.json()
-
-                    if 'name' not in release_data:
-                        raise DoozerFatalError(f"No 'name' field in release controller response for {arch}")
-                    nightly_name = release_data['name']
-                    self.logger.info(f"Resolved {arch}:{offset} to latest nightly: {nightly_name}")
-                    return nightly_name
-                else:
-                    # For other offsets, we need to query the full stream list
-                    streams_url = f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestreams/all"
-                    self.logger.info(f"Querying release streams for offset {offset}: {streams_url}")
-
-                    async with session.get(streams_url) as resp:
-                        if resp.status != 200:
-                            raise DoozerFatalError(
-                                f"Failed to query release streams at {streams_url}: HTTP {resp.status}"
-                            )
-                        streams_data = await resp.json()
-
-                    # Find the matching stream
-                    matching_stream = None
-                    for stream in streams_data:
-                        if stream.get('name') == stream_name:
-                            matching_stream = stream
-                            break
-
-                    if not matching_stream:
-                        raise DoozerFatalError(
-                            f"Could not find stream '{stream_name}' in release controller for {arch}"
-                        )
-
-                    # Get the releases list
-                    releases = matching_stream.get('releases', [])
-                    if not releases:
-                        raise DoozerFatalError(f"No releases found in stream '{stream_name}' for {arch}")
-
-                    if offset >= len(releases):
-                        raise DoozerFatalError(
-                            f"Offset {offset} is out of range. Stream '{stream_name}' only has {len(releases)} releases."
-                        )
-
-                    nightly_name = releases[offset]['name']
-                    self.logger.info(f"Resolved {arch}:{offset} to nightly: {nightly_name}")
-                    return nightly_name
+                nightly_name = releases[offset]['name']
+                self.logger.info(f"Resolved {arch}:{offset} to nightly: {nightly_name}")
+                return nightly_name
 
         except aiohttp.ClientError as e:
             raise DoozerFatalError(f"HTTP client error querying release controller for {arch}:{offset}: {e}")
