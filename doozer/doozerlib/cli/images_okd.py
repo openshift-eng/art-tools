@@ -262,12 +262,8 @@ def resolve_okd_from_image_meta(runtime, image_meta, okd_version):
     elif ci_alignment_config.upstream_image:
         return ci_alignment_config.upstream_image
     else:
-        name = image_meta.config.payload_name or image_meta.config.name
-        image_name = name.split('/')[-1]
-        # In release payloads, images are promoted into an imagestream
-        # tag name without the ose- prefix.
-        image_name = remove_prefix(image_name, 'ose-')
-        ci_payload_tag_name = image_name
+        # Use the same payload tag name logic as OCP, which properly handles payload_name
+        ci_payload_tag_name = get_okd_payload_tag_name(image_meta)
 
     # e.g. registry.ci.openshift.org/origin/scos-4.16:base
     return f'registry.ci.openshift.org/origin/scos-{okd_version}:{ci_payload_tag_name}'
