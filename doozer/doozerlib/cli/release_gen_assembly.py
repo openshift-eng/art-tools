@@ -10,12 +10,16 @@ import requests
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import ART_PROD_IMAGE_REPO, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import get_assembly_release_date, uses_konflux_imagestream_override
+from artcommonlib.util import (
+    get_art_prod_image_repo_for_version,
+    get_assembly_release_date,
+    uses_konflux_imagestream_override,
+)
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -605,13 +609,15 @@ class GenAssemblyCli:
                                 f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
                             )
                         amd64_rhcos_info = util.oc_image_info_for_arch(self.rhcos_by_tag[tag.name]["x86_64"], "amd64")
+                        # NOTE: RHCOS images are currently always in ocp-v4.0-art-dev, even for OCP 5.x.
+                        # When RHCOS 5.x images exist in their own repository, this should be updated to
+                        # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
+                        art_repo = get_art_prod_image_repo_for_version(4, "dev")
                         rhcos_info = util.oc_image_info_for_arch(
-                            f"{ART_PROD_IMAGE_REPO}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
+                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
                         )
-                        self.rhcos_by_tag[tag.name][arch] = (
-                            f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
-                        )
+                        self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
                     else:
                         url_key = (
                             f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor

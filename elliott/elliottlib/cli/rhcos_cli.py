@@ -85,7 +85,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
 
     if arch == 'all':
         target_arches = BREW_ARCHES
-        if major == 4 and minor < 9:
+        if (major, minor) < (4, 9):
             target_arches.remove("aarch64")
     else:
         target_arches = [arch]

@@ -899,8 +899,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
         dry_run: If true, new desired jira issues would only be printed to the console.
     """
     major, minor = runtime.get_major_minor_fields()
-    if (major == 4 and minor < 16) or major < 4:
-        # Only enabled for 4.13 and beyond at the moment.
+    if (major, minor) < (4, 16):
+        # Only enabled for 4.16 and beyond
         return
 
     new_issues: Dict[str, Issue] = dict()

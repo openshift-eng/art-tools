@@ -20,7 +20,7 @@ from pyartcd.pipelines import (
     gen_assembly,
     images_health,
     oadp_scan_konflux,
-    ocp4,
+    ocp,
     ocp4_konflux,
     ocp4_scan,
     ocp4_scan_konflux,

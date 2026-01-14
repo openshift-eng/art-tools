@@ -808,8 +808,8 @@ class Runtime(GroupRuntime):
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
         major, minor = self.get_major_minor_fields()
-        if major == 4 and minor < 6:
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for 4.X versions < 4.6")
+        if (major, minor) < (4, 6):
+            raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
         bug_config = Model(self.get_bug_config())
         server = bug_config.jira_config.server or 'https://issues.redhat.com'
 

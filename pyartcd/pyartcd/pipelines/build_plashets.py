@@ -122,7 +122,7 @@ class BuildPlashetsPipeline:
     help="Create multiple yum repos (one for each arch) based on -candidate tags "
     "Those repos can be signed (release state) or unsigned (pre-release state)",
 )
-@click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.14')
+@click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.14, openshift-5.0')
 @click.option('--release', required=True, help='e.g. 201901011200.?')
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
