@@ -17,7 +17,7 @@ from errata_tool import Erratum
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
-from elliottlib.errata import is_security_advisory
+from elliottlib.errata import is_security_advisory, get_errata_live_id
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
@@ -196,7 +196,8 @@ class AttachCveFlaws:
         self._replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch}
         rpm_advisory = self.runtime.group_config.advisories.get("rpm")
         if rpm_advisory is not None:
-            self._replace_vars.update({"RPM_ADVISORY": rpm_advisory})
+            live_id = get_errata_live_id(rpm_advisory)
+            self._replace_vars.update({"RPM_ADVISORY": live_id})
 
     async def run(self):
         if self.runtime.build_system == 'konflux':
