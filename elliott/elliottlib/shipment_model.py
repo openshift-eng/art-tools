@@ -75,7 +75,7 @@ class ReleaseNotes(StrictBaseModel):
     """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
-    live_id: int = None
+    live_id: str = None
     synopsis: str = None
     topic: str = None
     description: str = None
