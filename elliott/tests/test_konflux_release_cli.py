@@ -228,7 +228,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
-                        live_id="123456",
+                        live_id=123456,
                         synopsis="Red Hat Openshift Test Release",
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",
@@ -387,7 +387,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                 data=Data(
                     releaseNotes=ReleaseNotes(
                         type="RHBA",
-                        live_id="123456",
+                        live_id=123456,
                         synopsis="Red Hat Openshift Test Release",
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",

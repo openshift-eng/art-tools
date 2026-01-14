@@ -65,7 +65,7 @@ class TestShipmentModel(unittest.TestCase):
             "data": {
                 "releaseNotes": {
                     "type": "RHEA",
-                    "live_id": "12345",
+                    "live_id": 12345,
                     "synopsis": "Test synopsis",
                     "topic": "Test topic",
                     "description": "Test description",

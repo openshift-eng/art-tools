@@ -161,7 +161,7 @@
           "type": "string"
         },
         "live_id": {
-          "type": "string"
+          "type": "integer"
         }
       },
       "additionalProperties": false
