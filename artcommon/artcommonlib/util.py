@@ -20,6 +20,7 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
+    LAST_OCP_MINOR_VERSION,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
@@ -326,9 +327,15 @@ def get_inflight(assembly, group, date=None):
     assembly_release_date = get_assembly_release_date(assembly, group, date)
     major, minor = get_ocp_version_from_group(group)
 
-    # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
-    if minor > 0:
-        prev_group = f'openshift-{major}.{minor - 1}'
+    # Get previous version (handles major version boundaries like 5.0 → 4.22)
+    try:
+        prev_major, prev_minor = get_previous_ocp_version(major, minor)
+        prev_group = f'openshift-{prev_major}.{prev_minor}'
+    except ValueError:
+        # No previous version exists (e.g., OCP 3.0)
+        return None
+
+    if prev_group:
         s = requests.Session()
         auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
         s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
@@ -493,6 +500,97 @@ def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> s
         raise ValueError(f"Invalid repo_type '{repo_type}'. Must be one of: {valid_repo_types}")
 
     return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
+
+
+def get_previous_ocp_version(major: int, minor: int) -> Tuple[int, int]:
+    """
+    Get the previous OCP minor version, handling major version boundaries.
+
+    Version transitions:
+    - 5.0 → 4.22 (major version boundary)
+    - 4.1 → 4.0
+    - 4.0 → 3.11 (major version boundary)
+    - 3.1 → 3.0
+
+    :param major: Current major version (e.g., 5)
+    :param minor: Current minor version (e.g., 0)
+    :return: Tuple of (previous_major, previous_minor)
+    :raises ValueError: If previous major version is not in LAST_OCP_MINOR_VERSION
+
+    Examples:
+        >>> get_previous_ocp_version(5, 1)
+        (5, 0)
+        >>> get_previous_ocp_version(5, 0)
+        (4, 22)
+        >>> get_previous_ocp_version(4, 1)
+        (4, 0)
+        >>> get_previous_ocp_version(4, 0)
+        (3, 11)
+    """
+
+    # Handle simple case: decrement minor within same major version
+    if minor > 0:
+        return major, minor - 1
+
+    # Handle major version boundaries (x.0 → previous major)
+    # Need to transition to previous major version
+    prev_major = major - 1
+    prev_max = LAST_OCP_MINOR_VERSION.get(prev_major)
+
+    if prev_max is None:
+        raise ValueError(
+            f"Cannot determine previous version of OCP {major}.0: "
+            f"OCP {prev_major}.x maximum minor version is not set in LAST_OCP_MINOR_VERSION."
+        )
+
+    return prev_major, prev_max
+
+
+def get_next_ocp_version(major: int, minor: int) -> Tuple[int, int]:
+    """
+    Get the next OCP minor version, handling major version boundaries.
+
+    Version transitions:
+    - 4.22 → 5.0 (major version boundary)
+    - 4.21 → 4.22
+    - 3.11 → 4.0 (major version boundary)
+
+    :param major: Current major version (e.g., 4)
+    :param minor: Current minor version (e.g., 22)
+    :return: Tuple of (next_major, next_minor)
+    :raises ValueError: If at maximum version and next major is not defined
+
+    Examples:
+        >>> get_next_ocp_version(4, 21)
+        (4, 22)
+        >>> get_next_ocp_version(4, 22)
+        (5, 0)
+        >>> get_next_ocp_version(3, 11)
+        (4, 0)
+    """
+
+    # Get max minor from constants
+    max_minor = LAST_OCP_MINOR_VERSION.get(major)
+
+    # If max_minor is None, the maximum is unknown - allow infinite growth
+    if max_minor is None:
+        # No known maximum for this major version, just increment minor
+        return major, minor + 1
+
+    # Check if we're at the known boundary
+    if minor >= max_minor:
+        # Transition to next major version
+        next_major = major + 1
+        # Check if next major version is defined in LAST_OCP_MINOR_VERSION
+        if next_major not in LAST_OCP_MINOR_VERSION:
+            raise ValueError(
+                f"OCP {major}.{minor} is at or beyond maximum known version ({major}.{max_minor}). "
+                f"Cannot determine next version: OCP {next_major}.x is not defined in LAST_OCP_MINOR_VERSION."
+            )
+        return next_major, 0
+
+    # Simple case: increment within same major
+    return major, minor + 1
 
 
 def extract_group_from_nvr(nvr: str) -> Optional[str]:
