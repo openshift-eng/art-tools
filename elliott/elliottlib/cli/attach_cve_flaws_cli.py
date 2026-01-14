@@ -17,7 +17,7 @@ from errata_tool import Erratum
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
-from elliottlib.errata import is_security_advisory, get_errata_live_id
+from elliottlib.errata import get_errata_live_id, is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
