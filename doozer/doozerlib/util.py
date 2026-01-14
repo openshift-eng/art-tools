@@ -23,7 +23,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.util import get_previous_ocp_version, isolate_major_minor_in_group
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -466,7 +466,8 @@ def get_release_calc_previous(
     arch = go_arch_for_brew_arch(arch)  # Cincinnati is go code, and uses a different arch name than brew
     # Get the names of channels we need to analyze
     candidate_channel = get_cincinnati_channels(major, minor)[0]
-    prev_candidate_channel = get_cincinnati_channels(major, minor - 1)[0]
+    prev_major, prev_minor = get_previous_ocp_version(major, minor)
+    prev_candidate_channel = get_cincinnati_channels(prev_major, prev_minor)[0]
 
     upgrade_from = set()
     prev_versions, prev_edges = get_channel_versions(

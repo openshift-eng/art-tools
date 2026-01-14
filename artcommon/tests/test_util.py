@@ -395,5 +395,89 @@ class TestNormalizeGroupNameForK8s(unittest.TestCase):
         self.assertEqual(result, "group123-4-56")
 
 
+class TestOCPVersionHelpers(unittest.TestCase):
+    """Tests for get_previous_ocp_version and get_next_ocp_version"""
+
+    def setUp(self):
+        """Set up test fixture with mocked LAST_OCP_MINOR_VERSION"""
+        # Mock the constant to avoid breaking tests when actual constant changes
+        self.mock_version_map = {
+            3: 11,  # OCP 3.11 was the last 3.x release
+            4: 22,  # Test with 4.22 as max
+            5: None,  # OCP 5.x max unknown
+        }
+        self.patcher = patch('artcommonlib.util.LAST_OCP_MINOR_VERSION', self.mock_version_map)
+        self.patcher.start()
+
+    def tearDown(self):
+        """Clean up mock"""
+        self.patcher.stop()
+
+    def test_get_previous_ocp_version_within_major(self):
+        """Test decrementing minor version within same major"""
+        self.assertEqual(util.get_previous_ocp_version(5, 1), (5, 0))
+        self.assertEqual(util.get_previous_ocp_version(4, 15), (4, 14))
+        self.assertEqual(util.get_previous_ocp_version(4, 1), (4, 0))
+        self.assertEqual(util.get_previous_ocp_version(3, 5), (3, 4))
+
+    def test_get_previous_ocp_version_major_boundaries(self):
+        """Test major version boundaries"""
+        # 5.0 → 4.22 (using mocked max)
+        self.assertEqual(util.get_previous_ocp_version(5, 0), (4, 22))
+        # 4.0 → 3.11 (using mocked max)
+        self.assertEqual(util.get_previous_ocp_version(4, 0), (3, 11))
+
+    def test_get_previous_ocp_version_errors(self):
+        """Test error conditions"""
+        # 3.0 has no previous version (2.x not in mocked LAST_OCP_MINOR_VERSION)
+        with self.assertRaises(ValueError) as ctx:
+            util.get_previous_ocp_version(3, 0)
+        self.assertIn("Cannot determine previous version of OCP 3.0", str(ctx.exception))
+        self.assertIn("OCP 2.x", str(ctx.exception))
+
+        # 6.0 previous version would be 5.x, which has None as max minor
+        with self.assertRaises(ValueError) as ctx:
+            util.get_previous_ocp_version(6, 0)
+        self.assertIn("Cannot determine previous version of OCP 6.0", str(ctx.exception))
+        self.assertIn("OCP 5.x", str(ctx.exception))
+
+    def test_get_next_ocp_version_within_major(self):
+        """Test incrementing minor version within same major"""
+        self.assertEqual(util.get_next_ocp_version(5, 0), (5, 1))
+        self.assertEqual(util.get_next_ocp_version(4, 15), (4, 16))
+        self.assertEqual(util.get_next_ocp_version(3, 10), (3, 11))
+
+    def test_get_next_ocp_version_major_boundaries(self):
+        """Test major version boundaries using mocked values"""
+        # 4.22 → 5.0 (mocked max is 22)
+        self.assertEqual(util.get_next_ocp_version(4, 22), (5, 0))
+        # 3.11 → 4.0 (mocked max is 11)
+        self.assertEqual(util.get_next_ocp_version(3, 11), (4, 0))
+
+    def test_get_next_ocp_version_unknown_max(self):
+        """Test behavior when max minor is None (unknown)"""
+        # For OCP 5 with None max, should allow infinite growth
+        self.assertEqual(util.get_next_ocp_version(5, 0), (5, 1))
+        self.assertEqual(util.get_next_ocp_version(5, 50), (5, 51))
+        self.assertEqual(util.get_next_ocp_version(5, 100), (5, 101))
+
+    def test_get_next_ocp_version_errors(self):
+        """Test error conditions"""
+        # Test that versions not in dict allow infinite growth
+        self.assertEqual(util.get_next_ocp_version(2, 0), (2, 1))
+        self.assertEqual(util.get_next_ocp_version(2, 100), (2, 101))
+        self.assertEqual(util.get_next_ocp_version(1, 5), (1, 6))
+
+    def test_get_next_ocp_version_at_boundary_without_next_major(self):
+        """Test error when at max version and next major not defined"""
+        # Create a scenario where we're at max but next major isn't defined
+        with patch('artcommonlib.util.LAST_OCP_MINOR_VERSION', {3: 11}):
+            # 3.11 is max, but 4.x is not defined
+            with self.assertRaises(ValueError) as ctx:
+                util.get_next_ocp_version(3, 11)
+            self.assertIn("Cannot determine next version", str(ctx.exception))
+            self.assertIn("OCP 4.x is not defined", str(ctx.exception))
+
+
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
