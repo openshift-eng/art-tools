@@ -10,6 +10,7 @@ import click
 from artcommonlib import logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
+from artcommonlib.model import Model
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.util import new_roundtrip_yaml_handler
 
@@ -185,7 +186,7 @@ class ConformaVerifyCli:
                 "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
                 len(snapshots),
             )
-        snapshot_spec = snapshots[0].spec
+        snapshot_spec = Model(snapshots[0]).spec
 
         self.policy_path = self.get_policy_url(snapshot_spec.application, self.env)
         LOGGER.info(
