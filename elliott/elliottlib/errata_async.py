@@ -79,8 +79,8 @@ class AsyncErrataAPI:
         result = await self._make_request(aiohttp.hdrs.METH_POST, path)
         live_id = result.get("live_id")
         if isinstance(live_id, int):
-            return f"{live_id:04}"
-        raise ValueError(f"Unexpected live_id: {live_id}")
+            return live_id
+        raise ValueError(f"live_id is not an int. Errata changed its API?: {live_id}")
 
     async def get_builds(self, advisory: Union[int, str]):
         # As of May 25, 2023, /api/v1/erratum/{id}/builds_list doesn't return all builds.

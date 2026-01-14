@@ -1,20 +1,17 @@
 import asyncio
-import functools
 import json
-import logging
 import re
 import sys
-from typing import Dict, List, Set, Union
 
 import click
 import koji
 import requests
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
-from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.format_util import green_print, red_print, yellow_print
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -32,7 +29,6 @@ from elliottlib.util import (
     isolate_el_version_in_brew_tag,
     parallel_results_with_progress,
     pbar_header,
-    progress_func,
 )
 
 LOGGER = logutil.get_logger(__name__)
@@ -233,7 +229,7 @@ async def find_builds_cli(
             nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
     LOGGER.info('Fetching info for builds from Errata')
-    builds: List[brew.Build] = parallel_results_with_progress(
+    builds: list[brew.Build] = parallel_results_with_progress(
         nvrps,
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}', nvrp[3], session=requests.Session()),
     )
@@ -442,7 +438,7 @@ def _fetch_nvrps_by_nvr_or_id(
     return nvrps
 
 
-def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
+def _gen_nvrp_tuples(builds: list[dict], tag_pv_map: dict[str, str]):
     """Returns a list of (name, version, release, product_version) tuples of each build"""
     nvrps = [(b['name'], b['version'], b['release'], tag_pv_map[b['tag_name']]) for b in builds]
     return nvrps
@@ -461,7 +457,7 @@ def _json_dump(as_json: str, data: dict):
             json.dump(data, json_file, indent=4, sort_keys=True)
 
 
-def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
+def _find_shipped_builds(build_ids: list[str | int], brew_session: koji.ClientSession) -> set[str | int]:
     """Finds shipped builds
     :param builds: list of Brew build IDs or NVRs
     :param brew_session: Brew session
@@ -480,13 +476,13 @@ def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.Cl
 
 async def _fetch_builds_by_kind_image(
     runtime: Runtime,
-    tag_pv_map: Dict[str, str],
+    tag_pv_map: dict[str, str],
     brew_session: koji.ClientSession,
     payload_only: bool,
     non_payload_only: bool,
     include_shipped: bool,
 ):
-    image_metas: List[ImageMetadata] = []
+    image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
             continue
@@ -501,7 +497,7 @@ async def _fetch_builds_by_kind_image(
     tasks = [
         image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
     ]
-    brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
+    brew_latest_builds: list[dict] = list(await asyncio.gather(*tasks))
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
     if include_shipped:
@@ -516,7 +512,7 @@ async def _fetch_builds_by_kind_image(
 
 
 def _ensure_accepted_tags(
-    builds: List[Dict], brew_session: koji.ClientSession, tag_pv_map: Dict[str, str], raise_exception: bool = True
+    builds: list[dict], brew_session: koji.ClientSession, tag_pv_map: dict[str, str], raise_exception: bool = True
 ):
     """
     Build dicts returned by koji.listTagged API have their tag names, however other APIs don't set that field.
@@ -543,7 +539,7 @@ def _ensure_accepted_tags(
 
 async def _fetch_builds_by_kind_rpm(
     runtime: Runtime,
-    tag_pv_map: Dict[str, str],
+    tag_pv_map: dict[str, str],
     brew_session: koji.ClientSession,
     include_shipped: bool,
     member_only: bool,
@@ -576,7 +572,7 @@ async def _fetch_builds_by_kind_rpm(
                 f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release."
             )
 
-    builds: List[Dict] = []
+    builds: list[dict] = []
 
     pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
@@ -593,7 +589,7 @@ async def _fetch_builds_by_kind_rpm(
         builder = BuildFinder(brew_session, logger=LOGGER)
         for tag in tag_pv_map:
             # keys are rpm component names, values are nvres
-            component_builds: Dict[str, Dict] = builder.from_tag(
+            component_builds: dict[str, dict] = builder.from_tag(
                 "rpm", tag, inherit=False, assembly=assembly, event=runtime.brew_event
             )
             # Remove "tag_name" field from the build dict because it may be outdated. _ensure_accepted_tags() will update it.
@@ -668,14 +664,14 @@ async def _fetch_builds_by_kind_rpm(
 
 
 def _filter_out_attached_builds(
-    build_objects: List[brew.Build], include_shipped: bool = False
-) -> (List[brew.Build], Dict[int, Set[str]]):
+    build_objects: list[brew.Build], include_shipped: bool = False
+) -> tuple[list[brew.Build], dict[int, set[str]]]:
     """
     Filter out builds that are already attached to an ART advisory
     """
-    unattached_builds: List[brew.Build] = []
+    unattached_builds: list[brew.Build] = []
     errata_version_cache = {}  # avoid reloading the same errata for multiple builds
-    attached_to_advisories: Dict[int, Set[str]] = dict()
+    attached_to_advisories: dict[int, set[str]] = dict()
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
@@ -714,7 +710,7 @@ async def find_builds_konflux(runtime, payload):
 
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
-    image_metas: List[ImageMetadata] = []
+    image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
             continue
@@ -726,13 +722,13 @@ async def find_builds_konflux(runtime, payload):
     tasks = [
         image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
     ]
-    records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
+    records: list[dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
     if len(records) != len(image_metas):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
     return records
 
 
-async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
+async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
     and fetch related OLM bundle builds.
@@ -752,7 +748,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
         runtime: The runtime object providing access to image metadata and the Konflux database.
 
     Returns:
-        Dict[str, List]: A dictionary containing four lists:
+        dict[str, list]: A dictionary containing four lists:
             - 'payload': List of build nvrs for payload images.
             - 'non_payload': List of build nvrs for non-payload images.
             - 'olm_builds': List of NVRs for OLM bundle builds found.

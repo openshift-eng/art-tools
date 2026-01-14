@@ -373,6 +373,35 @@ class KonfluxOkd4Pipeline:
             else:
                 jenkins.update_description(f'Build failures: {len(failed_images)} images<br>')
 
+    def _get_payload_tag_name(self, image_distgit_key: str, image_metadata: dict) -> str:
+        """
+        Get the payload tag name for an image, honoring the payload_name config.
+        Checks okd.payload_name first (takes precedence), then payload_name.
+        """
+        # Check for okd.payload_name override (highest precedence)
+        okd_payload_name = image_metadata.get('okd', {}).get('payload_name')
+        if okd_payload_name:
+            return okd_payload_name
+
+        # Check for payload_name config
+        payload_name = image_metadata.get('payload_name')
+        if payload_name:
+            return payload_name
+
+        # Final fallback: derive from the image name
+        image_name = image_metadata.get('name', '')
+        if image_name:
+            # Extract short name from full image name (e.g., "openshift/ose-foo" -> "ose-foo")
+            image_name_short = image_name.split('/')[-1]
+        else:
+            # Use distgit key as fallback
+            image_name_short = image_distgit_key
+
+        # Strip "ose-" prefix if present
+        if image_name_short.startswith('ose-'):
+            return image_name_short[4:]
+        return image_name_short
+
     async def update_imagestreams(self):
         """
         Update static OKD imagestream with successfully built images:
@@ -392,6 +421,30 @@ class KonfluxOkd4Pipeline:
             LOGGER.info('[DRY RUN] Would tag %d images', len(self.built_images))
             return
 
+        # Load image metadata from ocp-build-data to get payload tag names
+        LOGGER.info('Loading image metadata to resolve payload tag names')
+        ocp_build_data_path = Path(self.runtime.doozer_working) / 'ocp-build-data' / 'images'
+        payload_tag_map = {}
+
+        for image in self.built_images:
+            image_name = image['name']
+            yaml_file = ocp_build_data_path / f'{image_name}.yml'
+
+            if yaml_file.exists():
+                try:
+                    with open(yaml_file) as f:
+                        image_metadata = yaml.safe_load(f)
+                    payload_tag = self._get_payload_tag_name(image_name, image_metadata)
+                    payload_tag_map[image_name] = payload_tag
+                    if payload_tag != image_name:
+                        LOGGER.info('Mapped %s -> %s (from payload_name config)', image_name, payload_tag)
+                except Exception as e:
+                    LOGGER.warning('Failed to load metadata for %s: %s. Using image name as tag.', image_name, e)
+                    payload_tag_map[image_name] = image_name
+            else:
+                LOGGER.warning('Metadata file not found for %s. Using image name as tag.', image_name)
+                payload_tag_map[image_name] = image_name
+
         is_name = f'scos-{self.version}-art'
         env = os.environ.copy()
         successful_tags = []
@@ -409,8 +462,11 @@ class KonfluxOkd4Pipeline:
                 failed_tags.append(image_name)
                 continue
 
+            # Get the payload tag name from metadata (honors payload_name config)
+            payload_tag = payload_tag_map.get(image_name, image_name)
+
             # Tag into imagestream
-            target = f'{self.imagestream_namespace}/{is_name}:{image_name}'
+            target = f'{self.imagestream_namespace}/{is_name}:{payload_tag}'
             try:
                 await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
                 LOGGER.info('Tagged %s into %s', image_name, target)

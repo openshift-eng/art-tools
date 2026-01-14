@@ -2,14 +2,13 @@ import asyncio
 import concurrent.futures
 import datetime
 import re
-import threading
 import time
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
 
@@ -85,7 +84,7 @@ class MetadataBase(object):
         """Returns derived brew target name from the distgit branch name"""
         return NotImplementedError()
 
-    def determine_targets(self) -> List[str]:
+    def determine_targets(self) -> list[str]:
         """Determine Brew targets for building this component"""
         targets = self.config.get("targets")
         if not targets:
@@ -110,12 +109,12 @@ class MetadataBase(object):
         else:
             raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
 
-    def determine_rhel_targets(self) -> List[int]:
+    def determine_rhel_targets(self) -> list[int]:
         """
         For each build target for the component, return the rhel version it is for. For example,
         if an RPM builds for both rhel-7 and rhel-8 targets, return [7,8]
         """
-        el_targets: List[int] = []
+        el_targets: list[int] = []
         for target in self.determine_targets():
             el_ver = isolate_el_version_in_brew_tag(target)
             if not el_ver:
@@ -124,7 +123,7 @@ class MetadataBase(object):
         return el_targets
 
     @staticmethod
-    def extract_component_info(meta_type: str, meta_name: str, config_model: Model) -> Tuple[str, str]:
+    def extract_component_info(meta_type: str, meta_name: str, config_model: Model) -> tuple[str, str]:
         """
         Determine the component information for either RPM or Image metadata
         configs.
@@ -177,16 +176,16 @@ class MetadataBase(object):
 
     def get_latest_brew_build(
         self,
-        default: Optional[Any] = -1,
-        assembly: Optional[str] = None,
+        default: Any = -1,
+        assembly: str | None = None,
         extra_pattern: str = '*',
         build_state: BuildStates = BuildStates.COMPLETE,
-        component_name: Optional[str] = None,
-        el_target: Optional[Union[str, int]] = None,
+        component_name: str | None = None,
+        el_target: str | int | None = None,
         honor_is: bool = True,
-        complete_before_event: Optional[int] = None,
+        complete_before_event: int | None = None,
         exclude_large_columns: bool = False,  # Ignored for Brew builds (Konflux-only parameter)
-        max_window_days: Optional[int] = None,  # Ignored for Brew builds (Konflux-only parameter)
+        max_window_days: int | None = None,  # Ignored for Brew builds (Konflux-only parameter)
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
@@ -429,15 +428,15 @@ class MetadataBase(object):
     async def get_latest_konflux_build(
         self,
         default=None,
-        assembly: Optional[str] = None,
+        assembly: str | None = None,
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        el_target: Optional[Union[int, str]] = None,
+        el_target: int | str | None = None,
         honor_is: bool = True,
-        completed_before: Optional[datetime.datetime] = None,
-        extra_patterns: dict = {},
+        completed_before: datetime.datetime | None = None,
+        extra_patterns: dict | None = None,
         exclude_large_columns: bool = False,
         **kwargs,
-    ) -> Optional[KonfluxBuildRecord]:
+    ) -> KonfluxBuildRecord | None:
         """
         :param default: the value to be returned when no build is found
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -473,7 +472,7 @@ class MetadataBase(object):
             'outcome': outcome,
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
-            'extra_patterns': extra_patterns,
+            'extra_patterns': extra_patterns or {},
             **kwargs,
         }
         if el_target and isinstance(el_target, int):

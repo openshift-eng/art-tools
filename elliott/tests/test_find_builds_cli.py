@@ -1,6 +1,5 @@
-import asyncio
 import unittest
-from unittest import IsolatedAsyncioTestCase, mock
+from unittest import IsolatedAsyncioTestCase, TestCase, mock
 from unittest.mock import AsyncMock, MagicMock
 
 from elliottlib import errata as erratalib
@@ -14,11 +13,7 @@ from elliottlib.cli.find_builds_cli import (
 from flexmock import flexmock
 
 
-async def _async_return_val(val):
-    return val
-
-
-class TestFindBuildsCli(unittest.TestCase):
+class TestFindBuildsCli(TestCase):
     """
     Test elliott find-builds command and internal functions
     """
@@ -80,7 +75,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
 
 
-class TestFindBuildsKonfluxAllTypes(unittest.IsolatedAsyncioTestCase):
+class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
     async def test_find_builds_konflux_all_types(self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord):

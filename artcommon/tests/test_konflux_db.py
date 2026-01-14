@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from artcommonlib import constants
 from artcommonlib.konflux.konflux_build_record import (
@@ -12,7 +12,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
-from google.cloud.bigquery import Row, SchemaField
+from google.cloud.bigquery import SchemaField
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):

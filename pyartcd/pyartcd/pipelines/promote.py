@@ -305,7 +305,11 @@ class PromotePipeline:
                 # construct full advisory id like RHBA-2025:13660
                 advisory_type = image_shipment.shipment.data.releaseNotes.type
                 year = datetime.now().strftime("%Y")
-                full_advisory_id = f"{advisory_type}-{year}:{live_id:04}"
+
+                # Important: Pad liveID with 0 if it is less than 4 digits
+                live_id = f"{live_id:04}"
+
+                full_advisory_id = f"{advisory_type}-{year}:{live_id}"
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
                 # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
             else:
