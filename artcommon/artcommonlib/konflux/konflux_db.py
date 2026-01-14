@@ -858,7 +858,7 @@ class KonfluxDb:
         engine: typing.Optional[typing.Union[Engine, str]] = None,
         completed_before: typing.Optional[datetime] = None,
         embargoed: bool = None,
-        extra_patterns: dict = {},
+        extra_patterns: dict | None = None,
         strict: bool = False,
     ) -> typing.List[typing.Optional[KonfluxRecord]]:
         """
@@ -885,7 +885,7 @@ class KonfluxDb:
                     engine=engine,
                     completed_before=completed_before,
                     embargoed=embargoed,
-                    extra_patterns=extra_patterns,
+                    extra_patterns=extra_patterns or {},
                     strict=strict,
                 )
                 for name in names
@@ -904,7 +904,7 @@ class KonfluxDb:
         engine: typing.Optional[typing.Union[Engine, str]] = None,
         completed_before: typing.Optional[datetime] = None,
         embargoed: typing.Optional[bool] = None,
-        extra_patterns: dict = {},
+        extra_patterns: dict | None = None,
         strict: bool = False,
         use_cache: bool = True,
         exclude_large_columns: bool = False,
@@ -1046,7 +1046,7 @@ class KonfluxDb:
             engine=engine,
             completed_before=completed_before,
             embargoed=embargoed,
-            extra_patterns=extra_patterns,
+            extra_patterns=extra_patterns or {},
             exclude_columns=exclude_columns,
             max_window_days=max_window_days,
         )
