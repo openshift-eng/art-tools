@@ -78,7 +78,7 @@ class AsyncErrataAPI:
         path = "/api/v1/advisory/reserve_live_id"
         result = await self._make_request(aiohttp.hdrs.METH_POST, path)
         live_id = result.get("live_id")
-        return str(live_id) if live_id is not None else None
+        return f"{live_id:04}" if live_id is not None else None
 
     async def get_builds(self, advisory: Union[int, str]):
         # As of May 25, 2023, /api/v1/erratum/{id}/builds_list doesn't return all builds.
