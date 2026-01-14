@@ -77,7 +77,10 @@ class AsyncErrataAPI:
     async def reserve_live_id(self) -> str:
         path = "/api/v1/advisory/reserve_live_id"
         result = await self._make_request(aiohttp.hdrs.METH_POST, path)
-        return result.get("live_id")
+        live_id = result.get("live_id")
+        if isinstance(live_id, int):
+            return f"{live_id:04}"
+        raise ValueError(f"Unexpected live_id: {live_id}")
 
     async def get_builds(self, advisory: Union[int, str]):
         # As of May 25, 2023, /api/v1/erratum/{id}/builds_list doesn't return all builds.
