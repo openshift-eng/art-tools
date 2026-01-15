@@ -137,7 +137,7 @@ class ConformaVerifyCli:
                 "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
                 len(snapshots),
             )
-        snapshot_spec = snapshots[0].spec
+        snapshot_spec = Model(snapshots[0]).spec
 
         pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
 
