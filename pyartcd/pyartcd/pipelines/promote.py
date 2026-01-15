@@ -33,7 +33,12 @@ from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group, new_roundtrip_yaml_handler
-from elliottlib.shipment_utils import get_shipment_config_from_mr, get_shipment_configs_from_mr
+from elliottlib.errata import get_errata_live_id
+from elliottlib.shipment_model import ShipmentConfig
+from elliottlib.shipment_utils import (
+    get_shipment_config_from_mr,
+    get_shipment_configs_from_mr,
+)
 from github import Github, GithubException
 from requests_gssapi import HTTPSPNEGOAuth
 from ruamel.yaml import YAML
@@ -298,18 +303,7 @@ class PromotePipeline:
                 image_shipment = get_shipment_config_from_mr(shipment_url, "image")
                 if not image_shipment:
                     raise ValueError("Could not find image shipment config in merge request!")
-                live_id = image_shipment.shipment.data.releaseNotes.live_id
-                if not live_id:
-                    raise ValueError("Could not find live ID in image shipment config!")
-
-                # construct full advisory id like RHBA-2025:13660
-                advisory_type = image_shipment.shipment.data.releaseNotes.type
-                year = datetime.now().strftime("%Y")
-
-                # Important: Pad liveID with 0 if it is less than 4 digits
-                live_id = f"{live_id:04}"
-
-                full_advisory_id = f"{advisory_type}-{year}:{live_id}"
+                full_advisory_id = self.get_full_advisory_id_from_shipment(image_shipment)
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
                 # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
             else:
@@ -330,7 +324,7 @@ class PromotePipeline:
                             justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
                             justifications.append(justification)
 
-                        full_advisory_id = self.get_live_id(image_advisory_info)
+                        full_advisory_id = self.get_full_advisory_id_from_errata_advisory(image_advisory_info)
 
             if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
                 if not full_advisory_id:
@@ -1263,7 +1257,7 @@ class PromotePipeline:
         jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
 
     @staticmethod
-    def get_live_id(advisory_info: Dict):
+    def get_full_advisory_id_from_errata_advisory(advisory_info: Dict):
         # Extract live ID from advisory info
         # Examples:
         # - advisory with a live ID
@@ -1281,6 +1275,22 @@ class PromotePipeline:
             return None
         live_id = advisory_info["fulladvisory"].rsplit("-", 1)[0]  # RHBA-2019:2681-02 => RHBA-2019:2681
         return live_id
+
+    @staticmethod
+    def get_full_advisory_id_from_shipment(shipment_config: ShipmentConfig) -> str:
+        """Get the full advisory ID from a shipment config, if it exists."""
+        live_id = shipment_config.shipment.data.releaseNotes.live_id
+        if not live_id:
+            raise ValueError("Could not find live ID in image shipment config!")
+
+        # construct full advisory id like RHBA-2025:13660
+        advisory_type = shipment_config.shipment.data.releaseNotes.type
+        year = datetime.now().strftime("%Y")
+
+        # Important: Pad liveID with 0 if it is less than 4 digits
+        live_id = f"{live_id:04}"
+
+        return f"{advisory_type.upper()}-{year}:{live_id}"
 
     def verify_advisory_status(self, advisory_info: Dict):
         if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
@@ -2249,10 +2259,7 @@ class PromotePipeline:
                 and image_shipment.shipment.data.releaseNotes.type
                 and image_shipment.shipment.data.releaseNotes.live_id
             ):
-                advisory_type = image_shipment.shipment.data.releaseNotes.type
-                live_id = image_shipment.shipment.data.releaseNotes.live_id
-                year = datetime.now().strftime("%Y")
-                image_advisory = f"{advisory_type}-{year}:{live_id}"
+                image_advisory = self.get_full_advisory_id_from_shipment(image_shipment)
                 format_dict["IMAGE_ADVISORY"] = image_advisory
                 self._logger.info("Generated IMAGE_ADVISORY: %s", image_advisory)
             else:
@@ -2262,10 +2269,10 @@ class PromotePipeline:
 
         # Generate RPM_ADVISORY template key for all shipment types
         try:
-            rpm_advisory = await self._get_rpm_advisory()
-            if rpm_advisory:
-                format_dict["RPM_ADVISORY"] = rpm_advisory
-                self._logger.info("Generated RPM_ADVISORY: %s", rpm_advisory)
+            rpm_advisory_id = await self._get_rpm_advisory_id()
+            if rpm_advisory_id:
+                format_dict["RPM_ADVISORY"] = rpm_advisory_id
+                self._logger.info("Generated RPM_ADVISORY: %s", rpm_advisory_id)
             else:
                 # Don't replace RPM_ADVISORY placeholder if we can't generate it
                 self._logger.warning("Could not generate RPM_ADVISORY: no RPM advisory found in releases.yml")
@@ -2505,7 +2512,7 @@ class PromotePipeline:
             self._logger.error("Failed to create consolidated template update MR: %s", ex)
             raise
 
-    async def _get_rpm_advisory(self) -> Optional[str]:
+    async def _get_rpm_advisory_id(self) -> Optional[str]:
         """Get RPM advisory ID from releases.yml and query errata endpoint for advisory type.
 
         :return: Formatted RPM advisory string like "RHBA-2025:12345" or None if not found
@@ -2539,47 +2546,7 @@ class PromotePipeline:
                 self._logger.info("No RPM advisory ID found for assembly %s", self.assembly)
                 return None
 
-            self._logger.info("Found RPM advisory ID %s for assembly %s", rpm_advisory_id, self.assembly)
-
-            # Query errata endpoint to get advisory type
-            errata_endpoint = "https://errata.devel.redhat.com/api/v1/erratum/{}"
-            errata_url = urlparse(errata_endpoint.format(rpm_advisory_id)).geturl()
-
-            self._logger.info("Querying errata API endpoint: %s", errata_url)
-
-            # Make request to errata endpoint
-            response = requests.get(
-                errata_url,
-                verify=ssl.get_default_verify_paths().openssl_cafile,
-                auth=HTTPSPNEGOAuth(),
-            )
-            response.raise_for_status()
-
-            advisory_data = response.json()
-
-            # Extract advisory type and errata_id from response using similar logic to format_advisory_data
-            advisory_type = None
-            errata_id = None
-            if "errata" in advisory_data:
-                errata_data = advisory_data["errata"]
-                # Get the first (and typically only) advisory type key
-                for key in errata_data:
-                    advisory_type = key
-                    errata_id = errata_data[key].get("errata_id")
-                    break
-
-            if not advisory_type or not errata_id:
-                self._logger.warning(
-                    "Could not extract advisory type or errata_id from errata response for RPM advisory %s",
-                    rpm_advisory_id,
-                )
-                return None
-
-            # Generate the formatted advisory string: {advisory_type}-{year}:{errata_id}
-            year = datetime.now().strftime("%Y")
-            rpm_advisory = f"{advisory_type.upper()}-{year}:{errata_id}"
-
-            return rpm_advisory
+            return get_errata_live_id(rpm_advisory_id)
 
         except Exception as ex:
             self._logger.error("Error getting RPM advisory: %s", ex)
