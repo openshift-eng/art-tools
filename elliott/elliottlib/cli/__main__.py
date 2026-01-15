@@ -50,7 +50,6 @@ from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
 from elliottlib.cli.find_bugs_second_fix_cli import find_bugs_second_fix_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.find_builds_cli import find_builds_cli
-from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
 from elliottlib.cli.find_unconsumed_rpms import find_unconsumed_rpms_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
@@ -288,7 +287,6 @@ cli.add_command(verify_conforma_cli)
 cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_bugs_cli)
 cli.add_command(find_builds_cli)
-cli.add_command(find_k_builds_cli)
 cli.add_command(get_network_mode_cli)
 cli.add_command(tag_builds_cli)
 cli.add_command(tarball_sources_cli)
