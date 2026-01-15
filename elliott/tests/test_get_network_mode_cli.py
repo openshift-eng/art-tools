@@ -67,6 +67,7 @@ class TestGetNetworkModeCli(IsolatedAsyncioTestCase):
             names=["ironic", "ironic-inspector"],
             group="openshift-4.21",
             assembly="stream",
+            exclude_large_columns=True,
             outcome=KonfluxBuildOutcome.SUCCESS,
             artifact_type=ArtifactType.IMAGE,
         )

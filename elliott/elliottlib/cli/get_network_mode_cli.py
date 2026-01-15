@@ -45,6 +45,7 @@ class GetNetworkModeCli:
             assembly=assembly_to_use,
             outcome=KonfluxBuildOutcome.SUCCESS,
             artifact_type=ArtifactType.IMAGE,
+            exclude_large_columns=True,  # Only need name, nvr, hermetic - not installed_rpms/packages
         )
 
         # Filter out non-found builds

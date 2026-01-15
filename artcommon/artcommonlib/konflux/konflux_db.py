@@ -860,9 +860,14 @@ class KonfluxDb:
         embargoed: bool = None,
         extra_patterns: dict | None = None,
         strict: bool = False,
+        exclude_large_columns: bool = False,
     ) -> typing.List[typing.Optional[KonfluxRecord]]:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
+
+        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
+                                      BigQuery queries to reduce query cost and latency. Uses small_columns cache.
+                                      Default is False (include all columns, uses all_columns cache).
         """
 
         # Normalize enum parameters - accept strings or enums
@@ -887,6 +892,7 @@ class KonfluxDb:
                     embargoed=embargoed,
                     extra_patterns=extra_patterns or {},
                     strict=strict,
+                    exclude_large_columns=exclude_large_columns,
                 )
                 for name in names
             ]
