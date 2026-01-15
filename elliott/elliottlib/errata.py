@@ -209,6 +209,17 @@ def get_bug_ids(advisory_id) -> dict:
     return {'bugzilla': bugzilla_ids, 'jira': jira_ids}
 
 
+def get_errata_live_id(advisory_id):
+    """
+    Extract live ID from advisory info
+    """
+    raw_erratum = get_raw_erratum(advisory_id)
+    erratum = raw_erratum.get('errata')
+    for key in erratum:
+        live_id = erratum[key].get("fulladvisory").rsplit("-", 1)[0]
+        return live_id
+
+
 def get_erratum_content_type(advisory_id: str):
     raw_erratum = get_raw_erratum(advisory_id)
     erratum = raw_erratum.get('errata')
