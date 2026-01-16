@@ -1,21 +1,17 @@
-.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall
+.PHONY: venv lint-check lint pylint unit functional-elliott functional-doozer test reinstall clean-reinstall gen-shipment-schema
 
 venv:
 	uv venv --python 3.11
 	# Install base requirements files first to ensure all runtime dependencies are available
 	./install.sh
 
-
-format-check:
-	uv run ruff check --select I --output-format concise
+lint-check:
+	uv run ruff check --output-format concise
 	uv run ruff format --check
 
-format:
-	uv run ruff check --select I --fix
+lint:
+	uv run ruff check --fix
 	uv run ruff format
-
-lint: format-check
-	uv run ruff check --output-format concise
 
 pylint:
 	uv run pylint --errors-only .
@@ -33,7 +29,7 @@ functional-elliott:
 functional-doozer:
 	uv run pytest --verbose --color=yes doozer/tests_functional
 
-test: lint unit
+test: lint-check unit
 
 reinstall:
 	# Force reinstall all editable packages (use when source code structure changes)
