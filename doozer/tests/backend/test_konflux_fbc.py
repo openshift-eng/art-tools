@@ -95,6 +95,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             index_image,
             "test-package",
             migrate_level="none",
+            strict=True,
         )
         mock_get_package_name.assert_awaited_once_with(metadata)
 
@@ -145,6 +146,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             index_image,
             "test-package",
             migrate_level="none",
+            strict=True,
         )
         mock_get_package_name.assert_awaited_once_with(metadata)
 
@@ -187,7 +189,10 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
         mock_render.assert_called_once_with(
-            "test-index-image-pullspec", migrate_level="none", auth=OpmRegistryAuth(path='/path/to/auth.json')
+            "test-index-image-pullspec",
+            migrate_level="none",
+            auth=OpmRegistryAuth(path='/path/to/auth.json'),
+            strict=True,
         )
 
     def test_filter_catalog_blobs(self):
@@ -238,7 +243,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
                 {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
             ],
         )
-        mock_render_index_image.assert_called_once_with(index_image, migrate_level="none")
+        mock_render_index_image.assert_called_once_with(index_image, migrate_level="none", strict=True)
 
     @patch("pathlib.Path.open")
     @patch("pathlib.Path.glob")
