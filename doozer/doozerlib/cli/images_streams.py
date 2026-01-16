@@ -515,7 +515,9 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
 
-    rpm_repos_conf = runtime.group_config.repos or {}
+    # Use runtime.repos which handles both old-style and new-style repo configs
+    # Convert to Model objects to maintain compatibility with existing dot notation code
+    rpm_repos_conf = {name: Model(repo.to_dict()) for name, repo in runtime.repos.items()}
 
     group_label = runtime.group_config.name
     if live_test_mode:
