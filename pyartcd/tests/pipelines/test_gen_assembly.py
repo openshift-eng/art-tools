@@ -28,7 +28,6 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
             previous_list=(),
             auto_previous=True,
             auto_trigger_build_sync=False,
-            pre_ga_mode="none",
             skip_get_nightlies=False,
         )
         actual = asyncio.run(pipeline._get_nightlies())
@@ -110,7 +109,6 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
             previous_list=(),
             auto_previous=True,
             auto_trigger_build_sync=False,
-            pre_ga_mode="none",
             skip_get_nightlies=False,
         )
         out = """
@@ -179,7 +177,6 @@ releases:
             previous_list=(),
             auto_previous=True,
             auto_trigger_build_sync=False,
-            pre_ga_mode="none",
             skip_get_nightlies=False,
         )
         pipeline._working_dir = Path("/path/to/working")
@@ -277,7 +274,6 @@ releases:
             previous_list=(),
             auto_previous=True,
             auto_trigger_build_sync=False,
-            pre_ga_mode="none",
             skip_get_nightlies=False,
         )
         pipeline._working_dir = Path("/path/to/working")

@@ -69,11 +69,6 @@ def releases_gen_assembly(ctx, name):
     is_flag=True,
     help="If specified, weaker conformance criteria are applied (e.g. a nightly is not required for every arch).",
 )
-@click.option(
-    "--pre-ga-mode",
-    type=click.Choice(["prerelease"], case_sensitive=False),
-    help="Prepare the advisory for 'prerelease' operator release",
-)
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option(
     '--previous',
@@ -135,7 +130,6 @@ async def gen_assembly_from_releases(
     nightlies: Tuple[str, ...],
     standards: Tuple[str, ...],
     custom: bool,
-    pre_ga_mode: str,
     in_flight: Optional[str],
     previous_list: Tuple[str, ...],
     auto_previous: bool,
@@ -161,7 +155,6 @@ async def gen_assembly_from_releases(
         nightlies=nightlies,
         standards=standards,
         custom=custom,
-        pre_ga_mode=pre_ga_mode,
         in_flight=in_flight,
         previous_list=previous_list,
         auto_previous=auto_previous,
@@ -200,7 +193,6 @@ class GenAssemblyCli:
         nightlies: Tuple[str, ...] = [],
         standards: Tuple[str, ...] = [],
         custom: bool = False,
-        pre_ga_mode: str = '',
         in_flight: Optional[str] = None,
         previous_list: Tuple[str, ...] = None,
         auto_previous: bool = False,
@@ -217,7 +209,6 @@ class GenAssemblyCli:
         self.nightlies = nightlies
         self.standards = standards
         self.custom = custom
-        self.pre_ga_mode = pre_ga_mode
         self.in_flight = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
@@ -261,10 +252,6 @@ class GenAssemblyCli:
             rpm_meta.get_package_name(): rpm_meta for rpm_meta in self.runtime.rpm_metas()
         }
 
-        # ECs are always prerelease
-        if self.assembly_type == AssemblyTypes.PREVIEW:
-            self.pre_ga_mode = 'prerelease'
-
         # Microshift should always be built and its advisory prepared for preview and candidate assemblies
         # which will eventually go out at GA time
         if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
@@ -305,12 +292,6 @@ class GenAssemblyCli:
         if self.assembly_type in [AssemblyTypes.CUSTOM]:
             if self.auto_previous or self.previous_list or self.in_flight:
                 self._exit_with_error("Custom releases don't have previous list.")
-
-        if self.pre_ga_mode == "prerelease" and self.assembly_type not in [
-            AssemblyTypes.PREVIEW,
-            AssemblyTypes.CANDIDATE,
-        ]:
-            self._exit_with_error("Prerelease is only valid for preview and candidate assemblies.")
 
         if self.assembly_type is AssemblyTypes.STANDARD and self.includes_release_version is True:
             if "-" not in self.gen_assembly_name:
@@ -766,7 +747,6 @@ class GenAssemblyCli:
     def _get_advisories_release_jira(self) -> Tuple[Dict[str, int], str]:
         # Add placeholder advisory numbers and JIRA key.
         # Those values will be replaced with real values by pyartcd when preparing a release.
-        preGA_advisory_type = ['prerelease']
 
         if self.runtime.build_system == 'brew':
             advisories = {
@@ -775,16 +755,11 @@ class GenAssemblyCli:
                 'extras': -1,
                 'metadata': -1,
             }
-            for key in preGA_advisory_type:
-                if self.pre_ga_mode == key:
-                    advisories[key] = -1
         else:  # konflux
             advisories = {
                 'rpm': -1,
                 'rhcos': -1,
             }
-            # for konflux, prerelease advisories are noted in the `shipment` field.
-            # No need to add it to the advisories map.
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
@@ -826,12 +801,6 @@ class GenAssemblyCli:
         previous_group = self.releases_config.releases[previous_assembly].assembly.group
         if previous_group.advisories is not Missing:
             previous_advisories = previous_group.advisories.primitive()
-
-            # preGA advisories (prerelease) associated with an assembly should not be reused
-            # they should be shipped or dropped if not shipping
-            for key in preGA_advisory_type:
-                previous_advisories.pop(key, None)
-
             advisories.update(previous_advisories)
 
         release_jira = previous_group.release_jira
@@ -861,8 +830,6 @@ class GenAssemblyCli:
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
-            if self.pre_ga_mode == 'prerelease':
-                group_info['operator_index_mode'] = 'pre-release'
 
         if self.runtime.build_system == 'konflux':
             group_info['shipment'] = self._get_shipment_info()
@@ -980,8 +947,6 @@ class GenAssemblyCli:
         }
         if env:
             default_shipment['env'] = env
-        if self.pre_ga_mode == 'prerelease':
-            default_shipment['advisories'].append({'kind': 'prerelease'})
         return default_shipment
 
     def _get_previous_shipment_info(self) -> dict:
@@ -1039,10 +1004,6 @@ class GenAssemblyCli:
                 previous_advisories = {ad["kind"]: ad for ad in release.assembly.group.shipment.advisories.primitive()}
                 if previous_advisories:
                     for advisory in advisories:
-                        # preGA advisories (prerelease) associated with an assembly should not be reused
-                        # they should be shipped or dropped if not shipping
-                        if advisory["kind"] == "prerelease":
-                            continue
                         # Reuse advisory if it exists in previous advisories
                         previous_ad = previous_advisories.get(advisory["kind"])
                         if not previous_ad:

@@ -592,7 +592,6 @@ class GenPayloadCli:
             nightlies=(multi_model_nightly,),  # Single nightly to model from
             standards=(),
             custom=False,  # Not a custom assembly
-            pre_ga_mode='',
             in_flight=None,
             previous_list=(),
             auto_previous=False,

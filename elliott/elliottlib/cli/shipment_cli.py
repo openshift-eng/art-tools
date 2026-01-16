@@ -105,7 +105,7 @@ class InitShipmentCli:
 @click.argument(
     "kind",
     metavar="<KIND>",
-    type=click.Choice(["image", "extras", "metadata", "microshift-bootc", "fbc", "prerelease"]),
+    type=click.Choice(["image", "extras", "metadata", "microshift-bootc", "fbc"]),
 )
 @click.pass_obj
 @click_coroutine

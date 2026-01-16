@@ -621,6 +621,7 @@ class OLMBundle(object):
             'com.redhat.delivery.operator.bundle': 'true',
             'com.redhat.openshift.versions': versions.format(**self.runtime.group_config.vars),
         }
+        # TODO: deprecate pre-release mode support
         if self.operator_index_mode == 'pre-release':
             labels['com.redhat.prerelease'] = 'true'
         return labels
@@ -671,6 +672,7 @@ class OLMBundle(object):
         for label, value in self.redhat_delivery_tags.items():
             if image_labels.get(label, '') != value:
                 return False
+        # TODO: deprecate pre-release mode support
         if self.operator_index_mode != 'pre-release':
             # It doesn't matter what the value of com.redhat.prerelease is
             # ET marks it as prerelease if the label is present

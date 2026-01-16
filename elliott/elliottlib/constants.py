@@ -58,7 +58,6 @@ standard_advisory_types = [
     "extras",
     "metadata",
     "microshift",
-    "prerelease",
     "advance",
     "bootimage",
 ]
