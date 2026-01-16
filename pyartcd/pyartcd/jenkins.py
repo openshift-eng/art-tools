@@ -644,13 +644,14 @@ def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
     )
 
 
-def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
+def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, prepare_shipment: bool = True, **kwargs):
     return start_build(
         job=Jobs.BUILD_MICROSHIFT_BOOTC,
         params={
             'BUILD_VERSION': version,
             'ASSEMBLY': assembly,
             'DRY_RUN': dry_run,
+            'PREPARE_SHIPMENT': prepare_shipment,
         },
         **kwargs,
     )
