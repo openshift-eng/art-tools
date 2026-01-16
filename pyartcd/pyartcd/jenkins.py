@@ -46,6 +46,7 @@ class Jobs(Enum):
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     OADP = 'aos-cd-builds/build%2Foadp'
     OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
+    SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
 
 
 def get_jenkins_url():
@@ -450,6 +451,18 @@ def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.OCP4_SCAN_KONFLUX,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_scan_plashet_rpms(group: str, assembly: str = 'stream', **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.SCAN_PLASHET_RPMS,
         params=params,
         **kwargs,
     )
