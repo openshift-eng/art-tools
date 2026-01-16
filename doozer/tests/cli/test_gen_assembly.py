@@ -387,7 +387,6 @@ class TestGenAssemblyCli(TestCase):
                 {'kind': 'extras'},
                 {'kind': 'metadata'},
                 {'kind': 'fbc'},
-                {'kind': 'prerelease'},
             ],
             'env': 'stage',
         }

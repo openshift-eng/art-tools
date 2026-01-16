@@ -405,6 +405,7 @@ class KonfluxOlmBundleRebaser:
             'com.redhat.delivery.operator.bundle': 'true',
             'com.redhat.openshift.versions': versions.format(**self._group_config.vars),
         }
+        # TODO: deprecate pre-release mode support
         if mode == 'pre-release':
             labels['com.redhat.prerelease'] = 'true'
         return labels

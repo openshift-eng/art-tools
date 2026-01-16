@@ -50,7 +50,6 @@ class GenAssemblyPipeline:
         previous_list: Tuple[str, ...],
         auto_previous: bool,
         auto_trigger_build_sync: bool,
-        pre_ga_mode: str,
         skip_get_nightlies: bool,
         ignore_non_x86_nightlies: Optional[bool] = False,
         logger: Optional[logging.Logger] = None,
@@ -77,14 +76,13 @@ class GenAssemblyPipeline:
             self.in_flight = in_flight
         elif in_flight == "none":
             self.in_flight = None
-        elif not custom and not pre_ga_mode:
+        elif not custom:
             self.in_flight = get_inflight(assembly, group)
         else:
             self.in_flight = None
 
         self.previous_list = previous_list
         self.auto_previous = auto_previous
-        self.pre_ga_mode = pre_ga_mode
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
@@ -245,8 +243,6 @@ class GenAssemblyPipeline:
         for nightly in candidate_nightlies:
             cmd.append(f"--nightly={nightly}")
 
-        if self.pre_ga_mode:
-            cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
         if self.gen_microshift:
             cmd.append("--gen-microshift")
         if self.date:
@@ -386,11 +382,6 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
 )
-@click.option(
-    "--pre-ga-mode",
-    type=click.Choice(["prerelease"], case_sensitive=False),
-    help="Prepare the advisory for 'prerelease' operator release",
-)
 @click.option('--auto-trigger-build-sync', is_flag=True, help='Will trigger build-sync automatically after PR creation')
 @click.option(
     "--arch",
@@ -449,7 +440,6 @@ async def gen_assembly(
     allow_rejected: bool,
     allow_inconsistency: bool,
     custom: bool,
-    pre_ga_mode: str,
     auto_trigger_build_sync: bool,
     arches: Tuple[str, ...],
     in_flight: Optional[str],
@@ -476,7 +466,6 @@ async def gen_assembly(
         in_flight=in_flight,
         previous_list=previous_list,
         auto_previous=auto_previous,
-        pre_ga_mode=pre_ga_mode,
         skip_get_nightlies=skip_get_nightlies,
         ignore_non_x86_nightlies=ignore_non_x86_nightlies,
         gen_microshift=gen_microshift,
