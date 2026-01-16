@@ -824,14 +824,15 @@ class GenAssemblyCli:
                 return advisories, release_jira
 
         previous_group = self.releases_config.releases[previous_assembly].assembly.group
-        previous_advisories = previous_group.advisories.primitive()
+        if previous_group.advisories is not Missing:
+            previous_advisories = previous_group.advisories.primitive()
 
-        # preGA advisories (prerelease) associated with an assembly should not be reused
-        # they should be shipped or dropped if not shipping
-        for key in preGA_advisory_type:
-            previous_advisories.pop(key, None)
+            # preGA advisories (prerelease) associated with an assembly should not be reused
+            # they should be shipped or dropped if not shipping
+            for key in preGA_advisory_type:
+                previous_advisories.pop(key, None)
 
-        advisories.update(previous_advisories)
+            advisories.update(previous_advisories)
 
         release_jira = previous_group.release_jira
         self.logger.info(
