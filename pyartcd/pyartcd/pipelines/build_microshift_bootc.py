@@ -35,7 +35,8 @@ from artcommonlib.util import (
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
+from artcommonlib.util import get_art_prod_image_repo_for_version
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import Github, GithubException
 
@@ -191,22 +192,27 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
 
         if not self.runtime.dry_run:
+            major, _ = self._ocp_version
             if bootc_build.embargoed:
-                await sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
+                art_repo = get_art_prod_image_repo_for_version(major, "dev-priv")
+                await sync_to_quay(bootc_build.image_pullspec, art_repo)
             else:
-                await sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                art_repo = get_art_prod_image_repo_for_version(major, "dev")
+                await sync_to_quay(bootc_build.image_pullspec, art_repo)
                 # sync per-arch bootc-pullspec.txt to mirror
                 if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                     self._logger.info(f"Found assembly type {self.assembly_type}. Syncing bootc build to mirror")
                     await asyncio.gather(
                         *(
-                            self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}")
+                            self.sync_to_mirror(arch, bootc_build.el_target, f"{art_repo}@{digest}")
                             for arch, digest in digest_by_arch.items()
                         ),
                     )
         else:
+            major, _ = self._ocp_version
+            art_repo = get_art_prod_image_repo_for_version(major, "dev")
             self._logger.warning(
-                "Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode"
+                f"Skipping sync to {art_repo} since in dry-run mode"
             )
 
         # Pin the image to the assembly if not STREAM
@@ -390,7 +396,7 @@ class BuildMicroShiftBootcPipeline:
         bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
         # do not run for version < 4.18
-        if major < 4 or (major == 4 and minor < 18):
+        if (major, minor) < (4, 18):
             self._logger.info("Skipping bootc image build for version < 4.18")
             return
 

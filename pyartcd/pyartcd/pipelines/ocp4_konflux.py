@@ -63,7 +63,7 @@ class EnumEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-class KonfluxOcp4Pipeline:
+class KonfluxOcpPipeline:
     def __init__(
         self,
         runtime: Runtime = None,
@@ -532,14 +532,7 @@ class KonfluxOcp4Pipeline:
             jenkins.update_title(' [MASS REBUILD]')
 
     def check_building_rpms(self):
-        # If the version is not in the override list, skip the RPM rebase and build
-        # TODO this can be removed once all versions are handled by ocp4-konflux
-        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-            self.runtime.logger.info(
-                'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
-            )
-            self.build_plan.rpm_build_strategy = BuildStrategy.NONE
-
+        # All versions are now handled by ocp4-konflux
         if self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
             jenkins.update_title('[NO RPMs]')
 
@@ -708,7 +701,8 @@ class KonfluxOcp4Pipeline:
         await self.rebase_and_build_rpms(self.release)
 
         # Build plashets if needed
-        if not self.skip_plashets and self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        # All versions are now handled by ocp4-konflux
+        if not self.skip_plashets:
             group_param = f"openshift-{self.version}"
             jenkins.start_build_plashets(
                 group=group_param,
@@ -732,13 +726,9 @@ class KonfluxOcp4Pipeline:
 
             await self.sync_images()
 
-            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-                await self.sweep_bugs()
-                await self.sweep_golang_bugs()
-            else:
-                LOGGER.info(
-                    f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
-                )
+            # All versions are now handled by ocp4-konflux
+            await self.sweep_bugs()
+            await self.sweep_golang_bugs()
 
             self.trigger_bundle_build()
 
@@ -905,7 +895,7 @@ async def ocp4(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = KonfluxOcp4Pipeline(
+    pipeline = KonfluxOcpPipeline(
         runtime=runtime,
         assembly=assembly,
         data_path=data_path,

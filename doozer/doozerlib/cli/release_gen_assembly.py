@@ -10,7 +10,8 @@ import requests
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import ART_PROD_IMAGE_REPO, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.util import get_art_prod_image_repo_for_version
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
@@ -606,13 +607,16 @@ class GenAssemblyCli:
                                 f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
                             )
                         amd64_rhcos_info = util.oc_image_info_for_arch(self.rhcos_by_tag[tag.name]["x86_64"], "amd64")
+                        major, _ = self.runtime.get_major_minor_fields()
+                        # NOTE: For layered RHCOS images, we use the version-specific repository.
+                        # RHCOS images are currently in ocp-v4.0-art-dev even for OCP 5.x, but this
+                        # helper function allows us to handle future RHCOS 5.x images when they exist.
+                        art_repo = get_art_prod_image_repo_for_version(major, "dev")
                         rhcos_info = util.oc_image_info_for_arch(
-                            f"{ART_PROD_IMAGE_REPO}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
+                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
                         )
-                        self.rhcos_by_tag[tag.name][arch] = (
-                            f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
-                        )
+                        self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
                     else:
                         url_key = (
                             f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor

@@ -12,14 +12,14 @@ from pyartcd import constants
 class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
+        self.ocp4: ocp4.OcpPipeline = self.default_ocp4_pipeline()
 
     def setUp(self) -> None:
         self.ocp4 = self.default_ocp4_pipeline()
 
     @staticmethod
-    def default_ocp4_pipeline() -> ocp4.Ocp4Pipeline:
-        return ocp4.Ocp4Pipeline(
+    def default_ocp4_pipeline() -> ocp4.OcpPipeline:
+        return ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.14',
@@ -113,11 +113,11 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
 class TestInitialize(unittest.IsolatedAsyncioTestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
+        self.ocp4: ocp4.OcpPipeline = self.default_ocp4_pipeline()
 
     @staticmethod
-    def default_ocp4_pipeline() -> ocp4.Ocp4Pipeline:
-        return ocp4.Ocp4Pipeline(
+    def default_ocp4_pipeline() -> ocp4.OcpPipeline:
+        return ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.14',
@@ -221,7 +221,7 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
 class TestBuilds(unittest.IsolatedAsyncioTestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
+        self.ocp4: ocp4.OcpPipeline = self.default_ocp4_pipeline()
 
     def setUp(self) -> None:
         os.environ['BUILD_URL'] = 'build-url'
@@ -232,8 +232,8 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     @patch("os.path.abspath", return_value='doozer_working')
-    def default_ocp4_pipeline(*_) -> ocp4.Ocp4Pipeline:
-        pipeline = ocp4.Ocp4Pipeline(
+    def default_ocp4_pipeline(*_) -> ocp4.OcpPipeline:
+        pipeline = ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
             version='4.11',
@@ -468,12 +468,12 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
+        self.ocp4: ocp4.OcpPipeline = self.default_ocp4_pipeline()
 
     @staticmethod
     @patch("os.path.abspath", return_value='doozer_working')
-    def default_ocp4_pipeline(*_) -> ocp4.Ocp4Pipeline:
-        return ocp4.Ocp4Pipeline(
+    def default_ocp4_pipeline(*_) -> ocp4.OcpPipeline:
+        return ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.11',
@@ -524,13 +524,13 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
 
 
 class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._build_images")
+    @patch("pyartcd.pipelines.ocp4.OcpPipeline._build_images")
     @patch("os.path.abspath", return_value='doozer_working')
     @patch("pyartcd.util.notify_dockerfile_reconciliations")
     @patch("pyartcd.util.notify_bz_info_missing")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_update_distgit(self, cmd_assert_mock: AsyncMock, bz_info_missing_mock, reconciliations_mock, *_):
-        pipeline = ocp4.Ocp4Pipeline(
+        pipeline = ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
             version='4.11',
@@ -609,7 +609,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
     )
     @patch("pyartcd.jenkins.start_build")
     async def test_ocp4_sync_images(self, start_build_mock: MagicMock, *_):
-        pipeline = ocp4.Ocp4Pipeline(
+        pipeline = ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.11',
@@ -676,7 +676,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
     @patch("pyartcd.jenkins.start_olm_bundle")
     @patch("pyartcd.jenkins.start_build_sync")
     async def test_util_sync_images(self, build_sync_mock, olm_bundle_mock, *_):
-        pipeline = ocp4.Ocp4Pipeline(
+        pipeline = ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.11',
@@ -732,8 +732,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.ocp4 = self.default_ocp4_pipeline()
 
     @staticmethod
-    def default_ocp4_pipeline() -> ocp4.Ocp4Pipeline:
-        return ocp4.Ocp4Pipeline(
+    def default_ocp4_pipeline() -> ocp4.OcpPipeline:
+        return ocp4.OcpPipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
             version='4.14',
@@ -839,16 +839,16 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tag, ' [rpms except 2]')
 
 
-class TestKonfluxOcp4Pipeline(unittest.IsolatedAsyncioTestCase):
+class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_konflux_pipeline_network_mode_parameter_flow(self, mock_cmd):
         """Test pipeline passes network-mode to both doozer commands."""
-        from pyartcd.pipelines.ocp4_konflux import KonfluxOcp4Pipeline
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
 
         runtime = MagicMock()
         runtime.dry_run = False
 
-        pipeline = KonfluxOcp4Pipeline(
+        pipeline = KonfluxOcpPipeline(
             runtime=runtime,
             assembly='stream',
             version='4.14',

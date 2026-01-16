@@ -23,7 +23,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.util import get_previous_ocp_version, isolate_major_minor_in_group
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -231,20 +231,25 @@ def extract_version_fields(version, at_least=0):
 
 def get_cincinnati_channels(major, minor):
     """
-    :param major: Major for release
-    :param minor: Minor version for release.
-    :return: Returns the Cincinnati graph channels associated with a release
-             in promotion order (e.g. candidate -> stable)
+    Returns Cincinnati graph channels for a release in promotion order.
+
+    :param major: Major version for release
+    :param minor: Minor version for release
+    :return: List of channel names (e.g., ['candidate-4.16', 'fast-4.16', 'stable-4.16'])
+    :raises ValueError: If major version is less than 4 (Cincinnati channels only exist for OCP 4+)
     """
     major = int(major)
     minor = int(minor)
 
-    if major != 4:
-        raise IOError('Unable to derive previous for non v4 major')
+    if major < 4:
+        raise ValueError(f'Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})')
 
-    prefixes = ['candidate', 'fast', 'stable']
+    # Special case: OCP 4.1 used different channel names
     if major == 4 and minor == 1:
         prefixes = ['prerelease', 'stable']
+    else:
+        # Standard channel names for all other versions (4.2+, 5.x+)
+        prefixes = ['candidate', 'fast', 'stable']
 
     return [f'{prefix}-{major}.{minor}' for prefix in prefixes]
 
@@ -466,7 +471,8 @@ def get_release_calc_previous(
     arch = go_arch_for_brew_arch(arch)  # Cincinnati is go code, and uses a different arch name than brew
     # Get the names of channels we need to analyze
     candidate_channel = get_cincinnati_channels(major, minor)[0]
-    prev_candidate_channel = get_cincinnati_channels(major, minor - 1)[0]
+    prev_major, prev_minor = get_previous_ocp_version(major, minor)
+    prev_candidate_channel = get_cincinnati_channels(prev_major, prev_minor)[0]
 
     upgrade_from = set()
     prev_versions, prev_edges = get_channel_versions(

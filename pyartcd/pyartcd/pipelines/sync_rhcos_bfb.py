@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
+from artcommonlib.util import get_next_ocp_version
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -233,7 +234,8 @@ class SyncRhcosBfbPipeline:
         # For both stable and pre-release, check if next major.minor exists
         def get_next_major_minor(major_minor: str) -> str:
             major, minor = map(int, major_minor.split("."))
-            return f"{major}.{minor + 1}"
+            next_major, next_minor = get_next_ocp_version(major, minor)
+            return f"{next_major}.{next_minor}"
 
         next_major_minor = get_next_major_minor(self.major_minor)
 

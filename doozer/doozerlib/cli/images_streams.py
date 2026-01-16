@@ -15,7 +15,13 @@ from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    convert_remote_git_to_ssh,
+    get_next_ocp_version,
+    remove_prefix,
+    split_git_url,
+)
 from dockerfile_parse import DockerfileParser
 from github import Github, GithubException, PullRequest, UnknownObjectException
 from jira import JIRA, Issue
@@ -899,8 +905,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
         dry_run: If true, new desired jira issues would only be printed to the console.
     """
     major, minor = runtime.get_major_minor_fields()
-    if (major == 4 and minor < 16) or major < 4:
-        # Only enabled for 4.13 and beyond at the moment.
+    if (major, minor) < (4, 16):
+        # Only enabled for 4.16 and beyond
         return
 
     new_issues: Dict[str, Issue] = dict()
@@ -1036,7 +1042,8 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
                 runtime.logger.error(f"An error occurred while updating the Target Version on issue {issue.key}: {e}")
 
             # check depend issues and set depend to a higher version issue if true
-            look_for_summary = f'Update {major}.{minor + 1} {image_meta.name} image to be consistent with ART'
+            next_major, next_minor = get_next_ocp_version(major, minor)
+            look_for_summary = f'Update {next_major}.{next_minor} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want
             depend_issues = [i for i in depend_issues if i.fields.summary == look_for_summary]

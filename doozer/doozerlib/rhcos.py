@@ -16,7 +16,6 @@ from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import brew, util
-from doozerlib.constants import ART_PROD_IMAGE_REPO
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 
