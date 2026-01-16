@@ -424,36 +424,32 @@ class KonfluxOkd4Pipeline:
         # Load image metadata from ocp-build-data to get payload tag names
         LOGGER.info('Loading image metadata to resolve payload tag names')
         ocp_build_data_path = Path(self.runtime.doozer_working) / 'ocp-build-data' / 'images'
-        payload_tag_map = {}
-
-        for image in self.built_images:
-            image_name = image['name']
-            yaml_file = ocp_build_data_path / f'{image_name}.yml'
-
-            if yaml_file.exists():
-                try:
-                    with open(yaml_file) as f:
-                        image_metadata = yaml.safe_load(f)
-                    payload_tag = self._get_payload_tag_name(image_name, image_metadata)
-                    payload_tag_map[image_name] = payload_tag
-                    if payload_tag != image_name:
-                        LOGGER.info('Mapped %s -> %s (from payload_name config)', image_name, payload_tag)
-                except Exception as e:
-                    LOGGER.warning('Failed to load metadata for %s: %s. Using image name as tag.', image_name, e)
-                    payload_tag_map[image_name] = image_name
-            else:
-                LOGGER.warning('Metadata file not found for %s. Using image name as tag.', image_name)
-                payload_tag_map[image_name] = image_name
 
         is_name = f'scos-{self.version}-art'
         env = os.environ.copy()
         successful_tags = []
         failed_tags = []
 
-        # Tag each newly built image into the imagestream
-        LOGGER.info('Updating imagestream: %s in namespace %s', is_name, self.imagestream_namespace)
         for image in self.built_images:
+            # Load image metadata file
             image_name = image['name']
+            yaml_file = ocp_build_data_path / f'{image_name}.yml'
+
+            try:
+                with open(yaml_file) as f:
+                    image_metadata = yaml.safe_load(f)
+
+            except Exception as e:
+                LOGGER.warning('Failed to load metadata for %s: %s. Using image name as tag.', image_name, e)
+                failed_tags.append(image_name)
+                continue
+
+            if not image_metadata.get('for_payload', False):
+                LOGGER.info('Image %s not needed for OKD payload: skipping imagestream tag update', image_name)
+                continue
+
+            # Determine payload tag name
+            payload_tag = self._get_payload_tag_name(image_name, image_metadata)
             image_pullspec = image.get('image_pullspec')
             image_tag = image.get('image_tag')
 
@@ -462,15 +458,13 @@ class KonfluxOkd4Pipeline:
                 failed_tags.append(image_name)
                 continue
 
-            # Get the payload tag name from metadata (honors payload_name config)
-            payload_tag = payload_tag_map.get(image_name, image_name)
-
             # Tag into imagestream
             target = f'{self.imagestream_namespace}/{is_name}:{payload_tag}'
             try:
                 await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
                 LOGGER.info('Tagged %s into %s', image_name, target)
                 successful_tags.append(image_name)
+
             except Exception as e:
                 LOGGER.warning('Failed to tag %s into imagestream: %s', image_name, e)
                 failed_tags.append(image_name)
