@@ -723,7 +723,7 @@ class KonfluxImageBuilder:
             'artifact_type': ArtifactType.IMAGE,
             'engine': Engine.KONFLUX,
             'outcome': outcome,
-            'parent_images': df.parent_images,
+            'parent_images': await self.extract_parent_image_nvrs(df.parent_images, logger),
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
@@ -908,3 +908,37 @@ class KonfluxImageBuilder:
             rows.append(taskrun_record)
 
         return rows
+
+    @staticmethod
+    async def extract_parent_image_nvrs(parent_image_pullspecs: List[str], logger: logging.Logger) -> List[str]:
+        """
+        Extract NVRs from parent image pullspecs by inspecting their labels.
+
+        For each parent image, attempts to extract the NVR from container labels
+        (com.redhat.component, version, release). If the image doesn't have these
+        labels (e.g., external images not built by the tool), returns the original
+        pullspec for that entry.
+
+        NVRs never contain '/', so code reading this field can distinguish between
+        NVRs and pullspecs by checking for the presence of '/'.
+
+        :param parent_image_pullspecs: List of parent image pullspecs from the Dockerfile
+        :param logger: Logger instance for debug output
+        :return: List of NVRs (or original pullspecs for unknown) corresponding to each parent image
+        """
+        from doozerlib.release_inspector import extract_nvr_from_pullspec
+
+        parent_image_nvrs = []
+        for pullspec in parent_image_pullspecs:
+            try:
+                name, version, release = await extract_nvr_from_pullspec(pullspec)
+                nvr = f"{name}-{version}-{release}"
+                parent_image_nvrs.append(nvr)
+                logger.debug(f"Extracted NVR {nvr} from parent image {pullspec}")
+            except Exception as e:
+                # Image doesn't have NVR labels (external image) or inspection failed
+                # Store the original pullspec so it's still visible in the data
+                logger.debug(f"Could not extract NVR from parent image {pullspec}: {e}")
+                parent_image_nvrs.append(pullspec)
+
+        return parent_image_nvrs
