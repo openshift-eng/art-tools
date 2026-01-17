@@ -723,7 +723,9 @@ class KonfluxImageBuilder:
             'artifact_type': ArtifactType.IMAGE,
             'engine': Engine.KONFLUX,
             'outcome': outcome,
-            'parent_images': df.parent_images,
+            'parent_images': await self.extract_parent_image_nvrs(
+                df.parent_images, logger, self._config.registry_auth_file
+            ),
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
@@ -908,3 +910,66 @@ class KonfluxImageBuilder:
             rows.append(taskrun_record)
 
         return rows
+
+    @staticmethod
+    async def extract_parent_image_nvrs(
+        parent_image_pullspecs: List[str],
+        logger: logging.Logger,
+        registry_auth_file: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Extract NVRs from parent image pullspecs by inspecting their labels.
+
+        For each parent image, attempts to extract the NVR from container labels
+        (com.redhat.component, version, release). If the image doesn't have these
+        labels (e.g., external images not built by the tool), returns the original
+        pullspec for that entry.
+
+        NVRs never contain '/', so code reading this field can distinguish between
+        NVRs and pullspecs by checking for the presence of '/'.
+
+        :param parent_image_pullspecs: List of parent image pullspecs from the Dockerfile
+        :param logger: Logger instance for debug output
+        :param registry_auth_file: Optional path to registry auth file for pulling image metadata
+        :return: List of NVRs (or original pullspecs for unknown) corresponding to each parent image
+        """
+        parent_image_nvrs = []
+        for pullspec in parent_image_pullspecs:
+            try:
+                # Use oc image info with optional auth file to get image labels
+                # Use --filter-by-os to handle manifest list images
+                auth_arg = f"-a {registry_auth_file}" if registry_auth_file else ""
+                cmd = f"oc image info -o json --filter-by-os=amd64 {auth_arg} {pullspec}"
+                rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+
+                if rc != 0:
+                    # Could not access the image - this is unexpected and worth a warning
+                    logger.warning(f"Could not access parent image {pullspec}: {stderr}")
+                    parent_image_nvrs.append(pullspec)
+                    continue
+
+                image_info = json.loads(stdout)
+                labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
+
+                name = labels.get('com.redhat.component')
+                version = labels.get('version')
+                release = labels.get('release')
+
+                if name and version and release:
+                    nvr = f"{name}-{version}-{release}"
+                    parent_image_nvrs.append(nvr)
+                    logger.debug(f"Extracted NVR {nvr} from parent image {pullspec}")
+                else:
+                    # Image accessible but missing NVR labels (external image) - informational
+                    logger.info(
+                        f"Parent image {pullspec} missing NVR labels: "
+                        f"component={name}, version={version}, release={release}"
+                    )
+                    parent_image_nvrs.append(pullspec)
+
+            except Exception as e:
+                # Unexpected error during processing
+                logger.warning(f"Error extracting NVR from parent image {pullspec}: {e}")
+                parent_image_nvrs.append(pullspec)
+
+        return parent_image_nvrs
