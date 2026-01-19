@@ -217,7 +217,7 @@ class PrepareReleaseKonfluxPipeline:
             await self.prepare_et_advisories()
             await self.prepare_shipment()
             await self.handle_jira_ticket()
-            
+
             # Check advisory stage policy after release_version is set
             await self.check_advisory_stage_policy(self.assembly_type)
         except Exception as ex:
