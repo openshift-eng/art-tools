@@ -395,5 +395,59 @@ class TestNormalizeGroupNameForK8s(unittest.TestCase):
         self.assertEqual(result, "group123-4-56")
 
 
+class TestKonfluxImagestreamOverride(unittest.TestCase):
+    """Tests for uses_konflux_imagestream_override"""
+
+    def test_versions_below_4_12(self):
+        """Test versions below 4.12 return False"""
+        self.assertFalse(util.uses_konflux_imagestream_override("4.11"))
+        self.assertFalse(util.uses_konflux_imagestream_override("4.10"))
+        self.assertFalse(util.uses_konflux_imagestream_override("4.0"))
+        self.assertFalse(util.uses_konflux_imagestream_override("3.11"))
+        self.assertFalse(util.uses_konflux_imagestream_override("3.0"))
+
+    def test_version_4_12(self):
+        """Test version 4.12 returns True (boundary)"""
+        self.assertTrue(util.uses_konflux_imagestream_override("4.12"))
+
+    def test_versions_above_4_12(self):
+        """Test versions above 4.12 return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("4.13"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.14"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.15"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.16"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.17"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.18"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.19"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.20"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.21"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.22"))
+
+    def test_ocp_5_versions(self):
+        """Test all OCP 5.x versions return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("5.0"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.1"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.10"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.99"))
+
+    def test_future_major_versions(self):
+        """Test future major versions return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("6.0"))
+        self.assertTrue(util.uses_konflux_imagestream_override("10.0"))
+
+    def test_invalid_versions(self):
+        """Test invalid version strings raise ValueError"""
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("invalid")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("4")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("4.12.1")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("openshift-4.12")
+
+
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()

@@ -8,10 +8,10 @@ import click
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.util import uses_konflux_imagestream_override
 
 from doozerlib import brew, rhcos, util
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -58,7 +58,7 @@ class ConfigScanSources:
             if self.rebase_priv:
                 major, minor = self.runtime.get_major_minor_fields()
                 version = f'{major}.{minor}'
-                if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+                if uses_konflux_imagestream_override(version):
                     self.runtime.logger.warning(
                         'ocp4-scan for Brew is not allowed to rebase into openshfit-priv version %s', version
                     )

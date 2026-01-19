@@ -21,7 +21,6 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch,
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
-    KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS,
     RHCOS_RELEASES_STREAM_URL,
 )
 from artcommonlib.exectools import manifest_tool
@@ -32,7 +31,7 @@ from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import convert_remote_git_to_https
+from artcommonlib.util import convert_remote_git_to_https, uses_konflux_imagestream_override
 from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -293,7 +292,7 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 
 def default_imagestream_base_name_generic(version: str, build_system) -> str:
-    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
+    if uses_konflux_imagestream_override(version) or build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -309,7 +308,7 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
     if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    elif version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
+    elif uses_konflux_imagestream_override(version) or build_system == 'brew':
         return f"{version}-art-assembly-{assembly_name}"
     else:  # konflux
         return f"{version}-konflux-art-assembly-{assembly_name}"
@@ -2671,7 +2670,7 @@ class PayloadGenerator:
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
         # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
-        if runtime.build_system == 'brew' or major_minor in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
             release_suffix = 'release'
         else:
             release_suffix = 'konflux-release'

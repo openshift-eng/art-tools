@@ -10,12 +10,12 @@ import requests
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import ART_PROD_IMAGE_REPO, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import ART_PROD_IMAGE_REPO, RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import get_assembly_release_date
+from artcommonlib.util import get_assembly_release_date, uses_konflux_imagestream_override
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -309,7 +309,7 @@ class GenAssemblyCli:
 
             if (
                 self.runtime.build_system == 'konflux'
-                and self.runtime.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+                and not uses_konflux_imagestream_override(self.runtime.group.removeprefix('openshift-'))
             ):
                 release_suffix = f'konflux-release{rc_suffix}'
             else:

@@ -10,13 +10,13 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
     merge_objects,
     new_roundtrip_yaml_handler,
     split_git_url,
+    uses_konflux_imagestream_override,
 )
 from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
 from ghapi.all import GhApi
@@ -145,7 +145,7 @@ class GenAssemblyPipeline:
             # For Konflux, stop here at the moment
             if (
                 self.build_system == 'konflux'
-                and self.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+                and not uses_konflux_imagestream_override(self.group.removeprefix('openshift-'))
             ):
                 return
 

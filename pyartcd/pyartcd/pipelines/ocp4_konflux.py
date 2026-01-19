@@ -11,8 +11,14 @@ import click
 import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
-from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE, KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-from artcommonlib.util import new_roundtrip_yaml_handler, run_safe, sync_to_quay, validate_build_priority
+from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
+from artcommonlib.util import (
+    new_roundtrip_yaml_handler,
+    run_safe,
+    sync_to_quay,
+    uses_konflux_imagestream_override,
+    validate_build_priority,
+)
 
 from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
@@ -534,7 +540,7 @@ class KonfluxOcp4Pipeline:
     def check_building_rpms(self):
         # If the version is not in the override list, skip the RPM rebase and build
         # TODO this can be removed once all versions are handled by ocp4-konflux
-        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if not uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
                 'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
             )
@@ -708,7 +714,7 @@ class KonfluxOcp4Pipeline:
         await self.rebase_and_build_rpms(self.release)
 
         # Build plashets if needed
-        if not self.skip_plashets and self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if not self.skip_plashets and uses_konflux_imagestream_override(self.version):
             group_param = f"openshift-{self.version}"
             jenkins.start_build_plashets(
                 group=group_param,
@@ -732,7 +738,7 @@ class KonfluxOcp4Pipeline:
 
             await self.sync_images()
 
-            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            if uses_konflux_imagestream_override(self.version):
                 await self.sweep_bugs()
                 await self.sweep_golang_bugs()
             else:
