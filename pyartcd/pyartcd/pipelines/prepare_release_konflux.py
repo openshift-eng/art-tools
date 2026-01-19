@@ -211,15 +211,16 @@ class PrepareReleaseKonfluxPipeline:
 
     async def run(self):
         await self.initialize()
+        
+        # Check advisory stage policy early for fail-fast behavior
+        await self.check_advisory_stage_policy(self.assembly_type)
+        
         await self.check_blockers()
         err = None
         try:
             await self.prepare_et_advisories()
             await self.prepare_shipment()
             await self.handle_jira_ticket()
-
-            # Check advisory stage policy after release_version is set
-            await self.check_advisory_stage_policy(self.assembly_type)
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
             err = ex
@@ -1530,9 +1531,10 @@ class PrepareReleaseKonfluxPipeline:
         is_ec_release = assembly_type == AssemblyTypes.PREVIEW
         expected_policy = "registry-ocp-art-ec-stage" if is_ec_release else "registry-ocp-art-stage"
 
-        # Construct URL to the advisory stage policy file
-        version_major = self.release_version[0]
-        version_minor = self.release_version[1]
+        # Extract version from release_name (available after initialize)
+        release_version = semver.VersionInfo.parse(self.release_name).to_tuple()
+        version_major = release_version[0]
+        version_minor = release_version[1]
         policy_filename = f"ocp-art-advisory-stage-{version_major}-{version_minor}.yaml"
         policy_url = f"https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art/{policy_filename}"
 
