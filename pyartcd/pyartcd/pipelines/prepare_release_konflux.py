@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import aiohttp
 import asyncstdlib as a
 import click
 import gitlab
@@ -210,6 +211,10 @@ class PrepareReleaseKonfluxPipeline:
 
     async def run(self):
         await self.initialize()
+
+        # Check advisory stage policy before proceeding
+        await self.check_advisory_stage_policy(self.assembly_type)
+
         await self.check_blockers()
         err = None
         try:
@@ -1513,6 +1518,72 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info('Jira unchanged, not updating issue')
 
         return jira_changed
+
+    async def check_advisory_stage_policy(self, assembly_type: AssemblyTypes):
+        """
+        Check that the advisory stage policy is correct for EC vs non-EC releases.
+        For EC releases: expect 'registry-ocp-art-ec-stage' policy
+        For non-EC releases: expect 'registry-ocp-art-stage' policy
+        """
+        self.logger.info("Checking advisory stage policy...")
+
+        # Determine expected policy based on assembly type
+        is_ec_release = assembly_type == AssemblyTypes.PREVIEW
+        expected_policy = "registry-ocp-art-ec-stage" if is_ec_release else "registry-ocp-art-stage"
+
+        # Construct URL to the advisory stage policy file
+        version_major = self.release_version[0]
+        version_minor = self.release_version[1]
+        policy_filename = f"ocp-art-advisory-stage-{version_major}-{version_minor}.yaml"
+        policy_url = f"https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art/{policy_filename}"
+
+        try:
+            # Fetch the policy file
+            self.logger.info("Fetching policy file from %s", policy_url)
+
+            # Configure timeout for the request
+            timeout = aiohttp.ClientTimeout(total=30, sock_read=10)
+
+            # Prepare authentication headers if GitLab token is available
+            headers = {}
+            gitlab_token = os.environ.get("GITLAB_TOKEN")
+            if gitlab_token:
+                headers["Private-Token"] = gitlab_token
+
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(policy_url, headers=headers) as response:
+                    if response.status != 200:
+                        error_details = [
+                            f"Failed to fetch policy file from {policy_url}: HTTP {response.status}",
+                            "This requires konflux-release-data MR 13498 to be merged and deployed.",
+                        ]
+                        if response.status == 403:
+                            error_details.append(
+                                "403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
+                            )
+                        raise ValueError(" ".join(error_details))
+                    policy_content = await response.text()
+
+            # Parse the YAML content
+            policy_data = yaml.load(policy_content) or {}
+            actual_policy = policy_data.get("spec", {}).get("policy", "")
+
+            # Validate the policy
+            if actual_policy != expected_policy:
+                error_msg = (
+                    f"Advisory stage policy mismatch for {'EC' if is_ec_release else 'non-EC'} release. "
+                    f"Expected '{expected_policy}', but found '{actual_policy}' in {policy_filename}"
+                )
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            self.logger.info("Advisory stage policy validation passed: %s", actual_policy)
+
+        except Exception as ex:
+            error_msg = f"Failed to validate advisory stage policy: {ex}"
+            self.logger.exception(error_msg)
+            await self._slack_client.say_in_thread(f":warning: {error_msg}")
+            raise ValueError(error_msg) from ex
 
 
 @cli.command("prepare-release-konflux")
