@@ -158,6 +158,8 @@ class BuildSyncPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system=self.build_system,
+            data_path=self.data_path,
+            doozer_data_gitref=self.doozer_data_gitref,
         )
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
