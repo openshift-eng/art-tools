@@ -208,18 +208,31 @@ async def kinit():
         logger.warning('DISTGIT_KEYTAB_FILE is not set. Using any existing kerberos credential.')
 
 
-async def branch_arches(group: str, assembly: str, ga_only: bool = False, build_system: str = 'brew') -> list:
+async def branch_arches(
+    group: str,
+    assembly: str,
+    ga_only: bool = False,
+    build_system: str = 'brew',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> list:
     """
     Find the supported arches for a specific release
     :param str group: The name of the branch to get configs for. For example: 'openshift-4.12
     :param str assembly: The name of the assembly. For example: 'stream'
     :param bool ga_only: If you only want group arches and do not care about arches_override.
     :param str build_system: 'brew' | 'konflux'
+    :param str data_path: Path to ocp-build-data repository
+    :param str doozer_data_gitref: Git ref for ocp-build-data
     :return: A list of the arches built for this branch
     """
 
     logger.info('Fetching group config for %s', group)
-    group_config = Model(await load_group_config(group=group, assembly=assembly))
+    group_config = Model(
+        await load_group_config(
+            group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=doozer_data_gitref
+        )
+    )
 
     # Check if arches_override has been specified. This is used in group.yaml
     # when we temporarily want to build for CPU architectures that are not yet GA.
