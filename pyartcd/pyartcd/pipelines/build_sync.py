@@ -8,12 +8,11 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import split_git_url
+from artcommonlib.util import split_git_url, uses_konflux_imagestream_override
 from ghapi.all import GhApi
 from opentelemetry import trace
 
@@ -85,7 +84,7 @@ class BuildSyncPipeline:
         # For konflux, it is 4.y-konflux-art-latest
         self.is_base_name = (
             f'{self.version}-art-latest'
-            if build_system == 'brew' or self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            if build_system == 'brew' or uses_konflux_imagestream_override(self.version)
             else f'{self.version}-konflux-art-latest'
         )
 

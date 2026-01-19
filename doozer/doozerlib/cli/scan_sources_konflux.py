@@ -18,7 +18,6 @@ import pycares
 import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -27,7 +26,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import deep_merge, fetch_slsa_attestation
+from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -102,7 +101,7 @@ class ConfigScanSources:
         if self.rebase_priv:
             major, minor = self.runtime.get_major_minor_fields()
             version = f'{major}.{minor}'
-            if version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+            if not uses_konflux_imagestream_override(version):
                 self.logger.warning(
                     'ocp4-scan for Konflux is not allowed to rebase into openshfit-priv version %s', version
                 )

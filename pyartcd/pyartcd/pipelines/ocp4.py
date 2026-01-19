@@ -6,7 +6,7 @@ import shutil
 import click
 import yaml
 from artcommonlib import exectools, redis
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.util import uses_konflux_imagestream_override
 
 from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
@@ -220,7 +220,7 @@ class Ocp4Pipeline:
         jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
         self.runtime.logger.info('Pinned builds (whether source changed or not)')
 
-        if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
                 'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
             )
@@ -654,10 +654,8 @@ class Ocp4Pipeline:
 
         else:
             # Trigger ocp4 build sync only for streams that are not being updated with konflux builds
-            if self.version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-                self.runtime.logger.info(
-                    f'Skipping build-sync job for streams updated by konflux builds {KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS}'
-                )
+            if uses_konflux_imagestream_override(self.version):
+                self.runtime.logger.info('Skipping build-sync job for streams updated by Konflux builds')
             else:
                 jenkins.start_build_sync(
                     build_version=self.version,
@@ -676,7 +674,7 @@ class Ocp4Pipeline:
             )
 
     async def _sweep(self):
-        if self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if not uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
                 'Skipping bug sweep for %s since it is being handled by ocp4-konflux', {self.version}
             )
@@ -787,7 +785,7 @@ class Ocp4Pipeline:
         await self._rebase_and_build_rpms()
 
         # Build plashets
-        if not self.skip_plashets and self.version not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+        if not self.skip_plashets and not uses_konflux_imagestream_override(self.version):
             group_param = f"openshift-{self.version}"
             jenkins.start_build_plashets(
                 group=group_param,
