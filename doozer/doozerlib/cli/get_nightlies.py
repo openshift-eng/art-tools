@@ -6,9 +6,9 @@ import aiohttp
 import click
 from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
+from artcommonlib.util import uses_konflux_imagestream_override
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import constants
@@ -288,7 +288,7 @@ def get_nightly_tag_base(major: int, minor: int, build_system: str) -> str:
     Get the nightly tag base for the given major, minor version and build system.
     """
     nightly_suffix = "nightly"
-    if build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+    if build_system == "konflux" and not uses_konflux_imagestream_override(f"{major}.{minor}"):
         nightly_suffix = "konflux-nightly"
     return f"{major}.{minor}.0-0.{nightly_suffix}"
 

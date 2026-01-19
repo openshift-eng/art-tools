@@ -377,6 +377,22 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Option
     return int(match[1]), int(match[2])
 
 
+def uses_konflux_imagestream_override(version: str) -> bool:
+    """
+    Check if an OCP version uses Konflux imagestream override.
+    All OCP versions >= 4.12 (including 5.0+) use Konflux imagestream override.
+
+    :param version: Version string in format "4.22", "5.0", etc.
+    :return: True if version >= 4.12, False otherwise
+    :raises ValueError: If version string is not in valid format
+    """
+    match = re.fullmatch(r"(\d+)\.(\d+)", version)
+    if not match:
+        raise ValueError(f"Invalid version string: {version!r}. Expected format: 'MAJOR.MINOR' (e.g., '4.22', '5.0')")
+
+    return (int(match[1]), int(match[2])) >= (4, 12)
+
+
 def extract_group_from_nvr(nvr: str) -> Optional[str]:
     """
     Extract the group from an NVR by matching -vMAJOR.MINOR pattern.
