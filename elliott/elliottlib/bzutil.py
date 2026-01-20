@@ -715,7 +715,7 @@ class JIRABugTracker(BugTracker):
 
     @staticmethod
     def get_config(runtime) -> Dict:
-        bug_config = runtime.gitdata.load_data(key='bug').data
+        bug_config = runtime.gitdata.load_data(key='bug', replace_vars=runtime.group_config.vars).data
         # construct config so that all jira_config keys become toplevel keys
         jira_config = bug_config.pop('jira_config')
         for key in jira_config:
@@ -963,7 +963,7 @@ class JIRABugTracker(BugTracker):
 class BugzillaBugTracker(BugTracker):
     @staticmethod
     def get_config(runtime):
-        bug_config = runtime.gitdata.load_data(key='bug').data
+        bug_config = runtime.gitdata.load_data(key='bug', replace_vars=runtime.group_config.vars).data
         # construct config so that all bugzilla_config keys become toplevel keys
         bz_config = bug_config.pop('bugzilla_config')
         for key in bz_config:

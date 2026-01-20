@@ -111,10 +111,15 @@ class TestBugTracker(unittest.TestCase):
 class TestJIRABugTracker(unittest.TestCase):
     def test_get_config(self):
         config = {'foo': 1, 'jira_config': {'bar': 2}}
+        vars_mock = flexmock(MAJOR="4", MINOR="9")
         runtime = flexmock(
-            gitdata=flexmock(load_data=flexmock(data=config)),
-            get_major_minor=lambda: (4, 9),
+            group_config=flexmock(vars=vars_mock),
+            gitdata=flexmock(),
         )
+        runtime.gitdata.should_receive("load_data").with_args(key='bug', replace_vars=vars_mock).and_return(
+            flexmock(data=config)
+        )
+
         actual = JIRABugTracker.get_config(runtime)
         expected = {'foo': 1, 'bar': 2}
         self.assertEqual(actual, expected)
@@ -213,10 +218,15 @@ class TestJIRABugTracker(unittest.TestCase):
 class TestBugzillaBugTracker(unittest.TestCase):
     def test_get_config(self):
         config = {'foo': 1, 'bugzilla_config': {'bar': 2}}
+        vars_mock = flexmock(MAJOR="4", MINOR="9")
         runtime = flexmock(
-            gitdata=flexmock(load_data=flexmock(data=config)),
-            get_major_minor=lambda: (4, 9),
+            group_config=flexmock(vars=vars_mock),
+            gitdata=flexmock(),
         )
+        runtime.gitdata.should_receive("load_data").with_args(key='bug', replace_vars=vars_mock).and_return(
+            flexmock(data=config)
+        )
+
         actual = BugzillaBugTracker.get_config(runtime)
         expected = {'foo': 1, 'bar': 2}
         self.assertEqual(actual, expected)
