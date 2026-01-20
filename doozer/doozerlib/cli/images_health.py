@@ -160,7 +160,7 @@ class ImagesHealthPipeline:
                 ),
             )
 
-        if self.variant is not BuildVariant.OKD and latest_success_idx <= 3:
+        elif self.variant is not BuildVariant.OKD and latest_success_idx <= 3:
             # The latest attempt was a failure, but there was a success within the last 3 attempts: skip notification
             # Note: For OKD, we always notify on first failure, so this check is skipped
             self.logger.info(
