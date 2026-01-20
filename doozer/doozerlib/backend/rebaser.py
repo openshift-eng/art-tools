@@ -940,7 +940,8 @@ class KonfluxRebaser:
         cleaned_version = version.lstrip('v').rsplit('.', 1)[0]
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
-        dfp.labels["cpe"] = f"cpe:/a:redhat:openshift:{cleaned_version}::{rhel_version}"
+        product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
+        dfp.labels["cpe"] = f"cpe:/a:redhat:{product}:{cleaned_version}::{rhel_version}"
 
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()
