@@ -211,10 +211,10 @@ class PrepareReleaseKonfluxPipeline:
 
     async def run(self):
         await self.initialize()
-        
+
         # Check advisory stage policy early for fail-fast behavior
         await self.check_advisory_stage_policy(self.assembly_type)
-        
+
         await self.check_blockers()
         err = None
         try:
