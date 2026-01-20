@@ -36,6 +36,12 @@ from doozerlib.source_resolver import SourceResolution, SourceResolver
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+# Product name mapping for CPE labels
+CPE_PRODUCT_NAME_MAPPING = {
+    'rhmtc': 'rhmt',
+    'oadp': 'openshift_api_data_protection',
+}
+
 LOGGER = logging.getLogger(__name__)
 TRACER = trace.get_tracer(__name__)
 
@@ -941,7 +947,9 @@ class KonfluxRebaser:
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
-        dfp.labels["cpe"] = f"cpe:/a:redhat:{product}:{cleaned_version}::{rhel_version}"
+        # Apply product name mapping for CPE labels
+        cpe_product_name = CPE_PRODUCT_NAME_MAPPING.get(product, product)
+        dfp.labels["cpe"] = f"cpe:/a:redhat:{cpe_product_name}:{cleaned_version}::{rhel_version}"
 
         # Set the distgit repo name
         dfp.labels["com.redhat.component"] = metadata.get_component_name()
