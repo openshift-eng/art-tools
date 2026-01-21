@@ -6,21 +6,24 @@ import click
 import koji
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.config.rpm_delivery import RPMDeliveries
 from artcommonlib.release_util import split_el_suffix_in_release
 
 from doozerlib import brew
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.rpm_delivery import RPMDeliveries
 from doozerlib.runtime import Runtime
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TagRPMsCli:
-    def __init__(self, runtime: Runtime, dry_run: bool, as_json: bool) -> None:
+    def __init__(self, runtime: Runtime, dry_run: bool, as_json: bool, logger: Optional[logging.Logger] = None) -> None:
         self._runtime = runtime
         self.dry_run = dry_run
         self.as_json = as_json
+        self.logger = logger or LOGGER
 
     @staticmethod
     async def get_tagged_builds(
@@ -71,10 +74,7 @@ class TagRPMsCli:
 
         return await exectools.to_thread(_func)
 
-    @staticmethod
-    async def tag_builds(
-        session: koji.ClientSession, tag_build_tuples: Iterable[Tuple[str, Union[str, int]]], logger: logging.Logger
-    ):
+    async def tag_builds(self, session: koji.ClientSession, tag_build_tuples: Iterable[Tuple[str, Union[str, int]]]):
         def _func():
             tasks = []
             with session.multicall(strict=True) as m:
@@ -85,8 +85,10 @@ class TagRPMsCli:
         task_ids = cast(List[int], await exectools.to_thread(_func))
         if task_ids:
             TASK_URL = f'{BREWWEB_URL}/taskinfo?taskID='
-            logger.info("Waiting for task(s) to complete: %s", ", ".join(map(lambda t: f"{TASK_URL}{t}", task_ids)))
-            errors = await brew.watch_tasks_async(session, logger.info, task_ids)
+            self.logger.info(
+                "Waiting for task(s) to complete: %s", ", ".join(map(lambda t: f"{TASK_URL}{t}", task_ids))
+            )
+            errors = await brew.watch_tasks_async(session, self.logger.info, task_ids)
             # we will treat "already tagged" error as a success
             failed_tasks = {task_id for task_id, error in errors.items() if error and "already tagged" not in error}
             if failed_tasks:
@@ -94,193 +96,345 @@ class TagRPMsCli:
                 message = "; ".join(f"Task {TASK_URL}{task_id} failed: {errors[task_id]}" for task_id in failed_tasks)
                 raise DoozerFatalError(message)
 
-    async def run(self):
-        if self._runtime.assembly_type is not AssemblyTypes.STREAM:
-            raise DoozerFatalError("This command can only be run for stream assembly.")
-        logger = self._runtime.logger
-        report = {
-            "untagged": {},
-            "tagged": {},
-        }
-        # Load and verify rpm_deliveries config
+    def _validate_options(self):
+        """Validate command options and runtime state.
+
+        Raises:
+            DoozerFatalError: If assembly type is not None or STREAM
+        """
+        if self._runtime.assembly_type not in (None, AssemblyTypes.STREAM):
+            raise DoozerFatalError(f"This command cannot be run for non-stream assembly {self._runtime.assembly_type}")
+
+    def _load_rpm_deliveries_config(self) -> Optional[RPMDeliveries]:
+        """Load and validate rpm_deliveries configuration.
+
+        Returns:
+            RPMDeliveries if config is valid and non-empty, None if empty
+        """
         group_config = self._runtime.group_config.primitive()
-        rpm_deliveries = RPMDeliveries.model_validate(group_config.get("rpm_deliveries", []))  # will raise
-        # ValidationError if invalid
+        rpm_deliveries = RPMDeliveries.model_validate(group_config.get("rpm_deliveries", []))
+
         if not rpm_deliveries:
-            logger.warning("rpm_deliveries is not defined for this group.")
-            if self.as_json:
-                print(json.dumps(report))
-            return
-        # Scan for builds
-        logger.info("Logging into Brew...")
-        koji_api = self._runtime.build_retrying_koji_client()
-        koji_api.gssapi_login()
-        builds_to_tag: Dict[str, Dict[str]] = {}  # target_tag_name -> dict of NVRs {nvr_string: build_object}
-        builds_to_untag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
-        for entry in rpm_deliveries:
-            # For each package, look at builds in stop-ship tag and integration tag,
-            # then find an acceptable build in integration tag.
-            if not entry.target_tag:
-                logger.warning(
-                    "RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
-                    ", ".join(entry.packages),
-                )
-                continue
-            builds_to_tag.setdefault(entry.target_tag, dict())
-            builds_to_untag.setdefault(entry.target_tag, set())
-            # Get all builds in stop-ship tag
-            logger.info("Getting tagged builds in stop-ship tag %s...", entry.stop_ship_tag)
+            self.logger.warning("rpm_deliveries is not defined for this group.")
+            return None
+
+        return rpm_deliveries
+
+    async def _get_builds_from_tags(
+        self, koji_api: koji.ClientSession, entry, packages: List[str]
+    ) -> Tuple[List[List[Dict]], List[List[Dict]], List[List[Dict]]]:
+        """Get builds from stop-ship, integration, and rhel tags for given packages.
+
+        Args:
+            koji_api: Koji client session
+            entry: RPMDelivery entry containing tag names
+            packages: List of package names
+
+        Returns:
+            Tuple of (stop_ship_builds, integration_builds, rhel_builds)
+        """
+        if entry.stop_ship_tag:
+            self.logger.info("Getting tagged builds in stop-ship tag %s...", entry.stop_ship_tag)
             builds_in_stop_ship_tag = await self.get_tagged_builds(
-                koji_api, [(entry.stop_ship_tag, pkg) for pkg in entry.packages], build_type="rpm"
+                koji_api, [(entry.stop_ship_tag, pkg) for pkg in packages], build_type="rpm"
             )
-            # Get all builds in integration tag
-            logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
-            builds_in_integration_tag = await self.get_tagged_builds(
-                koji_api, [(entry.integration_tag, pkg) for pkg in entry.packages], build_type="rpm", latest=0
+        else:
+            builds_in_stop_ship_tag = [[] for _ in packages]
+
+        self.logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
+        builds_in_integration_tag = await self.get_tagged_builds(
+            koji_api, [(entry.integration_tag, pkg) for pkg in packages], build_type="rpm", latest=0
+        )
+
+        self.logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
+        builds_in_rhel_tag = (
+            await self.get_tagged_builds(
+                koji_api, [(entry.rhel_tag, pkg) for pkg in packages], build_type="rpm", latest=0
             )
-            # We assume in each rhel version, there are only a few hundreds of builds in the rhel candidate tag.
-            # It should be fine to get all builds in one single Brew API call.
-            logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
-            builds_in_rhel_tag = (
-                await self.get_tagged_builds(
-                    koji_api, [(entry.rhel_tag, pkg) for pkg in entry.packages], build_type="rpm", latest=0
-                )
-                if entry.rhel_tag
-                else [[] for _ in entry.packages]
-            )
-            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(
-                entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag
-            ):
-                stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
-                rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
-                logger.info(
-                    "Found %s build(s) of package %s in stop-ship tag %s",
-                    len(stop_ship_nvrs),
-                    package,
+            if entry.rhel_tag
+            else [[] for _ in packages]
+        )
+
+        return builds_in_stop_ship_tag, builds_in_integration_tag, builds_in_rhel_tag
+
+    def _find_stop_ship_builds_to_untag(
+        self, koji_api: koji.ClientSession, stop_ship_nvrs: Set[str], entry
+    ) -> Set[str]:
+        """Find stop-ship builds that are currently in the target tag.
+
+        Args:
+            koji_api: Koji client session
+            stop_ship_nvrs: Set of NVRs in the stop-ship tag
+            entry: RPMDelivery entry containing target tag name
+
+        Returns:
+            Set of NVRs to untag from target tag
+        """
+        if not stop_ship_nvrs:
+            return set()
+
+        nvr_list = sorted(stop_ship_nvrs)
+        self.logger.info(
+            "Check if the following stop-ship builds are in target tag %s: %s",
+            entry.target_tag,
+            ", ".join(nvr_list),
+        )
+
+        nvrs_to_untag = set()
+        for nvr, tags in zip(nvr_list, brew.get_builds_tags(nvr_list, koji_api)):
+            if next(filter(lambda tag: tag["name"] == entry.target_tag, tags), None):
+                nvrs_to_untag.add(nvr)
+
+        return nvrs_to_untag
+
+    def _find_acceptable_build(
+        self,
+        koji_api: koji.ClientSession,
+        candidate_builds: List[Dict],
+        stop_ship_nvrs: Set[str],
+        rhel_build_nvrs: Set[str],
+        entry,
+    ) -> Optional[Dict]:
+        """Find first acceptable build from candidates.
+
+        Args:
+            koji_api: Koji client session
+            candidate_builds: List of candidate build dicts from integration tag
+            stop_ship_nvrs: Set of NVRs in stop-ship tag
+            rhel_build_nvrs: Set of NVRs in rhel tag
+            entry: RPMDelivery entry
+
+        Returns:
+            First acceptable build dict, or None if no acceptable build found
+        """
+        for build in candidate_builds:
+            # check if the build is already tagged into the stop-ship tag
+            if entry.stop_ship_tag and build["nvr"] in stop_ship_nvrs:
+                self.logger.warning(
+                    "Build %s is tagged into the stop-ship tag: %s. Skipping...",
+                    build["nvr"],
                     entry.stop_ship_tag,
                 )
-                if stop_ship_nvrs:
-                    # Check if those stop-ship builds are also in target tag
-                    nvr_list = sorted(stop_ship_nvrs)
-                    logger.info(
-                        "Check if the following stop-ship builds are in target tag %s: %s",
+                continue
+
+            # check if the build is in the rhel tag. If not, skip it.
+            if entry.rhel_tag and build["nvr"] not in rhel_build_nvrs:
+                self.logger.warning("Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag)
+                continue
+
+            # check if the build is already (or historically) tagged into the target tag
+            self.logger.info(
+                "Checking if build %s is already tagged into target tag %s...", build["nvr"], entry.target_tag
+            )
+            history = koji_api.queryHistory(tables=["tag_listing"], build=build["nvr"], tag=entry.target_tag)[
+                "tag_listing"
+            ]
+
+            if history:  # already or historically tagged
+                if not history[-1]["active"]:  # the build was historically tagged but untagged afterwards
+                    self.logger.warning(
+                        "Build %s was untagged from %s after being tagged. Skipping...",
+                        build["nvr"],
                         entry.target_tag,
-                        ", ".join(nvr_list),
                     )
-                    for nvr, tags in zip(nvr_list, brew.get_builds_tags(nvr_list, koji_api)):
-                        if next(filter(lambda tag: tag["name"] == entry.target_tag, tags), None):
-                            builds_to_untag[entry.target_tag].add(nvr)
-                for build in candidate_builds:
-                    # check if the build is already tagged into the stop-ship tag
-                    if build["nvr"] in stop_ship_nvrs:
-                        logger.warning(
-                            "Build %s is tagged into the stop-ship tag: %s. Skipping...",
-                            build["nvr"],
-                            entry.stop_ship_tag,
-                        )
-                        continue
-                    # check if the build is in the rhel tag. If not, skip it.
-                    if entry.rhel_tag and build["nvr"] not in rhel_build_nvrs:
-                        logger.warning("Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag)
-                        continue
-                    # check if the build is already (or historically) tagged into the target tag
-                    logger.info(
-                        "Checking if build %s is already tagged into target tag %s...", build["nvr"], entry.target_tag
-                    )
-                    history = koji_api.queryHistory(tables=["tag_listing"], build=build["nvr"], tag=entry.target_tag)[
-                        "tag_listing"
-                    ]
-                    if history:  # already or historically tagged
-                        if not history[-1]["active"]:  # the build was historically tagged but untagged afterwards
-                            logger.warning(
-                                "Build %s was untagged from %s after being tagged. Skipping...",
-                                build["nvr"],
-                                entry.target_tag,
-                            )
-                            continue  # look at the next build
-                        logger.warning("Build %s is already tagged into %s", build["nvr"], entry.target_tag)
-                        break
-                    logger.info("Build %s is acceptable for %s", build["nvr"], entry.target_tag)
-                    builds_to_tag[entry.target_tag][build["nvr"]] = build
-                    break
+                    continue  # look at the next build
+                self.logger.warning("Build %s is already tagged into %s", build["nvr"], entry.target_tag)
+                return None  # Already tagged, stop looking
 
-            # Check if kernel and kernel-rt are of the same version
-            # From RHEL 9.4 on the package kernel-rt was integrated in kernel and does not exist anymore
-            # Extract and convert the string values to integers
-            rhcos_el_maj = int(self._runtime.group_config.vars.RHCOS_EL_MAJOR)
-            rhcos_el_min = int(self._runtime.group_config.vars.RHCOS_EL_MINOR)
+            self.logger.info("Build %s is acceptable for %s", build["nvr"], entry.target_tag)
+            return build
 
-            # this control was for versions < than 9.4 in the past.
-            # As now we skip also kernel-rt for 4.12 (OCPBUGS-63597),
-            # let's do only for 4.13 - 4.15 (RHEL9.2)
-            if (rhcos_el_maj, rhcos_el_min) == (9, 2):
-                for tag, nvr_dict in builds_to_tag.items():
-                    if not nvr_dict:
-                        continue
+        return None
 
-                    package_names = {b['name'] for b in nvr_dict.values()}
-                    are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
-                    if not are_these_kernel_packages:
-                        continue
+    def _validate_kernel_version_match(self, builds_to_tag: Dict[str, Dict]):
+        """Validate kernel and kernel-rt version matching for RHEL 9.2.
 
-                    expected = {'kernel', 'kernel-rt'}
-                    if package_names != expected:
-                        raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
-                    if len(nvr_dict) != len(expected):
-                        raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
+        Args:
+            builds_to_tag: Dict mapping target tags to build dicts
 
-                    kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
-                    kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+        Raises:
+            ValueError: If kernel versions don't match or unexpected packages found
+        """
+        rhcos_el_maj = int(self._runtime.group_config.vars.RHCOS_EL_MAJOR)
+        rhcos_el_min = int(self._runtime.group_config.vars.RHCOS_EL_MINOR)
 
-                    # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
-                    kernel_version = (
-                        f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-                    )
-                    kernel_rt_version = (
-                        f"{kernel_rt_build['version']}-{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
-                    )
-                    if kernel_version not in kernel_rt_version:
-                        raise ValueError(
-                            f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})"
-                        )
-                    else:
-                        logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+        # this control was for versions < than 9.4 in the past.
+        # As now we skip also kernel-rt for 4.12 (OCPBUGS-63597),
+        # let's do only for 4.13 - 4.15 (RHEL9.2)
+        if (rhcos_el_maj, rhcos_el_min) != (9, 2):
+            return
 
-        # untag builds from target tags
+        for tag, nvr_dict in builds_to_tag.items():
+            if not nvr_dict:
+                continue
+
+            package_names = {b['name'] for b in nvr_dict.values()}
+            are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
+            if not are_these_kernel_packages:
+                continue
+
+            expected = {'kernel', 'kernel-rt'}
+            if package_names != expected:
+                raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
+            if len(nvr_dict) != len(expected):
+                raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
+
+            kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
+            kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+
+            # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
+            kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
+            kernel_rt_version = (
+                f"{kernel_rt_build['version']}-{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
+            )
+
+            if kernel_version not in kernel_rt_version:
+                raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+            else:
+                self.logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+
+    async def _execute_untag_operations(
+        self, koji_api: koji.ClientSession, builds_to_untag: Dict[str, Set[str]], report: Dict
+    ):
+        """Execute untag operations and update report.
+
+        Args:
+            koji_api: Koji client session
+            builds_to_untag: Dict mapping target tags to sets of NVRs to untag
+            report: Report dict to update with untagged builds
+        """
         tag_build_tuples = []
         for tag, nvrs in builds_to_untag.items():
             if not nvrs:
                 continue
             nvrs = sorted(nvrs)
-            logger.info("About to untag the following build(s) from tag %s: %s", tag, ", ".join(nvrs))
+            self.logger.info("About to untag the following build(s) from tag %s: %s", tag, ", ".join(nvrs))
             tag_build_tuples += [(tag, nvr) for nvr in nvrs]
             report["untagged"].setdefault(tag, []).extend(nvrs)
+
         if tag_build_tuples:
             if self.dry_run:
-                logger.warning("[DRY RUN] Builds should have been untagged")
+                self.logger.warning("[DRY RUN] Builds should have been untagged")
             else:
                 await self.untag_builds(koji_api, tag_build_tuples)
-                logger.info("Builds have been untagged")
+                self.logger.info("Builds have been untagged")
         else:
-            logger.info("Nothing to untag")
+            self.logger.info("Nothing to untag")
 
-        # tag builds into target tags
+    async def _execute_tag_operations(self, koji_api: koji.ClientSession, builds_to_tag: Dict[str, Dict], report: Dict):
+        """Execute tag operations and update report.
+
+        Args:
+            koji_api: Koji client session
+            builds_to_tag: Dict mapping target tags to dicts of NVRs to tag
+            report: Report dict to update with tagged builds
+        """
         tag_build_tuples = []
         for tag, nvr_dict in builds_to_tag.items():
             if not nvr_dict:
                 continue
             nvrs = sorted(nvr_dict.keys())
-            logger.info("About to tag the following build(s) into tag %s: %s", tag, ", ".join(nvrs))
+            self.logger.info("About to tag the following build(s) into tag %s: %s", tag, ", ".join(nvrs))
             tag_build_tuples += [(tag, nvr) for nvr in nvrs]
             report["tagged"].setdefault(tag, []).extend(nvrs)
+
         if tag_build_tuples:
             if self.dry_run:
-                logger.warning("[DRY RUN] Builds should have been tagged")
+                self.logger.warning("[DRY RUN] Builds should have been tagged")
             else:
-                await self.tag_builds(koji_api, tag_build_tuples, logger)
-                logger.info("Builds have been tagged")
+                await self.tag_builds(koji_api, tag_build_tuples)
+                self.logger.info("Builds have been tagged")
         else:
-            logger.info("Nothing to tag")
+            self.logger.info("Nothing to tag")
+
+    async def _process_rpm_deliveries(
+        self, koji_api: koji.ClientSession, rpm_deliveries: RPMDeliveries
+    ) -> Tuple[Dict[str, Dict], Dict[str, Set[str]]]:
+        """Process all RPM delivery entries and determine builds to tag/untag.
+
+        Args:
+            koji_api: Koji client session
+            rpm_deliveries: Validated RPMDeliveries configuration
+
+        Returns:
+            Tuple of (builds_to_tag, builds_to_untag) dictionaries
+        """
+        builds_to_tag: Dict[str, Dict[str]] = {}  # target_tag_name -> dict of NVRs {nvr_string: build_object}
+        builds_to_untag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
+
+        for entry in rpm_deliveries:
+            # For each package, look at builds in stop-ship tag and integration tag,
+            # then find an acceptable build in integration tag.
+            if not entry.target_tag:
+                self.logger.warning(
+                    "RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
+                    ", ".join(entry.packages),
+                )
+                continue
+
+            builds_to_tag.setdefault(entry.target_tag, dict())
+            builds_to_untag.setdefault(entry.target_tag, set())
+
+            # Get builds from all relevant tags
+            builds_in_stop_ship_tag, builds_in_integration_tag, builds_in_rhel_tag = await self._get_builds_from_tags(
+                koji_api, entry, entry.packages
+            )
+
+            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(
+                entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag
+            ):
+                stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
+                rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
+
+                if entry.stop_ship_tag:
+                    self.logger.info(
+                        "Found %s build(s) of package %s in stop-ship tag %s",
+                        len(stop_ship_nvrs),
+                        package,
+                        entry.stop_ship_tag,
+                    )
+
+                # Find stop-ship builds to untag
+                nvrs_to_untag = self._find_stop_ship_builds_to_untag(koji_api, stop_ship_nvrs, entry)
+                builds_to_untag[entry.target_tag].update(nvrs_to_untag)
+
+                # Find acceptable build to tag
+                acceptable_build = self._find_acceptable_build(
+                    koji_api, candidate_builds, stop_ship_nvrs, rhel_build_nvrs, entry
+                )
+                if acceptable_build:
+                    builds_to_tag[entry.target_tag][acceptable_build["nvr"]] = acceptable_build
+
+        return builds_to_tag, builds_to_untag
+
+    async def run(self):
+        """Main entry point for config:tag-rpms command."""
+        # Validate options and runtime state
+        self._validate_options()
+
+        report = {"untagged": {}, "tagged": {}}
+
+        # Load and validate rpm_deliveries configuration
+        rpm_deliveries = self._load_rpm_deliveries_config()
+        if not rpm_deliveries:
+            if self.as_json:
+                print(json.dumps(report))
+            return
+
+        # Initialize Brew connection
+        self.logger.info("Logging into Brew...")
+        koji_api = self._runtime.build_retrying_koji_client()
+        koji_api.gssapi_login()
+
+        # Process RPM deliveries to determine builds to tag/untag
+        builds_to_tag, builds_to_untag = await self._process_rpm_deliveries(koji_api, rpm_deliveries)
+
+        # Validate kernel version matching
+        self._validate_kernel_version_match(builds_to_tag)
+
+        # Execute untag and tag operations
+        await self._execute_untag_operations(koji_api, builds_to_untag, report)
+        await self._execute_tag_operations(koji_api, builds_to_tag, report)
 
         # Print out the result as JSON format
         if self.as_json:
