@@ -55,10 +55,12 @@ class RPMBuilder:
         )
         # cleanup distgit dir
         logger.info("Cleaning up distgit repo...")
-        await exectools.cmd_assert_async(
-            ["git", "reset", "--hard", "origin/" + dg.branch],
-            cwd=dg.distgit_dir,
-        )
+        # Only reset if the remote branch exists (dg.sha will be None for newly created orphan branches)
+        if dg.sha:
+            await exectools.cmd_assert_async(
+                ["git", "reset", "--hard", "origin/" + dg.branch],
+                cwd=dg.distgit_dir,
+            )
         await exectools.cmd_assert_async(
             ["git", "rm", "--ignore-unmatch", "-rf", "."],
             cwd=dg.distgit_dir,

@@ -221,62 +221,43 @@ class DistGitRepo(object):
                     timeout = str(self.runtime.global_opts['rhpkg_clone_timeout'])
                     rhpkg_clone_depth = int(self.runtime.global_opts.get('rhpkg_clone_depth', '0'))
 
-                    if self.metadata.namespace == 'containers':
-                        # Containers don't generally require distgit lookaside. We can rely on normal
-                        # git clone & leverage git caches to greatly accelerate things if the user supplied it.
-                        gitargs = ['--branch', distgit_branch]
+                    # Use git clone for both containers and RPMs to leverage git caches
+                    gitargs = ['--branch', distgit_branch]
 
-                        if not distgit_commitish:
-                            gitargs.append('--single-branch')
+                    if not distgit_commitish:
+                        gitargs.append('--single-branch')
 
-                        if not distgit_commitish and rhpkg_clone_depth > 0:
-                            gitargs.extend(["--depth", str(rhpkg_clone_depth)])
+                    if not distgit_commitish and rhpkg_clone_depth > 0:
+                        gitargs.extend(["--depth", str(rhpkg_clone_depth)])
 
-                        try:
-                            git_clone(
-                                self.metadata.distgit_remote_url(),
-                                self.distgit_dir,
-                                gitargs=gitargs,
-                                set_env=GIT_NO_PROMPTS,
-                                timeout=timeout,
-                                git_cache_dir=self.runtime.git_cache_dir,
-                            )
-                        except ChildProcessError as err:
-                            # Create branch on demand
-                            if (
-                                len(err.args) > 1
-                                and self.has_source()
-                                and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
-                            ):
-                                _, _, clone_error = err.args[1]
-                                if f"Remote branch {distgit_branch} not found" in clone_error:
-                                    self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
-                                    exectools.cmd_assert(f"git init {self.distgit_dir}")
-                                    exectools.cmd_assert(
-                                        f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
-                                    )
-                                    exectools.cmd_assert(
-                                        f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}'
-                                    )
-                    else:
-                        # Use rhpkg -- presently no idea how to cache.
-                        cmd_list = ["timeout", timeout]
-                        cmd_list.append("rhpkg")
-
-                        if self.runtime.rhpkg_config_lst:
-                            cmd_list.extend(self.runtime.rhpkg_config_lst)
-
-                        if self.runtime.user is not None:
-                            cmd_list.append("--user=%s" % self.runtime.user)
-
-                        cmd_list.extend(["clone", self.metadata.qualified_name, self.distgit_dir])
-                        cmd_list.extend(["--branch", distgit_branch])
-
-                        if not distgit_commitish and rhpkg_clone_depth > 0:
-                            cmd_list.extend(["--depth", str(rhpkg_clone_depth)])
-
-                        # Clone the distgit repository. Occasional flakes in clone, so use retry.
-                        exectools.cmd_assert(cmd_list, retries=3, set_env=GIT_NO_PROMPTS)
+                    try:
+                        git_clone(
+                            self.metadata.distgit_remote_url(),
+                            self.distgit_dir,
+                            gitargs=gitargs,
+                            set_env=GIT_NO_PROMPTS,
+                            timeout=timeout,
+                            git_cache_dir=self.runtime.git_cache_dir,
+                        )
+                    except ChildProcessError as err:
+                        # Create branch on demand
+                        if (
+                            len(err.args) > 1
+                            and self.has_source()
+                            and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
+                        ):
+                            _, _, clone_error = err.args[1]
+                            if f"Remote branch {distgit_branch} not found" in clone_error:
+                                self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
+                                exectools.cmd_assert(f"git init {self.distgit_dir}")
+                                exectools.cmd_assert(
+                                    f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
+                                )
+                                exectools.cmd_assert(f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}')
+                            else:
+                                raise
+                        else:
+                            raise
 
                     if distgit_commitish:
                         with Dir(self.distgit_dir):
@@ -454,7 +435,7 @@ class DistGitRepo(object):
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
         await exectools.cmd_assert_async(
-            ["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir
+            ["timeout", f"{timeout}", "git", "push", "origin", "HEAD", "--follow-tags"], cwd=self.distgit_dir
         )
 
     def get_branch_el(self) -> Optional[int]:

@@ -180,21 +180,18 @@ class TestGenericDistGit(TestDistgit):
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
-        expected_cmd = [
-            "timeout",
-            "999",
-            "rhpkg",
-            "clone",
-            "my-qualified-name",
-            "my-root-dir/my-namespace/my-distgit-key",
-            "--branch",
-            "my-branch",
-        ]
-
+        # Mock git_clone function (unified cloning for both containers and RPMs)
         (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_cmd, retries=3, set_env=object)
+            flexmock(distgit)
+            .should_receive("git_clone")
+            .with_args(
+                "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
+                "my-root-dir/my-namespace/my-distgit-key",
+                gitargs=['--branch', 'my-branch', '--single-branch'],
+                set_env=object,
+                timeout='999',
+                git_cache_dir=None,
+            )
             .once()
             .and_return(None)
         )
@@ -227,10 +224,12 @@ class TestGenericDistGit(TestDistgit):
                 branch="_irrelevant_",
                 rhpkg_config_lst=[],
                 downstream_commitish_overrides={},
+                git_cache_dir=None,
             ),
             namespace="my-namespace",
             distgit_key="my-distgit-key",
             qualified_name="my-qualified-name",
+            distgit_remote_url=lambda: "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
             prevent_cloning=False,
             logger=logger,
             name="_irrelevant_",
@@ -249,22 +248,18 @@ class TestGenericDistGit(TestDistgit):
         # avoid warning print in the middle of the test progress report
         flexmock(distgit).should_receive("yellow_print").replace_with(lambda _: None)
 
-        expected_cmd = [
-            "timeout",
-            "999",
-            "rhpkg",
-            "--user=my-user",
-            "clone",
-            "my-qualified-name",
-            "my-root-dir/my-namespace/my-distgit-key",
-            "--branch",
-            "my-branch",
-        ]
-
+        # Mock git_clone function (unified cloning for both containers and RPMs)
         (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_cmd, retries=3, set_env=object)
+            flexmock(distgit)
+            .should_receive("git_clone")
+            .with_args(
+                "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
+                "my-root-dir/my-namespace/my-distgit-key",
+                gitargs=['--branch', 'my-branch', '--single-branch'],
+                set_env=object,
+                timeout='999',
+                git_cache_dir=None,
+            )
             .once()
             .and_return(None)
         )
@@ -288,10 +283,12 @@ class TestGenericDistGit(TestDistgit):
                 branch="_irrelevant_",
                 rhpkg_config_lst=[],
                 downstream_commitish_overrides={},
+                git_cache_dir=None,
             ),
             namespace="my-namespace",
             distgit_key="my-distgit-key",
             qualified_name="my-qualified-name",
+            distgit_remote_url=lambda: "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
             logger=flexmock(info=lambda _: None),
             prevent_cloning=False,
             name="_irrelevant_",
