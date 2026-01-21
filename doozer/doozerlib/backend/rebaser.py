@@ -40,6 +40,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 CPE_PRODUCT_NAME_MAPPING = {
     'rhmtc': 'rhmt',
     'oadp': 'openshift_api_data_protection',
+    'mta': 'migration_toolkit_applications',
 }
 
 LOGGER = logging.getLogger(__name__)
