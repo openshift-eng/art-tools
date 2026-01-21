@@ -34,7 +34,7 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         blobs = await render('test-catalog', auth=auth)
         self.assertEqual(list(blobs), [{'key': 'value'}])
         mock_gather_opm.assert_called_once_with(
-            ['render', '--migrate-level', 'none', '-o', 'yaml', '--', 'test-catalog'], auth=auth
+            ['render', '--migrate-level', 'none', '-o', 'yaml', '--', 'test-catalog'], auth=auth, check=False
         )
 
     @patch("builtins.open")
