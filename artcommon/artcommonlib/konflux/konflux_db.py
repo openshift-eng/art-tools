@@ -19,6 +19,7 @@ from artcommonlib.util import extract_group_from_nvr
 from google.cloud.bigquery import Row, SchemaField
 from sqlalchemy import BinaryExpression, Boolean, Column, DateTime, Null, String, func
 from sqlalchemy.sql import text
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 SCHEMA_LEVEL = 1
 
@@ -1265,6 +1266,7 @@ class KonfluxDb:
             nvr=nvr, outcome=outcome, strict=strict, exclude_large_columns=exclude_large_columns
         )
 
+    @retry(reraise=True, wait=wait_fixed(5), stop=stop_after_attempt(3))
     async def get_build_records_by_nvrs(
         self,
         nvrs: typing.Sequence[str],
