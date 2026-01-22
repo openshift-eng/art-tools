@@ -11,7 +11,7 @@ from semver import VersionInfo
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import GroupRuntime, Runtime
-from pyartcd.signatory import SigstoreSignatory
+from pyartcd.signatory import ReleaseImageInfo, SigstoreSignatory
 
 CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
 
@@ -63,9 +63,6 @@ class SigstorePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
-            sign_release=self.sign_release,
-            sign_components=self.sign_components,
-            verify_release=self.verify_release,
         )
 
     def check_environment_variables(self):
@@ -118,25 +115,72 @@ class SigstorePipeline:
                 """)
             self.pullspecs = self._lookup_release_images(release_name)
 
-        # Build canonical_tags mapping for release images.
-        # This maps digest-based pullspecs to their corresponding canonical tags, enabling
-        # dual signing: by digest (for immutability) and by tag (for convenience).
-        canonical_tags: Dict[str, str] = self._build_canonical_tags_mapping(self.pullspecs)
+        all_errors: Dict[str, Exception] = {}
 
-        # given pullspecs that are most likely trees (either manifest lists or release images),
-        # recursively discover all the pullspecs that need to be signed.
-        # Returns a mapping from original input to the list of discovered pullspecs.
-        discovered, errors = await self.signatory.discover_pullspecs(self.pullspecs, release_name)
+        # --- Phase 1: Discover release images and their manifests ---
+        release_images: List[ReleaseImageInfo] = []
 
-        if errors:
-            print("Not all pullspecs examined were viable:")
-            for ps, err in errors.items():
-                print(f"{ps}: {err}")
+        if self.sign_release:
+            for pullspec in self.pullspecs:
+                # Extract canonical tag from tag-based pullspecs
+                if "@sha256:" in pullspec:
+                    logger.warning(
+                        "Pullspec %s is digest-based; cannot determine canonical tag. "
+                        "For proper canonical tag signing, use tag-based pullspecs.",
+                        pullspec
+                    )
+                    # Can't do canonical tag signing without knowing the tag
+                    continue
+
+                canonical_tag = pullspec.split(":")[-1]
+                logger.info("Discovering release image %s with canonical tag: %s", pullspec, canonical_tag)
+
+                release_info, errors = await self.signatory.discover_release_image(
+                    pullspec=pullspec,
+                    canonical_tag=canonical_tag,
+                    release_name=release_name,
+                    verify_legacy_sig=self.verify_release,
+                )
+                release_images.append(release_info)
+                all_errors.update(errors)
+
+        # --- Phase 2: Discover component images ---
+        component_images: Set[str] = set()
+
+        if self.sign_components and self.pullspecs:
+            # Use first release image to get component references
+            first_pullspec = self.pullspecs[0]
+            logger.info("Discovering component images from %s", first_pullspec)
+
+            components, errors = await self.signatory.discover_component_images(
+                release_pullspec=first_pullspec,
+                release_name=release_name,
+            )
+            component_images.update(components)
+            all_errors.update(errors)
+
+        if all_errors:
+            print("Discovery errors:")
+            for ps, err in all_errors.items():
+                print(f"  {ps}: {err}")
             exit(1)
 
-        if errors := await self.signatory.sign_pullspecs(discovered, canonical_tags):
-            print(f"Not all signings succeeded, check errors: {errors}")
-            exit(1)
+        # --- Phase 3: Sign release images (with canonical tags) ---
+        if release_images:
+            total_manifests = sum(len(ri.manifests_to_sign) for ri in release_images)
+            logger.info("Signing %d release images with %d total manifests", len(release_images), total_manifests)
+            if errors := await self.signatory.sign_release_images(release_images):
+                print(f"Release image signing failed: {errors}")
+                exit(1)
+
+        # --- Phase 4: Sign component images (digest only) ---
+        if component_images:
+            logger.info("Signing %d component images", len(component_images))
+            if errors := await self.signatory.sign_component_images(component_images):
+                print(f"Component image signing failed: {errors}")
+                exit(1)
+
+        logger.info("Signing complete!")
 
     def _lookup_release_images(self, release_name):
         # NOTE: only do this for testing purposes. for secure signing, always supply an
@@ -152,51 +196,6 @@ class SigstorePipeline:
         if self.sign_multi:
             arches.append("multi")
         return list(f"{constants.RELEASE_IMAGE_REPO}:{release_name}-{arch}" for arch in arches)
-
-    def _build_canonical_tags_mapping(self, pullspecs: List[str]) -> Dict[str, str]:
-        """
-        Build a mapping of pullspecs to their canonical tags.
-
-        For tag-based pullspecs, we record the tag directly. When signing, if the pullspec
-        in need_signing matches a key in this mapping, it will be signed with both the
-        digest identity and the tag-based identity.
-
-        Note: For manifest lists, discover_pullspecs returns individual arch manifests with
-        digest-based pullspecs, which won't match the tag-based keys in this mapping. The
-        promote pipeline handles this correctly because it has access to release_infos with
-        manifest structure. This CLI is primarily useful for arch-specific (non-manifest-list)
-        release images.
-
-        :param pullspecs: List of pullspecs (may be tag-based or digest-based)
-        :return: Dict mapping pullspecs to their canonical tags
-        """
-        canonical_tags: Dict[str, str] = {}
-
-        for pullspec in pullspecs:
-            # Only process release images in the canonical repo
-            if constants.RELEASE_IMAGE_REPO not in pullspec:
-                continue
-
-            if "@sha256:" in pullspec:
-                # Digest-based pullspec: we can't determine the canonical tag
-                self._logger.warning(
-                    "Pullspec %s is digest-based; cannot determine canonical tag. "
-                    "Consider passing tag-based pullspecs for canonical tag signing.",
-                    pullspec
-                )
-            else:
-                # Tag-based pullspec: extract the tag
-                tag = pullspec.split(":")[-1]
-                canonical_tags[pullspec] = tag
-                self._logger.info(
-                    "Will sign with canonical tag identity for %s (tag: %s)", pullspec, tag
-                )
-                # Note: If this is a manifest list, discover_pullspecs will return the
-                # individual arch manifests with digest-based pullspecs, which won't match
-                # this tag-based key. Those manifests won't get canonical tag signing.
-                # For proper manifest list support, use the promote pipeline instead.
-
-        return canonical_tags
 
 
 @cli.command("sigstore-sign")
