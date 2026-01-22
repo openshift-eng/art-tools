@@ -13,7 +13,6 @@ from artcommonlib.model import Model
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
-from doozerlib.util import isolate_nightly_name_components
 
 
 async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor: str) -> str:

@@ -17,6 +17,7 @@ import aiohttp
 import requests
 import requests_gssapi
 from artcommonlib import logutil
+from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.constants import (
     KONFLUX_DEFAULT_NAMESPACE,
     PRODUCT_KUBECONFIG_MAP,

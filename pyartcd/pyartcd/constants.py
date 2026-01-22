@@ -13,13 +13,6 @@ RELEASE_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-release"
 
 GIT_AUTHOR = "AOS Automation Release Team <noreply@redhat.com>"
 
-NIGHTLY_PAYLOAD_REPOS = {
-    "x86_64": "registry.ci.openshift.org/ocp/release",
-    "s390x": "registry.ci.openshift.org/ocp-s390x/release-s390x",
-    "ppc64le": "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le",
-    "aarch64": "registry.ci.openshift.org/ocp-arm64/release-arm64",
-}
-
 # Maps the name of a release component tag to the filename element to include
 # when creating artifacts on mirror.openshift.com.
 MIRROR_CLIENTS = {

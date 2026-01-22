@@ -6,6 +6,7 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch, go_suffix_for_arch
 from artcommonlib.format_util import green_print
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_primary_container_name
+from doozerlib.util import get_nightly_pullspec
 
 from elliottlib import rhcos, util
 from elliottlib.cli.common import cli
@@ -95,7 +96,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         if pullspec:
             payload_pullspecs.append(release)
         elif nightly:
-            payload_pullspecs.append(get_nightly_pullspec(release, arch))
+            payload_pullspecs.append(get_nightly_pullspec(runtime, release))
         elif named_release:
             for local_arch in target_arches:
                 p = get_pullspec(release, local_arch)
@@ -113,11 +114,6 @@ def rhcos_cli(runtime, release, packages, arch, go):
 
 def get_pullspec(release, arch):
     return f'quay.io/openshift-release-dev/ocp-release:{release}-{arch}'
-
-
-def get_nightly_pullspec(release, arch):
-    suffix = go_suffix_for_arch(arch, "priv" in release)
-    return f'registry.ci.openshift.org/ocp{suffix}/release{suffix}:{release}'
 
 
 def get_rhcos_pullspecs_from_assembly(runtime):

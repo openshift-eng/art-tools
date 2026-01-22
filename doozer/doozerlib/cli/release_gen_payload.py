@@ -54,6 +54,7 @@ from doozerlib.util import (
     check_nightly_exists,
     extract_version_fields,
     find_manifest_list_sha,
+    get_nightly_pullspec,
     isolate_nightly_name_components,
     what_is_in_master,
 )
@@ -2664,23 +2665,14 @@ class PayloadGenerator:
 
         issues: List[str]
         runtime.logger.info(f"Processing nightly: {nightly}")
-        major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
-
-        if major_minor != runtime.get_minor_version():
-            return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
-
-        # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
-        if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
-            release_suffix = 'release'
-        else:
-            release_suffix = 'konflux-release'
-
-        rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+        try:
+            pullspec = get_nightly_pullspec(runtime, nightly)
+        except ValueError as e:
+            return terminal_issue(str(e))
 
         retries: int = 3
         release_json_str = ""
         rc = -1
-        pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
         while retries > 0:
             rc, release_json_str, err = await exectools.cmd_gather_async(
                 f"oc adm release info {pullspec} -o=json", check=False

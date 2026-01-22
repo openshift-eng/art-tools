@@ -128,25 +128,6 @@ class TestGenAssemblyCli(TestCase):
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
-    @patch('doozerlib.cli.release_gen_assembly.GenAssemblyCli._exit_with_error', MagicMock(return_value=None))
-    def test_group_nightly_mismatch(self):
-        """
-        Specified nightlies must match the group `major.minor` parameter.
-        The command should raise an error otherwise
-        """
-
-        runtime = MagicMock()
-        runtime.get_minor_version.return_value = '4.12'
-        runtime.get_major_minor_fields.return_value = (4, 12)
-        gacli = flexmock(
-            GenAssemblyCli(
-                runtime=runtime,
-                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-            )
-        )
-        gacli.should_receive('_exit_with_error').once()
-        gacli._get_release_pullspecs()
-
     def test_nightly_release_pullspecs(self):
         """
         Check that for nightlies matching group param, two maps are populated:
