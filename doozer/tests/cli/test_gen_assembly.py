@@ -137,6 +137,7 @@ class TestGenAssemblyCli(TestCase):
 
         runtime = MagicMock()
         runtime.get_minor_version.return_value = '4.12'
+        runtime.get_major_minor_fields.return_value = (4, 12)
         gacli = flexmock(
             GenAssemblyCli(
                 runtime=runtime,
@@ -155,6 +156,7 @@ class TestGenAssemblyCli(TestCase):
 
         runtime = MagicMock()
         runtime.get_minor_version.return_value = '4.13'
+        runtime.get_major_minor_fields.return_value = (4, 13)
 
         gacli = GenAssemblyCli(
             runtime=runtime,
