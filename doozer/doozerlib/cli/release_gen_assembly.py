@@ -312,7 +312,12 @@ class GenAssemblyCli:
             ):
                 release_suffix = f'konflux-release{rc_suffix}'
             else:
-                release_suffix = f'release{rc_suffix}'
+                major, minor = self.runtime.get_major_minor_fields()
+                if (major, minor) >= (5, 0):
+                    release_with_ver = "release-5"
+                else:
+                    release_with_ver = "release"
+                release_suffix = f'{release_with_ver}{rc_suffix}'
             nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
