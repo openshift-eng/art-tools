@@ -749,6 +749,55 @@ class JIRABugTracker(BugTracker):
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
         self._init_fields()
+        self._available_target_versions = None
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+    def _get_available_target_versions(self) -> List[str]:
+        """Get all available target versions for the JIRA project.
+
+        Returns a list of target version names that exist in the JIRA project's "Target Version" custom field.
+        This is cached after the first call to avoid repeated API calls.
+        """
+        if self._available_target_versions is not None:
+            return self._available_target_versions
+
+        try:
+            issue_types = self._client.project_issue_types(self._project)
+
+            bug_issue_type = None
+            for issue_type in issue_types:
+                name = getattr(issue_type, 'name', issue_type.get('name') if isinstance(issue_type, dict) else None)
+                if name == 'Bug':
+                    bug_issue_type = issue_type
+                    break
+
+            if not bug_issue_type:
+                logger.warning(f"Bug issue type not found in JIRA project {self._project}")
+                self._available_target_versions = []
+                return self._available_target_versions
+
+            bug_id = getattr(bug_issue_type, 'id', bug_issue_type.get('id') if isinstance(bug_issue_type, dict) else None)
+            fields = self._client.project_issue_fields(self._project, bug_id)
+
+            target_versions = []
+            for field in fields:
+                field_id = getattr(field, 'fieldId', field.get('fieldId') if isinstance(field, dict) else None)
+                if field_id == self.field_target_version:
+                    allowed_values = getattr(field, 'allowedValues', field.get('allowedValues') if isinstance(field, dict) else None)
+                    if allowed_values:
+                        for v in allowed_values:
+                            version_name = getattr(v, 'name', v.get('name') if isinstance(v, dict) else None)
+                            if version_name:
+                                target_versions.append(version_name)
+                    break
+
+            self._available_target_versions = target_versions
+            logger.info(f"Found {len(self._available_target_versions)} target versions in JIRA project {self._project}")
+            return self._available_target_versions
+        except Exception as e:
+            logger.error(f"Failed to fetch target versions for project {self._project}: {e}")
+            self._available_target_versions = []
+            return self._available_target_versions
 
     @property
     def product(self):
@@ -839,11 +888,46 @@ class JIRABugTracker(BugTracker):
         with_target_release: bool = True,
         search_filter: str = None,
         custom_query: str = None,
-    ) -> str:
+    ) -> Optional[str]:
         if target_release and with_target_release:
             raise ValueError("cannot use target_release and with_target_release together")
         if not target_release and with_target_release:
             target_release = self.target_release()
+
+        if target_release:
+            original_target_release = target_release.copy()
+            available_versions = self._get_available_target_versions()
+            if available_versions:
+                valid_target_releases = [tr for tr in target_release if tr in available_versions]
+                invalid_target_releases = [tr for tr in target_release if tr not in available_versions]
+
+                if invalid_target_releases:
+                    logger.warning(
+                        f"Target versions {invalid_target_releases} do not exist in JIRA project {self._project}. "
+                        f"They will be excluded from the query."
+                    )
+
+                target_release = valid_target_releases
+
+                if not target_release:
+                    logger.warning(
+                        f"No valid target versions found for query. All requested versions do not exist in JIRA project {self._project}."
+                    )
+                    logger.warning(
+                        f"Target version filtering removed configured versions. "
+                        f"Original: {original_target_release}, After filtering: (none)"
+                    )
+                    logger.info(
+                        f"All configured target versions were filtered out. Returning empty result set."
+                    )
+                    return None
+                elif len(target_release) < len(original_target_release):
+                    logger.warning(
+                        f"Target version filtering removed configured versions. "
+                        f"Original: {original_target_release}, After filtering: {target_release}"
+                    )
+            else:
+                logger.warning(f"Could not fetch available target versions for project {self._project}. Proceeding with original query.")
 
         exclude_components = []
         if search_filter:
@@ -900,6 +984,8 @@ class JIRABugTracker(BugTracker):
             search_filter=search_filter,
             custom_query='and "Release Blocker" = "Approved"',
         )
+        if query is None:
+            return []
         return self._search(query, verbose=verbose, **kwargs)
 
     def search(self, status, search_filter='default', verbose=False):
@@ -907,6 +993,8 @@ class JIRABugTracker(BugTracker):
             status=status,
             search_filter=search_filter,
         )
+        if query is None:
+            return []
         return self._search(query, verbose=verbose)
 
     def cve_tracker_search(self, status, search_filter='default', verbose=False):
@@ -915,6 +1003,8 @@ class JIRABugTracker(BugTracker):
             search_filter=search_filter,
             include_labels=["SecurityTracking"],
         )
+        if query is None:
+            return []
         return self._search(query, verbose=verbose)
 
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
