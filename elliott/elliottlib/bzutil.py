@@ -776,14 +776,18 @@ class JIRABugTracker(BugTracker):
                 self._available_target_versions = []
                 return self._available_target_versions
 
-            bug_id = getattr(bug_issue_type, 'id', bug_issue_type.get('id') if isinstance(bug_issue_type, dict) else None)
+            bug_id = getattr(
+                bug_issue_type, 'id', bug_issue_type.get('id') if isinstance(bug_issue_type, dict) else None
+            )
             fields = self._client.project_issue_fields(self._project, bug_id)
 
             target_versions = []
             for field in fields:
                 field_id = getattr(field, 'fieldId', field.get('fieldId') if isinstance(field, dict) else None)
                 if field_id == self.field_target_version:
-                    allowed_values = getattr(field, 'allowedValues', field.get('allowedValues') if isinstance(field, dict) else None)
+                    allowed_values = getattr(
+                        field, 'allowedValues', field.get('allowedValues') if isinstance(field, dict) else None
+                    )
                     if allowed_values:
                         for v in allowed_values:
                             version_name = getattr(v, 'name', v.get('name') if isinstance(v, dict) else None)
@@ -917,9 +921,7 @@ class JIRABugTracker(BugTracker):
                         f"Target version filtering removed configured versions. "
                         f"Original: {original_target_release}, After filtering: (none)"
                     )
-                    logger.info(
-                        f"All configured target versions were filtered out. Returning empty result set."
-                    )
+                    logger.info("All configured target versions were filtered out. Returning empty result set.")
                     return None
                 elif len(target_release) < len(original_target_release):
                     logger.warning(
@@ -927,7 +929,9 @@ class JIRABugTracker(BugTracker):
                         f"Original: {original_target_release}, After filtering: {target_release}"
                     )
             else:
-                logger.warning(f"Could not fetch available target versions for project {self._project}. Proceeding with original query.")
+                logger.warning(
+                    f"Could not fetch available target versions for project {self._project}. Proceeding with original query."
+                )
 
         exclude_components = []
         if search_filter:

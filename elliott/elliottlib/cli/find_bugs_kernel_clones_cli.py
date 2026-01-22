@@ -114,7 +114,13 @@ class FindBugsKernelClonesCli:
         return found_bugs
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
-    def _search_for_jira_bugs(self, jira_tracker: JIRABugTracker, jira_client: JIRA, trackers: Optional[List[str]], config: KernelBugSweepConfig):
+    def _search_for_jira_bugs(
+        self,
+        jira_tracker: JIRABugTracker,
+        jira_client: JIRA,
+        trackers: Optional[List[str]],
+        config: KernelBugSweepConfig,
+    ):
         logger = self._logger
         target_release = config.target_jira.target_release
 

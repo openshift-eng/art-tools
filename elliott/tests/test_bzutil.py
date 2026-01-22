@@ -233,7 +233,7 @@ class TestJIRABugTracker(unittest.TestCase):
                     {'name': '4.17.z'},
                     {'name': '4.18.0'},
                     {'name': '4.18.z'},
-                ]
+                ],
             }
         ]
 
