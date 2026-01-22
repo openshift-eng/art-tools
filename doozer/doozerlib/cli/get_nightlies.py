@@ -449,7 +449,7 @@ class Nightly:
                     f"No rhcos_inspector for nightly {nightly}, should have called populate_nightly_content first"
                 )
             # Filter out RHEL 10 streams to only compare RHEL 9 RPMs (consistent with other RHCOS checks)
-            logger.info(f"Ignoring RHEL 10 rpms from RHCOS deeper comparison..")
+            logger.info("Ignoring RHEL 10 rpms from RHCOS deeper comparison..")
             nightly._rhcos_rpms = {
                 nevra[0]: (nevra[2], nevra[3])
                 for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
