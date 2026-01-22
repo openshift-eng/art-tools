@@ -6,6 +6,7 @@ import aiohttp
 import click
 from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
 from artcommonlib.util import uses_konflux_imagestream_override
@@ -447,8 +448,12 @@ class Nightly:
                 raise Exception(
                     f"No rhcos_inspector for nightly {nightly}, should have called populate_nightly_content first"
                 )
+            # Filter out RHEL 10 streams to only compare RHEL 9 RPMs (consistent with other RHCOS checks)
+            logger.info("Ignoring RHEL 10 rpms from RHCOS deeper comparison..")
             nightly._rhcos_rpms = {
-                nevra[0]: (nevra[2], nevra[3]) for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
+                nevra[0]: (nevra[2], nevra[3])
+                for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
+                if nevra[-1] not in COREOS_RHEL10_STREAMS
             }
 
         logger.debug(f"comparing {self.rhcos_inspector} and {other.rhcos_inspector}")
