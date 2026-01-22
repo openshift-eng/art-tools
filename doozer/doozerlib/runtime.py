@@ -589,7 +589,15 @@ class Runtime(GroupRuntime):
                 return d.get('mode', 'enabled') in ['wip', 'enabled']
 
             def filter_enabled(n, d):
-                return d.get('mode', 'enabled') == 'enabled'
+                mode = d.get('mode', 'enabled')
+                # Include if generally enabled OR has okd.mode: enabled
+                if mode == 'enabled':
+                    return True
+                if mode == 'disabled':
+                    okd_config = d.get('okd', {})
+                    if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
+                        return True
+                return False
 
             def filter_disabled(n, d):
                 return d.get('mode', 'enabled') in ['enabled', 'disabled']
@@ -1091,7 +1099,25 @@ class Runtime(GroupRuntime):
             raise DoozerFatalError('Unable to resolve image metadata for {}'.format(distgit_name))
 
         mode = data_obj.data.get("mode", "enabled")
-        if mode == "disabled" and not self.load_disabled or mode == "wip" and not self.load_wip:
+
+        # Check if image has OKD mode override that enables it
+        okd_enabled = False
+        if mode == "disabled":
+            okd_config = data_obj.data.get("okd", {})
+            if isinstance(okd_config, dict):
+                okd_mode = okd_config.get("mode")
+                if okd_mode == "enabled":
+                    okd_enabled = True
+
+        # Skip loading if disabled (unless okd.mode: enabled or load_disabled is set)
+        if mode == "disabled" and not self.load_disabled and not okd_enabled:
+            if required:
+                raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
+            self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
+            return None
+
+        # Skip loading if wip
+        if mode == "wip" and not self.load_wip:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
             self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
