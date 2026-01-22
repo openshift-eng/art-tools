@@ -8,7 +8,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 from random import uniform
-from typing import BinaryIO, Dict, Iterable, List, Set, cast
+from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
 
 import aiofiles
 import aiohttp
@@ -268,7 +268,9 @@ class SigstoreSignatory:
             return f"{halves[0]}@{digest}"
         return f"{pullspec}@{digest}"  # assume it was a bare registry/repo
 
-    async def discover_pullspecs(self, pullspecs: Iterable[str], release_name: str) -> (Set[str], Dict[str, Exception]):
+    async def discover_pullspecs(
+        self, pullspecs: Iterable[str], release_name: str
+    ) -> Tuple[Dict[str, List[str]], Dict[str, Exception]]:
         """
         Recursively discover pullspecs that need signatures. Given manifest lists, examine the
         digests of each platform. Given a release image, examine the digests of all payload
@@ -276,27 +278,64 @@ class SigstoreSignatory:
 
         :param pullspecs: List of pullspecs to begin discovery
         :param release_name: Require any release images to have this release name
-        :return: a set of discovered pullspecs to sign, and a dict of any discovery errors
+        :return:
+            - Dict mapping each original input pullspec to the list of pullspecs discovered from it
+              that need signing. For manifest lists, this maps to the individual arch manifests.
+              For single manifests, this maps to [itself] plus any component images.
+            - Dict of any discovery errors
         """
-        seen: Set[str] = set(pullspecs)  # prevent re-examination and multiple signings
-        need_signing: Set[str] = set()  # pullspecs for manifests to be signed
+        original_pullspecs = list(pullspecs)
+        seen: Set[str] = set(original_pullspecs)  # prevent re-examination and multiple signings
         errors: Dict[str, Exception] = {}  # pullspec -> error when examining it
 
-        need_examining: List[str] = list(pullspecs)
+        # Track which original input each discovered pullspec came from
+        # This allows canonical tags to be propagated from manifest lists to their members
+        origin_map: Dict[str, str] = {}  # discovered pullspec -> original input it came from
+        for ps in original_pullspecs:
+            origin_map[ps] = ps  # initially, each input maps to itself
+
+        need_signing: Set[str] = set()  # pullspecs for manifests to be signed
+        need_examining: List[str] = original_pullspecs.copy()
+
         while need_examining:
             args = [(ps, release_name) for ps in need_examining]
             results = await run_limited_unordered(self._examine_pullspec, args, self.concurrency_limit)
 
-            need_examining = []
-            for next_signing, next_examining, next_errors in results:
+            next_to_examine = []
+            for idx, (next_signing, next_examining, next_errors) in enumerate(results):
+                current_ps = args[idx][0]
+                current_origin = origin_map.get(current_ps, current_ps)
+
                 need_signing.update(next_signing)
                 errors.update(next_errors)
+
+                # For newly discovered pullspecs, track their origin
+                for ps in next_signing:
+                    if ps not in origin_map:
+                        origin_map[ps] = current_origin
+
                 for ps in next_examining:
                     if ps not in seen:
                         seen.add(ps)
-                        need_examining.append(ps)
+                        next_to_examine.append(ps)
+                        # Inherit the origin from the parent
+                        origin_map[ps] = current_origin
 
-        return need_signing, errors
+            need_examining = next_to_examine
+
+        # Build the result: original input -> list of discovered pullspecs
+        result: Dict[str, List[str]] = {ps: [] for ps in original_pullspecs}
+        for ps in need_signing:
+            origin = origin_map.get(ps)
+            if origin and origin in result:
+                result[origin].append(ps)
+            else:
+                # Shouldn't happen, but handle gracefully
+                self._logger.warning("Pullspec %s has unknown origin, adding to first input", ps)
+                if original_pullspecs:
+                    result[original_pullspecs[0]].append(ps)
+
+        return result, errors
 
     async def _examine_pullspec(self, pullspec: str, release_name: str) -> (Set[str], Set[str], Dict[str, Exception]):
         """
@@ -364,13 +403,35 @@ class SigstoreSignatory:
             tag["from"]["name"] for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"]
         )
 
-    async def sign_pullspecs(self, need_signing: Iterable[str]) -> Dict[str, Exception]:
+    async def sign_pullspecs(
+        self,
+        discovered: Dict[str, List[str]],
+        canonical_tags: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Exception]:
         """
-        Sign the given pullspecs via cosign with our KMS.
-        :param need_signing: Pullspecs to be signed
+        Sign the discovered pullspecs via cosign with our KMS.
+
+        :param discovered: Dict mapping original input pullspecs to lists of discovered pullspecs
+            that need signing. This structure preserves the origin of each discovered pullspec.
+        :param canonical_tags: Optional mapping of original input pullspec -> canonical tag.
+            The canonical tag from the original is applied to ALL pullspecs discovered from it.
+            This is important for manifest lists: when a user pulls "ocp-release:4.16.1-multi",
+            the registry returns an arch-specific manifest. The signature for that manifest must
+            have identity "ocp-release:4.16.1-multi" (the tag the user requested), not an
+            arch-specific tag. This enables tag-based signature verification without
+            signedIdentity overrides.
         :return: dict with any signing errors per pullspec
         """
-        args = [(ps,) for ps in need_signing]
+        tags = canonical_tags or {}
+
+        # Build args list: for each discovered pullspec, use the canonical tag from its origin.
+        # This ensures manifest list members are signed with the manifest list's tag.
+        args: List[Tuple[str, Optional[str]]] = []
+        for original, to_sign_list in discovered.items():
+            canonical_tag = tags.get(original)
+            for pullspec in to_sign_list:
+                args.append((pullspec, canonical_tag))
+
         results = await run_limited_unordered(self._sign_single_manifest, args, self.concurrency_limit)
         return {pullspec: err for result in results for pullspec, err in result.items()}
 
@@ -398,43 +459,73 @@ class SigstoreSignatory:
                     self._logger.info(f"found sig file at {url}")
                     return True
 
-    async def _sign_single_manifest(self, pullspec: str) -> Dict[str, Exception]:
+    async def _sign_single_manifest(
+        self,
+        pullspec: str,
+        canonical_tag: Optional[str] = None,
+    ) -> Dict[str, Exception]:
         """
-        use sigstore to sign a single image manifest, with one or more signing keys, and upload the signature
-        :param pullspec: Pullspec to be signed
+        Use sigstore to sign a single image manifest, with one or more signing keys, and upload the signature.
+
+        When a canonical_tag is provided and the pullspec is a release image (in the ocp-release repo),
+        the image will be signed twice: once with the digest-based identity (pullspec) and once with
+        the tag-based identity. This enables customers to verify images referenced by tag without
+        needing signedIdentity overrides.
+
+        :param pullspec: Digest-based pullspec to be signed (e.g., "quay.io/.../ocp-release@sha256:...")
+        :param canonical_tag: Optional canonical tag for the release image (e.g., "4.16.1-x86_64").
+            When provided and pullspec is a release image, an additional signature with the
+            tag-based identity will be created.
         :return: dict with any signing errors for pullspec
         """
         log = self._logger
-        for signing_key_id in self.signing_key_ids:
-            cmd = [
-                "cosign",
-                "sign",
-                "--yes",
-                # https://issues.redhat.com/browse/ART-10052
-                f"--sign-container-identity={pullspec}",
-                "--key",
-                f"awskms:///{signing_key_id}",
-            ]
 
-            if self.rekor_url:
-                cmd.append(f"--rekor-url={self.rekor_url}")
-            else:
-                cmd.append("--tlog-upload=false")
+        # Build list of identities to sign with
+        # Always sign with the digest-based identity first
+        identities_to_sign: List[str] = [pullspec]
 
-            cmd.append(pullspec)
+        # If we have a canonical tag and this is a release image (not a component image),
+        # also sign with tag identity. This enables customers to verify images referenced
+        # by tag without needing signedIdentity overrides.
+        # Release images are in ocp-release repo; component images are in ocp-v4.0-art-dev.
+        if canonical_tag and "/ocp-release" in pullspec:
+            # Extract the repo from the pullspec (everything before @sha256:)
+            repo = pullspec.split("@sha256:")[0] if "@sha256:" in pullspec else pullspec.rsplit(":", 1)[0]
+            tag_identity = f"{repo}:{canonical_tag}"
+            identities_to_sign.append(tag_identity)
+            log.info("Will also sign with canonical tag identity: %s", tag_identity)
 
-            if self.dry_run:
-                log.info("[DRY RUN] Would have signed image: %s", cmd)
-                continue
+        for identity in identities_to_sign:
+            for signing_key_id in self.signing_key_ids:
+                cmd = [
+                    "cosign",
+                    "sign",
+                    "--yes",
+                    # https://issues.redhat.com/browse/ART-10052
+                    f"--sign-container-identity={identity}",
+                    "--key",
+                    f"awskms:///{signing_key_id}",
+                ]
 
-            log.info("Signing %s with %s...", pullspec, signing_key_id)
-            try:
-                stdout = await self._retrying_sign_single_manifest(cmd)
-                log.debug("Successfully signed %s with %s:\n%s", pullspec, signing_key_id, stdout)
-                await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
-            except Exception as exc:
-                log.error("Failure signing %s with %s:\n%s", pullspec, signing_key_id, exc)
-                return {pullspec: exc}
+                if self.rekor_url:
+                    cmd.append(f"--rekor-url={self.rekor_url}")
+                else:
+                    cmd.append("--tlog-upload=false")
+
+                cmd.append(pullspec)
+
+                if self.dry_run:
+                    log.info("[DRY RUN] Would have signed image: %s", cmd)
+                    continue
+
+                log.info("Signing %s (identity=%s) with %s...", pullspec, identity, signing_key_id)
+                try:
+                    stdout = await self._retrying_sign_single_manifest(cmd)
+                    log.debug("Successfully signed %s (identity=%s) with %s:\n%s", pullspec, identity, signing_key_id, stdout)
+                    await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
+                except Exception as exc:
+                    log.error("Failure signing %s (identity=%s) with %s:\n%s", pullspec, identity, signing_key_id, exc)
+                    return {pullspec: exc}
 
         return {}
 

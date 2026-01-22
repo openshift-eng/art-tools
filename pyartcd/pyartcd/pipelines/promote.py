@@ -1016,8 +1016,21 @@ class PromotePipeline:
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
-    async def sigstore_sign(self, release_name: str, release_infos: Dict):
-        """Signs release and component images with sigstore/cosign which publishes to quay"""
+    async def sigstore_sign(
+        self,
+        release_name: str,
+        release_infos: Dict,
+    ):
+        """Signs release and component images with sigstore/cosign which publishes to quay.
+
+        Release images will also be signed with their canonical tag-based identity
+        (e.g., "quay.io/.../ocp-release:4.16.1-x86_64"). This enables customers to verify
+        images referenced by tag without needing signedIdentity overrides in their policy
+        configuration.
+
+        :param release_name: The release name (e.g., "4.16.1")
+        :param release_infos: Dict mapping arch to release info (containing "image" and "digest")
+        """
         CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
         signatory = SigstoreSignatory(
             logger=self._logger,
@@ -1031,20 +1044,39 @@ class PromotePipeline:
             sign_components=True,
             verify_release=False,  # not needed when we're supplying the shasum pullspecs
         )
-        # recursively discover all the pullspecs that need to be signed.
-        images: List[str] = [
+
+        # Build mapping of original input pullspecs to their canonical tags.
+        # The canonical tag from each original will be applied to ALL pullspecs discovered from it.
+        # This is important for manifest lists: when a user pulls "ocp-release:4.16.1-multi",
+        # the registry returns an arch-specific manifest. The signature for that manifest must
+        # have identity "ocp-release:4.16.1-multi" (the tag the user requested), enabling
+        # tag-based signature verification without signedIdentity overrides.
+        canonical_tags: Dict[str, str] = {}
+        images: List[str] = []
+        for arch, info in release_infos.items():
             # for paranoia, refer to release image pullspecs with shasums
-            signatory.redigest_pullspec(info["image"], info["digest"])
-            for info in release_infos.values()
-        ]
-        need_signing: Set[str] = set()
-        errors: Dict[str, str] = {}  # pullspec -> exception
-        need_signing, errors = await signatory.discover_pullspecs(images, release_name)
+            digest_pullspec = signatory.redigest_pullspec(info["image"], info["digest"])
+            images.append(digest_pullspec)
+
+            # For release images in the canonical repo, record the tag for dual signing.
+            # info["image"] is like "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+            if self.DEST_RELEASE_IMAGE_REPO in info["image"]:
+                # Extract the tag portion (e.g., "4.16.1-x86_64" or "4.16.1-multi")
+                tag = info["image"].split(":")[-1]
+                canonical_tags[digest_pullspec] = tag
+                self._logger.info(
+                    "Release image %s and all manifests discovered from it will be signed with canonical tag: %s",
+                    digest_pullspec, tag
+                )
+
+        # Discover all pullspecs that need signing. Returns a mapping from original input
+        # to the list of pullspecs discovered from it (release images and components).
+        discovered, errors = await signatory.discover_pullspecs(images, release_name)
 
         if errors:
             # this should be impossible given we just created the pullspecs
             raise IOError(f"Not all pullspecs examined were viable: {errors}")
-        if errors := await signatory.sign_pullspecs(need_signing):
+        if errors := await signatory.sign_pullspecs(discovered, canonical_tags):
             raise IOError(f"Not all signings succeeded, check errors: {errors}")
 
     def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):

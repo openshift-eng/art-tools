@@ -118,11 +118,15 @@ class SigstorePipeline:
                 """)
             self.pullspecs = self._lookup_release_images(release_name)
 
+        # Build canonical_tags mapping for release images.
+        # This maps digest-based pullspecs to their corresponding canonical tags, enabling
+        # dual signing: by digest (for immutability) and by tag (for convenience).
+        canonical_tags: Dict[str, str] = self._build_canonical_tags_mapping(self.pullspecs)
+
         # given pullspecs that are most likely trees (either manifest lists or release images),
         # recursively discover all the pullspecs that need to be signed.
-        need_signing: Set[str] = set()
-        errors: Dict[str, str] = {}  # pullspec -> exception
-        need_signing, errors = await self.signatory.discover_pullspecs(self.pullspecs, release_name)
+        # Returns a mapping from original input to the list of discovered pullspecs.
+        discovered, errors = await self.signatory.discover_pullspecs(self.pullspecs, release_name)
 
         if errors:
             print("Not all pullspecs examined were viable:")
@@ -130,7 +134,7 @@ class SigstorePipeline:
                 print(f"{ps}: {err}")
             exit(1)
 
-        if errors := await self.signatory.sign_pullspecs(need_signing):
+        if errors := await self.signatory.sign_pullspecs(discovered, canonical_tags):
             print(f"Not all signings succeeded, check errors: {errors}")
             exit(1)
 
@@ -148,6 +152,51 @@ class SigstorePipeline:
         if self.sign_multi:
             arches.append("multi")
         return list(f"{constants.RELEASE_IMAGE_REPO}:{release_name}-{arch}" for arch in arches)
+
+    def _build_canonical_tags_mapping(self, pullspecs: List[str]) -> Dict[str, str]:
+        """
+        Build a mapping of pullspecs to their canonical tags.
+
+        For tag-based pullspecs, we record the tag directly. When signing, if the pullspec
+        in need_signing matches a key in this mapping, it will be signed with both the
+        digest identity and the tag-based identity.
+
+        Note: For manifest lists, discover_pullspecs returns individual arch manifests with
+        digest-based pullspecs, which won't match the tag-based keys in this mapping. The
+        promote pipeline handles this correctly because it has access to release_infos with
+        manifest structure. This CLI is primarily useful for arch-specific (non-manifest-list)
+        release images.
+
+        :param pullspecs: List of pullspecs (may be tag-based or digest-based)
+        :return: Dict mapping pullspecs to their canonical tags
+        """
+        canonical_tags: Dict[str, str] = {}
+
+        for pullspec in pullspecs:
+            # Only process release images in the canonical repo
+            if constants.RELEASE_IMAGE_REPO not in pullspec:
+                continue
+
+            if "@sha256:" in pullspec:
+                # Digest-based pullspec: we can't determine the canonical tag
+                self._logger.warning(
+                    "Pullspec %s is digest-based; cannot determine canonical tag. "
+                    "Consider passing tag-based pullspecs for canonical tag signing.",
+                    pullspec
+                )
+            else:
+                # Tag-based pullspec: extract the tag
+                tag = pullspec.split(":")[-1]
+                canonical_tags[pullspec] = tag
+                self._logger.info(
+                    "Will sign with canonical tag identity for %s (tag: %s)", pullspec, tag
+                )
+                # Note: If this is a manifest list, discover_pullspecs will return the
+                # individual arch manifests with digest-based pullspecs, which won't match
+                # this tag-based key. Those manifests won't get canonical tag signing.
+                # For proper manifest list support, use the promote pipeline instead.
+
+        return canonical_tags
 
 
 @cli.command("sigstore-sign")
