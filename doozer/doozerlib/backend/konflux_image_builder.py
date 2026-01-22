@@ -449,7 +449,7 @@ class KonfluxImageBuilder:
                 f"Skipping generic prefetch - network_mode: {network_mode}, artifact_lockfile_enabled: {artifact_lockfile_enabled}"
             )
 
-        for package_manager in ["gomod", "npm", "pip", "yarn"]:
+        for package_manager in ["gomod", "npm", "pip", "yarn", "cargo"]:
             if package_manager in required_package_managers:
                 paths: dict = metadata.config.cachito.packages.get(package_manager, [])
 
