@@ -1101,13 +1101,8 @@ class Runtime(GroupRuntime):
         mode = data_obj.data.get("mode", "enabled")
 
         # Check if image has OKD mode override that enables it
-        okd_enabled = False
-        if mode == "disabled":
-            okd_config = data_obj.data.get("okd", {})
-            if isinstance(okd_config, dict):
-                okd_mode = okd_config.get("mode")
-                if okd_mode == "enabled":
-                    okd_enabled = True
+        okd_config = data_obj.data.get("okd", {})
+        okd_enabled = okd_config.get("mode") == "enabled"
 
         # Skip loading if disabled (unless okd.mode: enabled or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
