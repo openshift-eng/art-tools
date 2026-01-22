@@ -192,6 +192,23 @@ class TestGenAssemblyCli(TestCase):
             },
         )
 
+    def test_nightly_release_pullspecs_ocp5(self):
+        runtime = MagicMock()
+        runtime.get_minor_version.return_value = '5.0'
+        runtime.get_major_minor_fields.return_value = (5, 0)
+
+        gacli = GenAssemblyCli(
+            runtime=runtime,
+            nightlies=['5.0.0-0.nightly-2022-12-01-153811'],
+        )
+        gacli._get_release_pullspecs()
+        self.assertEqual(
+            gacli.release_pullspecs,
+            {
+                'x86_64': 'registry.ci.openshift.org/ocp/release-5:5.0.0-0.nightly-2022-12-01-153811',
+            },
+        )
+
     def test_multi_nighly_arch(self):
         """
         Only one nightly per group arch should be specified.
