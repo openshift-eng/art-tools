@@ -76,7 +76,7 @@ class ConfigScanSources:
         self.all_rpm_metas = set(runtime.rpm_metas())
         self.all_image_metas = set(
             filter(
-                lambda meta: meta.enabled or (meta.mode == 'disabled' and self.runtime.load_disabled),
+                lambda meta: self._is_image_enabled_for_scan(meta),
                 runtime.image_metas(),
             )
         )
@@ -95,6 +95,62 @@ class ConfigScanSources:
         self.rhcos_status = []
         self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         self.current_task_bundles: Dict[str, str] = {}
+
+    def _is_okd_enabled(self, image_meta: ImageMetadata) -> bool:
+        """
+        Check if an image has OKD mode enabled.
+
+        Arg(s):
+            image_meta (ImageMetadata): The image metadata.
+        Return Value(s):
+            bool: True if okd.mode is enabled, False otherwise.
+        """
+        return (
+            image_meta.config.okd is not Missing
+            and image_meta.config.okd.mode is not Missing
+            and image_meta.config.okd.mode == 'enabled'
+        )
+
+    def _is_image_enabled(self, image_meta: ImageMetadata) -> bool:
+        """
+        Check if an image should be processed (not disabled).
+
+        An image is considered enabled if:
+        - It's generally enabled (mode != 'disabled'), OR
+        - It has okd.mode: enabled (even if general mode: disabled)
+
+        Arg(s):
+            image_meta (ImageMetadata): The image metadata.
+        Return Value(s):
+            bool: True if image should be processed, False otherwise.
+        """
+        return image_meta.enabled or self._is_okd_enabled(image_meta)
+
+    def _is_image_enabled_for_scan(self, image_meta: ImageMetadata) -> bool:
+        """
+        Determine if an image should be included in scan-sources.
+
+        An image is included if:
+        - It's enabled (generally enabled OR okd.mode: enabled), OR
+        - load_disabled is set (includes all images even if disabled)
+
+        This ensures OKD-only images (mode: disabled, okd.mode: enabled) are scanned
+        so they can be built for OKD when they change.
+
+        Arg(s):
+            image_meta (ImageMetadata): The image metadata.
+        Return Value(s):
+            bool: True if image should be included, False otherwise.
+        """
+        # Include if enabled (handles both general and OKD-enabled cases)
+        if self._is_image_enabled(image_meta):
+            return True
+
+        # Include if disabled but load_disabled is set
+        if image_meta.mode == 'disabled' and self.runtime.load_disabled:
+            return True
+
+        return False
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -264,8 +320,14 @@ class ConfigScanSources:
         ).get()
 
         for metadata, public_upstream in upstream_mappings:
-            # Skip rebase for disabled images
-            if not metadata.enabled:
+            # Skip rebase for disabled components
+            if metadata.meta_type == 'image':
+                # For images: use OKD-aware enabled check
+                if not self._is_image_enabled(metadata):
+                    self.logger.warning('%s is disabled: skipping rebase', metadata.name)
+                    continue
+            elif not metadata.enabled:
+                # For RPMs, use standard enabled check
                 self.logger.warning('%s is disabled: skipping rebase', metadata.name)
                 continue
 
@@ -387,8 +449,8 @@ class ConfigScanSources:
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
     async def scan_images(self, image_names: List[str]):
-        # Do not scan images that have been disabled for Konflux operations
-        image_names = filter(lambda name: self.runtime.image_map[name].config.konflux.mode != 'disabled', image_names)
+        # Filter to only enabled images (generally enabled OR OKD-enabled)
+        image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))

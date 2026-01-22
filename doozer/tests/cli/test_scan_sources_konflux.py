@@ -20,6 +20,11 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         """Set up test fixtures."""
         self.runtime = MagicMock(spec=Runtime)
         self.runtime.konflux_db = MagicMock()
+        self.runtime.group = 'openshift-4.20'  # Default to OCP group for tests
+        self.runtime.load_disabled = False
+        self.runtime.image_metas.return_value = []
+        self.runtime.rpm_metas.return_value = []
+        self.runtime.image_map = {}
         self.session = MagicMock(spec=aiohttp.ClientSession)
         self.ci_kubeconfig = "/tmp/test_kubeconfig"
 
