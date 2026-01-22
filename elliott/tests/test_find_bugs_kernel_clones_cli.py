@@ -58,6 +58,12 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
         self.assertEqual([bug.key for bug in actual], ["FOO-1", "FOO-2", "FOO-3"])
 
     def test_search_for_jira_bugs(self):
+        runtime = MagicMock()
+        cli = FindBugsKernelClonesCli(
+            runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False
+        )
+        jira_tracker = MagicMock(spec=JIRABugTracker)
+        jira_tracker._get_available_target_versions.return_value = ["4.14.0", "4.14.z"]
         jira_client = MagicMock(spec=JIRA)
         trackers = ["TRACKER-1", "TRACKER-2"]
         jira_client.search_issues.return_value = [
@@ -65,10 +71,26 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             MagicMock(key="FOO-2"),
             MagicMock(key="FOO-3"),
         ]
-        actual = FindBugsKernelClonesCli._search_for_jira_bugs(jira_client, trackers, self._config)
+        actual = cli._search_for_jira_bugs(jira_tracker, jira_client, trackers, self._config)
         expected_jql = 'labels = art:cloned-kernel-bug AND project = OCPBUGS AND component = RHCOS AND "Target Version" = "4.14.0" AND (labels = art:kmaint:TRACKER-1 OR labels = art:kmaint:TRACKER-2) order by created DESC'
         jira_client.search_issues.assert_called_once_with(expected_jql, maxResults=0)
         self.assertEqual([issue.key for issue in actual], ["FOO-1", "FOO-2", "FOO-3"])
+
+    def test_search_for_jira_bugs_invalid_target_version(self):
+        runtime = MagicMock()
+        cli = FindBugsKernelClonesCli(
+            runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False
+        )
+        jira_tracker = MagicMock(spec=JIRABugTracker)
+        jira_tracker._get_available_target_versions.return_value = ["4.13.0", "4.13.z"]
+        jira_client = MagicMock(spec=JIRA)
+        trackers = ["TRACKER-1"]
+
+        with self.assertRaises(SystemExit) as cm:
+            cli._search_for_jira_bugs(jira_tracker, jira_client, trackers, self._config)
+
+        self.assertEqual(cm.exception.code, 0)
+        jira_client.search_issues.assert_not_called()
 
     @patch("elliottlib.early_kernel.process_shipped_tracker")
     @patch("elliottlib.early_kernel.move_jira")

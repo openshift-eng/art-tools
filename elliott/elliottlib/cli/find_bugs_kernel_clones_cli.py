@@ -61,14 +61,13 @@ class FindBugsKernelClonesCli:
         jira_client: JIRA = jira_tracker._client
         koji_api = self._runtime.build_retrying_koji_client(caching=True)
 
-        # Search for Jiras
         report = {"jira_issues": []}
         if self.bugs:
             logger.info("Getting specified Jira bugs %s...", self.bugs)
             found_bugs = self._get_jira_bugs(jira_client, self.bugs, config)
         else:
             logger.info("Searching for bug clones in Jira project %s...", config.target_jira.project)
-            found_bugs = self._search_for_jira_bugs(jira_client, self.trackers, config)
+            found_bugs = self._search_for_jira_bugs(jira_tracker, jira_client, self.trackers, config)
         bug_keys = [bug.key for bug in found_bugs]
         logger.info("Found %s Jira(s) in %s: %s", len(bug_keys), config.target_jira.project, bug_keys)
 
@@ -114,15 +113,24 @@ class FindBugsKernelClonesCli:
             found_bugs.append(bug)
         return found_bugs
 
-    @staticmethod
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
-    def _search_for_jira_bugs(jira_client: JIRA, trackers: Optional[List[str]], config: KernelBugSweepConfig):
-        # search for jira bugs we created previously as clones of the original kernel bugs
+    def _search_for_jira_bugs(self, jira_tracker: JIRABugTracker, jira_client: JIRA, trackers: Optional[List[str]], config: KernelBugSweepConfig):
+        logger = self._logger
+        target_release = config.target_jira.target_release
+
+        available_versions = jira_tracker._get_available_target_versions()
+        if available_versions and target_release not in available_versions:
+            logger.warning(
+                f"Target version '{target_release}' does not exist in JIRA project {config.target_jira.project}."
+            )
+            logger.info("All configured target versions were filtered out. Exiting successfully.")
+            sys.exit(0)
+
         conditions = [
             "labels = art:cloned-kernel-bug",
             f"project = {config.target_jira.project}",
             f"component = {config.target_jira.component}",
-            f"\"Target Version\" = \"{config.target_jira.target_release}\"",
+            f"\"Target Version\" = \"{target_release}\"",
         ]
         if trackers:
             condition = ' OR '.join(map(lambda t: f"labels = art:kmaint:{t}", trackers))
