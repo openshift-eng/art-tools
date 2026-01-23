@@ -752,7 +752,7 @@ class JIRABugTracker(BugTracker):
         self._available_target_versions = None
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
-    def _get_available_target_versions(self) -> List[str]:
+    def _get_available_target_versions(self) -> list[str]:
         """Get all available target versions for the JIRA project.
 
         Returns a list of target version names that exist in the JIRA project's "Target Version" custom field.
@@ -766,8 +766,7 @@ class JIRABugTracker(BugTracker):
 
             bug_issue_type = None
             for issue_type in issue_types:
-                name = getattr(issue_type, 'name', issue_type.get('name') if isinstance(issue_type, dict) else None)
-                if name == 'Bug':
+                if issue_type.get('name') == 'Bug':
                     bug_issue_type = issue_type
                     break
 
@@ -776,21 +775,16 @@ class JIRABugTracker(BugTracker):
                 self._available_target_versions = []
                 return self._available_target_versions
 
-            bug_id = getattr(
-                bug_issue_type, 'id', bug_issue_type.get('id') if isinstance(bug_issue_type, dict) else None
-            )
+            bug_id = bug_issue_type.get('id')
             fields = self._client.project_issue_fields(self._project, bug_id)
 
             target_versions = []
             for field in fields:
-                field_id = getattr(field, 'fieldId', field.get('fieldId') if isinstance(field, dict) else None)
-                if field_id == self.field_target_version:
-                    allowed_values = getattr(
-                        field, 'allowedValues', field.get('allowedValues') if isinstance(field, dict) else None
-                    )
+                if field.get('fieldId') == self.field_target_version:
+                    allowed_values = field.get('allowedValues')
                     if allowed_values:
                         for v in allowed_values:
-                            version_name = getattr(v, 'name', v.get('name') if isinstance(v, dict) else None)
+                            version_name = v.get('name')
                             if version_name:
                                 target_versions.append(version_name)
                     break
@@ -892,16 +886,19 @@ class JIRABugTracker(BugTracker):
         with_target_release: bool = True,
         search_filter: str = None,
         custom_query: str = None,
-    ) -> Optional[str]:
+    ) -> str | None:
         if target_release and with_target_release:
             raise ValueError("cannot use target_release and with_target_release together")
         if not target_release and with_target_release:
             target_release = self.target_release()
 
         if target_release:
-            original_target_release = target_release.copy()
             available_versions = self._get_available_target_versions()
-            if available_versions:
+            if not available_versions:
+                logger.warning(
+                    f"Could not fetch available target versions for project {self._project}. Proceeding with original query."
+                )
+            else:
                 valid_target_releases = [tr for tr in target_release if tr in available_versions]
                 invalid_target_releases = [tr for tr in target_release if tr not in available_versions]
 
@@ -911,27 +908,23 @@ class JIRABugTracker(BugTracker):
                         f"They will be excluded from the query."
                     )
 
-                target_release = valid_target_releases
-
-                if not target_release:
+                if not valid_target_releases:
                     logger.warning(
                         f"No valid target versions found for query. All requested versions do not exist in JIRA project {self._project}."
                     )
                     logger.warning(
                         f"Target version filtering removed configured versions. "
-                        f"Original: {original_target_release}, After filtering: (none)"
+                        f"Original: {target_release}, After filtering: (none)"
                     )
                     logger.info("All configured target versions were filtered out. Returning empty result set.")
                     return None
-                elif len(target_release) < len(original_target_release):
+                elif len(valid_target_releases) < len(target_release):
                     logger.warning(
                         f"Target version filtering removed configured versions. "
-                        f"Original: {original_target_release}, After filtering: {target_release}"
+                        f"Original: {target_release}, After filtering: {valid_target_releases}"
                     )
-            else:
-                logger.warning(
-                    f"Could not fetch available target versions for project {self._project}. Proceeding with original query."
-                )
+
+                target_release = valid_target_releases
 
         exclude_components = []
         if search_filter:
