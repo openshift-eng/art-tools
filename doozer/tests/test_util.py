@@ -178,24 +178,29 @@ class TestUtil(unittest.TestCase):
         util.oc_image_info_for_arch__caching('pullspec')
         gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'])
 
-    @patch("artcommonlib.exectools.cmd_gather")
-    def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, gather_mock):
+    @patch("doozerlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, oc_image_info_mock):
         # When strict=False and manifest unknown, should return None
-        gather_mock.return_value = (1, '', 'error: manifest unknown: manifest unknown')
+        oc_image_info_mock.return_value = None
         result = util.oc_image_info_for_arch('pullspec', strict=False)
         self.assertIsNone(result)
+        oc_image_info_mock.assert_called_once_with(
+            'pullspec', '--filter-by-os=amd64', registry_config=None, strict=False
+        )
 
-    @patch("artcommonlib.exectools.cmd_gather")
-    def test_oc_image_info_for_arch_strict_false_other_error(self, gather_mock):
+    @patch("doozerlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_false_other_error(self, oc_image_info_mock):
         # When strict=False but other error, should raise
-        gather_mock.return_value = (1, '', 'error: network timeout')
+        oc_image_info_mock.side_effect = IOError("oc image info failed (rc=1): error: network timeout")
         with self.assertRaises(IOError):
             util.oc_image_info_for_arch('pullspec', strict=False)
 
-    @patch("artcommonlib.exectools.cmd_gather")
-    def test_oc_image_info_for_arch_strict_true_manifest_unknown(self, gather_mock):
+    @patch("doozerlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_true_manifest_unknown(self, oc_image_info_mock):
         # When strict=True and manifest unknown, should raise
-        gather_mock.return_value = (1, '', 'error: manifest unknown: manifest unknown')
+        oc_image_info_mock.side_effect = IOError(
+            "oc image info failed (rc=1): error: manifest unknown: manifest unknown"
+        )
         with self.assertRaises(IOError):
             util.oc_image_info_for_arch('pullspec', strict=True)
 
