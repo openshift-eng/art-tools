@@ -766,7 +766,7 @@ class JIRABugTracker(BugTracker):
 
             bug_issue_type = None
             for issue_type in issue_types:
-                if issue_type.get('name') == 'Bug':
+                if getattr(issue_type, 'name', None) == 'Bug':
                     bug_issue_type = issue_type
                     break
 
@@ -775,16 +775,16 @@ class JIRABugTracker(BugTracker):
                 self._available_target_versions = []
                 return self._available_target_versions
 
-            bug_id = bug_issue_type.get('id')
+            bug_id = getattr(bug_issue_type, 'id', None)
             fields = self._client.project_issue_fields(self._project, bug_id)
 
             target_versions = []
             for field in fields:
-                if field.get('fieldId') == self.field_target_version:
-                    allowed_values = field.get('allowedValues')
+                if getattr(field, 'fieldId', None) == self.field_target_version:
+                    allowed_values = getattr(field, 'allowedValues', None)
                     if allowed_values:
                         for v in allowed_values:
-                            version_name = v.get('name')
+                            version_name = getattr(v, 'name', None)
                             if version_name:
                                 target_versions.append(version_name)
                     break
