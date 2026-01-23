@@ -98,9 +98,15 @@ class ImageMetadata(Metadata):
         :raises IOError: If the image is not an OLM operator.
         """
         short_name = self.get_olm_bundle_short_name()
-        if not short_name.startswith('ose-'):
+        
+        # Use product name as the namespace prefix
+        product = self.runtime.group_config.product if self.runtime.group_config.product else "openshift"
+        
+        # Only add "ose-" prefix for OpenShift products
+        if product == "openshift" and not short_name.startswith('ose-'):
             short_name = 'ose-' + short_name
-        return f"openshift/{short_name}"
+        
+        return f"{product}/{short_name}"
 
     def get_olm_bundle_delivery_repo_name(self):
         """Returns the delivery repository name for the OLM bundle of this OLM operator.
