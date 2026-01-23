@@ -218,24 +218,19 @@ class TestJIRABugTracker(unittest.TestCase):
         """Test fetching available target versions from JIRA"""
         config = {'project': 'OCPBUGS', 'server': 'https://issues.redhat.com'}
 
-        # Mock issue types response
-        mock_issue_types = [
-            {'id': '1', 'name': 'Bug'},
-            {'id': '2', 'name': 'Story'},
-        ]
+        # Mock issue types response (JIRA returns objects, not dicts)
+        bug_type = flexmock(id='1', name='Bug')
+        story_type = flexmock(id='2', name='Story')
+        mock_issue_types = [bug_type, story_type]
 
         # Mock fields response with Target Version field
-        mock_fields = [
-            {
-                'fieldId': 'customfield_12319940',  # Target Version field ID
-                'allowedValues': [
-                    {'name': '4.17.0'},
-                    {'name': '4.17.z'},
-                    {'name': '4.18.0'},
-                    {'name': '4.18.z'},
-                ],
-            }
-        ]
+        version1 = flexmock(name='4.17.0')
+        version2 = flexmock(name='4.17.z')
+        version3 = flexmock(name='4.18.0')
+        version4 = flexmock(name='4.18.z')
+
+        field = flexmock(fieldId='customfield_12319940', allowedValues=[version1, version2, version3, version4])
+        mock_fields = [field]
 
         mock_jira_client = flexmock()
         mock_jira_client.should_receive('project_issue_types').with_args('OCPBUGS').and_return(mock_issue_types)
