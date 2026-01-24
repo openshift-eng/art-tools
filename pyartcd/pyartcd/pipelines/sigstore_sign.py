@@ -127,7 +127,7 @@ class SigstorePipeline:
                     logger.warning(
                         "Pullspec %s is digest-based; cannot determine canonical tag. "
                         "For proper canonical tag signing, use tag-based pullspecs.",
-                        pullspec
+                        pullspec,
                     )
                     # Can't do canonical tag signing without knowing the tag
                     continue

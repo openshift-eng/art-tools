@@ -1058,9 +1058,7 @@ class PromotePipeline:
 
             # Extract the canonical tag (e.g., "4.16.1-x86_64" or "4.16.1-multi")
             canonical_tag = info["image"].split(":")[-1]
-            self._logger.info(
-                "Discovering release image %s with canonical tag: %s", digest_pullspec, canonical_tag
-            )
+            self._logger.info("Discovering release image %s with canonical tag: %s", digest_pullspec, canonical_tag)
 
             release_info, errors = await signatory.discover_release_image(
                 pullspec=digest_pullspec,
@@ -1096,7 +1094,8 @@ class PromotePipeline:
         # --- Phase 3: Sign release images (with canonical tags) ---
         self._logger.info(
             "Signing %d release images with %d total manifests",
-            len(release_images), sum(len(ri.manifests_to_sign) for ri in release_images)
+            len(release_images),
+            sum(len(ri.manifests_to_sign) for ri in release_images),
         )
         if errors := await signatory.sign_release_images(release_images):
             raise IOError(f"Release image signing failed: {errors}")

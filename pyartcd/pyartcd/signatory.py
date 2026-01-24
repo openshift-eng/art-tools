@@ -232,6 +232,7 @@ class ReleaseImageInfo:
             For single manifests, this is just [original_pullspec].
             All manifests will be signed with the same canonical_tag.
     """
+
     original_pullspec: str
     canonical_tag: str
     manifests_to_sign: List[str] = field(default_factory=list)
@@ -244,6 +245,7 @@ class DiscoveryResult:
     Provides clear separation between release images (which need canonical tag signing)
     and component images (which only need digest-based signing).
     """
+
     # Release images with their canonical tags and discovered manifests
     release_images: List[ReleaseImageInfo] = field(default_factory=list)
 
@@ -340,7 +342,8 @@ class SigstoreSignatory:
             this_rn = img_info["config"]["config"]["Labels"].get("io.openshift.release")
             if not this_rn:
                 errors[pullspec] = RuntimeError(f"{pullspec} is not a release image (missing label)")
-            elif release_name != this_rn:
+            elif release_name and release_name != this_rn:
+                # Only validate release name if one was provided
                 errors[pullspec] = RuntimeError(
                     f"release image at {pullspec} has release name {this_rn}, not expected {release_name}"
                 )
@@ -349,7 +352,14 @@ class SigstoreSignatory:
                     f"release image at {pullspec} does not have a required legacy signature"
                 )
             else:
-                info.manifests_to_sign.append(pullspec)
+                # Always use digest-based pullspec for signing (immutable reference)
+                digest = img_info.get("digest")
+                if digest:
+                    digest_pullspec = self.redigest_pullspec(pullspec, digest)
+                    info.manifests_to_sign.append(digest_pullspec)
+                else:
+                    # Fallback to original if no digest available
+                    info.manifests_to_sign.append(pullspec)
 
         return info, errors
 
@@ -442,11 +452,12 @@ class SigstoreSignatory:
     async def sign_release_images(
         self,
         release_images: List[ReleaseImageInfo],
+        tag_only: bool = False,
     ) -> Dict[str, Exception]:
         """
-        Sign release image manifests with both digest and canonical tag identities.
+        Sign release image manifests with digest and/or canonical tag identities.
 
-        Each manifest is signed twice:
+        By default, each manifest is signed twice:
         1. With digest-based identity (e.g., quay.io/.../ocp-release@sha256:...)
         2. With tag-based identity (e.g., quay.io/.../ocp-release:4.16.1-multi)
 
@@ -454,17 +465,21 @@ class SigstoreSignatory:
         without needing signedIdentity overrides in their policy.
 
         :param release_images: List of ReleaseImageInfo with canonical tags and manifests to sign
+        :param tag_only: If True, only sign with tag identity (skip digest identity).
+            Useful for retroactive signing where digest signatures already exist.
         :return: Dict of any signing errors per pullspec
         """
-        # Build args: (pullspec, canonical_tag)
-        args: List[Tuple[str, str]] = []
+        # Build args: (pullspec, canonical_tag, tag_only)
+        args: List[Tuple[str, str, bool]] = []
         for info in release_images:
             for pullspec in info.manifests_to_sign:
-                args.append((pullspec, info.canonical_tag))
+                args.append((pullspec, info.canonical_tag, tag_only))
 
         self._logger.info(
-            "Signing %d release image manifests (from %d release images)",
-            len(args), len(release_images)
+            "Signing %d release image manifests (from %d release images)%s",
+            len(args),
+            len(release_images),
+            " [TAG ONLY]" if tag_only else "",
         )
 
         results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
@@ -494,6 +509,7 @@ class SigstoreSignatory:
         self,
         pullspec: str,
         canonical_tag: Optional[str] = None,
+        tag_only: bool = False,
     ) -> Dict[str, Exception]:
         """
         Sign a manifest with cosign.
@@ -503,28 +519,39 @@ class SigstoreSignatory:
         2. Tag-based identity (e.g., quay.io/.../ocp-release:4.16.1-multi)
 
         When canonical_tag is None, only the digest-based identity is used.
+        When tag_only is True, only the tag-based identity is used (skips digest signing).
 
         :param pullspec: Digest-based pullspec to sign
         :param canonical_tag: Optional canonical tag for additional tag-based identity
+        :param tag_only: If True, only sign with tag identity (skip digest identity)
         :return: Dict with any signing error
         """
         log = self._logger
 
         # Build list of identities to sign with
-        identities = [pullspec]
+        identities = []
+        if not tag_only:
+            identities.append(pullspec)
         if canonical_tag:
             repo = pullspec.split("@sha256:")[0] if "@sha256:" in pullspec else pullspec.rsplit(":", 1)[0]
             tag_identity = f"{repo}:{canonical_tag}"
             identities.append(tag_identity)
+
+        if not identities:
+            log.warning("No identities to sign for %s (tag_only=True but no canonical_tag)", pullspec)
+            return {}
 
         log.info("Signing manifest %s with identities: %s", pullspec, identities)
 
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
                 cmd = [
-                    "cosign", "sign", "--yes",
+                    "cosign",
+                    "sign",
+                    "--yes",
                     f"--sign-container-identity={identity}",
-                    "--key", f"awskms:///{signing_key_id}",
+                    "--key",
+                    f"awskms:///{signing_key_id}",
                 ]
 
                 if self.rekor_url:

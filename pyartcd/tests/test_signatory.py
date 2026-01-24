@@ -333,10 +333,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {})
         # Should have logged dry run messages twice (digest + tag identities)
-        dry_run_calls = [
-            call for call in signatory._logger.info.call_args_list
-            if "[DRY RUN]" in str(call)
-        ]
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
         self.assertEqual(len(dry_run_calls), 2)
 
     async def test_sign_manifest_without_canonical_tag(self):
@@ -348,10 +345,7 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {})
         # Should have logged dry run message once (digest identity only)
-        dry_run_calls = [
-            call for call in signatory._logger.info.call_args_list
-            if "[DRY RUN]" in str(call)
-        ]
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
         self.assertEqual(len(dry_run_calls), 1)
 
     async def test_sign_release_images_with_multiple_manifests(self):
@@ -372,17 +366,14 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
             manifests_to_sign=[
                 "quay.io/openshift-release-dev/ocp-release@sha256:x86-manifest",
                 "quay.io/openshift-release-dev/ocp-release@sha256:arm-manifest",
-            ]
+            ],
         )
 
         result = await signatory.sign_release_images([release_info])
 
         self.assertEqual(result, {})
         # Should have logged for 4 signings: 2 manifests x 2 identities (digest + tag) each
-        dry_run_calls = [
-            call for call in signatory._logger.info.call_args_list
-            if "[DRY RUN]" in str(call)
-        ]
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
         self.assertEqual(len(dry_run_calls), 4)
 
     async def test_sign_component_images(self):
@@ -398,8 +389,5 @@ class TestSigstoreSignatory(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {})
         # Should have logged 2 dry run messages (one per component, digest only)
-        dry_run_calls = [
-            call for call in signatory._logger.info.call_args_list
-            if "[DRY RUN]" in str(call)
-        ]
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
         self.assertEqual(len(dry_run_calls), 2)
