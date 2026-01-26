@@ -10,27 +10,27 @@ from elliottlib.util import ensure_erratatool_auth
 LOGGER = logutil.get_logger(__name__)
 
 
-@cli.command('move-builds', short_help='Move builds from one advisory to another')
+@cli.command("move-builds", short_help="Move builds from one advisory to another")
 @click.option(
-    '--from',
-    'from_advisory',
-    metavar='ADVISORY_ID',
+    "--from",
+    "from_advisory",
+    metavar="ADVISORY_ID",
     type=int,
     required=True,
-    help='Source advisory to remove attached builds from',
+    help="Source advisory to remove attached builds from",
 )
 @click.option(
-    '--to', 'to_advisory', metavar='ADVISORY_ID', type=int, required=True, help='Target advisory to attach builds to'
+    "--to", "to_advisory", metavar="ADVISORY_ID", type=int, required=True, help="Target advisory to attach builds to"
 )
 @click.option(
-    '--kind',
-    '-k',
-    metavar='KIND',
+    "--kind",
+    "-k",
+    metavar="KIND",
     required=True,
-    type=click.Choice(['rpm', 'image']),
-    help='Builds of the given KIND [rpm, image]',
+    type=click.Choice(["rpm", "image"]),
+    help="Builds of the given KIND [rpm, image]",
 )
-@click.option('--only', metavar='NVR', help='Only move these builds. Comma separated Build NVRs')
+@click.option("--only", metavar="NVR", help="Only move these builds. Comma separated Build NVRs")
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 def move_builds_cli(runtime, from_advisory, to_advisory, kind, only, noop):
@@ -46,13 +46,13 @@ def move_builds_cli(runtime, from_advisory, to_advisory, kind, only, noop):
     runtime.initialize(no_group=True)
     ensure_erratatool_auth()
 
-    LOGGER.info(f'Fetching all builds from {from_advisory}')
+    LOGGER.info(f"Fetching all builds from {from_advisory}")
     attached_builds = errata.get_brew_builds(from_advisory)
     build_nvrs = [b.nvr for b in attached_builds]
 
     if only:
-        temp = only.split(',')
-        LOGGER.info(f'Filtering to only specified builds ({len(temp)})')
+        temp = only.split(",")
+        LOGGER.info(f"Filtering to only specified builds ({len(temp)})")
         only_nvrs = []
         for n in temp:
             if n not in build_nvrs:

@@ -15,186 +15,186 @@ class TestImageSchema(unittest.TestCase):
 
     def test_validate_with_valid_data(self):
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_invalid_data(self):
         invalid_data = {
-            'from': {},
-            'name': 1234,
+            "from": {},
+            "name": 1234,
         }
-        self.assertIn("1234 is not of type 'string'", image_schema.validate('filename', invalid_data))
+        self.assertIn("1234 is not of type 'string'", image_schema.validate("filename", invalid_data))
 
     def test_validate_with_invalid_content_source_git_url(self):
-        url = 'https://github.com/openshift/csi-node-driver-registrar'
+        url = "https://github.com/openshift/csi-node-driver-registrar"
         invalid_data = {
-            'content': {
-                'source': {
-                    'git': {
-                        'branch': {
-                            'target': 'test',
+            "content": {
+                "source": {
+                    "git": {
+                        "branch": {
+                            "target": "test",
                         },
-                        'url': url,
+                        "url": url,
                     },
                 },
             },
-            'name': '1234',
-            'from': {},
+            "name": "1234",
+            "from": {},
         }
         self.assertIn(
             "'https://github.com/openshift/csi-node-driver-registrar' does not match",
-            image_schema.validate('filename', invalid_data),
+            image_schema.validate("filename", invalid_data),
         )
 
     def test_validate_with_valid_content_source_git_url(self):
-        url = 'git@github.com:openshift/csi-node-driver-registrar.git'
+        url = "git@github.com:openshift/csi-node-driver-registrar.git"
         valid_data = {
-            'content': {
-                'source': {
-                    'git': {
-                        'branch': {
-                            'target': 'test',
+            "content": {
+                "source": {
+                    "git": {
+                        "branch": {
+                            "target": "test",
                         },
-                        'url': url,
+                        "url": url,
                     },
                 },
             },
-            'name': '1234',
-            'from': {},
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            "name": "1234",
+            "from": {},
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_valid_subscription_label(self):
         data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'update-csv': {
-                'manifests-dir': '...',
-                'bundle-dir': '...',
-                'registry': '...',
-                'valid-subscription-label': '["foo", "bar", "baz"]',
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "update-csv": {
+                "manifests-dir": "...",
+                "bundle-dir": "...",
+                "registry": "...",
+                "valid-subscription-label": '["foo", "bar", "baz"]',
             },
         }
-        self.assertIsNone(image_schema.validate('filename', data))
+        self.assertIsNone(image_schema.validate("filename", data))
 
     def test_validate_without_valid_subscription_label(self):
         data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'update-csv': {
-                'manifests-dir': '...',
-                'bundle-dir': '...',
-                'registry': '...',
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "update-csv": {
+                "manifests-dir": "...",
+                "bundle-dir": "...",
+                "registry": "...",
             },
         }
         self.assertIn(
             "is not valid",
-            image_schema.validate('filename', data),
+            image_schema.validate("filename", data),
         )
 
     def test_validate_with_valid_konflux_cachi2_lockfile_rpms(self):
         """Test valid konflux.cachi2.lockfile.rpms configuration"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {
-                'mode': 'enabled',
-                'cachi2': {
-                    'enabled': True,
-                    'lockfile': {'enabled': True, 'rpms': ['package1', 'package2', 'package3']},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {
+                "mode": "enabled",
+                "cachi2": {
+                    "enabled": True,
+                    "lockfile": {"enabled": True, "rpms": ["package1", "package2", "package3"]},
                 },
             },
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_empty_konflux_cachi2_lockfile_rpms(self):
         """Test empty rpms array is valid"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {'cachi2': {'lockfile': {'rpms': []}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {"cachi2": {"lockfile": {"rpms": []}}},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_invalid_konflux_cachi2_lockfile_rpms_type(self):
         """Test invalid rpms data type (not array)"""
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'lockfile': {'rpms': 'not-an-array'}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "konflux": {"cachi2": {"lockfile": {"rpms": "not-an-array"}}},
         }
-        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
+        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate("filename", invalid_data))
 
     def test_validate_with_invalid_konflux_cachi2_lockfile_rpms_items(self):
         """Test invalid rpm items (not strings)"""
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'lockfile': {'rpms': ['valid-package', 123, 'another-valid-package']}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "konflux": {"cachi2": {"lockfile": {"rpms": ["valid-package", 123, "another-valid-package"]}}},
         }
-        self.assertIn("123 is not of type 'string'", image_schema.validate('filename', invalid_data))
+        self.assertIn("123 is not of type 'string'", image_schema.validate("filename", invalid_data))
 
     def test_validate_with_valid_konflux_cachi2_lockfile_enabled(self):
         """Test valid konflux.cachi2.lockfile.enabled configuration"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {'cachi2': {'lockfile': {'enabled': True}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {"cachi2": {"lockfile": {"enabled": True}}},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_invalid_konflux_cachi2_lockfile_enabled(self):
         """Test invalid konflux.cachi2.lockfile.enabled type"""
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'lockfile': {'enabled': 'not-a-boolean'}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "konflux": {"cachi2": {"lockfile": {"enabled": "not-a-boolean"}}},
         }
-        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate("filename", invalid_data))
 
     def test_validate_with_valid_komplux_cachi2_enabled(self):
         """Test valid konflux.cachi2.enabled configuration"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {'cachi2': {'enabled': True}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {"cachi2": {"enabled": True}},
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_combined_konflux_configurations(self):
         """Test valid combined konflux configurations"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {
-                'mode': 'enabled',
-                'cachito': {'mode': 'emulation'},
-                'cachi2': {'enabled': True, 'lockfile': {'enabled': True, 'rpms': ['rpm1', 'rpm2']}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {
+                "mode": "enabled",
+                "cachito": {"mode": "emulation"},
+                "cachi2": {"enabled": True, "lockfile": {"enabled": True, "rpms": ["rpm1", "rpm2"]}},
             },
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_dependents(self):
         images_dir = self.temp_dir
@@ -204,59 +204,59 @@ class TestImageSchema(unittest.TestCase):
             f.write("test")
 
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'dependents': ['image1', 'image2'],
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "dependents": ["image1", "image2"],
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))
+        self.assertIsNone(image_schema.validate("filename", valid_data, images_dir=images_dir))
 
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'dependents': ['image1', 'image3'],
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "dependents": ["image1", "image3"],
         }
         self.assertIn(
-            "Dependent image 'image3' not found", image_schema.validate('filename', invalid_data, images_dir=images_dir)
+            "Dependent image 'image3' not found", image_schema.validate("filename", invalid_data, images_dir=images_dir)
         )
 
     def test_validate_with_valid_konflux_cachi2_artifact_lockfile(self):
         """Test valid konflux.cachi2.artifact_lockfile configuration"""
         valid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'delivery': {'delivery_repo_names': ['foo', 'bar']},
-            'konflux': {
-                'cachi2': {
-                    'artifact_lockfile': {
-                        'enabled': True,
-                        'resources': ['https://example.com/cert1.pem', 'https://example.com/cert2.pem'],
-                        'path': '.',
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "delivery": {"delivery_repo_names": ["foo", "bar"]},
+            "konflux": {
+                "cachi2": {
+                    "artifact_lockfile": {
+                        "enabled": True,
+                        "resources": ["https://example.com/cert1.pem", "https://example.com/cert2.pem"],
+                        "path": ".",
                     }
                 }
             },
         }
-        self.assertIsNone(image_schema.validate('filename', valid_data))
+        self.assertIsNone(image_schema.validate("filename", valid_data))
 
     def test_validate_with_invalid_konflux_cachi2_artifact_lockfile_enabled(self):
         """Test invalid artifact_lockfile.enabled type"""
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'artifact_lockfile': {'enabled': 'not-a-boolean'}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "konflux": {"cachi2": {"artifact_lockfile": {"enabled": "not-a-boolean"}}},
         }
-        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate('filename', invalid_data))
+        self.assertIn("'not-a-boolean' is not of type 'boolean'", image_schema.validate("filename", invalid_data))
 
     def test_validate_with_invalid_konflux_cachi2_artifact_lockfile_resources(self):
         """Test invalid artifact_lockfile.resources type"""
         invalid_data = {
-            'from': {},
-            'name': 'my-name',
-            'for_payload': True,
-            'konflux': {'cachi2': {'artifact_lockfile': {'resources': 'not-an-array'}}},
+            "from": {},
+            "name": "my-name",
+            "for_payload": True,
+            "konflux": {"cachi2": {"artifact_lockfile": {"resources": "not-an-array"}}},
         }
-        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
+        self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate("filename", invalid_data))

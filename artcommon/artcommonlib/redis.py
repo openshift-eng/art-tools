@@ -10,7 +10,7 @@ from artcommonlib import constants
 logger = logging.getLogger(__name__)
 
 # Redis instance template, to be rendered with env vars
-redis_url_template = Template('${protocol}://:${redis_password}@${redis_host}:${redis_port}')
+redis_url_template = Template("${protocol}://:${redis_password}@${redis_host}:${redis_port}")
 
 
 class RedisError(Exception):
@@ -18,12 +18,12 @@ class RedisError(Exception):
 
 
 def redis_url(use_ssl=True):
-    if not os.environ.get('REDIS_SERVER_PASSWORD', None):
-        raise RedisError('Please define REDIS_SERVER_PASSWORD env var')
+    if not os.environ.get("REDIS_SERVER_PASSWORD", None):
+        raise RedisError("Please define REDIS_SERVER_PASSWORD env var")
 
     return redis_url_template.substitute(
-        protocol='rediss' if use_ssl else 'redis',
-        redis_password=os.environ['REDIS_SERVER_PASSWORD'],
+        protocol="rediss" if use_ssl else "redis",
+        redis_password=os.environ["REDIS_SERVER_PASSWORD"],
         redis_host=constants.REDIS_HOST,
         redis_port=constants.REDIS_PORT,
     )
@@ -70,7 +70,7 @@ async def get_value(conn: redis.asyncio.client.Redis, key: str):
     """
 
     value = await conn.get(key)
-    logger.debug('Key %s has value %s', key, value)
+    logger.debug("Key %s has value %s", key, value)
     return value
 
 
@@ -81,7 +81,7 @@ def get_value_sync(conn: redis.client.Redis, key: str):
     """
 
     value = conn.get(key)
-    logger.debug('Key %s has value %s', key, value)
+    logger.debug("Key %s has value %s", key, value)
     return value
 
 
@@ -93,7 +93,7 @@ async def set_value(conn: redis.asyncio.client.Redis, key: str, value, expiry=No
     expiry optionally sets an expiry flag in seconds
     """
 
-    logger.debug('Setting key %s to %s', key, value)
+    logger.debug("Setting key %s to %s", key, value)
     await conn.set(key, value, ex=expiry)
 
 
@@ -103,7 +103,7 @@ def set_value_sync(conn: redis.client.Redis, key: str, value, expiry=None):
     Same as set_value(), but synchronous
     """
 
-    logger.debug('Setting key %s to %s', key, value)
+    logger.debug("Setting key %s to %s", key, value)
     conn.set(key, value, ex=expiry)
 
 
@@ -114,7 +114,7 @@ async def get_keys(conn: redis.asyncio.client.Redis, pattern: str):
     """
 
     keys = await conn.keys(pattern)
-    logger.debug('Found keys matching pattern %s: %s', pattern, ', '.join(keys))
+    logger.debug("Found keys matching pattern %s: %s", pattern, ", ".join(keys))
     return keys
 
 
@@ -125,7 +125,7 @@ def get_keys_sync(conn: redis.client.Redis, pattern: str):
     """
 
     keys = conn.keys(pattern)
-    logger.debug('Found keys matching pattern %s: %s', pattern, ', '.join(keys))
+    logger.debug("Found keys matching pattern %s: %s", pattern, ", ".join(keys))
     return keys
 
 
@@ -136,9 +136,9 @@ async def delete_key(conn: redis.asyncio.client.Redis, key: str) -> int:
     Returns: 1 if successful, 0 otherwise
     """
 
-    logger.debug('Deleting key %s', key)
+    logger.debug("Deleting key %s", key)
     res = await conn.delete(key)
-    logger.debug('Key %s %s', key, 'deleted' if res else 'not found')
+    logger.debug("Key %s %s", key, "deleted" if res else "not found")
     return res
 
 
@@ -148,9 +148,9 @@ def delete_key_sync(conn: redis.asyncio.client.Redis, key: str) -> int:
     Same as delete_key, but synchronous
     """
 
-    logger.debug('Deleting key %s', key)
+    logger.debug("Deleting key %s", key)
     res = conn.delete(key)
-    logger.debug('Key %s %s', key, 'deleted' if res else 'not found')
+    logger.debug("Key %s %s", key, "deleted" if res else "not found")
     return res
 
 
@@ -164,16 +164,16 @@ async def delete_keys_by_pattern(conn: redis.asyncio.client.Redis, pattern: str)
     Return Value(s):
         int: Number of keys deleted
     """
-    logger.debug('Finding keys matching pattern %s', pattern)
+    logger.debug("Finding keys matching pattern %s", pattern)
     keys = await conn.keys(pattern)
 
     if not keys:
-        logger.debug('No keys found matching pattern %s', pattern)
+        logger.debug("No keys found matching pattern %s", pattern)
         return 0
 
-    logger.debug('Deleting %d keys matching pattern %s', len(keys), pattern)
+    logger.debug("Deleting %d keys matching pattern %s", len(keys), pattern)
     res = await conn.delete(*keys)
-    logger.debug('%d keys deleted', res)
+    logger.debug("%d keys deleted", res)
     return res
 
 
@@ -182,16 +182,16 @@ def delete_keys_by_pattern_sync(conn: redis.client.Redis, pattern: str) -> int:
     """
     Same as delete_keys_by_pattern, but synchronous
     """
-    logger.debug('Finding keys matching pattern %s', pattern)
+    logger.debug("Finding keys matching pattern %s", pattern)
     keys = conn.keys(pattern)
 
     if not keys:
-        logger.debug('No keys found matching pattern %s', pattern)
+        logger.debug("No keys found matching pattern %s", pattern)
         return 0
 
-    logger.debug('Deleting %d keys matching pattern %s', len(keys), pattern)
+    logger.debug("Deleting %d keys matching pattern %s", len(keys), pattern)
     res = conn.delete(*keys)
-    logger.debug('%d keys deleted', res)
+    logger.debug("%d keys deleted", res)
     return res
 
 
@@ -201,7 +201,7 @@ async def list_push(conn: redis.asyncio.client.Redis, key: str, value: str) -> N
     Push to a list in Redis, like a queue (FIFO). Docs: https://redis.io/docs/data-types/lists/
     """
 
-    logger.debug('Pushing value %s to list %s', value, key)
+    logger.debug("Pushing value %s to list %s", value, key)
     await conn.lpush(key, value)
 
 
@@ -213,7 +213,7 @@ async def list_pop(conn: redis.asyncio.client.Redis, key: str) -> typing.Optiona
     """
 
     value = await conn.rpop(key)
-    logger.debug('List %s has value %s', key, value)
+    logger.debug("List %s has value %s", key, value)
     return value
 
 

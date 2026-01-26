@@ -8,9 +8,9 @@ import yaml
 from future.utils import string_types
 
 VALID_EXT = [
-    'yaml',
-    'yml',
-    'json',
+    "yaml",
+    "yml",
+    "json",
 ]
 
 
@@ -19,7 +19,7 @@ class Config(object):
         self,
         app=None,
         name=None,
-        base_dir='~/.config/',
+        base_dir="~/.config/",
         template_file=None,
         template=None,
         envvars={},
@@ -56,7 +56,7 @@ class Config(object):
         if file_override is not None:
             self.full_path = file_override
             if not os.path.isfile(self.full_path):
-                raise Exception('Unable to find specified file {}'.format(self.full_path))
+                raise Exception("Unable to find specified file {}".format(self.full_path))
         else:
             if path_override:
                 self.base_dir = os.path.expanduser(path_override)
@@ -67,7 +67,7 @@ class Config(object):
                 os.makedirs(self.base_dir)
 
             for ext in itertools.chain(VALID_EXT, map(str.upper, VALID_EXT)):
-                filename = f'{name}.{ext}'
+                filename = f"{name}.{ext}"
                 cfg = os.path.join(self.base_dir, filename)
                 if os.path.isfile(cfg):
                     self.full_path = cfg
@@ -75,12 +75,12 @@ class Config(object):
                     break
 
             if self.filename is None:
-                self.filename = f'{name}.{VALID_EXT[0]}'
+                self.filename = f"{name}.{VALID_EXT[0]}"
                 self.full_path = os.path.join(self.base_dir, self.filename)
                 if template_file:
                     shutil.copyfile(template_file, self.full_path)
                 else:
-                    with open(self.full_path, 'w') as f:
+                    with open(self.full_path, "w") as f:
                         if template:
                             if isinstance(template, string_types):
                                 f.write(template)
@@ -90,7 +90,7 @@ class Config(object):
                             yaml.dump({}, f, default_flow_style=False)
 
         self._data = defaults
-        with open(self.full_path, 'r') as f:
+        with open(self.full_path, "r") as f:
             data = yaml.full_load(f)
             self._data.update(data)
             # load envvars if given and override

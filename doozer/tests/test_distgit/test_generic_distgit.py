@@ -33,7 +33,7 @@ class TestGenericDistGit(TestDistgit):
                 urls=flexmock(brew_image_host="brew-img-host", brew_image_namespace="brew-img-ns"),
                 insecure_source=False,
             ),
-            resolve_brew_image_url=lambda *_, **__: '',
+            resolve_brew_image_url=lambda *_, **__: "",
             working_dir="my-working-dir",
             branch="some-branch",
             command="some-command",
@@ -87,7 +87,7 @@ class TestGenericDistGit(TestDistgit):
             name="_irrelevant_",
         )
 
-        expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
+        expected_cmd = ["git", "-C", "my-root-dir/my-namespace/my-distgit-key", "rev-parse", "HEAD"]
         (
             flexmock(distgit.exectools)
             .should_receive("cmd_gather")
@@ -123,7 +123,7 @@ class TestGenericDistGit(TestDistgit):
         try:
             repo.clone("my-root-dir", "my-branch")
         except OSError:
-            self.fail("Should not have raised a \"dir already exists\" exception")
+            self.fail('Should not have raised a "dir already exists" exception')
         except:
             pass  # doesn't matter if something fails at a later point
 
@@ -147,7 +147,7 @@ class TestGenericDistGit(TestDistgit):
         expected_cmd = ["mkdir", "-p", "my-root-dir/my-namespace/my-distgit-key"]
         (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd).once())
 
-        expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
+        expected_cmd = ["git", "-C", "my-root-dir/my-namespace/my-distgit-key", "rev-parse", "HEAD"]
         (
             flexmock(distgit.exectools)
             .should_receive("cmd_gather")
@@ -187,16 +187,16 @@ class TestGenericDistGit(TestDistgit):
             .with_args(
                 "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
                 "my-root-dir/my-namespace/my-distgit-key",
-                gitargs=['--branch', 'my-branch', '--single-branch'],
+                gitargs=["--branch", "my-branch", "--single-branch"],
                 set_env=object,
-                timeout='999',
+                timeout="999",
                 git_cache_dir=None,
             )
             .once()
             .and_return(None)
         )
 
-        expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
+        expected_cmd = ["git", "-C", "my-root-dir/my-namespace/my-distgit-key", "rev-parse", "HEAD"]
         (
             flexmock(distgit.exectools)
             .should_receive("cmd_gather")
@@ -255,16 +255,16 @@ class TestGenericDistGit(TestDistgit):
             .with_args(
                 "https://pkgs.devel.redhat.com/git/my-namespace/my-qualified-name",
                 "my-root-dir/my-namespace/my-distgit-key",
-                gitargs=['--branch', 'my-branch', '--single-branch'],
+                gitargs=["--branch", "my-branch", "--single-branch"],
                 set_env=object,
-                timeout='999',
+                timeout="999",
                 git_cache_dir=None,
             )
             .once()
             .and_return(None)
         )
 
-        expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
+        expected_cmd = ["git", "-C", "my-root-dir/my-namespace/my-distgit-key", "rev-parse", "HEAD"]
         (
             flexmock(distgit.exectools)
             .should_receive("cmd_gather")
@@ -690,7 +690,7 @@ class TestGenericDistGit(TestDistgit):
 
         self.assertIn(msg, actual)
 
-    @mock.patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @mock.patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_add_missing_pkgs_succeed(self, _):
         md = MockMetadata(MockRuntime(self.logger))
         d = distgit.ImageDistGitRepo(md, autoclone=False)
@@ -699,7 +699,7 @@ class TestGenericDistGit(TestDistgit):
         self.assertEqual(1, len(d.runtime.missing_pkgs))
         self.assertIn("distgit_key image is missing package haproxy", d.runtime.missing_pkgs)
 
-    @mock.patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @mock.patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     @mock.patch("requests.head")
     def test_cgit_file_available(self, mocked_head, _):
         meta = MockMetadata(MockRuntime(self.logger))

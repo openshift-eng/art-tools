@@ -48,16 +48,16 @@ targets:
 
             def fake_get_latest_builds(tag_component_tuples, build_type, event, session):
                 results = {
-                    ('rhaos-4.7-rhel-7-build', 'golang'): [
+                    ("rhaos-4.7-rhel-7-build", "golang"): [
                         {"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
+                    ("rhaos-4.7-rhel-7-build", "golang-scl-shim"): [
                         {"name": "golang-scl-shim", "version": "1.4.0", "release": "2.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang'): [
+                    ("rhaos-4.7-rhel-8-build", "golang"): [
                         {"name": "golang", "version": "1.4.5", "release": "3.el8", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
+                    ("rhaos-4.7-rhel-8-build", "golang-scl-shim"): [],
                 }
                 return [results[tag_component] for tag_component in tag_component_tuples]
 
@@ -67,7 +67,7 @@ targets:
             ]
             metadata.assert_golang_versions()
             koji_session.getLatestBuilds.assert_called_with(
-                'rhaos-4.7-rhel-7-build', package="go-toolset-1.4", type="rpm"
+                "rhaos-4.7-rhel-7-build", package="go-toolset-1.4", type="rpm"
             )
 
         runtime.group_config.check_golang_versions = "exact"
@@ -76,16 +76,16 @@ targets:
 
             def fake_get_latest_builds(tag_component_tuples, build_type, event, session):
                 results = {
-                    ('rhaos-4.7-rhel-7-build', 'golang'): [
+                    ("rhaos-4.7-rhel-7-build", "golang"): [
                         {"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
+                    ("rhaos-4.7-rhel-7-build", "golang-scl-shim"): [
                         {"name": "golang-scl-shim", "version": "1.4.6", "release": "2.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang'): [
+                    ("rhaos-4.7-rhel-8-build", "golang"): [
                         {"name": "golang", "version": "1.4.6", "release": "3.el8", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
+                    ("rhaos-4.7-rhel-8-build", "golang-scl-shim"): [],
                 }
                 return [results[tag_component] for tag_component in tag_component_tuples]
 
@@ -102,16 +102,16 @@ targets:
 
             def fake_get_latest_builds(tag_component_tuples, build_type, event, session):
                 results = {
-                    ('rhaos-4.7-rhel-7-build', 'golang'): [
+                    ("rhaos-4.7-rhel-7-build", "golang"): [
                         {"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
+                    ("rhaos-4.7-rhel-7-build", "golang-scl-shim"): [
                         {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang'): [
+                    ("rhaos-4.7-rhel-8-build", "golang"): [
                         {"name": "golang", "version": "1.4.6", "release": "3.el8", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
+                    ("rhaos-4.7-rhel-8-build", "golang-scl-shim"): [],
                 }
                 return [results[tag_component] for tag_component in tag_component_tuples]
 
@@ -127,16 +127,16 @@ targets:
 
             def fake_get_latest_builds(tag_component_tuples, build_type, event, session):
                 results = {
-                    ('rhaos-4.7-rhel-7-build', 'golang'): [
+                    ("rhaos-4.7-rhel-7-build", "golang"): [
                         {"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
+                    ("rhaos-4.7-rhel-7-build", "golang-scl-shim"): [
                         {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang'): [
+                    ("rhaos-4.7-rhel-8-build", "golang"): [
                         {"name": "golang", "version": "1.5.6", "release": "3.el8", "epoch": None}
                     ],
-                    ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
+                    ("rhaos-4.7-rhel-8-build", "golang-scl-shim"): [],
                 }
                 return [results[tag_component] for tag_component in tag_component_tuples]
 

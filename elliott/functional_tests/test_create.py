@@ -23,5 +23,5 @@ class GreateTestCase(unittest.TestCase):
         self.assertIn("Would have created advisory:", out.decode("utf-8"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

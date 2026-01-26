@@ -41,9 +41,9 @@ class AsyncErrataAPI:
         await self._session.close()
 
     def _generate_auth_header(self):
-        client_ctx = gssapi.SecurityContext(name=self._errata_gssapi_name, usage='initiate', flags=self._gssapi_flags)
+        client_ctx = gssapi.SecurityContext(name=self._errata_gssapi_name, usage="initiate", flags=self._gssapi_flags)
         out_token = client_ctx.step(b"")
-        return f'Negotiate {base64.b64encode(out_token).decode()}'
+        return f"Negotiate {base64.b64encode(out_token).decode()}"
 
     async def _make_request(self, method: str, path: str, parse_json: bool = True, **kwargs) -> Union[Dict, bytes]:
         auth_header = self._generate_auth_header()
@@ -103,7 +103,7 @@ class AsyncErrataAPI:
         params = {"filter[errata_id]": str(int(advisory_id)), "page[number]": 1, "page[size]": 1000}
         while True:
             result = await self._make_request(aiohttp.hdrs.METH_GET, path, params=params)
-            data: List[Dict] = result.get('data', [])
+            data: List[Dict] = result.get("data", [])
             if not data:
                 break
             for item in data:
@@ -152,7 +152,7 @@ class AsyncErrataAPI:
             params["page[size]"] = page_size
         while True:
             result = cast(Dict, await self._make_request(method=method, path=path, params=params))
-            data: List[Dict] = result.get('data', [])
+            data: List[Dict] = result.get("data", [])
             if not data:
                 break
             for item in data:
@@ -310,7 +310,7 @@ class AsyncErrataAPI:
                 "topic": advisory_topic,
                 "security_impact": advisory_security_impact,
                 "quality_responsibility_name": advisory_quality_responsibility_name,
-                "idsfixed": ' '.join(str(i) for i in idsfixed) if idsfixed else None,
+                "idsfixed": " ".join(str(i) for i in idsfixed) if idsfixed else None,
                 "package_owner_email": advisory_package_owner_email,
                 "manager_email": advisory_manager_email,
                 "assigned_to_email": advisory_assigned_to_email,
@@ -409,7 +409,7 @@ class AsyncErrataUtils:
     @classmethod
     def populate_golang_cve_components(cls, golang_cve_names, expected_cve_components, attached_builds):
         # Get go builder images for all attached image builds
-        parsed_nvrs = [(n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds]]
+        parsed_nvrs = [(n["name"], n["version"], n["release"]) for n in [parse_nvr(n) for n in attached_builds]]
         go_nvr_map = util.get_golang_container_nvrs(parsed_nvrs, _LOGGER)
 
         etcd_golang_builder, base_golang_builders = None, []
@@ -417,13 +417,13 @@ class AsyncErrataUtils:
             builder_nvr = parse_nvr(builder_nvr_string)
 
             # Make sure they are go builder nvrs (this should never happen)
-            if builder_nvr['name'] != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if builder_nvr["name"] != constants.GOLANG_BUILDER_CVE_COMPONENT:
                 raise ValueError(
                     f"Unexpected `name` value for nvr {builder_nvr}. Expected "
                     f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate."
                 )
 
-            if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
+            if "etcd" in list(go_nvr_map[builder_nvr_string])[0]:
                 if etcd_golang_builder:
                     raise ValueError(
                         f"Multiple etcd builds found in advisory {go_nvr_map[etcd_golang_builder][0]}, "
@@ -440,9 +440,9 @@ class AsyncErrataUtils:
 
         if etcd_golang_builder:
             _LOGGER.warning(
-                f'etcd build found in advisory {go_nvr_map[etcd_golang_builder][0]}, with builder: '
-                f'{etcd_golang_builder}. If an attached CVE affects etcd please manually associate CVE '
-                'with etcd build'
+                f"etcd build found in advisory {go_nvr_map[etcd_golang_builder][0]}, with builder: "
+                f"{etcd_golang_builder}. If an attached CVE affects etcd please manually associate CVE "
+                "with etcd build"
             )
 
         for cve_name in golang_cve_names:

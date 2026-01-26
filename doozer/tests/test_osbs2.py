@@ -20,8 +20,8 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
                         "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
                     },
                 },
-                'distgit': {
-                    'branch': 'rhaos-4.12-rhel-8',
+                "distgit": {
+                    "branch": "rhaos-4.12-rhel-8",
                 },
                 "targets": ["rhaos-4.12-rhel-8-containers-candidate"],
             },
@@ -67,10 +67,10 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
             f"{constants.DISTGIT_GIT_URL}/containers/foo#deadbeef",
             "rhaos-4.12-rhel-8-containers-candidate",
             opts={
-                'scratch': False,
-                'signing_intent': "release",
-                'yum_repourls': ["http://cgit.example.com/foo.repo"],
-                'git_branch': "rhaos-4.12-rhel-8",
+                "scratch": False,
+                "signing_intent": "release",
+                "yum_repourls": ["http://cgit.example.com/foo.repo"],
+                "git_branch": "rhaos-4.12-rhel-8",
             },
             channel="container-binary",
         )
@@ -109,23 +109,23 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
             (
                 12345,
                 f"{constants.BREWWEB_URL}/taskinfo?taskID=12345",
-                {'id': 42, 'nvr': 'foo-v4.12.0-12345.p0.assembly.test'},
+                {"id": 42, "nvr": "foo-v4.12.0-12345.p0.assembly.test"},
             ),
         )
         koji_api.gssapi_login.assert_called_once_with()
         koji_api.getTaskResult.assert_called_once_with(12345)
         koji_api.getBuild.assert_called_once_with(42)
-        koji_api.tagBuild.assert_called_once_with('rhaos-4.12-rhel-8-hotfix', "foo-v4.12.0-12345.p0.assembly.test")
+        koji_api.tagBuild.assert_called_once_with("rhaos-4.12-rhel-8-hotfix", "foo-v4.12.0-12345.p0.assembly.test")
         runtime.build_retrying_koji_client.assert_called_once_with()
         _start_build.assert_called_once_with(
             dg,
-            'rhaos-4.12-rhel-8-containers-candidate',
-            {'signing_intent': 'release', 'repo_type': 'signed', 'repo_list': []},
+            "rhaos-4.12-rhel-8-containers-candidate",
+            {"signing_intent": "release", "repo_type": "signed", "repo_list": []},
             koji_api,
         )
         watch_task.assert_called_once_with(koji_api, ANY, 12345, ANY)
-        cmd_gather.assert_called_once_with(['brew', 'download-logs', '--recurse', '-d', ANY, 12345])
+        cmd_gather.assert_called_once_with(["brew", "download-logs", "--recurse", "-d", ANY, 12345])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

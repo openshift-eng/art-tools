@@ -264,7 +264,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
             logger=None,
             pull_url=pull_url,
         )
-        with patch.object(repo, 'set_remote_url') as mock_set_remote:
+        with patch.object(repo, "set_remote_url") as mock_set_remote:
             await repo.set_pull_remote("https://example.com/new-pull.git")
             mock_set_remote.assert_called_once_with("https://example.com/new-pull.git", "pull")
 

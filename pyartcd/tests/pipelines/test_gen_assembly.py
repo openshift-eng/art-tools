@@ -33,7 +33,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', '--build-system', 'brew', 'get-nightlies'],
+            ["doozer", "--group", "openshift-4.12", "--assembly", "stream", "--build-system", "brew", "get-nightlies"],
             stderr=None,
             env=ANY,
         )
@@ -46,17 +46,17 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
             [
-                'doozer',
-                '--group',
-                'openshift-4.12',
-                '--assembly',
-                'stream',
-                '--build-system',
-                'brew',
-                'get-nightlies',
-                '--allow-pending',
-                '--allow-rejected',
-                '--allow-inconsistency',
+                "doozer",
+                "--group",
+                "openshift-4.12",
+                "--assembly",
+                "stream",
+                "--build-system",
+                "brew",
+                "get-nightlies",
+                "--allow-pending",
+                "--allow-rejected",
+                "--allow-inconsistency",
             ],
             stderr=None,
             env=ANY,
@@ -70,21 +70,21 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
             [
-                'doozer',
-                '--group',
-                'openshift-4.12',
-                '--assembly',
-                'stream',
-                '--build-system',
-                'brew',
-                '--arches',
-                'x86_64,aarch64',
-                'get-nightlies',
-                '--allow-pending',
-                '--allow-rejected',
-                '--allow-inconsistency',
-                '--matching=n1',
-                '--matching=n2',
+                "doozer",
+                "--group",
+                "openshift-4.12",
+                "--assembly",
+                "stream",
+                "--build-system",
+                "brew",
+                "--arches",
+                "x86_64,aarch64",
+                "get-nightlies",
+                "--allow-pending",
+                "--allow-rejected",
+                "--allow-inconsistency",
+                "--matching=n1",
+                "--matching=n2",
             ],
             stderr=None,
             env=ANY,
@@ -217,14 +217,14 @@ releases:
         self.assertEqual(actual.number, 1234)
         git_repo.return_value.setup.assert_awaited_once_with("git@github.com:someone/ocp-build-data.git")
         git_repo.return_value.fetch_switch_branch.assert_awaited_once_with(
-            'auto-gen-assembly-openshift-4.12-4.12.99', 'openshift-4.12'
+            "auto-gen-assembly-openshift-4.12-4.12.99", "openshift-4.12"
         )
-        yaml.load.assert_called_once_with(pipeline._working_dir / 'ocp-build-data-push/releases.yml')
+        yaml.load.assert_called_once_with(pipeline._working_dir / "ocp-build-data-push/releases.yml")
         git_repo.return_value.commit_push.assert_awaited_once_with(ANY)
         api.pulls.create.assert_called_once_with(
-            head='someone:auto-gen-assembly-openshift-4.12-4.12.99',
-            base='openshift-4.12',
-            title='Add assembly 4.12.99',
+            head="someone:auto-gen-assembly-openshift-4.12-4.12.99",
+            base="openshift-4.12",
+            title="Add assembly 4.12.99",
             body=ANY,
             maintainer_can_modify=True,
         )
@@ -255,7 +255,7 @@ releases:
             },
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = GenAssemblyPipeline(
@@ -285,6 +285,6 @@ releases:
         )
         await pipeline.run()
         get_nightlies.assert_awaited_once_with(pipeline)
-        _gen_assembly_from_releases.assert_awaited_once_with(pipeline, ['nightly1', 'nightly2', 'nightly3', 'nightly4'])
+        _gen_assembly_from_releases.assert_awaited_once_with(pipeline, ["nightly1", "nightly2", "nightly3", "nightly4"])
         _create_or_update_pull_request.assert_awaited_once_with(pipeline, ANY)
         del os.environ["GITHUB_TOKEN"]

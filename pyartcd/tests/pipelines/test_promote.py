@@ -140,7 +140,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -171,7 +171,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -205,7 +205,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -266,7 +266,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -282,7 +282,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
         get_release_image_info.assert_any_await(
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64", raise_if_not_found=ANY
@@ -298,7 +298,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64",
             None,
-            '4.10-art-assembly-art0001',
+            "4.10-art-assembly-art0001",
             keep_manifest_list=False,
         )
         build_release_image.assert_any_await(
@@ -309,7 +309,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x",
             None,
-            '4.10-art-assembly-art0001-s390x',
+            "4.10-art-assembly-art0001-s390x",
             keep_manifest_list=False,
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
@@ -338,7 +338,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
         pipeline = await PromotePipeline.create(
             runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
@@ -348,7 +348,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -378,7 +378,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -390,7 +390,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -420,7 +420,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -440,7 +440,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -470,7 +470,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -486,7 +486,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
@@ -513,7 +513,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "metadata": {
                     "annotations": {
-                        "release.openshift.io/from-release": 'registry.ci.openshift.org/ocp/release:nightly'
+                        "release.openshift.io/from-release": "registry.ci.openshift.org/ocp/release:nightly"
                     }
                 },
             },
@@ -576,7 +576,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
         pipeline = await PromotePipeline.create(
             runtime,
@@ -606,7 +606,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
         pipeline.check_blocker_bugs.assert_awaited_once_with()
         for advisory in [1, 2, 3, 4]:
@@ -757,7 +757,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64",
             None,
-            '4.10-art-assembly-4.10.99',
+            "4.10-art-assembly-4.10.99",
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp", "release:4.10.99")
@@ -789,7 +789,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
             None,
-            '4.10-art-assembly-4.10.99-arm64',
+            "4.10-art-assembly-4.10.99-arm64",
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
@@ -827,7 +827,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
             None,
-            '4.10-art-assembly-4.10.99-arm64',
+            "4.10-art-assembly-4.10.99-arm64",
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
@@ -878,7 +878,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             f"--from-release={reference_release}",
             "--previous=4.10.98,4.10.97,4.9.99",
             "--metadata",
-            "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}",
+            '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}',
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
@@ -909,7 +909,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             f"--from-release={reference_release}",
             "--previous=4.10.98,4.10.97,4.9.99",
             "--metadata",
-            "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}",
+            '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}',
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
@@ -941,7 +941,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             "--keep-manifest-list",
             "--previous=4.10.98,4.10.97,4.9.99",
             "--metadata",
-            "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}",
+            '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}',
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
@@ -976,18 +976,18 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             keep_manifest_list=False,
         )
         expected_cmd = [
-            'oc',
-            'adm',
-            'release',
-            'new',
-            '-n',
-            'ocp',
-            '--name=4.10.99',
-            '--to-image=example.com/foo/release:4.10.99-x86_64',
-            '--reference-mode=source',
-            '--from-image-stream=4.10-art-assembly-4.10.99',
-            '--previous=4.10.98,4.10.97,4.9.99',
-            '--metadata',
+            "oc",
+            "adm",
+            "release",
+            "new",
+            "-n",
+            "ocp",
+            "--name=4.10.99",
+            "--to-image=example.com/foo/release:4.10.99-x86_64",
+            "--reference-mode=source",
+            "--from-image-stream=4.10-art-assembly-4.10.99",
+            "--previous=4.10.98,4.10.97,4.9.99",
+            "--metadata",
             '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}',
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
@@ -1009,18 +1009,18 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             keep_manifest_list=False,
         )
         expected_cmd = [
-            'oc',
-            'adm',
-            'release',
-            'new',
-            '-n',
-            'ocp-arm64',
-            '--name=4.10.99',
-            '--to-image=example.com/foo/release:4.10.99-aarch64',
-            '--reference-mode=source',
-            '--from-image-stream=4.10-art-assembly-4.10.99-arm64',
-            '--previous=4.10.98,4.10.97,4.9.99',
-            '--metadata',
+            "oc",
+            "adm",
+            "release",
+            "new",
+            "-n",
+            "ocp-arm64",
+            "--name=4.10.99",
+            "--to-image=example.com/foo/release:4.10.99-aarch64",
+            "--reference-mode=source",
+            "--from-image-stream=4.10-art-assembly-4.10.99-arm64",
+            "--previous=4.10.98,4.10.97,4.9.99",
+            "--metadata",
             '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}',
         ]
         cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
@@ -1053,7 +1053,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         },
     )
     @patch(
-        'pyartcd.pipelines.promote.PromotePipeline.get_image_info',
+        "pyartcd.pipelines.promote.PromotePipeline.get_image_info",
         side_effect=lambda pullspec, raise_if_not_found=False: {
             (
                 "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
@@ -1062,8 +1062,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         }[pullspec, raise_if_not_found],
     )
     @patch(
-        'pyartcd.pipelines.promote.PromotePipeline.get_multi_image_digest',
-        return_value='fake:deadbeef-toplevel-manifest-list',
+        "pyartcd.pipelines.promote.PromotePipeline.get_multi_image_digest",
+        return_value="fake:deadbeef-toplevel-manifest-list",
     )
     async def test_promote_heterogeneous_payload(
         self,
@@ -1122,7 +1122,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             ("quay.io/openshift-release-dev/ocp-release:4.10.99-multi", True): None
             if not push_manifest_list.called
             else TestPromotePipeline.FAKE_DEST_MANIFEST_LIST,
-            ('example.com/ocp-release@fake:deadbeef-source-manifest-list', True): {
+            ("example.com/ocp-release@fake:deadbeef-source-manifest-list", True): {
                 "schemaVersion": 2,
                 "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
                 "manifests": [
@@ -1201,7 +1201,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-arm64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-arm64",
             None,
             keep_manifest_list=True,
         )
@@ -1212,20 +1212,20 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-amd64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-amd64",
             None,
             keep_manifest_list=True,
         )
         dest_manifest_list = {
-            'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi',
-            'manifests': [
+            "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
+            "manifests": [
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64',
-                    'platform': {'os': 'linux', 'architecture': 'amd64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
+                    "platform": {"os": "linux", "architecture": "amd64"},
                 },
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64',
-                    'platform': {'os': 'linux', 'architecture': 'arm64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
+                    "platform": {"os": "linux", "architecture": "arm64"},
                 },
             ],
         }
@@ -1248,7 +1248,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             if not push_manifest_list.called
             else TestPromotePipeline.FAKE_DEST_MANIFEST_LIST,
             (
-                'example.com/ocp-release@fake:deadbeef-source-manifest-list',
+                "example.com/ocp-release@fake:deadbeef-source-manifest-list",
                 True,
             ): TestPromotePipeline.FAKE_SOURCE_MANIFEST_LIST,
         }[pullspec, raise_if_not_found]
@@ -1288,7 +1288,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-arm64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-arm64",
             None,
             keep_manifest_list=True,
         )
@@ -1299,20 +1299,20 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-amd64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-amd64",
             None,
             keep_manifest_list=True,
         )
         dest_manifest_list = {
-            'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi',
-            'manifests': [
+            "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
+            "manifests": [
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64',
-                    'platform': {'os': 'linux', 'architecture': 'amd64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
+                    "platform": {"os": "linux", "architecture": "amd64"},
                 },
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64',
-                    'platform': {'os': 'linux', 'architecture': 'arm64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
+                    "platform": {"os": "linux", "architecture": "arm64"},
                 },
             ],
         }
@@ -1351,7 +1351,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         },
     )
     @patch(
-        'pyartcd.pipelines.promote.PromotePipeline.get_image_info',
+        "pyartcd.pipelines.promote.PromotePipeline.get_image_info",
         side_effect=lambda pullspec, raise_if_not_found=False: {
             (
                 "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
@@ -1360,8 +1360,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         }[pullspec, raise_if_not_found],
     )
     @patch(
-        'pyartcd.pipelines.promote.PromotePipeline.get_multi_image_digest',
-        return_value='fake:deadbeef-toplevel-manifest-list',
+        "pyartcd.pipelines.promote.PromotePipeline.get_multi_image_digest",
+        return_value="fake:deadbeef-toplevel-manifest-list",
     )
     async def test_build_release_image_from_heterogeneous_image_stream(
         self,
@@ -1422,7 +1422,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             if not push_manifest_list.called
             else TestPromotePipeline.FAKE_DEST_MANIFEST_LIST,
             (
-                'example.com/ocp-release@fake:deadbeef-source-manifest-list',
+                "example.com/ocp-release@fake:deadbeef-source-manifest-list",
                 True,
             ): TestPromotePipeline.FAKE_SOURCE_MANIFEST_LIST,
         }[pullspec, raise_if_not_found]
@@ -1459,7 +1459,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-arm64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-arm64",
             None,
             keep_manifest_list=True,
         )
@@ -1470,20 +1470,20 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-amd64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-amd64",
             None,
             keep_manifest_list=True,
         )
         dest_manifest_list = {
-            'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi',
-            'manifests': [
+            "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
+            "manifests": [
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64',
-                    'platform': {'os': 'linux', 'architecture': 'amd64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
+                    "platform": {"os": "linux", "architecture": "amd64"},
                 },
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64',
-                    'platform': {'os': 'linux', 'architecture': 'arm64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
+                    "platform": {"os": "linux", "architecture": "arm64"},
                 },
             ],
         }
@@ -1506,7 +1506,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             if not push_manifest_list.called
             else TestPromotePipeline.FAKE_DEST_MANIFEST_LIST,
             (
-                'example.com/ocp-release@fake:deadbeef-source-manifest-list',
+                "example.com/ocp-release@fake:deadbeef-source-manifest-list",
                 True,
             ): TestPromotePipeline.FAKE_SOURCE_MANIFEST_LIST,
         }[pullspec, raise_if_not_found]
@@ -1543,7 +1543,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-arm64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-arm64",
             None,
             keep_manifest_list=True,
         )
@@ -1554,20 +1554,20 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [],
             dest_metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
-            'example.com/ocp-release@fake:deadbeef-source-multi-amd64',
+            "example.com/ocp-release@fake:deadbeef-source-multi-amd64",
             None,
             keep_manifest_list=True,
         )
         dest_manifest_list = {
-            'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi',
-            'manifests': [
+            "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi",
+            "manifests": [
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64',
-                    'platform': {'os': 'linux', 'architecture': 'amd64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64",
+                    "platform": {"os": "linux", "architecture": "amd64"},
                 },
                 {
-                    'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64',
-                    'platform': {'os': 'linux', 'architecture': 'arm64'},
+                    "image": "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64",
+                    "platform": {"os": "linux", "architecture": "arm64"},
                 },
             ],
         }
@@ -1613,7 +1613,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -1625,7 +1625,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -1662,7 +1662,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -1673,7 +1673,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -1716,7 +1716,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -1728,7 +1728,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_shipment_config_mock.assert_called_once_with("https://gitlab.com/redhat/shipment-mr/123", "image")
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -1776,7 +1776,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -1788,7 +1788,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_shipment_config_mock.assert_called_once_with("https://gitlab.com/redhat/shipment-mr/123", "image")
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
-            group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
+            group="openshift-4.10", data_path="https://example.com/ocp-build-data.git"
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -1844,7 +1844,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         runtime.new_slack_client.return_value = AsyncMock()
-        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.say.return_value = {"message": {"ts": ""}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
         pipeline = await PromotePipeline.create(
@@ -1925,9 +1925,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             Path(temp_dir, "openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
             Path(temp_dir, "openshift-install-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
             pipeline.create_symlink(temp_dir, False, False)
-            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-linux.tar.gz')))
-            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-mac.tar.gz')))
-            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-install-mac.tar.gz')))
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, "openshift-client-linux.tar.gz")))
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, "openshift-client-mac.tar.gz")))
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, "openshift-install-mac.tar.gz")))
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("os.getenv")

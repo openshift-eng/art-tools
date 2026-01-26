@@ -13,9 +13,9 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         # mock init
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize").and_return(None)
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
-        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(JIRABugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
@@ -23,27 +23,27 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         bz_bug = flexmock(
             id=1,
             created_days_ago=lambda: 33,
-            cf_pm_score='score',
-            component='OLM',
-            status='ON_DEV',
-            summary='summary',
+            cf_pm_score="score",
+            component="OLM",
+            status="ON_DEV",
+            summary="summary",
         )
 
         jira_bug = flexmock(
-            id='OCPBUGS-1',
+            id="OCPBUGS-1",
             created_days_ago=lambda: 34,
-            cf_pm_score='score',
-            component='OLM',
-            status='ON_QA',
-            summary='summary',
+            cf_pm_score="score",
+            component="OLM",
+            status="ON_QA",
+            summary="summary",
         )
 
         flexmock(JIRABugTracker).should_receive("blocker_search").and_return([jira_bug])
         flexmock(BugzillaBugTracker).should_receive("blocker_search").and_return([bz_bug])
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:blocker'])
+        result = runner.invoke(cli, ["-g", "openshift-4.6", "find-bugs:blocker"])
 
-        bz_output = '1             OLM                       ON_DEV       score   33  days   summary'
-        jira_output = 'OCPBUGS-1     OLM                       ON_QA        score   34  days   summary'
+        bz_output = "1             OLM                       ON_DEV       score   33  days   summary"
+        jira_output = "OCPBUGS-1     OLM                       ON_QA        score   34  days   summary"
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -53,5 +53,5 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         self.assertIn(jira_output, result.output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

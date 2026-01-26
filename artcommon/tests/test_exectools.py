@@ -49,7 +49,7 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         def fail_function():
             return False
 
-        assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
+        assertRaisesRegex = self.assertRaisesRegex if hasattr(self, "assertRaisesRegex") else self.assertRaisesRegexp
         assertRaisesRegex(Exception, self.ERROR_MSG.format(1), exectools.retry, 1, fail_function)
         assertRaisesRegex(Exception, self.ERROR_MSG.format(2), exectools.retry, 2, fail_function)
 
@@ -65,7 +65,7 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         calls = []
 
         # loop 3 times, writing into the collector each try and wait
-        assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
+        assertRaisesRegex = self.assertRaisesRegex if hasattr(self, "assertRaisesRegex") else self.assertRaisesRegexp
         assertRaisesRegex(
             Exception,
             self.ERROR_MSG.format(3),

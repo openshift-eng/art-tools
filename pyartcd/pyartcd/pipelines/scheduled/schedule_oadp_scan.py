@@ -13,23 +13,23 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
     # Skip if locked on OADP scan
     scan_lock_name = Lock.OADP_SCAN.value.format(group=group)
     if await lock_manager.is_locked(scan_lock_name):
-        runtime.logger.info(f'[{group}] Locked on {scan_lock_name}, skipping')
+        runtime.logger.info(f"[{group}] Locked on {scan_lock_name}, skipping")
         return
 
     # Skip if locked on OADP build
     build_lock_name = Lock.OADP_BUILD.value.format(group=group)
     if await lock_manager.is_locked(build_lock_name):
-        runtime.logger.info(f'[{group}] Locked on {build_lock_name}, skipping')
+        runtime.logger.info(f"[{group}] Locked on {build_lock_name}, skipping")
         return
 
     # Schedule OADP scan
-    runtime.logger.info('[%s] Scheduling oadp-scan-konflux', group)
+    runtime.logger.info("[%s] Scheduling oadp-scan-konflux", group)
 
     jenkins.start_oadp_scan_konflux(group=group, block_until_building=False)
 
 
-@cli.command('schedule-oadp-scan')
-@click.option('--group', '-g', required=True, help='OADP group to scan', multiple=True)
+@cli.command("schedule-oadp-scan")
+@click.option("--group", "-g", required=True, help="OADP group to scan", multiple=True)
 @pass_runtime
 @click_coroutine
 async def oadp_scan(runtime: Runtime, group: tuple):

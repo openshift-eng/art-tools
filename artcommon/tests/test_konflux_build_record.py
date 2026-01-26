@@ -39,23 +39,23 @@ class TestKonfluxBuild(TestCase):
         self.assertIsNotNone(build.nvr)
         self.assertEqual(build.nvr, build.get_nvr())
 
-        build.nvr = 'nvr'
+        build.nvr = "nvr"
         self.assertNotEqual(build.nvr, build.get_nvr())
 
-        build = KonfluxBuildRecord(name='image', version='v1', release='123456')
-        self.assertEqual(build.nvr, 'image-v1-123456')
-        build.version = 'v2'
+        build = KonfluxBuildRecord(name="image", version="v1", release="123456")
+        self.assertEqual(build.nvr, "image-v1-123456")
+        build.version = "v2"
         self.assertEqual(build.get_nvr(), build.nvr)
 
     def test_excluded_keys(self):
         build = KonfluxBuildRecord()
         build_id = build.build_id
 
-        build.nvr = 'nvr'
+        build.nvr = "nvr"
         self.assertEqual(build.generate_build_id(), build_id)
 
-        build.build_id = 'build_id'
+        build.build_id = "build_id"
         self.assertEqual(build.generate_build_id(), build_id)
 
-        build.record_id = 'record_id'
+        build.record_id = "record_id"
         self.assertEqual(build.generate_build_id(), build_id)

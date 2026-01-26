@@ -22,7 +22,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.konflux_db = MagicMock()
         self.source_resolver = MagicMock()
         # Ensure fresh logger for proper assertLogs() behavior
-        self.test_logger = logging.getLogger('doozerlib.backend.konflux_olm_bundler')
+        self.test_logger = logging.getLogger("doozerlib.backend.konflux_olm_bundler")
         self.rebaser = KonfluxOlmBundleRebaser(
             base_dir=self.base_dir,
             group=self.group,
@@ -85,24 +85,24 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             image: registry.example.com/namespace/image:tag
         """
         mock_image_info = {
-            'config': {
-                'config': {
-                    'Labels': {
-                        'com.redhat.component': 'test-brew-component',
-                        'version': '1.0',
-                        'release': '1',
+            "config": {
+                "config": {
+                    "Labels": {
+                        "com.redhat.component": "test-brew-component",
+                        "version": "1.0",
+                        "release": "1",
                     },
-                    'Env': {
-                        '__doozer_key=test-component',
+                    "Env": {
+                        "__doozer_key=test-component",
                     },
                 },
             },
-            'listDigest': 'sha256:1234567890abcdef',
-            'contentDigest': 'sha256:abcdef1234567890',
+            "listDigest": "sha256:1234567890abcdef",
+            "contentDigest": "sha256:abcdef1234567890",
         }
         mock_oc_image_info.return_value = mock_image_info
         # operator_image_ref_mode defaults to 'manifest-list' (uses listDigest)
-        self.rebaser._group_config.get.return_value = 'namespace'
+        self.rebaser._group_config.get.return_value = "namespace"
         metadata = MagicMock()
         metadata.runtime.group = "openshift-4.19"
         new_content, found_images = await self.rebaser._replace_image_references(
@@ -120,36 +120,36 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             image: registry.redhat.io/openshift4/image@sha256:1234567890abcdef
         """
         self.assertEqual(new_content.strip(), expected_new_content.strip())
-        self.assertIn('image', found_images)
+        self.assertIn("image", found_images)
         self.assertEqual(
-            found_images['image'],
+            found_images["image"],
             (
-                'registry.example.com/namespace/image:tag',
-                'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
-                'test-brew-component-1.0-1',
+                "registry.example.com/namespace/image:tag",
+                "registry.redhat.io/openshift4/image@sha256:1234567890abcdef",
+                "test-brew-component-1.0-1",
             ),
         )
 
     def test_operator_index_mode(self):
         # Test when operator_index_mode is 'pre-release'
-        self.rebaser._group_config.operator_index_mode = 'pre-release'
-        self.assertEqual(self.rebaser._operator_index_mode, 'pre-release')
+        self.rebaser._group_config.operator_index_mode = "pre-release"
+        self.assertEqual(self.rebaser._operator_index_mode, "pre-release")
 
         # Test when operator_index_mode is 'ga'
-        self.rebaser._group_config.operator_index_mode = 'ga'
+        self.rebaser._group_config.operator_index_mode = "ga"
         del self.rebaser._operator_index_mode
-        self.assertEqual(self.rebaser._operator_index_mode, 'ga')
+        self.assertEqual(self.rebaser._operator_index_mode, "ga")
 
         # Test when operator_index_mode is 'ga-plus'
-        self.rebaser._group_config.operator_index_mode = 'ga-plus'
+        self.rebaser._group_config.operator_index_mode = "ga-plus"
         del self.rebaser._operator_index_mode
-        self.assertEqual(self.rebaser._operator_index_mode, 'ga-plus')
+        self.assertEqual(self.rebaser._operator_index_mode, "ga-plus")
 
         # Test when operator_index_mode is invalid
-        self.rebaser._group_config.operator_index_mode = 'invalid-mode'
+        self.rebaser._group_config.operator_index_mode = "invalid-mode"
         del self.rebaser._operator_index_mode
-        with self.assertLogs(self.rebaser._logger.name, level='WARNING') as cm:
-            self.assertEqual(self.rebaser._operator_index_mode, 'ga')
+        with self.assertLogs(self.rebaser._logger.name, level="WARNING") as cm:
+            self.assertEqual(self.rebaser._operator_index_mode, "ga")
             self.assertIn(
                 'invalid-mode is not a valid group_config.operator_index_mode. Defaulting to "ga"', cm.output[0]
             )
@@ -157,47 +157,47 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         # Test when operator_index_mode is None (default to 'ga')
         self.rebaser._group_config.operator_index_mode = None
         del self.rebaser._operator_index_mode
-        self.assertEqual(self.rebaser._operator_index_mode, 'ga')
+        self.assertEqual(self.rebaser._operator_index_mode, "ga")
 
     def test_redhat_delivery_tags(self):
         # Test when operator_index_mode is 'pre-release'
-        self.rebaser._group_config.operator_index_mode = 'pre-release'
-        self.rebaser._group_config.vars = {'MAJOR': '4', 'MINOR': '8'}
+        self.rebaser._group_config.operator_index_mode = "pre-release"
+        self.rebaser._group_config.vars = {"MAJOR": "4", "MINOR": "8"}
         expected_tags = {
-            'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': '=v4.8',
-            'com.redhat.prerelease': 'true',
+            "com.redhat.delivery.operator.bundle": "true",
+            "com.redhat.openshift.versions": "=v4.8",
+            "com.redhat.prerelease": "true",
         }
         self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
 
         # Test when operator_index_mode is 'ga'
-        self.rebaser._group_config.operator_index_mode = 'ga'
+        self.rebaser._group_config.operator_index_mode = "ga"
         del self.rebaser._operator_index_mode
         del self.rebaser._redhat_delivery_tags
         expected_tags = {
-            'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': '=v4.8',
+            "com.redhat.delivery.operator.bundle": "true",
+            "com.redhat.openshift.versions": "=v4.8",
         }
         self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
 
         # Test when operator_index_mode is 'ga-plus'
-        self.rebaser._group_config.operator_index_mode = 'ga-plus'
+        self.rebaser._group_config.operator_index_mode = "ga-plus"
         del self.rebaser._operator_index_mode
         del self.rebaser._redhat_delivery_tags
         expected_tags = {
-            'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': 'v4.8',
+            "com.redhat.delivery.operator.bundle": "true",
+            "com.redhat.openshift.versions": "v4.8",
         }
         self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
 
         # Test when operator_index_mode is invalid (should default to 'ga')
-        self.rebaser._group_config.operator_index_mode = 'invalid-mode'
+        self.rebaser._group_config.operator_index_mode = "invalid-mode"
         del self.rebaser._operator_index_mode
         del self.rebaser._redhat_delivery_tags
-        with self.assertLogs(self.rebaser._logger.name, level='WARNING') as cm:
+        with self.assertLogs(self.rebaser._logger.name, level="WARNING") as cm:
             expected_tags = {
-                'com.redhat.delivery.operator.bundle': 'true',
-                'com.redhat.openshift.versions': '=v4.8',
+                "com.redhat.delivery.operator.bundle": "true",
+                "com.redhat.openshift.versions": "=v4.8",
             }
             self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
             self.assertIn(
@@ -209,36 +209,36 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         del self.rebaser._operator_index_mode
         del self.rebaser._redhat_delivery_tags
         expected_tags = {
-            'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': '=v4.8',
+            "com.redhat.delivery.operator.bundle": "true",
+            "com.redhat.openshift.versions": "=v4.8",
         }
         self.assertEqual(self.rebaser._redhat_delivery_tags, expected_tags)
 
     def test_get_operator_framework_tags(self):
         # Test when operator_channel_stable is 'default'
-        self.rebaser._group_config.operator_channel_stable = 'default'
+        self.rebaser._group_config.operator_channel_stable = "default"
         channel_name = "test-channel"
         package_name = "test-package"
         expected_tags = {
-            'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
-            'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': 'test-package',
+            "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+            "operators.operatorframework.io.bundle.channels.v1": "test-channel,stable",
+            "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+            "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+            "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+            "operators.operatorframework.io.bundle.package.v1": "test-package",
         }
         actual_tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
         self.assertEqual(actual_tags, expected_tags)
 
         # Test when operator_channel_stable is 'extra'
-        self.rebaser._group_config.operator_channel_stable = 'extra'
+        self.rebaser._group_config.operator_channel_stable = "extra"
         expected_tags = {
-            'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
-            'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': 'test-package',
+            "operators.operatorframework.io.bundle.channel.default.v1": "test-channel",
+            "operators.operatorframework.io.bundle.channels.v1": "test-channel,stable",
+            "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+            "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+            "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+            "operators.operatorframework.io.bundle.package.v1": "test-package",
         }
         actual_tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
         self.assertEqual(actual_tags, expected_tags)
@@ -246,12 +246,12 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         # Test when operator_channel_stable is None
         self.rebaser._group_config.operator_channel_stable = None
         expected_tags = {
-            'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
-            'operators.operatorframework.io.bundle.channels.v1': 'test-channel',
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': 'test-package',
+            "operators.operatorframework.io.bundle.channel.default.v1": "test-channel",
+            "operators.operatorframework.io.bundle.channels.v1": "test-channel",
+            "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+            "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+            "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+            "operators.operatorframework.io.bundle.package.v1": "test-package",
         }
         actual_tags = self.rebaser._get_operator_framework_tags(channel_name, package_name)
         self.assertEqual(actual_tags, expected_tags)
@@ -264,55 +264,55 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         operator_dir = Path("/path/to/operator/dir")
         bundle_dir = Path("/path/to/bundle/dir")
         operator_framework_tags = {
-            'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
-            'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': 'test-package',
+            "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+            "operators.operatorframework.io.bundle.channels.v1": "test-channel,stable",
+            "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+            "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+            "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+            "operators.operatorframework.io.bundle.package.v1": "test-package",
         }
         input_release = "1.0-1"
 
-        self.rebaser._group_config.vars = {'MAJOR': '4', 'MINOR': '8'}
+        self.rebaser._group_config.vars = {"MAJOR": "4", "MINOR": "8"}
 
         with patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser") as mock_dockerfile_parser:
             mock_operator_df = MagicMock()
             mock_operator_df.labels = {
-                'com.redhat.component': 'test-component',
-                'version': '1.0',
-                'release': '1',
-                'distribution-scope': 'public',
-                'url': 'https://example.com',
+                "com.redhat.component": "test-component",
+                "version": "1.0",
+                "release": "1",
+                "distribution-scope": "public",
+                "url": "https://example.com",
             }
             mock_bundle_df = MagicMock()
             mock_dockerfile_parser.side_effect = [mock_operator_df, mock_bundle_df]
 
             self.rebaser._create_dockerfile(metadata, operator_dir, bundle_dir, operator_framework_tags, input_release)
 
-            mock_dockerfile_parser.assert_any_call(str(operator_dir.joinpath('Dockerfile')))
-            mock_dockerfile_parser.assert_any_call(str(bundle_dir.joinpath('Dockerfile')))
+            mock_dockerfile_parser.assert_any_call(str(operator_dir.joinpath("Dockerfile")))
+            mock_dockerfile_parser.assert_any_call(str(bundle_dir.joinpath("Dockerfile")))
 
             self.assertEqual(
-                mock_bundle_df.content, 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata'
+                mock_bundle_df.content, "FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata"
             )
             self.assertEqual(
                 mock_bundle_df.labels,
                 {
-                    'com.redhat.component': 'test-component',
-                    'com.redhat.delivery.appregistry': '',
-                    'name': 'test-image',
-                    'version': '1.0.1',
-                    'release': '1.0-1',
-                    'com.redhat.delivery.operator.bundle': 'true',
-                    'com.redhat.openshift.versions': '=v4.8',
-                    'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
-                    'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
-                    'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-                    'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-                    'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-                    'operators.operatorframework.io.bundle.package.v1': 'test-package',
-                    'distribution-scope': 'public',
-                    'url': 'https://example.com',
+                    "com.redhat.component": "test-component",
+                    "com.redhat.delivery.appregistry": "",
+                    "name": "test-image",
+                    "version": "1.0.1",
+                    "release": "1.0-1",
+                    "com.redhat.delivery.operator.bundle": "true",
+                    "com.redhat.openshift.versions": "=v4.8",
+                    "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+                    "operators.operatorframework.io.bundle.channels.v1": "test-channel,stable",
+                    "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+                    "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+                    "operators.operatorframework.io.bundle.package.v1": "test-package",
+                    "distribution-scope": "public",
+                    "url": "https://example.com",
                 },
             )
 
@@ -335,11 +335,11 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     ):
         metadata = MagicMock()
         metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'bundle-dir': 'bundle',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
+            "update-csv": {
+                "manifests-dir": "manifests",
+                "bundle-dir": "bundle",
+                "valid-subscription-label": "valid-subscription",
+                "registry": "registry.example.com",
             },
         }
         metadata.distgit_key = "test-distgit-key"
@@ -351,8 +351,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump(
             {
-                'packageName': 'test-package',
-                'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
+                "packageName": "test-package",
+                "channels": [{"name": "test-channel", "currentCSV": "test-operator.v1.0.0"}],
             }
         )
 
@@ -369,7 +369,7 @@ spec:
         mock_replace_image_references.return_value = (
             new_content,
             {
-                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
+                "image": ("old_pullspec", "new_pullspec", "test-component-1.0-1"),
             },
         )
 
@@ -385,32 +385,32 @@ spec:
         await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, MagicMock(nvr=operator_nvr), input_release)
 
         mock_mkdir.assert_any_call(parents=True, exist_ok=True)
-        mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", 'r')
-        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/file.yaml"), 'w')
-        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/another-file.yaml"), 'w')
-        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/test.clusterserviceversion.yaml"), 'w')
-        mock_open.assert_any_call(Path("/path/to/bundle/dir/metadata/annotations.yaml"), 'w')
+        mock_open.assert_any_call("/path/to/operator/dir/manifests/package.yaml", "r")
+        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/file.yaml"), "w")
+        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/another-file.yaml"), "w")
+        mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/test.clusterserviceversion.yaml"), "w")
+        mock_open.assert_any_call(Path("/path/to/bundle/dir/metadata/annotations.yaml"), "w")
         mock_create_dockerfile.assert_called_once_with(
             metadata,
             operator_dir,
             bundle_dir,
             {
-                'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
-                'operators.operatorframework.io.bundle.channels.v1': 'test-channel',
-                'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-                'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-                'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-                'operators.operatorframework.io.bundle.package.v1': 'test-package',
+                "operators.operatorframework.io.bundle.channel.default.v1": "test-channel",
+                "operators.operatorframework.io.bundle.channels.v1": "test-channel",
+                "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+                "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+                "operators.operatorframework.io.bundle.package.v1": "test-package",
             },
             input_release,
         )
         mock_create_oit_files.assert_called_once_with(
-            'test-package',
-            'test-operator.v1.0.0',
+            "test-package",
+            "test-operator.v1.0.0",
             bundle_dir,
             operator_nvr,
             {
-                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
+                "image": ("old_pullspec", "new_pullspec", "test-component-1.0-1"),
             },
         )
 
@@ -429,10 +429,10 @@ spec:
     async def test_rebase_dir_no_manifests_dir(self):
         metadata = MagicMock()
         metadata.config = {
-            'update-csv': {
-                'bundle-dir': 'bundle',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
+            "update-csv": {
+                "bundle-dir": "bundle",
+                "valid-subscription-label": "valid-subscription",
+                "registry": "registry.example.com",
             },
         }
         metadata.distgit_key = "test-distgit-key"
@@ -447,10 +447,10 @@ spec:
     async def test_rebase_dir_no_bundle_dir(self):
         metadata = MagicMock()
         metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
+            "update-csv": {
+                "manifests-dir": "manifests",
+                "valid-subscription-label": "valid-subscription",
+                "registry": "registry.example.com",
             },
         }
         metadata.distgit_key = "test-distgit-key"
@@ -465,10 +465,10 @@ spec:
     async def test_rebase_dir_no_valid_subscription_label(self):
         metadata = MagicMock()
         metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'bundle-dir': 'bundle',
-                'registry': 'registry.example.com',
+            "update-csv": {
+                "manifests-dir": "manifests",
+                "bundle-dir": "bundle",
+                "registry": "registry.example.com",
             },
         }
         metadata.distgit_key = "test-distgit-key"
@@ -484,11 +484,11 @@ spec:
     async def test_rebase_dir_no_files_in_bundle_dir(self, _):
         metadata = MagicMock()
         metadata.config = {
-            'update-csv': {
-                'manifests-dir': 'manifests',
-                'bundle-dir': 'bundle',
-                'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com',
+            "update-csv": {
+                "manifests-dir": "manifests",
+                "bundle-dir": "bundle",
+                "valid-subscription-label": "valid-subscription",
+                "registry": "registry.example.com",
             },
         }
         metadata.distgit_key = "test-distgit-key"
@@ -516,7 +516,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.dry_run = False
         self.konflux_client = AsyncMock()
         # Ensure fresh logger for proper assertLogs() behavior
-        self.test_logger = logging.getLogger('doozerlib.backend.konflux_olm_bundler')
+        self.test_logger = logging.getLogger("doozerlib.backend.konflux_olm_bundler")
         with patch("doozerlib.backend.konflux_olm_bundler.KonfluxClient") as mock_konflux_client:
             mock_konflux_client.return_value = self.konflux_client
             mock_konflux_client.from_kubeconfig.return_value = self.konflux_client
@@ -549,9 +549,9 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
+            "com.redhat.component": "test-component",
+            "version": "1.0",
+            "release": "1",
         }
         mock_dockerfile_parser.return_value = mock_dockerfile
 
@@ -582,7 +582,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             generate_name="test-group-test-bundle-",
             namespace=self.konflux_namespace,
             application_name="test-group",
-            component_name='test-group-test-bundle',
+            component_name="test-group-test-bundle",
             git_url=bundle_build_repo.https_url,
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=bundle_build_repo.commit_hash,
@@ -624,17 +624,17 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.local_dir = Path("/path/to/local/dir")
 
         pipelinerun_dict = {
-            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
-            'status': {
-                'results': [
-                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+            "metadata": {"name": "test-pipelinerun", "labels": {"appstudio.openshift.io/component": "test-component"}},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image"},
                     {
-                        'name': 'IMAGE_DIGEST',
-                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                        "name": "IMAGE_DIGEST",
+                        "value": "sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807",
                     },
                 ],
-                'startTime': '2023-10-01T12:00:00Z',
-                'completionTime': '2023-10-01T12:30:00Z',
+                "startTime": "2023-10-01T12:00:00Z",
+                "completionTime": "2023-10-01T12:30:00Z",
             },
         }
         pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
@@ -643,21 +643,21 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
-            'io.openshift.build.source-location': 'https://example.com/source-repo.git',
-            'io.openshift.build.commit.id': 'source-commit-id',
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
+            "io.openshift.build.source-location": "https://example.com/source-repo.git",
+            "io.openshift.build.commit.id": "source-commit-id",
+            "com.redhat.component": "test-component",
+            "version": "1.0",
+            "release": "1",
         }
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump(
             {
-                'operator': {'nvr': 'test-operator-1.0-1'},
-                'operands': {
-                    'operand1': {'nvr': 'operand1-1.0-1'},
-                    'operand2': {'nvr': 'operand2-1.0-1'},
+                "operator": {"nvr": "test-operator-1.0-1"},
+                "operands": {
+                    "operand1": {"nvr": "operand1-1.0-1"},
+                    "operand2": {"nvr": "operand2-1.0-1"},
                 },
             }
         )
@@ -665,11 +665,11 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         await self.builder._update_konflux_db(
             metadata,
             build_repo,
-            'test-operator',
-            'test-operator-1.0',
+            "test-operator",
+            "test-operator-1.0",
             pipelinerun,
             KonfluxBuildOutcome.SUCCESS,
-            'test-operator-1.0-1',
+            "test-operator-1.0-1",
             ["operand1-1.0-1", "operand2-1.0-1"],
         )
 
@@ -687,7 +687,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.rebase_commitish, "test-commit-hash")
         self.assertEqual(build_record.engine, Engine.KONFLUX)
         self.assertEqual(build_record.outcome, KonfluxBuildOutcome.SUCCESS)
-        self.assertEqual(build_record.art_job_url, 'n/a')
+        self.assertEqual(build_record.art_job_url, "n/a")
         self.assertEqual(build_record.build_id, "test-pipelinerun")
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")
         self.assertEqual(build_record.operator_nvr, "test-operator-1.0-1")
@@ -716,8 +716,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.local_dir = Path("/path/to/local/dir")
 
         pipelinerun_dict = {
-            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
-            'status': {'startTime': '2023-10-01T12:00:00Z', 'completionTime': '2023-10-01T12:30:00Z'},
+            "metadata": {"name": "test-pipelinerun", "labels": {"appstudio.openshift.io/component": "test-component"}},
+            "status": {"startTime": "2023-10-01T12:00:00Z", "completionTime": "2023-10-01T12:30:00Z"},
         }
         pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
 
@@ -725,21 +725,21 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
-            'io.openshift.build.source-location': 'https://example.com/source-repo.git',
-            'io.openshift.build.commit.id': 'source-commit-id',
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
+            "io.openshift.build.source-location": "https://example.com/source-repo.git",
+            "io.openshift.build.commit.id": "source-commit-id",
+            "com.redhat.component": "test-component",
+            "version": "1.0",
+            "release": "1",
         }
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump(
             {
-                'operator': {'nvr': 'test-operator-1.0-1'},
-                'operands': {
-                    'operand1': {'nvr': 'operand1-1.0-1'},
-                    'operand2': {'nvr': 'operand2-1.0-1'},
+                "operator": {"nvr": "test-operator-1.0-1"},
+                "operands": {
+                    "operand1": {"nvr": "operand1-1.0-1"},
+                    "operand2": {"nvr": "operand2-1.0-1"},
                 },
             }
         )
@@ -747,11 +747,11 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         await self.builder._update_konflux_db(
             metadata,
             build_repo,
-            'test-operator',
-            'test-operator-1.0',
+            "test-operator",
+            "test-operator-1.0",
             pipelinerun,
             KonfluxBuildOutcome.FAILURE,
-            'test-operator-1.0-1',
+            "test-operator-1.0-1",
             ["operand1-1.0-1", "operand2-1.0-1"],
         )
 
@@ -769,7 +769,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.rebase_commitish, "test-commit-hash")
         self.assertEqual(build_record.engine, Engine.KONFLUX)
         self.assertEqual(build_record.outcome, KonfluxBuildOutcome.FAILURE)
-        self.assertEqual(build_record.art_job_url, 'n/a')
+        self.assertEqual(build_record.art_job_url, "n/a")
         self.assertEqual(build_record.build_id, "test-pipelinerun")
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")
         self.assertEqual(build_record.operator_nvr, "test-operator-1.0-1")
@@ -793,17 +793,17 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.local_dir = Path("/path/to/local/dir")
 
         pipelinerun_dict = {
-            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
-            'status': {
-                'results': [
-                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+            "metadata": {"name": "test-pipelinerun", "labels": {"appstudio.openshift.io/component": "test-component"}},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image"},
                     {
-                        'name': 'IMAGE_DIGEST',
-                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                        "name": "IMAGE_DIGEST",
+                        "value": "sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807",
                     },
                 ],
-                'startTime': '2023-10-01T12:00:00Z',
-                'completionTime': '2023-10-01T12:30:00Z',
+                "startTime": "2023-10-01T12:00:00Z",
+                "completionTime": "2023-10-01T12:30:00Z",
             },
         }
         pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
@@ -812,40 +812,40 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
-            'io.openshift.build.source-location': 'https://example.com/source-repo.git',
-            'io.openshift.build.commit.id': 'source-commit-id',
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
+            "io.openshift.build.source-location": "https://example.com/source-repo.git",
+            "io.openshift.build.commit.id": "source-commit-id",
+            "com.redhat.component": "test-component",
+            "version": "1.0",
+            "release": "1",
         }
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump(
             {
-                'operator': {'nvr': 'test-operator-1.0-1'},
-                'operands': {
-                    'operand1': {'nvr': 'operand1-1.0-1'},
-                    'operand2': {'nvr': 'operand2-1.0-1'},
+                "operator": {"nvr": "test-operator-1.0-1"},
+                "operands": {
+                    "operand1": {"nvr": "operand1-1.0-1"},
+                    "operand2": {"nvr": "operand2-1.0-1"},
                 },
             }
         )
 
         self.builder._db = None
 
-        with self.assertLogs(self.builder._logger.name, level='WARNING') as cm:
+        with self.assertLogs(self.builder._logger.name, level="WARNING") as cm:
             await self.builder._update_konflux_db(
                 metadata,
                 build_repo,
-                'test-operator',
-                'test-operator-1.0',
+                "test-operator",
+                "test-operator-1.0",
                 pipelinerun,
                 KonfluxBuildOutcome.SUCCESS,
-                'test-operator-1.0-1',
+                "test-operator-1.0-1",
                 ["operand1-1.0-1", "operand2-1.0-1"],
             )
             self.assertIn(
-                'Konflux DB connection is not initialized, not writing build record to the Konflux DB.', cm.output[0]
+                "Konflux DB connection is not initialized, not writing build record to the Konflux DB.", cm.output[0]
             )
 
     @patch("aiofiles.open")
@@ -864,17 +864,17 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         build_repo.local_dir = Path("/path/to/local/dir")
 
         pipelinerun_dict = {
-            'metadata': {'name': 'test-pipelinerun', 'labels': {'appstudio.openshift.io/component': 'test-component'}},
-            'status': {
-                'results': [
-                    {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
+            "metadata": {"name": "test-pipelinerun", "labels": {"appstudio.openshift.io/component": "test-component"}},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image"},
                     {
-                        'name': 'IMAGE_DIGEST',
-                        'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807',
+                        "name": "IMAGE_DIGEST",
+                        "value": "sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807",
                     },
                 ],
-                'startTime': '2023-10-01T12:00:00Z',
-                'completionTime': '2023-10-01T12:30:00Z',
+                "startTime": "2023-10-01T12:00:00Z",
+                "completionTime": "2023-10-01T12:30:00Z",
             },
         }
         pipelinerun = PipelineRunInfo(pipelinerun_dict, {})
@@ -883,36 +883,36 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
 
         mock_dockerfile = MagicMock()
         mock_dockerfile.labels = {
-            'io.openshift.build.source-location': 'https://example.com/source-repo.git',
-            'io.openshift.build.commit.id': 'source-commit-id',
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-            'release': '1',
+            "io.openshift.build.source-location": "https://example.com/source-repo.git",
+            "io.openshift.build.commit.id": "source-commit-id",
+            "com.redhat.component": "test-component",
+            "version": "1.0",
+            "release": "1",
         }
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump(
             {
-                'operator': {'nvr': 'test-operator-1.0-1'},
-                'operands': {
-                    'operand1': {'nvr': 'operand1-1.0-1'},
-                    'operand2': {'nvr': 'operand2-1.0-1'},
+                "operator": {"nvr": "test-operator-1.0-1"},
+                "operands": {
+                    "operand1": {"nvr": "operand1-1.0-1"},
+                    "operand2": {"nvr": "operand2-1.0-1"},
                 },
             }
         )
 
         self.db.add_build.side_effect = Exception("Test exception")
 
-        with self.assertLogs(self.builder._logger.name, level='ERROR') as cm:
+        with self.assertLogs(self.builder._logger.name, level="ERROR") as cm:
             await self.builder._update_konflux_db(
                 metadata,
                 build_repo,
-                'test-operator',
-                'test-operator-1.0',
+                "test-operator",
+                "test-operator-1.0",
                 pipelinerun,
                 KonfluxBuildOutcome.SUCCESS,
-                'test-operator-1.0-1',
+                "test-operator-1.0-1",
                 ["operand1-1.0-1", "operand2-1.0-1"],
             )
-            self.assertIn('Failed writing record to the konflux DB', cm.output[0])
+            self.assertIn("Failed writing record to the konflux DB", cm.output[0])

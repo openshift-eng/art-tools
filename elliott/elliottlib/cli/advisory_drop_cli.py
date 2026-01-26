@@ -22,7 +22,7 @@ def advisory_drop_cli(advisory):
     """
     adv = Erratum(errata_id=advisory)
     if adv.errata_state == "DROPPED_NO_SHIP":
-        click.echo(f'Advisory {advisory} is already dropped')
+        click.echo(f"Advisory {advisory} is already dropped")
         return
 
     # move advisory status to NEW_FILES
@@ -49,13 +49,13 @@ def advisory_drop_cli(advisory):
     unset_advisory_batch(advisory_id=advisory)
     # Drop advisory
     url = errata_drop_url.format(id=advisory)
-    data = 'utf8=%E2%9C%93&reason=Dropping+unused+advisory%21&commit=Dropping+unused+advisory'
+    data = "utf8=%E2%9C%93&reason=Dropping+unused+advisory%21&commit=Dropping+unused+advisory"
     headers = {"Content-Type": "text/plain"}
     r = requests.post(url, auth=HTTPSPNEGOAuth(), data=data, headers=headers)
     adv.refresh()
     if adv.errata_state != "DROPPED_NO_SHIP":
         raise ElliottFatalError(
-            f'Failed to drop advisory {advisory}. Got status code {r.status_code}. Are you the owner of advisory {advisory}?'
+            f"Failed to drop advisory {advisory}. Got status code {r.status_code}. Are you the owner of advisory {advisory}?"
         )
 
-    click.echo(f'Successfully dropped advisory {advisory}')
+    click.echo(f"Successfully dropped advisory {advisory}")

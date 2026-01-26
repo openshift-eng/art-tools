@@ -30,4 +30,4 @@ def validate(_, data):
         validator.validate(data)
     except ValidationError:
         errors = validator.iter_errors(data)
-        return '\n'.join([f"{e.json_path}: {e.message}" for e in errors])
+        return "\n".join([f"{e.json_path}: {e.message}" for e in errors])

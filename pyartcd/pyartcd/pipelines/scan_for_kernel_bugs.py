@@ -90,14 +90,14 @@ class ScanForKernelBugsPipeline:
 @cli.command("scan-for-kernel-bugs", short_help="Scan for kernel bugs")
 @click.option(
     "--data-path",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.12",
 )
@@ -105,7 +105,7 @@ class ScanForKernelBugsPipeline:
 @click.option(
     "--tracker",
     "trackers",
-    metavar='JIRA_KEY',
+    metavar="JIRA_KEY",
     multiple=True,
     help="Find kernel bugs by the specified KMAINT tracker JIRA_KEY",
 )

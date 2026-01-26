@@ -57,18 +57,18 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         release = {
-            'apiVersion': API_VERSION,
-            'kind': KIND_RELEASE,
-            'metadata': {
-                'name': release,
-                'namespace': self.konflux_config['namespace'],
+            "apiVersion": API_VERSION,
+            "kind": KIND_RELEASE,
+            "metadata": {
+                "name": release,
+                "namespace": self.konflux_config["namespace"],
             },
-            'status': {
-                'conditions': [
+            "status": {
+                "conditions": [
                     {
-                        'type': 'Released',
-                        'status': 'True',
-                        'reason': 'Succeeded',
+                        "type": "Released",
+                        "status": "True",
+                        "reason": "Succeeded",
                     },
                 ],
             },
@@ -95,18 +95,18 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         release = {
-            'apiVersion': API_VERSION,
-            'kind': KIND_RELEASE,
-            'metadata': {
-                'name': release,
-                'namespace': self.konflux_config['namespace'],
+            "apiVersion": API_VERSION,
+            "kind": KIND_RELEASE,
+            "metadata": {
+                "name": release,
+                "namespace": self.konflux_config["namespace"],
             },
-            'status': {
-                'conditions': [
+            "status": {
+                "conditions": [
                     {
-                        'type': 'Released',
-                        'status': 'True',
-                        'reason': 'Skipped',
+                        "type": "Released",
+                        "status": "True",
+                        "reason": "Skipped",
                     },
                 ],
             },
@@ -133,18 +133,18 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         release = {
-            'apiVersion': API_VERSION,
-            'kind': KIND_RELEASE,
-            'metadata': {
-                'name': release,
-                'namespace': self.konflux_config['namespace'],
+            "apiVersion": API_VERSION,
+            "kind": KIND_RELEASE,
+            "metadata": {
+                "name": release,
+                "namespace": self.konflux_config["namespace"],
             },
-            'status': {
-                'conditions': [
+            "status": {
+                "conditions": [
                     {
-                        'type': 'Released',
-                        'status': 'False',
-                        'reason': 'Failed',
+                        "type": "Released",
+                        "status": "False",
+                        "reason": "Failed",
                     },
                 ],
             },
@@ -253,7 +253,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "kind": "Snapshot",
             "metadata": {
                 "name": created_snapshot_name,
-                "namespace": self.konflux_config['namespace'],
+                "namespace": self.konflux_config["namespace"],
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
@@ -270,27 +270,27 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         expected_release = {
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
-            'metadata': {
-                'name': 'ocp-prod-4-18-2-image-timestamp',
-                'namespace': self.konflux_config['namespace'],
-                'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
+            "metadata": {
+                "name": "ocp-prod-4-18-2-image-timestamp",
+                "namespace": self.konflux_config["namespace"],
+                "labels": {"appstudio.openshift.io/application": "openshift-4-18"},
                 "annotations": {
                     "art.redhat.com/assembly": self.runtime.assembly,
                     "art.redhat.com/env": self.release_env,
                     "art.redhat.com/kind": "image",
                 },
             },
-            'spec': {
-                'releasePlan': shipment_config.shipment.environments.prod.releasePlan,
-                'snapshot': created_snapshot_name,
-                'data': {
-                    'releaseNotes': {
-                        'type': shipment_config.shipment.data.releaseNotes.type,
-                        'live_id': shipment_config.shipment.data.releaseNotes.live_id,
-                        'synopsis': shipment_config.shipment.data.releaseNotes.synopsis,
-                        'topic': shipment_config.shipment.data.releaseNotes.topic,
-                        'description': shipment_config.shipment.data.releaseNotes.description,
-                        'solution': shipment_config.shipment.data.releaseNotes.solution,
+            "spec": {
+                "releasePlan": shipment_config.shipment.environments.prod.releasePlan,
+                "snapshot": created_snapshot_name,
+                "data": {
+                    "releaseNotes": {
+                        "type": shipment_config.shipment.data.releaseNotes.type,
+                        "live_id": shipment_config.shipment.data.releaseNotes.live_id,
+                        "synopsis": shipment_config.shipment.data.releaseNotes.synopsis,
+                        "topic": shipment_config.shipment.data.releaseNotes.topic,
+                        "description": shipment_config.shipment.data.releaseNotes.description,
+                        "solution": shipment_config.shipment.data.releaseNotes.solution,
                     },
                 },
             },
@@ -316,7 +316,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         result = await cli.run()
 
         # Verify runtime was initialized with shipment
-        self.runtime.initialize.assert_called_once_with(build_system='konflux', with_shipment=True)
+        self.runtime.initialize.assert_called_once_with(build_system="konflux", with_shipment=True)
 
         # Verify resource existence was checked
         self.konflux_client._get.assert_any_call(
@@ -412,7 +412,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "kind": "Snapshot",
             "metadata": {
                 "name": created_snapshot_name,
-                "namespace": self.konflux_config['namespace'],
+                "namespace": self.konflux_config["namespace"],
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": shipment_config.shipment.metadata.application,
@@ -429,26 +429,26 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         expected_release = {
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
-            'metadata': {
-                'name': 'ocp-stage-4-18-2-image-timestamp',
-                'namespace': self.konflux_config['namespace'],
-                'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
+            "metadata": {
+                "name": "ocp-stage-4-18-2-image-timestamp",
+                "namespace": self.konflux_config["namespace"],
+                "labels": {"appstudio.openshift.io/application": "openshift-4-18"},
                 "annotations": {
                     "art.redhat.com/assembly": self.runtime.assembly,
                     "art.redhat.com/env": "stage",
                     "art.redhat.com/kind": "image",
                 },
             },
-            'spec': {
-                'releasePlan': shipment_config.shipment.environments.stage.releasePlan,
-                'snapshot': created_snapshot_name,
-                'data': {
-                    'releaseNotes': {
-                        'type': shipment_config.shipment.data.releaseNotes.type,
-                        'synopsis': shipment_config.shipment.data.releaseNotes.synopsis,
-                        'topic': shipment_config.shipment.data.releaseNotes.topic,
-                        'description': shipment_config.shipment.data.releaseNotes.description,
-                        'solution': shipment_config.shipment.data.releaseNotes.solution,
+            "spec": {
+                "releasePlan": shipment_config.shipment.environments.stage.releasePlan,
+                "snapshot": created_snapshot_name,
+                "data": {
+                    "releaseNotes": {
+                        "type": shipment_config.shipment.data.releaseNotes.type,
+                        "synopsis": shipment_config.shipment.data.releaseNotes.synopsis,
+                        "topic": shipment_config.shipment.data.releaseNotes.topic,
+                        "description": shipment_config.shipment.data.releaseNotes.description,
+                        "solution": shipment_config.shipment.data.releaseNotes.solution,
                     },
                 },
             },
@@ -474,7 +474,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         result = await cli.run()
 
         # Verify runtime was initialized with shipment
-        self.runtime.initialize.assert_called_once_with(build_system='konflux', with_shipment=True)
+        self.runtime.initialize.assert_called_once_with(build_system="konflux", with_shipment=True)
 
         # Verify resource existence was checked
         self.konflux_client._get.assert_any_call(

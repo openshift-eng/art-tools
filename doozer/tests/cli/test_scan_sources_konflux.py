@@ -20,7 +20,7 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         """Set up test fixtures."""
         self.runtime = MagicMock(spec=Runtime)
         self.runtime.konflux_db = MagicMock()
-        self.runtime.group = 'openshift-4.20'  # Default to OCP group for tests
+        self.runtime.group = "openshift-4.20"  # Default to OCP group for tests
         self.runtime.load_disabled = False
         self.runtime.image_metas.return_value = []
         self.runtime.rpm_metas.return_value = []
@@ -29,7 +29,7 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         self.ci_kubeconfig = "/tmp/test_kubeconfig"
 
         # Mock environment variables
-        with patch.dict('os.environ', {'GITHUB_TOKEN': 'test_token'}):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "test_token"}):
             self.scanner = ConfigScanSources(
                 runtime=self.runtime,
                 ci_kubeconfig=self.ci_kubeconfig,
@@ -86,7 +86,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
             "task-buildah": "def456ghi789",  # Same SHA - up to date
         }
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
     async def test_scan_task_bundle_changes_no_attestation(self, mock_get_attestation):
         """Test handling when SLSA attestation cannot be retrieved."""
         mock_get_attestation.return_value = None
@@ -96,7 +96,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add any changes when attestation fails
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
     async def test_scan_task_bundle_changes_invalid_attestation(self, mock_get_attestation):
         """Test handling when SLSA attestation is malformed."""
         mock_get_attestation.return_value = "invalid json"
@@ -106,7 +106,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add any changes when attestation is invalid
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
     async def test_scan_task_bundle_changes_no_task_bundles(self, mock_get_attestation):
         """Test handling when no tekton-catalog task bundles are found."""
         attestation_without_task_bundles = json.dumps(
@@ -131,8 +131,8 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add any changes when no task bundles found
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
     async def test_scan_task_bundle_changes_github_fetch_fails(self, mock_get_current, mock_get_attestation):
         """Test handling when GitHub task bundle fetch fails."""
         mock_get_attestation.return_value = self.sample_attestation
@@ -143,9 +143,9 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add any changes when GitHub fetch fails
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
     async def test_scan_task_bundle_changes_not_old_enough(self, mock_get_age, mock_get_current, mock_get_attestation):
         """Test that task bundles less than 10 days old don't trigger rebuilds."""
         mock_get_attestation.return_value = self.sample_attestation
@@ -157,10 +157,10 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add any changes when task bundle is not old enough
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
+    @patch.object(ConfigScanSources, "add_image_meta_change")
+    @patch("random.randint")
     async def test_scan_task_bundle_changes_staggered_rebuild_triggers(
         self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
     ):
@@ -183,11 +183,11 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         self.assertIn("task-git-clone", rebuild_hint.reason)
         self.assertIn("35 days old", rebuild_hint.reason)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
+    @patch.object(ConfigScanSources, "add_image_meta_change")
+    @patch("random.randint")
     async def test_scan_task_bundle_changes_staggered_rebuild_skips(
         self, mock_randint, mock_add_change, mock_get_age, mock_get_current, mock_get_attestation
     ):
@@ -202,9 +202,9 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         # Should not add change when staggered rebuild condition is not met
         mock_add_change.assert_not_called()
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
     async def test_scan_task_bundle_changes_same_sha_no_rebuild(
         self, mock_get_age, mock_get_current, mock_get_attestation
     ):
@@ -224,8 +224,8 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         mock_get_age.assert_not_called()
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
     async def test_scan_task_bundle_changes_for_release_none(self, mock_get_current, mock_get_attestation):
         """Test that task bundle scanning proceeds when for_release is None."""
         # Set for_release to None
@@ -241,8 +241,8 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
             self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
         )
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
     async def test_scan_task_bundle_changes_for_release_missing(self, mock_get_current, mock_get_attestation):
         """Test that task bundle scanning proceeds when for_release is Missing."""
         # Set for_release to Missing
@@ -258,8 +258,8 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
             self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
         )
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_current_task_bundle_shas")
     async def test_scan_task_bundle_changes_for_release_true(self, mock_get_current, mock_get_attestation):
         """Test that task bundle scanning proceeds when for_release is True."""
         # for_release is already set to True in setUp, but let's be explicit
@@ -275,7 +275,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
             self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
         )
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
     async def test_scan_task_bundle_changes_for_release_false(self, mock_get_attestation):
         """Test that task bundle scanning is skipped when for_release is False."""
         # Set for_release to False
@@ -364,7 +364,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test successful fetching and parsing of task bundle SHAs."""
         # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(self.sample_yaml)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        encoded_content = base64.b64encode(yaml_content.encode("utf-8")).decode("utf-8")
 
         # Mock GitHub API response with base64-encoded content
         mock_github_response = {
@@ -391,7 +391,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
         # Verify correct URL and headers were used
         self.session.get.assert_called_once_with(
-            KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL, headers={'Authorization': 'Bearer test_token'}
+            KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL, headers={"Authorization": "Bearer test_token"}
         )
 
     async def test_get_current_task_bundle_shas_http_error(self):
@@ -412,7 +412,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         """Test handling of YAML parsing errors."""
         # Mock GitHub response with invalid base64-encoded YAML content
         invalid_yaml = "invalid: yaml: content: [unclosed"
-        encoded_content = base64.b64encode(invalid_yaml.encode('utf-8')).decode('utf-8')
+        encoded_content = base64.b64encode(invalid_yaml.encode("utf-8")).decode("utf-8")
 
         mock_github_response = {
             "name": "art-konflux-template-push.yaml",
@@ -436,7 +436,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
         # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(yaml_without_tasks)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        encoded_content = base64.b64encode(yaml_content.encode("utf-8")).decode("utf-8")
 
         # Mock GitHub API response with base64-encoded content
         mock_github_response = {
@@ -495,7 +495,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
         # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(nested_yaml)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
+        encoded_content = base64.b64encode(yaml_content.encode("utf-8")).decode("utf-8")
 
         # Mock GitHub API response with base64-encoded content
         mock_github_response = {
@@ -519,7 +519,7 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
     """Test the get_task_bundle_age_days method."""
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
+    @patch("doozerlib.cli.scan_sources_konflux.cmd_gather_async")
     async def test_get_task_bundle_age_days_success(self, mock_cmd_gather):
         """Test successful calculation of task bundle age."""
         # Mock oc image info output
@@ -529,7 +529,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
         mock_cmd_gather.return_value = (0, json.dumps(mock_image_info), "")
 
         # Mock current time to be 35 days after creation
-        with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
+        with patch("doozerlib.cli.scan_sources_konflux.datetime") as mock_datetime:
             mock_now = datetime(2024, 2, 5, 10, 0, 0, tzinfo=timezone.utc)
             mock_datetime.now.return_value = mock_now
             mock_datetime.fromisoformat = datetime.fromisoformat
@@ -543,7 +543,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
         expected_cmd = f"oc image info {expected_pullspec} -o json"
         mock_cmd_gather.assert_called_once_with(expected_cmd)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
+    @patch("doozerlib.cli.scan_sources_konflux.cmd_gather_async")
     async def test_get_task_bundle_age_days_missing_created_field(self, mock_cmd_gather):
         """Test handling when created field is missing from image info."""
         mock_image_info = {"config": {}}  # Missing 'created' field
@@ -554,7 +554,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
+    @patch("doozerlib.cli.scan_sources_konflux.cmd_gather_async")
     async def test_get_task_bundle_age_days_command_failure(self, mock_cmd_gather):
         """Test handling when oc image info command fails."""
         mock_cmd_gather.side_effect = Exception("Command failed")
@@ -563,7 +563,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
+    @patch("doozerlib.cli.scan_sources_konflux.cmd_gather_async")
     async def test_get_task_bundle_age_days_invalid_json(self, mock_cmd_gather):
         """Test handling when oc command returns invalid JSON."""
         mock_cmd_gather.return_value = (0, "invalid json", "")
@@ -572,7 +572,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
+    @patch("doozerlib.cli.scan_sources_konflux.cmd_gather_async")
     async def test_get_task_bundle_age_days_timezone_handling(self, mock_cmd_gather):
         """Test proper timezone handling in age calculation."""
         # Test with different timezone formats
@@ -586,7 +586,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
                 mock_image_info = {"config": {"created": created_time}}
                 mock_cmd_gather.return_value = (0, json.dumps(mock_image_info), "")
 
-                with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
+                with patch("doozerlib.cli.scan_sources_konflux.datetime") as mock_datetime:
                     mock_now = datetime(2024, 1, 11, 10, 0, 0, tzinfo=timezone.utc)
                     mock_datetime.now.return_value = mock_now
                     mock_datetime.fromisoformat = datetime.fromisoformat
@@ -599,10 +599,10 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 class TestTaskBundleIntegration(TestScanSourcesKonflux):
     """Integration tests for the complete task bundle scanning workflow."""
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
+    @patch.object(ConfigScanSources, "add_image_meta_change")
+    @patch("random.randint")
     async def test_full_workflow_rebuild_triggered(
         self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
     ):
@@ -642,9 +642,9 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         rebuild_hint = mock_add_change.call_args[0][1]
         self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
 
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    @patch.object(ConfigScanSources, 'add_image_meta_change')
+    @patch("doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation")
+    @patch.object(ConfigScanSources, "get_task_bundle_age_days")
+    @patch.object(ConfigScanSources, "add_image_meta_change")
     async def test_full_workflow_no_rebuild_needed(self, mock_add_change, mock_get_age, mock_get_attestation):
         """Test the complete workflow when no rebuild is needed."""
         # Setup test data with matching SHAs
@@ -663,7 +663,7 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         # Add image to changing set
         self.scanner.changing_image_names.add("test-image")
 
-        with patch('artcommonlib.util.get_konflux_data') as mock_get_attestation:
+        with patch("artcommonlib.util.get_konflux_data") as mock_get_attestation:
             await self.scanner.scan_task_bundle_changes(self.image_meta)
 
             # Should not call get_attestation when image is already changing

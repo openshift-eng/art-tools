@@ -18,10 +18,10 @@ LIMIT_BUILD_RESULTS = 100  # how many build records to fetch from DB
 
 
 class ConcernCode(Enum):
-    NEVER_BUILT = 'NEVER_BUILT'
-    LATEST_ATTEMPT_FAILED = 'LATEST_ATTEMPT_FAILED'
-    FAILING_AT_LEAST_FOR = 'FAILING_AT_LEAST_FOR'
-    LATEST_BUILD_SUCCEEDED = 'LATEST_BUILT_SUCCEEDED'
+    NEVER_BUILT = "NEVER_BUILT"
+    LATEST_ATTEMPT_FAILED = "LATEST_ATTEMPT_FAILED"
+    FAILING_AT_LEAST_FOR = "FAILING_AT_LEAST_FOR"
+    LATEST_BUILD_SUCCEEDED = "LATEST_BUILT_SUCCEEDED"
 
 
 class Concern:
@@ -74,7 +74,7 @@ class ImagesHealthPipeline:
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
         # Set group and assembly overrides
         self.group = group or self.runtime.group_config.name  # default to runtime group
-        self.assembly = assembly or 'stream'  # default to 'stream' assembly
+        self.assembly = assembly or "stream"  # default to 'stream' assembly
         self.variant = variant
 
     async def run(self):
@@ -89,11 +89,11 @@ class ImagesHealthPipeline:
                 if image_meta.config.okd is not Missing and image_meta.config.okd.mode is not Missing:
                     effective_mode = image_meta.config.okd.mode  # Override with OKD-specific mode if present
 
-                if effective_mode == 'disabled':
-                    self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
+                if effective_mode == "disabled":
+                    self.logger.info("Skipping OKD disabled image: %s", image_meta.distgit_key)
                     continue
-            elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
-                self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
+            elif image_meta.config.konflux.mode == "disabled" or image_meta.mode == "disabled":
+                self.logger.info("Skipping disabled image: %s", image_meta.distgit_key)
                 continue
             tasks.append(self.get_concerns(image_meta))
 
@@ -101,7 +101,7 @@ class ImagesHealthPipeline:
 
         # We should now have a dict of qualified_key => [concern, ...]
         if not self.concerns:
-            self.logger.info('No concerns to report!')
+            self.logger.info("No concerns to report!")
         click.echo(
             json.dumps(self.concerns, indent=4, default=lambda o: o.to_dict() if isinstance(o, Concern) else str(o))
         )
@@ -113,7 +113,7 @@ class ImagesHealthPipeline:
 
         builds = await self.query(image_meta)
         if not builds:
-            message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
+            message = f"Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days"
             self.logger.info(message)
             self.add_concern(
                 Concern(
@@ -125,7 +125,7 @@ class ImagesHealthPipeline:
             return
 
         latest_success_idx = -1
-        latest_success_bi_task_url = ''
+        latest_success_bi_task_url = ""
 
         for idx, build in enumerate(builds):
             if build.outcome == KonfluxBuildOutcome.SUCCESS:
@@ -164,7 +164,7 @@ class ImagesHealthPipeline:
             # The latest attempt was a failure, but there was a success within the last 3 attempts: skip notification
             # Note: For OKD, we always notify on first failure, so this check is skipped
             self.logger.info(
-                f'Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification.'
+                f"Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification."
             )
             return
 
@@ -195,18 +195,18 @@ class ImagesHealthPipeline:
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
 
-        self.logger.info('Querying builds for image: %s', image_meta.distgit_key)
+        self.logger.info("Querying builds for image: %s", image_meta.distgit_key)
         results = [
             build
             async for build in self.runtime.konflux_db.search_builds_by_fields(
                 start_search=self.start_search,
                 where={
-                    'name': image_meta.distgit_key,
-                    'group': self.group,
-                    'engine': 'konflux',
-                    'assembly': self.assembly,
+                    "name": image_meta.distgit_key,
+                    "group": self.group,
+                    "engine": "konflux",
+                    "assembly": self.assembly,
                 },
-                order_by='start_time',
+                order_by="start_time",
                 limit=self.limit,
             )
         ]
@@ -214,14 +214,14 @@ class ImagesHealthPipeline:
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
-@click.option('--limit', default=LIMIT_BUILD_RESULTS, help='How far back in the database to search for builds')
-@click.option('--group', required=False, help='(Optional) override the group name from the config')
-@click.option('--assembly', required=False, help='(Optional) override the runtime assembly name')
+@click.option("--limit", default=LIMIT_BUILD_RESULTS, help="How far back in the database to search for builds")
+@click.option("--group", required=False, help="(Optional) override the group name from the config")
+@click.option("--assembly", required=False, help="(Optional) override the runtime assembly name")
 @click.option(
-    '--variant',
+    "--variant",
     default=BuildVariant.OCP.value,
     type=click.Choice([v.value for v in BuildVariant]),
-    help='Build variant.',
+    help="Build variant.",
 )
 @click_coroutine
 @pass_runtime

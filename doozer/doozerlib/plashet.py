@@ -65,11 +65,11 @@ class PlashetBuilder:
         if not assembly:
             # Assemblies are disabled. We need the true latest tagged builds in the brew tag
             self._logger.info("Finding latest RPM builds in Brew tag %s...", tag)
-            builds = self._koji_api.listTagged(tag, latest=True, inherit=inherit, event=event, type='rpm')
+            builds = self._koji_api.listTagged(tag, latest=True, inherit=inherit, event=event, type="rpm")
         else:
             # Assemblies are enabled. We need all tagged builds in the brew tag then find the latest ones for the assembly.
             self._logger.info("Finding RPM builds specific to assembly %s in Brew tag %s...", assembly, tag)
-            tagged_builds = self._koji_api.listTagged(tag, latest=False, inherit=inherit, event=event, type='rpm')
+            tagged_builds = self._koji_api.listTagged(tag, latest=False, inherit=inherit, event=event, type="rpm")
             builds = find_latest_builds(tagged_builds, assembly)
         component_builds = {build["name"]: build for build in builds}
         for build in component_builds.values():  # Save to cache
@@ -98,7 +98,7 @@ class PlashetBuilder:
 
         # Honor pinned rpm nvrs pinned by "is"
         for distgit_key, rpm_meta in rpm_map.items():
-            meta_config = assembly_metadata_config(releases_config, assembly, 'rpm', distgit_key, rpm_meta.config)
+            meta_config = assembly_metadata_config(releases_config, assembly, "rpm", distgit_key, rpm_meta.config)
             nvr = meta_config["is"][f"el{el_version}"]
             if not nvr:
                 continue
@@ -210,7 +210,7 @@ class PlashetBuilder:
         ] = {}  # rpms pinned to the runtime assembly; keys are rpm component names, values are brew build dicts
 
         meta_config = assembly_metadata_config(
-            releases_config, assembly, 'image', image_meta.distgit_key, image_meta.config
+            releases_config, assembly, "image", image_meta.distgit_key, image_meta.config
         )
         # honor image member dependencies
         dep_nvrs = {

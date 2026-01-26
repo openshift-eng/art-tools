@@ -41,7 +41,7 @@ class TarballSourcesPipeline:
         try:
             await kinit()
         except ChildProcessError:
-            self.runtime.logger.error('Failed initializing Kerberos credentials')
+            self.runtime.logger.error("Failed initializing Kerberos credentials")
             raise RuntimeError
 
         advisories = self.advisories
@@ -131,7 +131,7 @@ Attaching source tarballs to be published on ftp.redhat.com as in https://projec
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

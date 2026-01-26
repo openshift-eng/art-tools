@@ -25,7 +25,7 @@ async def no_sleep(arg):
 # ART regulates the frequency of multi payloads by extracting a timestamp
 # from the name. This function makes it easier to generate these names.
 def as_multi_release_name(prefix):
-    return f'{prefix}-multi-2024-10-10-061203'
+    return f"{prefix}-multi-2024-10-10-061203"
 
 
 rgp_cli.asyncio.sleep = no_sleep
@@ -178,7 +178,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         # test when we should be tagging for GC prevention
         rt.assembly_type = AssemblyTypes.STANDARD
-        gpcli.should_receive("tag_missing_gc_tags").with_args([(43, '8-hotfix'), (44, '9-hotfix')]).once()
+        gpcli.should_receive("tag_missing_gc_tags").with_args([(43, "8-hotfix"), (44, "9-hotfix")]).once()
         build_ids = gpcli.collect_assembly_build_ids(ai)
         self.assertEqual(build_ids, {43, 44})
 
@@ -190,7 +190,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     async def test_detect_non_latest_rpms(self):
         gpcli = rgp_cli.GenPayloadCli()
-        gpcli.runtime = MagicMock(build_system='brew')
+        gpcli.runtime = MagicMock(build_system="brew")
         bbii = AsyncMock(BrewBuildRecordInspector)
         bbii.get_image_meta.return_value = Mock(ImageMetadata, is_rpm_exempt=Mock(return_value=(False, None)))
         bbii.find_non_latest_rpms.return_value = {
@@ -298,7 +298,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     async def test_detect_rhcos_issues(self):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
-        rhcos_issue = Mock(AssemblyIssue, component='rhcos')
+        rhcos_issue = Mock(AssemblyIssue, component="rhcos")
         ai = flexmock(Mock(AssemblyInspector), check_rhcos_issues=AsyncMock(return_value=[rhcos_issue]))
         rhcos_build = flexmock(
             Mock(rhcos.RHCOSBuildInspector, brew_arch="x86_64"),
@@ -424,7 +424,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("aiofiles.open")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mirror_payload_content(self, exec_mock, open_mock):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system="brew"))
         payload_entries = dict(
             rhcos=rgp_cli.PayloadEntry(
                 issues=[],
@@ -464,10 +464,10 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mirror_payload_content_mismatched_siblings(self, exec_mock, open_mock):
         """Test that mismatched siblings are not mirrored"""
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system="brew"))
 
         # Mark mismatched-image as having mismatched siblings
-        gpcli.mismatched_siblings = ['mismatched-image']
+        gpcli.mismatched_siblings = ["mismatched-image"]
 
         payload_entries = dict(
             good_image=rgp_cli.PayloadEntry(
@@ -589,7 +589,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
 
         # Mark 'mismatched-image' as having mismatched siblings
-        gpcli.mismatched_siblings = ['mismatched-image']
+        gpcli.mismatched_siblings = ["mismatched-image"]
 
         payload_entries = dict(
             rhcos=rgp_cli.PayloadEntry(
@@ -655,7 +655,7 @@ apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
   annotations:
-    release.openshift.io/build-url: {os.getenv('BUILD_URL', "''")}
+    release.openshift.io/build-url: {os.getenv("BUILD_URL", "''")}
     release.openshift.io/runtime-brew-event: '999999'
   name: release-s390x
   namespace: ocp-s390x
@@ -797,7 +797,7 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
+        os.environ["XDG_RUNTIME_DIR"] = "fake"
         runtime = MagicMock(uuid="uuid")
         gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
@@ -847,7 +847,7 @@ spec:
             "some_pullspec",
         )
         gpcli.create_multi_release_manifest_list.assert_awaited_once_with(
-            {"arch": "quay.io/org/repo:spam-arch"}, 'isname', 'quay.io/org/repo:spam'
+            {"arch": "quay.io/org/repo:spam-arch"}, "isname", "quay.io/org/repo:spam"
         )
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
@@ -857,7 +857,7 @@ spec:
     async def test_create_multi_release_manifest_list(
         self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
     ):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
+        os.environ["XDG_RUNTIME_DIR"] = "fake"
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
         exec_mock.return_value = None  # do not actually execute command
@@ -904,31 +904,31 @@ manifests:
                         tags=[
                             dict(
                                 name=as_multi_release_name("spam0-nightly"),
-                                annotations={'release.openshift.io/phase': 'Accepted'},
+                                annotations={"release.openshift.io/phase": "Accepted"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam1-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam2-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam3-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam4-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam5-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam6-nightly"),
-                                annotations={'release.openshift.io/phase': 'Accepted'},
+                                annotations={"release.openshift.io/phase": "Accepted"},
                             ),
                             dict(
                                 name="tickle",  # non-nightly tag
@@ -954,10 +954,10 @@ manifests:
         self.assertTrue(contains(name=as_multi_release_name("spam0-nightly")), "older 2nd accepted not pruned")
         self.assertTrue(contains(name="tickle"), "non-nightly tag should be preserved")
 
-        new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
-        self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
-        self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
-        self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+        new_tag_annotations = istream_apiobj.model.spec.tags[-1]["annotations"]
+        self.assertEqual("false", new_tag_annotations["release.openshift.io/rewrite"])
+        self.assertEqual(os.getenv("BUILD_URL", ""), new_tag_annotations["release.openshift.io/build-url"])
+        self.assertIn("release.openshift.io/runtime-brew-event", new_tag_annotations)
 
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
@@ -979,47 +979,47 @@ manifests:
                         tags=[
                             dict(
                                 name=as_multi_release_name("spam-1-nightly"),
-                                annotations={'release.openshift.io/phase': 'Accepted'},
+                                annotations={"release.openshift.io/phase": "Accepted"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam0-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam1-nightly"),
-                                annotations={'release.openshift.io/phase': 'Accepted'},
+                                annotations={"release.openshift.io/phase": "Accepted"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam2-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam3-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam4-nightly"),
-                                annotations={'release.openshift.io/phase': 'Accepted'},
+                                annotations={"release.openshift.io/phase": "Accepted"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam5-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam6-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam7-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam8-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                             dict(
                                 name=as_multi_release_name("spam9-nightly"),
-                                annotations={'release.openshift.io/phase': 'Rejected'},
+                                annotations={"release.openshift.io/phase": "Rejected"},
                             ),
                         ]
                     ),
@@ -1049,7 +1049,7 @@ manifests:
             contains(name=as_multi_release_name("spam0-nightly")), "oldest rejected release should have been pruned"
         )
 
-        new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
-        self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
-        self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
-        self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+        new_tag_annotations = istream_apiobj.model.spec.tags[-1]["annotations"]
+        self.assertEqual("false", new_tag_annotations["release.openshift.io/rewrite"])
+        self.assertEqual(os.getenv("BUILD_URL", ""), new_tag_annotations["release.openshift.io/build-url"])
+        self.assertIn("release.openshift.io/runtime-brew-event", new_tag_annotations)

@@ -7,7 +7,7 @@ from artcommonlib.metadata import CONFIG_MODES
 from future.utils import bytes_to_native_str
 
 VALID_UPDATES = {
-    'mode': CONFIG_MODES,
+    "mode": CONFIG_MODES,
 }
 
 
@@ -20,14 +20,14 @@ class MetaDataConfig(object):
     def __init__(self, runtime):
         self.runtime = runtime
         if self.runtime.remove_tmp_working_dir:
-            print('config:* options require a non-temporary working space. Must run with --working-dir')
+            print("config:* options require a non-temporary working space. Must run with --working-dir")
             sys.exit(1)
 
     def update_meta(self, meta, k, v):
         """
         Convenience function for setting meta keys
         """
-        self.runtime.logger.info('{}: [{}] -> {}'.format(meta.config_filename, k, v))
+        self.runtime.logger.info("{}: [{}] -> {}".format(meta.config_filename, k, v))
         meta.config[k] = v
         meta.save()
 
@@ -37,7 +37,7 @@ class MetaDataConfig(object):
         """
 
         self.runtime.logger.info(
-            '{}: Delete [{}]'.format(
+            "{}: Delete [{}]".format(
                 meta.config_filename,
                 k,
             )
@@ -52,11 +52,11 @@ class MetaDataConfig(object):
         Right now only [mode] is valid, but that may change
         """
         if key not in VALID_UPDATES:
-            raise ValueError('{} is not a valid update key. See --help'.format(key))
+            raise ValueError("{} is not a valid update key. See --help".format(key))
 
         if VALID_UPDATES[key]:
             if val not in VALID_UPDATES[key]:
-                msg = '{} is not a valid value for {}. Use one of: {}'.format(val, key, ','.join(VALID_UPDATES[key]))
+                msg = "{} is not a valid value for {}. Use one of: {}".format(val, key, ",".join(VALID_UPDATES[key]))
                 raise ValueError(msg)
 
         for img in self.runtime.image_metas():
@@ -80,7 +80,7 @@ class MetaDataConfig(object):
                     entry = meta.config.get(key, None)
                 else:
                     entry = meta.config.primitive()
-                output[meta.config_filename.replace('.yml', '')] = entry
+                output[meta.config_filename.replace(".yml", "")] = entry
 
         _collect_data(self.runtime.image_metas(), data["images"])
         _collect_data(self.runtime.rpm_metas(), data["rpms"])
@@ -92,18 +92,18 @@ class MetaDataConfig(object):
         def _do_print(kind, output):
             if not output:
                 return
-            print('')
-            print('********* {} *********'.format(kind))
+            print("")
+            print("********* {} *********".format(kind))
             for name, entry in output.items():
                 if name_only:
                     print(entry)
                 else:
                     print("*****{}.yml*****".format(name))
                     print(yaml.safe_dump(entry, default_flow_style=False))
-                    print('')
+                    print("")
 
-        _do_print("Images", data['images'])
-        _do_print(" RPMS ", data['rpms'])
+        _do_print("Images", data["images"])
+        _do_print(" RPMS ", data["rpms"])
 
     def config_gen_csv(self, keys, as_type=None, output=None):
         """
@@ -111,11 +111,11 @@ class MetaDataConfig(object):
         """
 
         if keys is None:
-            print('No --keys specified, please make sure you have at least one key to generate')
+            print("No --keys specified, please make sure you have at least one key to generate")
             return
 
         # split --keys=a,b,c,d to list [a,b,c,d]
-        keys = [c.strip() for c in keys.split(',')]
+        keys = [c.strip() for c in keys.split(",")]
 
         image_list = None
         if as_type == "image" and not self.runtime.rpms:
@@ -125,8 +125,8 @@ class MetaDataConfig(object):
 
         if image_list is None:
             print(
-                'Not correct --type specified (--type image or --type rpm). '
-                'Or not consistent with global options: --images/-i and --rpms/-r'
+                "Not correct --type specified (--type image or --type rpm). "
+                "Or not consistent with global options: --images/-i and --rpms/-r"
             )
             return
 
@@ -146,17 +146,17 @@ class MetaDataConfig(object):
         if output is None:
             writer = csv.writer(
                 sys.stdout,
-                delimiter=bytes_to_native_str(b','),
+                delimiter=bytes_to_native_str(b","),
                 quotechar=bytes_to_native_str(b'"'),
                 quoting=csv.QUOTE_MINIMAL,
             )
             _write_rows(writer)
             return
 
-        with io.open(output, mode='w', encoding="utf-8") as csv_file:
+        with io.open(output, mode="w", encoding="utf-8") as csv_file:
             writer = csv.writer(
                 csv_file,
-                delimiter=bytes_to_native_str(b','),
+                delimiter=bytes_to_native_str(b","),
                 quotechar=bytes_to_native_str(b'"'),
                 quoting=csv.QUOTE_MINIMAL,
             )

@@ -9,11 +9,11 @@ from artcommonlib import exectools
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
 
-COVSCAN_ALL_JS_FILENAME = 'all_results.js'
-COVSCAN_DIFF_JS_FILENAME = 'diff_results.js'
-COVSCAN_ALL_HTML_FILENAME = 'all_results.html'
-COVSCAN_DIFF_HTML_FILENAME = 'diff_results.html'
-COVSCAN_WAIVED_FILENAME = 'waived.flag'
+COVSCAN_ALL_JS_FILENAME = "all_results.js"
+COVSCAN_DIFF_JS_FILENAME = "diff_results.js"
+COVSCAN_ALL_HTML_FILENAME = "all_results.html"
+COVSCAN_DIFF_HTML_FILENAME = "diff_results.html"
+COVSCAN_WAIVED_FILENAME = "waived.flag"
 
 
 class CoverityContext(object):
@@ -22,13 +22,13 @@ class CoverityContext(object):
         image,
         dg_commit_hash: str,
         result_archive: str,
-        repo_type: str = 'unsigned',
+        repo_type: str = "unsigned",
         local_repo_rhel_7: List[str] = [],
         local_repo_rhel_8: List[str] = [],
         local_repo_rhel_9: List[str] = [],
         force_analysis: bool = False,
         ignore_waived: bool = False,
-        https_proxy: str = '',
+        https_proxy: str = "",
         podman_sudo: bool = False,
         podman_tmpdir: Optional[str] = None,
     ):
@@ -50,7 +50,7 @@ class CoverityContext(object):
         self.ignore_waived = ignore_waived
         self.https_proxy = https_proxy
         self.podman_sudo = podman_sudo
-        self.podman_cmd = 'sudo podman' if self.podman_sudo else 'podman'
+        self.podman_cmd = "sudo podman" if self.podman_sudo else "podman"
 
         # Podman is going to create a significant amount of container image data
         # Make sure there is plenty of space. Override TMPDIR, because podman
@@ -60,11 +60,11 @@ class CoverityContext(object):
             podman_tmpdir_path = pathlib.Path(podman_tmpdir)
             podman_tmpdir_path.mkdir(exist_ok=True)
             self.podman_env = {
-                'TMPDIR': str(podman_tmpdir_path.absolute()),
+                "TMPDIR": str(podman_tmpdir_path.absolute()),
             }
 
         # Runtime coverity scanning output directory; each stage will have an entry beneath this.
-        self.cov_root_path: pathlib.Path = image.distgit_repo().dg_path.joinpath('cov')
+        self.cov_root_path: pathlib.Path = image.distgit_repo().dg_path.joinpath("cov")
         self.cov_root_path.mkdir(exist_ok=True, parents=True)
         self.dg_path = image.distgit_repo().dg_path
 
@@ -79,7 +79,7 @@ class CoverityContext(object):
                 # Check for waived hash for in the commit history. The second check is for legacy style of waiver where we only checked
                 # the first Dockerfile stage.
                 cov_root_path = self.dg_archive_path.joinpath(old_commit)
-                if cov_root_path.joinpath('1', COVSCAN_WAIVED_FILENAME).exists() or cov_root_path.joinpath(
+                if cov_root_path.joinpath("1", COVSCAN_WAIVED_FILENAME).exists() or cov_root_path.joinpath(
                     COVSCAN_WAIVED_FILENAME
                 ):
                     return cov_root_path
@@ -91,7 +91,7 @@ class CoverityContext(object):
         if not nearest_waived_cov_root_path:
             return None
 
-        if nearest_waived_cov_root_path.joinpath('1').exists():
+        if nearest_waived_cov_root_path.joinpath("1").exists():
             # If this is the new style where we scan every stage
             stage_cov_path = nearest_waived_cov_root_path.joinpath(str(stage_number))
             if stage_cov_path.exists():
@@ -108,7 +108,7 @@ class CoverityContext(object):
         Where coverity output should go for a given stage within the context
         of the coverity runner container.
         """
-        path = pathlib.Path('/cov').joinpath(str(stage_number))
+        path = pathlib.Path("/cov").joinpath(str(stage_number))
         if filename:
             path = path.joinpath(filename)
         return path
@@ -133,7 +133,7 @@ class CoverityContext(object):
         A path to a flag file in the archive directory. If it exists for a given commit hash, then
         we successfully completed scanning on the commit.
         """
-        return self.archive_commit_results_path.joinpath('done.flag')
+        return self.archive_commit_results_path.joinpath("done.flag")
 
     def get_stage_results_path(self, stage_number):
         """
@@ -165,8 +165,8 @@ class CoverityContext(object):
         the repos.
         :returns: (string to inject into parent derivative Dockerfile, mounts to use when building that dockerfile)
         """
-        make_image_repo_files = ''
-        vol_mount_arg = ''
+        make_image_repo_files = ""
+        vol_mount_arg = ""
         if self.local_repo_rhel_7:
             for idx, lr in enumerate(self.local_repo_rhel_7):
                 make_image_repo_files += f"""
@@ -179,7 +179,7 @@ RUN if cat /etc/redhat-release | grep "release 7"; then echo '[covscan_local_{id
     echo enabled_metadata=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo && \
     echo priority=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo; fi
 """
-                vol_mount_arg += f' -v {lr}:/covscan_local_{idx}_rhel_7:z'
+                vol_mount_arg += f" -v {lr}:/covscan_local_{idx}_rhel_7:z"
         else:
             make_image_repo_files += 'RUN if cat /etc/redhat-release | grep "release 7"; then curl -k https://cov01.lab.eng.brq2.redhat.com/coverity/install/covscan/covscan-rhel-7.repo --output /etc/yum.repos.d/covscan.repo; fi\n'
 
@@ -195,7 +195,7 @@ RUN if cat /etc/redhat-release | grep "release 8"; then echo '[covscan_local_{id
     echo enabled_metadata=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo && \
     echo priority=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo; fi
 """
-                vol_mount_arg += f' -v {lr}:/covscan_local_{idx}_rhel_8:z'
+                vol_mount_arg += f" -v {lr}:/covscan_local_{idx}_rhel_8:z"
         else:
             make_image_repo_files += 'RUN if cat /etc/redhat-release | grep "release 8"; then curl -k https://copr.devel.redhat.com/coprs/kdudka/covscan/repo/epel-8/kdudka-covscan-epel-8.repo --output /etc/yum.repos.d/covscan.repo; fi\n'
             make_image_repo_files += 'RUN if cat /etc/redhat-release | grep "release 8"; then curl -k https://copr.devel.redhat.com/coprs/kdudka/covscan-testing/repo/epel-8/kdudka-covscan-testing-epel-8.repo --output /etc/yum.repos.d/covscan-testing.repo; fi\n'
@@ -212,7 +212,7 @@ RUN if cat /etc/redhat-release | grep "release 9"; then echo '[covscan_local_{id
     echo enabled_metadata=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo && \
     echo priority=1 >> /etc/yum.repos.d/covscan_local_{idx}.repo; fi
 """
-                vol_mount_arg += f' -v {lr}:/covscan_local_{idx}_rhel_9:z'
+                vol_mount_arg += f" -v {lr}:/covscan_local_{idx}_rhel_9:z"
         else:
             make_image_repo_files += 'RUN if cat /etc/redhat-release | grep "release 9"; then curl -k https://copr.devel.redhat.com/coprs/kdudka/covscan/repo/epel-9/kdudka-covscan-epel-9.repo --output /etc/yum.repos.d/covscan.repo; fi\n'
             make_image_repo_files += 'RUN if cat /etc/redhat-release | grep "release 9"; then curl -k https://copr.devel.redhat.com/coprs/kdudka/covscan-testing/repo/epel-9/kdudka-covscan-testing-epel-9.repo --output /etc/yum.repos.d/covscan-testing.repo; fi\n'
@@ -222,7 +222,7 @@ RUN if cat /etc/redhat-release | grep "release 9"; then echo '[covscan_local_{id
         """
         HTTPS proxy can be specified as build argument and passed to podman build command
         """
-        return f"--build-arg HTTPS_PROXY='{self.https_proxy}'" if self.https_proxy else ''
+        return f"--build-arg HTTPS_PROXY='{self.https_proxy}'" if self.https_proxy else ""
 
 
 def _covscan_prepare_parent(cc: CoverityContext, parent_image_name, parent_tag) -> bool:
@@ -236,18 +236,18 @@ def _covscan_prepare_parent(cc: CoverityContext, parent_image_name, parent_tag) 
     :return: Returns True if the image is built successfully
     """
     dg_path = cc.dg_path
-    rc, _, _ = exectools.cmd_gather(f'{cc.podman_cmd} inspect {parent_tag}', set_env=cc.podman_env)
+    rc, _, _ = exectools.cmd_gather(f"{cc.podman_cmd} inspect {parent_tag}", set_env=cc.podman_env)
     if rc != 0:
         cc.logger.info(
-            f'Creating parent image derivative with covscan tools installed as {parent_tag} for parent {parent_image_name}'
+            f"Creating parent image derivative with covscan tools installed as {parent_tag} for parent {parent_image_name}"
         )
-        df_parent_path = dg_path.joinpath(f'Dockerfile.{parent_tag}')
+        df_parent_path = dg_path.joinpath(f"Dockerfile.{parent_tag}")
 
         repo_injection_lines, mount_args = cc.parent_repo_injection_info()
 
-        rhel_repo_gen_sh = '_rhel_repo_gen.sh'
-        with dg_path.joinpath(rhel_repo_gen_sh).open(mode='w') as f:
-            f.write('''
+        rhel_repo_gen_sh = "_rhel_repo_gen.sh"
+        with dg_path.joinpath(rhel_repo_gen_sh).open(mode="w") as f:
+            f.write("""
 #!/bin/sh
 set -o xtrace
 if cat /etc/redhat-release | grep "release 9"; then
@@ -342,14 +342,14 @@ EOF
     # Install Python 3.6
     yum -y install rh-python36
 fi
-''')
+""")
 
-        with df_parent_path.open(mode='w+', encoding='utf-8') as df_parent_out:
+        with df_parent_path.open(mode="w+", encoding="utf-8") as df_parent_out:
             parent_image_url = parent_image_name
-            if 'redhat.registry' not in parent_image_name:
+            if "redhat.registry" not in parent_image_name:
                 parent_image_url = cc.runtime.resolve_brew_image_url(parent_image_name)
 
-            df_parent_out.write(f'''
+            df_parent_out.write(f"""
 FROM {parent_image_url}
 LABEL DOOZER_COVSCAN_PARENT={cc.runtime.group_config.name}
 USER 0
@@ -376,27 +376,27 @@ ADD {rhel_repo_gen_sh} .
 RUN chmod +x {rhel_repo_gen_sh} && ./{rhel_repo_gen_sh}
 
 RUN yum install -y cov-sa csmock csmock-plugin-coverity csdiff
-''')
-            df_parent_out.write('ENV PATH=/opt/coverity/bin:${PATH}\n')  # Ensure coverity is in the path
+""")
+            df_parent_out.write("ENV PATH=/opt/coverity/bin:${PATH}\n")  # Ensure coverity is in the path
 
         # This will have prepared a parent image we can use during the actual covscan Dockerfile build
         rc, stdout, stderr = exectools.cmd_gather(
-            f'{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}',
+            f"{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}",
             set_env=cc.podman_env,
         )
-        cc.logger.info(f'''Output from covscan build for {cc.image.distgit_key}
+        cc.logger.info(f"""Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
-''')
+""")
         if rc != 0:
             cc.logger.error(
-                f'Error preparing builder image derivative {parent_tag} from {parent_image_name} with {str(df_parent_path)}'
+                f"Error preparing builder image derivative {parent_tag} from {parent_image_name} with {str(df_parent_path)}"
             )
             # TODO: log this as a record and make sure the pipeline warns artist
             return False
 
     else:
-        cc.logger.info(f'Parent image already exists with covscan tools {parent_tag} for {parent_image_name}')
+        cc.logger.info(f"Parent image already exists with covscan tools {parent_tag} for {parent_image_name}")
 
     return True
 
@@ -404,15 +404,15 @@ stderr: {stderr}
 def run_covscan(cc: CoverityContext) -> bool:
     dg_path = cc.dg_path
     with Dir(dg_path):
-        dockerfile_path = dg_path.joinpath('Dockerfile')
+        dockerfile_path = dg_path.joinpath("Dockerfile")
         if not dockerfile_path.exists():
-            cc.logger.error('Dockerfile does not exist in distgit; not rebased yet?')
+            cc.logger.error("Dockerfile does not exist in distgit; not rebased yet?")
             return False
 
         dfp = DockerfileParser(str(dockerfile_path))
 
         if cc.are_results_done():
-            cc.logger.info(f'Scan results already exist for {cc.dg_commit_hash}; skipping scan')
+            cc.logger.info(f"Scan results already exist for {cc.dg_commit_hash}; skipping scan")
             # Even if it is complete, write a record for Jenkins so that results can be sent to prodsec.
             for i in range(len(dfp.parent_images)):
                 records_results(cc, stage_number=i + 1, waived_cov_path_root=None, write_only=True)
@@ -420,11 +420,11 @@ def run_covscan(cc: CoverityContext) -> bool:
 
         def compute_parent_tag(parent_image_name):
             parent_sig = hashlib.md5(parent_image_name.encode("utf-8")).hexdigest()
-            return f'parent-{parent_sig}'
+            return f"parent-{parent_sig}"
 
-        covscan_df = dg_path.joinpath('Dockerfile.covscan')
+        covscan_df = dg_path.joinpath("Dockerfile.covscan")
 
-        with covscan_df.open(mode='w+') as df_out:
+        with covscan_df.open(mode="w+") as df_out:
             df_line = 0
             stage_number = 0
             for entry in dfp.structure:
@@ -443,8 +443,8 @@ def run_covscan(cc: CoverityContext) -> bool:
 
                     container_stage_cov_dir = str(cc.container_stage_cov_path(stage_number))
 
-                    analysis_script_name = f'_gen_{cc.image.image_name_short}_stage_{stage_number}_analysis.sh'
-                    with open(dg_path.joinpath(analysis_script_name), mode='w+', encoding='utf-8') as sh:
+                    analysis_script_name = f"_gen_{cc.image.image_name_short}_stage_{stage_number}_analysis.sh"
+                    with open(dg_path.joinpath(analysis_script_name), mode="w+", encoding="utf-8") as sh:
                         sh.write(f'''
 #!/bin/sh
 set -o xtrace
@@ -487,31 +487,31 @@ else
     echo "No units have been emitted for analysis by this stage; skipping analysis"
 fi
 ''')
-                    df_out.write(f'''
+                    df_out.write(f"""
 ADD {analysis_script_name} /
 RUN chmod +x /{analysis_script_name}
 # Finally, run the analysis step script.
 # Route stderr to stdout so everything is in one stream; otherwise, it is hard to correlate a command with its stderr.
 RUN /{analysis_script_name} 2>&1
-''')
+""")
 
                     # Before running cov-analyze, make sure that all_js doesn't exist (i.e. we haven't already run it
                     # in this workspace AND summary.txt exist (i.e. at least one item in this stage emitted results).
                     if cc.podman_sudo:  # no need to chown if running as a rootless container
-                        df_out.write(f'''
+                        df_out.write(f"""
 # Dockerfile steps run as root; chang permissions back to doozer user before leaving stage
 RUN chown -R {os.getuid()}:{os.getgid()} {container_stage_cov_dir}
-''')
+""")
 
                 df_line += 1
-                content = entry['content']
-                instruction = entry['instruction'].upper()
+                content = entry["content"]
+                instruction = entry["instruction"].upper()
 
-                if instruction == 'USER':
+                if instruction == "USER":
                     # Stay as root
                     continue
 
-                if instruction == 'FROM':
+                if instruction == "FROM":
                     stage_number += 1
 
                     if stage_number > 1:
@@ -525,49 +525,49 @@ RUN chown -R {os.getuid()}:{os.getgid()} {container_stage_cov_dir}
                         return False
 
                     image_name_components[1] = parent_tag
-                    df_out.write(' '.join(image_name_components) + '\n')
+                    df_out.write(" ".join(image_name_components) + "\n")
                     # Label these images so we can find a delete them later
-                    df_out.write(f'LABEL DOOZER_COVSCAN_RUNNER={cc.runtime.group_config.name}\n')
-                    df_out.write(f'LABEL DOOZER_COVSCAN_COMPONENT={cc.image.distgit_key}\n')
+                    df_out.write(f"LABEL DOOZER_COVSCAN_RUNNER={cc.runtime.group_config.name}\n")
+                    df_out.write(f"LABEL DOOZER_COVSCAN_COMPONENT={cc.image.distgit_key}\n")
                     df_out.write(
-                        'ENTRYPOINT []\n'
+                        "ENTRYPOINT []\n"
                     )  # Ensure all invocations use /bin/sh -c, the default docker entrypoint
-                    df_out.write('USER 0\n')  # Just make sure all images are consistent
+                    df_out.write("USER 0\n")  # Just make sure all images are consistent
 
                     # Each stage will have its own cov output directory
-                    df_out.write(f'''
+                    df_out.write(f"""
 RUN mkdir -p {cc.container_stage_cov_path(stage_number)}
 # If we are reusing a workspace, coverity cannot pick up where it left off; clear anything already emitted
 RUN rm -rf {cc.container_stage_cov_path(stage_number)}/emit
-''')
+""")
 
                     # For each new stage, we also need to make sure we have the appropriate repos enabled for this image
-                    df_out.write(f'''
+                    df_out.write(f"""
 # Ensure that the build process can access the same RPMs that the build can during a brew build
 RUN curl {cc.image.cgit_file_url(".oit/" + "art-" + cc.repo_type + ".repo")} --output /etc/yum.repos.d/oit.repo 2>&1
-''')
+""")
                     continue
 
-                if instruction in ('ENTRYPOINT', 'CMD'):
-                    df_out.write(f'# Disabling: {content}')
+                if instruction in ("ENTRYPOINT", "CMD"):
+                    df_out.write(f"# Disabling: {content}")
                     continue
 
-                if instruction == 'RUN':
+                if instruction == "RUN":
                     container_stage_cov_dir = str(cc.container_stage_cov_path(stage_number))
 
                     # For RUN commands, we need to execute the command under the watchful eye of coverity
                     # tools. Create a batch file that will wrap the command
                     command_to_run = content.strip()[4:]  # Remove 'RUN '
-                    temp_script_name = f'_gen_{cc.image.image_name_short}_stage_{stage_number}_line_{df_line}.sh'
-                    with open(dg_path.joinpath(temp_script_name), mode='w+', encoding='utf-8') as sh:
-                        sh.write(f'''
+                    temp_script_name = f"_gen_{cc.image.image_name_short}_stage_{stage_number}_line_{df_line}.sh"
+                    with open(dg_path.joinpath(temp_script_name), mode="w+", encoding="utf-8") as sh:
+                        sh.write(f"""
 #!/bin/sh
 set -o xtrace
 set -eo pipefail
 echo "Running build as hostname: $(hostname)"
 {command_to_run}
-''')
-                    df_out.write(f'''
+""")
+                    df_out.write(f"""
 ADD {temp_script_name} .
 RUN chmod +x {temp_script_name}
 # Finally, run the script while coverity is watching. If there is already a summary file, assume we have already run
@@ -575,34 +575,34 @@ RUN chmod +x {temp_script_name}
 # The hostname changes with each run, so reset-host-name before cov-build.
 # Route stderr to stdout so everything is in one stream; otherwise, it is hard to tell which command failed.
 RUN cov-manage-emit --dir={container_stage_cov_dir} reset-host-name; timeout 3h cov-build --dir={container_stage_cov_dir} ./{temp_script_name} 2>&1
-''')
+""")
                 else:  # e.g. COPY, ENV, WORKDIR...
                     # Just pass it straight through to the covscan Dockerfile
-                    df_out.write(f'{content}\n')
+                    df_out.write(f"{content}\n")
 
             append_analysis(stage_number)
 
         # The dockerfile which will run the coverity builds and analysis for each stage has been created.
         # Now, run the build (and execute those steps). The output will be to <cov_path>/<stage_number>
-        run_tag = f'{cc.image.image_name_short}_{cc.runtime.group_config.name}'
+        run_tag = f"{cc.image.image_name_short}_{cc.runtime.group_config.name}"
         rc, stdout, stderr = exectools.cmd_gather(
-            f'{cc.podman_cmd} build {cc.build_args()} -v {str(cc.cov_root_path)}:/cov:z -v {str(dg_path)}:/covscan-src:z -t {run_tag} -f {str(covscan_df)} {str(dg_path)}',
+            f"{cc.podman_cmd} build {cc.build_args()} -v {str(cc.cov_root_path)}:/cov:z -v {str(dg_path)}:/covscan-src:z -t {run_tag} -f {str(covscan_df)} {str(dg_path)}",
             set_env=cc.podman_env,
         )
-        cc.logger.info(f'''Output from covscan build for {cc.image.distgit_key}
+        cc.logger.info(f"""Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
 
-''')
+""")
 
-        _, cleanup_out, cleanup_err = exectools.cmd_gather(f'{cc.podman_cmd} rmi -f {run_tag}', set_env=cc.podman_env)
-        cc.logger.info(f'''Output from image clean up {cc.image.distgit_key}
+        _, cleanup_out, cleanup_err = exectools.cmd_gather(f"{cc.podman_cmd} rmi -f {run_tag}", set_env=cc.podman_env)
+        cc.logger.info(f"""Output from image clean up {cc.image.distgit_key}
 stdout: {cleanup_out}
 stderr: {cleanup_err}
-''')
+""")
 
         if rc != 0:
-            cc.logger.error(f'Error running covscan build for {cc.image.distgit_key} ({str(covscan_df)})')
+            cc.logger.error(f"Error running covscan build for {cc.image.distgit_key} ({str(covscan_df)})")
             # TODO: log this as a record and make sure the pipeline warns artist
             return False
 
@@ -624,13 +624,13 @@ def records_results(cc: CoverityContext, stage_number, waived_cov_path_root=None
 
     def write_record():
         owners = ",".join(cc.image.config.owners or [])
-        all_json = json.loads(dest_all_js_path.read_text(encoding='utf-8'))
-        diff_json = json.loads(dest_diff_js_path.read_text(encoding='utf-8'))
-        diff_count = len(diff_json.get('issues', []))
-        all_count = len(all_json.get('issues', []))
+        all_json = json.loads(dest_all_js_path.read_text(encoding="utf-8"))
+        diff_json = json.loads(dest_diff_js_path.read_text(encoding="utf-8"))
+        diff_count = len(diff_json.get("issues", []))
+        all_count = len(all_json.get("issues", []))
         host_stage_waived_flag_path = cc.get_stage_results_waive_path(stage_number)
         cc.image.runtime.record_logger.add_record(
-            'covscan',
+            "covscan",
             distgit=cc.image.qualified_name,
             distgit_key=cc.image.distgit_key,
             commit_results_path=str(dest_result_path),
@@ -664,47 +664,47 @@ def records_results(cc: CoverityContext, stage_number, waived_cov_path_root=None
         # No results for this stage; nothing to report
         return
 
-    source_all_js = source_all_js_path.read_text(encoding='utf-8')
+    source_all_js = source_all_js_path.read_text(encoding="utf-8")
     if not source_all_js.strip():
         return
 
-    dest_all_js_path.write_text(source_all_js, encoding='utf-8')
+    dest_all_js_path.write_text(source_all_js, encoding="utf-8")
 
-    host_stage_output_path = host_stage_cov_path.joinpath('output')
-    source_summary_path = host_stage_output_path.joinpath('summary.txt')
+    host_stage_output_path = host_stage_cov_path.joinpath("output")
+    source_summary_path = host_stage_output_path.joinpath("summary.txt")
     if source_summary_path.exists():
-        dest_summary_path = dest_result_path.joinpath('summary.txt')
+        dest_summary_path = dest_result_path.joinpath("summary.txt")
         # The only reason there would not be a summary.txt is if we are testing with fake data.
         # If we find it, copy it into the results directory.
-        dest_summary_path.write_text(source_summary_path.read_text(encoding='utf-8'), encoding='utf-8')
+        dest_summary_path.write_text(source_summary_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    source_buildlog_path = host_stage_cov_path.joinpath('build-log.txt')
+    source_buildlog_path = host_stage_cov_path.joinpath("build-log.txt")
     if source_buildlog_path.exists():
-        dest_buildlog_path = dest_result_path.joinpath('build-log.txt')
+        dest_buildlog_path = dest_result_path.joinpath("build-log.txt")
         # The only reason there would not be a build-log.txt is if we are testing with fake data.
         # If we find it, copy it into the results directory.
-        dest_buildlog_path.write_text(source_buildlog_path.read_text(encoding='utf-8'), encoding='utf-8')
+        dest_buildlog_path.write_text(source_buildlog_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     dest_diff_js_path = dest_result_path.joinpath(COVSCAN_DIFF_JS_FILENAME)
     waived_stage_cov_path = cc.get_nearest_waived_cov_path(waived_cov_path_root, stage_number)
 
     if not waived_stage_cov_path or not waived_stage_cov_path.joinpath(COVSCAN_ALL_JS_FILENAME).exists():
         # No previous commit results to compare against; diff will be same as all
-        dest_diff_js_path.write_text(source_all_js, encoding='utf-8')
+        dest_diff_js_path.write_text(source_all_js, encoding="utf-8")
     else:
         waived_all_results_js_path = waived_stage_cov_path.joinpath(COVSCAN_ALL_JS_FILENAME)
-        diff_results_js, _ = exectools.cmd_assert(f'csdiff {str(source_all_js_path)} {str(waived_all_results_js_path)}')
-        dest_diff_js_path.write_text(diff_results_js, encoding='utf-8')
+        diff_results_js, _ = exectools.cmd_assert(f"csdiff {str(source_all_js_path)} {str(waived_all_results_js_path)}")
+        dest_diff_js_path.write_text(diff_results_js, encoding="utf-8")
 
     for entry in ((source_all_js_path, dest_all_results_html_path), (dest_diff_js_path, dest_diff_results_html_path)):
         js_path, html_out_path = entry
-        rc, html, stderr = exectools.cmd_gather(f'cshtml {str(js_path)}')
+        rc, html, stderr = exectools.cmd_gather(f"cshtml {str(js_path)}")
         if rc != 0:
             # Rarely, cshtml just outputs empty html and rc==1; just ignore it.
             html = "<html>Error generating HTML report.</html>"
-            cc.logger.warning(f'Error generating HTML report for {str(js_path)}: {stderr}')
+            cc.logger.warning(f"Error generating HTML report for {str(js_path)}: {stderr}")
             pass
-        html_out_path.write_text(html, encoding='utf-8')
+        html_out_path.write_text(html, encoding="utf-8")
 
     write_record()
     # The output directory may be multiple gigabytes for each phase. Remove it

@@ -246,5 +246,5 @@ class TestPlashetBuilder(unittest.TestCase):
         assembly_rhcos_config.assert_called_once()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

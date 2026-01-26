@@ -43,19 +43,19 @@ image_build_metrics|elapsed_wait_minutes=1|elapsed_total_minutes=13|task_count=1
         self.assertEqual(
             distgit_notify,
             {
-                'containers/openshift-enterprise-haproxy-router': {
-                    'distgit': 'containers/openshift-enterprise-haproxy-router',
-                    'dockerfile': '/containers/openshift-enterprise-haproxy-router/Dockerfile',
-                    'image': 'openshift/ose-haproxy-router',
-                    'owners': 'aos-network-edge@redhat.com,rfredette@redhat.com',
-                    'sha': '2236d7bd55cff55c5a6a1d0310d78bf732987644',
-                    'source_alias': {
-                        'alias': 'containers_openshift-enterprise-haproxy-router_router',
-                        'branch': 'release-4.12',
-                        'origin_url': 'https://github.com/openshift-priv/router',
-                        'path': '/workspace/containers_openshift-enterprise-haproxy-router_router',
+                "containers/openshift-enterprise-haproxy-router": {
+                    "distgit": "containers/openshift-enterprise-haproxy-router",
+                    "dockerfile": "/containers/openshift-enterprise-haproxy-router/Dockerfile",
+                    "image": "openshift/ose-haproxy-router",
+                    "owners": "aos-network-edge@redhat.com,rfredette@redhat.com",
+                    "sha": "2236d7bd55cff55c5a6a1d0310d78bf732987644",
+                    "source_alias": {
+                        "alias": "containers_openshift-enterprise-haproxy-router_router",
+                        "branch": "release-4.12",
+                        "origin_url": "https://github.com/openshift-priv/router",
+                        "path": "/workspace/containers_openshift-enterprise-haproxy-router_router",
                     },
-                    'source_dockerfile_subpath': 'images/router/haproxy/Dockerfile.rhel8',
+                    "source_dockerfile_subpath": "images/router/haproxy/Dockerfile.rhel8",
                 },
             },
         )
@@ -64,15 +64,15 @@ image_build_metrics|elapsed_wait_minutes=1|elapsed_total_minutes=13|task_count=1
         failed_map = record.get_failed_builds(self.data)
         self.assertEqual(
             failed_map,
-            {'openshift-enterprise-haproxy-router': 'n/a', 'ose-haproxy-router-base': 'brew/taskinfo?taskID=53138249'},
+            {"openshift-enterprise-haproxy-router": "n/a", "ose-haproxy-router-base": "brew/taskinfo?taskID=53138249"},
         )
 
     def test_determine_build_failure_ratio(self):
         ratio = record.determine_build_failure_ratio(self.data)
-        self.assertEqual(ratio['total'], 3)
-        self.assertEqual(ratio['failed'], 2)
-        self.assertEqual(round(ratio['ratio'], 2), 0.67)
+        self.assertEqual(ratio["total"], 3)
+        self.assertEqual(ratio["failed"], 2)
+        self.assertEqual(round(ratio["ratio"], 2), 0.67)
 
     def test_get_successful_builds(self):
         builds = record.get_successful_builds(self.data)
-        self.assertEqual(builds, {'cluster-network-operator': 'brew/taskinfo?taskID=53138250'})
+        self.assertEqual(builds, {"cluster-network-operator": "brew/taskinfo?taskID=53138250"})

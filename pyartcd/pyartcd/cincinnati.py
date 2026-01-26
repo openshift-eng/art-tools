@@ -16,7 +16,7 @@ class CincinnatiAPI:
         params = dict(channel=channel)
         if arch:
             params["arch"] = arch
-        async with self._client.get(url, headers={'Accept': 'application/json'}, params=params) as response:
+        async with self._client.get(url, headers={"Accept": "application/json"}, params=params) as response:
             response.raise_for_status()
             data = await response.json()
             return data

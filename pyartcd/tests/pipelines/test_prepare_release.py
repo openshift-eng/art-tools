@@ -26,10 +26,10 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
         self.assembly = "test-assembly"
         self.jira_token = "jira_token"
 
-    @patch('pyartcd.pipelines.prepare_release.JIRAClient.from_url')
-    @patch('pyartcd.pipelines.prepare_release.aiofiles.open')
-    @patch('pyartcd.pipelines.prepare_release.exectools.cmd_assert_async')
-    @patch('pyartcd.pipelines.prepare_release.yaml')
+    @patch("pyartcd.pipelines.prepare_release.JIRAClient.from_url")
+    @patch("pyartcd.pipelines.prepare_release.aiofiles.open")
+    @patch("pyartcd.pipelines.prepare_release.exectools.cmd_assert_async")
+    @patch("pyartcd.pipelines.prepare_release.yaml")
     async def test_update_build_data_new_advisories(
         self, mock_yaml, mock_cmd_assert, mock_aiofiles_open, mock_jira_client
     ):
@@ -90,7 +90,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
                 None,  # git push origin
             ]
 
-            with patch.object(pipeline, 'clone_build_data'):
+            with patch.object(pipeline, "clone_build_data"):
                 result = await pipeline.update_build_data(advisories, jira_issue_key)
 
                 self.assertTrue(result)
@@ -115,10 +115,10 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
                 self.assertEqual(len(push_commands), 1)
                 self.assertEqual(push_commands[0][-1], self.group)
 
-    @patch('pyartcd.pipelines.prepare_release.JIRAClient.from_url')
-    @patch('pyartcd.pipelines.prepare_release.aiofiles.open')
-    @patch('pyartcd.pipelines.prepare_release.exectools.cmd_assert_async')
-    @patch('pyartcd.pipelines.prepare_release.yaml')
+    @patch("pyartcd.pipelines.prepare_release.JIRAClient.from_url")
+    @patch("pyartcd.pipelines.prepare_release.aiofiles.open")
+    @patch("pyartcd.pipelines.prepare_release.exectools.cmd_assert_async")
+    @patch("pyartcd.pipelines.prepare_release.yaml")
     async def test_update_build_data_blank_advisories(
         self, mock_yaml, mock_cmd_assert, mock_aiofiles_open, mock_jira_client
     ):
@@ -183,7 +183,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
                 None,  # git push
             ]
 
-            with patch.object(pipeline, 'clone_build_data'):
+            with patch.object(pipeline, "clone_build_data"):
                 result = await pipeline.update_build_data(new_advisories, jira_issue_key)
 
                 self.assertTrue(result)
@@ -210,10 +210,10 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
                 push_commands = [cmd for cmd in git_commands if cmd[0] == "git" and "push" in cmd]
                 self.assertEqual(len(push_commands), 1)
 
-    @patch('pyartcd.pipelines.prepare_release.JIRAClient.from_url')
-    @patch('pyartcd.pipelines.prepare_release.aiofiles.open')
-    @patch('pyartcd.pipelines.prepare_release.exectools.cmd_assert_async')
-    @patch('pyartcd.pipelines.prepare_release.yaml')
+    @patch("pyartcd.pipelines.prepare_release.JIRAClient.from_url")
+    @patch("pyartcd.pipelines.prepare_release.aiofiles.open")
+    @patch("pyartcd.pipelines.prepare_release.exectools.cmd_assert_async")
+    @patch("pyartcd.pipelines.prepare_release.yaml")
     async def test_update_build_data_no_changes(self, mock_yaml, mock_cmd_assert, mock_aiofiles_open, mock_jira_client):
         """Test update_build_data when no changes are detected (git diff-index returns 0)"""
 
@@ -276,7 +276,7 @@ class TestPrepareReleasePipeline(IsolatedAsyncioTestCase):
                 0,  # git diff-index (no changes)
             ]
 
-            with patch.object(pipeline, 'clone_build_data'):
+            with patch.object(pipeline, "clone_build_data"):
                 result = await pipeline.update_build_data(advisories, jira_issue_key)
                 self.assertFalse(result)
 

@@ -21,7 +21,7 @@ class TestShipmentModel(unittest.TestCase):
             project_root / "ocp-build-data-validator" / "validator" / "json_schemas" / "shipment.schema.json"
         )
 
-        with open(schema_file_path, 'r') as f:
+        with open(schema_file_path, "r") as f:
             existing_schema_content = f.read()
 
         # Normalize both strings to handle timestamp differences and trailing newlines

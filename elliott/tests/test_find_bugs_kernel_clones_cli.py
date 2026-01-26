@@ -104,7 +104,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
                 "key": "KMAINT-1",
                 "fields": MagicMock(),
                 "fields.project.key": "KMAINT",
-                "fields.labels": ['early-kernel-track'],
+                "fields.labels": ["early-kernel-track"],
                 "fields.summary": "kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 "fields.description": "Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             },
@@ -245,10 +245,10 @@ FOO-2	ON_QA	test bug 2
         cli.run()
         _update_jira_bugs.assert_called_once_with(ANY, found_bugs, ANY, ANY)
         expected_report = {
-            'jira_issues': [
-                {'key': 'FOO-1', 'summary': 'Fake bug 1', 'status': 'New'},
-                {'key': 'FOO-2', 'summary': 'Fake bug 2', 'status': 'Assigned'},
-                {'key': 'FOO-3', 'summary': 'Fake bug 3', 'status': 'ON_QA'},
+            "jira_issues": [
+                {"key": "FOO-1", "summary": "Fake bug 1", "status": "New"},
+                {"key": "FOO-2", "summary": "Fake bug 2", "status": "Assigned"},
+                {"key": "FOO-3", "summary": "Fake bug 3", "status": "ON_QA"},
             ],
         }
         _print_report.assert_called_once_with(expected_report, ANY)
@@ -325,10 +325,10 @@ FOO-2	ON_QA	test bug 2
         cli.run()
         _update_jira_bugs.assert_called_once_with(ANY, found_bugs, ANY, ANY)
         expected_report = {
-            'jira_issues': [
-                {'key': 'FOO-1', 'summary': 'Fake bug 1', 'status': 'New'},
-                {'key': 'FOO-2', 'summary': 'Fake bug 2', 'status': 'Assigned'},
-                {'key': 'FOO-3', 'summary': 'Fake bug 3', 'status': 'ON_QA'},
+            "jira_issues": [
+                {"key": "FOO-1", "summary": "Fake bug 1", "status": "New"},
+                {"key": "FOO-2", "summary": "Fake bug 2", "status": "Assigned"},
+                {"key": "FOO-3", "summary": "Fake bug 3", "status": "ON_QA"},
             ],
         }
         _print_report.assert_called_once_with(expected_report, ANY)

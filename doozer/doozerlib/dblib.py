@@ -135,7 +135,7 @@ class DB(object):
         """
 
         if not self.mysql_db_env_var_setup:
-            self.runtime.logger.error('No queries can be made without DB env vars setup!')
+            self.runtime.logger.error("No queries can be made without DB env vars setup!")
             raise RuntimeError
 
         exeresult = []
@@ -202,7 +202,7 @@ class DB(object):
             SELECT COUNT(*)
             FROM information_schema.tables
             WHERE table_schema ='{0}' and table_name = '{1}'
-            """.format(self.db, table_name.replace('\'', '\'\''))
+            """.format(self.db, table_name.replace("'", "''"))
         )
         if cursor.fetchone()[0] != 0:
             cursor.close()
@@ -294,7 +294,7 @@ class DB(object):
         if not table_exist_status:
             self.runtime.logger.info("Table [{}] not found in database [{}].".format(table_name, self.db))
             cursor = self.connection.cursor()
-            cursor.execute(f'create table {table_name}(log_{table_name}_id bigint auto_increment primary key)')
+            cursor.execute(f"create table {table_name}(log_{table_name}_id bigint auto_increment primary key)")
             cursor.close()
             self._table_column_cache[table_name] = dict()
             self._table_column_cache[table_name]["log_" + table_name + "_id"] = True
@@ -350,7 +350,7 @@ class DB(object):
             columns, values = [], []
 
             for column in payload:
-                columns.append(f'`{column}`')
+                columns.append(f"`{column}`")
                 values.append(f'"{payload[column]}"')
 
             columns = ",".join(columns)
@@ -433,10 +433,10 @@ class DB(object):
 
         extras = {}
         if metadata:
-            extras['dg.name'] = metadata.name
-            extras['dg.namespace'] = metadata.namespace
-            extras['dg.qualified_key'] = metadata.qualified_key
-            extras['dg.qualified_name'] = metadata.qualified_name
+            extras["dg.name"] = metadata.name
+            extras["dg.namespace"] = metadata.namespace
+            extras["dg.qualified_key"] = metadata.qualified_key
+            extras["dg.qualified_name"] = metadata.qualified_name
 
         return Record(self, "log_" + str(operation), extras, dry_run)
 
@@ -458,31 +458,31 @@ class Record(object):
 
         # A set of attributes for the record
         self.attrs = {
-            'time.unix': int(round(time.time() * 1000)),  # utc milliseconds since epoch
-            'time.iso': self.runtime.timestamp(),  # for humans
-            'runtime.uuid': self.runtime.uuid,
-            'runtime.user': self.runtime.user or '',
-            'group': self.runtime.group_config['name'],
+            "time.unix": int(round(time.time() * 1000)),  # utc milliseconds since epoch
+            "time.iso": self.runtime.timestamp(),  # for humans
+            "runtime.uuid": self.runtime.uuid,
+            "runtime.user": self.runtime.user or "",
+            "group": self.runtime.group_config["name"],
         }
 
-        for jenkins_var in ['BUILD_NUMBER', 'BUILD_URL', 'JOB_NAME', 'NODE_NAME', 'JOB_URL']:
-            self.attrs[f'jenkins.{jenkins_var.lower()}'] = os.getenv(jenkins_var, '')
+        for jenkins_var in ["BUILD_NUMBER", "BUILD_URL", "JOB_NAME", "NODE_NAME", "JOB_URL"]:
+            self.attrs[f"jenkins.{jenkins_var.lower()}"] = os.getenv(jenkins_var, "")
 
         self.attrs.update(extras)
 
     def __enter__(self):
-        if hasattr(self._tl, 'record'):
+        if hasattr(self._tl, "record"):
             self.previous_record = self._tl.record
         self._tl.record = self
         return self
 
     def __exit__(self, *args):
         try:
-            with get_named_semaphore('dblib::mysql'):
+            with get_named_semaphore("dblib::mysql"):
                 attr_payload = {}
 
                 for k, v in self.attrs.items():
-                    if v is None or v is Missing or v == '':
+                    if v is None or v is Missing or v == "":
                         continue
                     else:
                         attr_payload[self.db.rename_to_valid_column(k)] = v
@@ -502,7 +502,7 @@ class Record(object):
         """
         if not hasattr(cls._tl, "record"):
             # Caller is not within runtime.record(...):
-            raise IOError(f'No database record context has been established. Unable to set {name}={value}.')
+            raise IOError(f"No database record context has been established. Unable to set {name}={value}.")
         cls._tl.record.attrs[name] = value
 
     @classmethod
@@ -514,7 +514,7 @@ class Record(object):
         """
         if not hasattr(cls._tl, "record"):
             # Caller is not within runtime.record(...):
-            raise IOError(f'No database record context has been established. Unable to set {a_dict}.')
+            raise IOError(f"No database record context has been established. Unable to set {a_dict}.")
         cls._tl.record.attrs.update(a_dict)
 
     @classmethod

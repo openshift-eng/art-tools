@@ -12,7 +12,7 @@ def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
     For OCP builds, this returns the el suffix (e.g., 'el9').
     """
 
-    el_suffix_match = re.match(r'(.*)[.+]((?:el|scos)\d+)(?:.*|$)', release)
+    el_suffix_match = re.match(r"(.*)[.+]((?:el|scos)\d+)(?:.*|$)", release)
     if el_suffix_match:
         prefix = el_suffix_match.group(1)
         el_suffix = el_suffix_match.group(2)
@@ -27,7 +27,7 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
     an assembly name. If it does, it returns the assembly
     name. If it is not found, None is returned.
     """
-    assembly_prefix = '.assembly.'
+    assembly_prefix = ".assembly."
     asm_pos = release.rfind(assembly_prefix)
     if asm_pos == -1:
         return None
@@ -35,7 +35,7 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
     # Our rpm release fields will usually have ".el?" or ".scos?" after ".assembly.name"
     # But some of our base images can have ".el?" or ".scos?" before ".assembly.name"
     # If ".el?" or ".scos?" appears after assembly name, then strip it off
-    el_pos = max(release.rfind('.el'), release.rfind('.scos'))
+    el_pos = max(release.rfind(".el"), release.rfind(".scos"))
     if el_pos > asm_pos:
         release, _ = split_el_suffix_in_release(release)
 
@@ -51,7 +51,7 @@ def isolate_el_version_in_release(release: str) -> Optional[int]:
     _, el_suffix = split_el_suffix_in_release(release)
     if el_suffix:
         # Strip the prefix ('el' or 'scos') and return the numeric version
-        if el_suffix.startswith('scos'):
+        if el_suffix.startswith("scos"):
             return int(el_suffix[4:])
         else:  # starts with 'el'
             return int(el_suffix[2:])
@@ -85,9 +85,9 @@ class SoftwareLifecyclePhase(Enum):
     @classmethod
     def from_name(cls, phase_name):
         try:
-            return cls[phase_name.upper().replace('-', '_')]
+            return cls[phase_name.upper().replace("-", "_")]
         except KeyError:
-            raise ValueError(f'{phase_name} is not a valid phase name')
+            raise ValueError(f"{phase_name} is not a valid phase name")
 
     def __lt__(self, other):
         if isinstance(other, SoftwareLifecyclePhase):

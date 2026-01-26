@@ -63,20 +63,20 @@ def watch_task(session, log_f, task_id, terminate_event):
 
             if watcher.is_done():
                 return None if watcher.is_success() else watcher.get_failure()
-            log_f("Task state: " + koji.TASK_STATES[watcher.info['state']])
+            log_f("Task state: " + koji.TASK_STATES[watcher.info["state"]])
         except:
             except_count += 1
             # possible for watcher.update() to except during connection issue, try again
-            log_f('watcher.update() exception. Trying again in 60s.\n{}'.format(traceback.format_exc()))
+            log_f("watcher.update() exception. Trying again in 60s.\n{}".format(traceback.format_exc()))
             if except_count >= 10:
-                log_f('watcher.update() excepted 10 times. Giving up.')
+                log_f("watcher.update() excepted 10 times. Giving up.")
                 error = traceback.format_exc()
                 break
 
         if terminate_event.wait(timeout=3 * 60):
-            error = 'Interrupted'
+            error = "Interrupted"
         elif time.time() > end:
-            error = 'Timeout building image'
+            error = "Timeout building image"
 
     log_f(error + ", canceling build")
     if not session.logged_in:
@@ -125,9 +125,9 @@ def watch_tasks(session, log_f, task_ids, terminate_event):
             except:
                 except_counts[task_id] += 1
                 # possible for watcher.update() to except during connection issue, try again
-                log_f('watcher.update() exception. Trying again in 60s.\n{}'.format(traceback.format_exc()))
+                log_f("watcher.update() exception. Trying again in 60s.\n{}".format(traceback.format_exc()))
                 if except_counts[task_id] >= 10:
-                    log_f('watcher.update() excepted 10 times. Giving up.')
+                    log_f("watcher.update() excepted 10 times. Giving up.")
                     errors[task_id] = traceback.format_exc()
                     tasks_to_cancel.add(task_id)
                     tasks_to_poll.remove(task_id)
@@ -136,12 +136,12 @@ def watch_tasks(session, log_f, task_ids, terminate_event):
         if terminate_event.wait(timeout=3 * 60):
             for task_id in tasks_to_poll:
                 tasks_to_cancel.add(task_id)
-                errors[task_id] = 'Interrupted'
+                errors[task_id] = "Interrupted"
             break
         if time.time() > end:
             for task_id in tasks_to_poll:
                 tasks_to_cancel.add(task_id)
-                errors[task_id] = 'Timeout watching task'
+                errors[task_id] = "Timeout watching task"
             break
     if tasks_to_cancel:
         log_f(f"{errors}, canceling builds")
@@ -351,8 +351,8 @@ def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) 
     :return: None if the tag has not changed since build OR a change event dict for the build that was tagged
             after the build argument was built.
     """
-    build_nvr = build['nvr']
-    build_event_id = build['creation_event_id']
+    build_nvr = build["nvr"]
+    build_event_id = build["creation_event_id"]
 
     with cache_lock:
         latest_tag_change_event = latest_tag_change_events.get(tag, None)
@@ -375,20 +375,20 @@ def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) 
             # a long time ago, and recently tagged into the tag we care about. To figure this out, we
             # need to query the tag_listing table.
 
-            found_in_tag_name = last_tagged_build['tag_name']  # If using inheritance, this can differ from tag
+            found_in_tag_name = last_tagged_build["tag_name"]  # If using inheritance, this can differ from tag
             # Example result of full queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
             tag_listing = koji_client.queryHistory(
-                table='tag_listing', tag=found_in_tag_name, build=last_tagged_build['build_id']
-            )['tag_listing']
-            tag_listing.sort(key=lambda event: event['create_event'])
+                table="tag_listing", tag=found_in_tag_name, build=last_tagged_build["build_id"]
+            )["tag_listing"]
+            tag_listing.sort(key=lambda event: event["create_event"])
             latest_tag_change_event = tag_listing[-1]
 
         with cache_lock:
             latest_tag_change_events[tag] = latest_tag_change_event
 
-    if latest_tag_change_event and latest_tag_change_event['create_event'] > build_event_id:
+    if latest_tag_change_event and latest_tag_change_event["create_event"] > build_event_id:
         runtime.logger.debug(
-            f'Found that build of {build_nvr} (event={build_event_id}) occurred before tag changes: {latest_tag_change_event}'
+            f"Found that build of {build_nvr} (event={build_event_id}) occurred before tag changes: {latest_tag_change_event}"
         )
         return latest_tag_change_event
 
@@ -456,30 +456,30 @@ class KojiWrapper(koji.ClientSession):
     # A list of methods which support receiving an event kwarg. See --brew-event CLI argument.
     methods_with_event = set(
         [
-            'getBuildConfig',
-            'getBuildTarget',
-            'getBuildTargets',
-            'getExternalRepo',
-            'getExternalRepoList',
-            'getFullInheritance',
-            'getGlobalInheritance',
-            'getHost',
-            'getInheritanceData',
-            'getLatestBuilds',
-            'getLatestMavenArchives',
-            'getLatestRPMS',
-            'getPackageConfig',
-            'getRepo',
-            'getTag',
-            'getTagExternalRepos',
-            'getTagGroups',
-            'listChannels',
-            'listExternalRepos',
-            'listPackages',
-            'listTagged',
-            'listTaggedArchives',
-            'listTaggedRPMS',
-            'newRepo',
+            "getBuildConfig",
+            "getBuildTarget",
+            "getBuildTargets",
+            "getExternalRepo",
+            "getExternalRepoList",
+            "getFullInheritance",
+            "getGlobalInheritance",
+            "getHost",
+            "getInheritanceData",
+            "getLatestBuilds",
+            "getLatestMavenArchives",
+            "getLatestRPMS",
+            "getPackageConfig",
+            "getRepo",
+            "getTag",
+            "getTagExternalRepos",
+            "getTagGroups",
+            "listChannels",
+            "listExternalRepos",
+            "listPackages",
+            "listTagged",
+            "listTaggedArchives",
+            "listTaggedRPMS",
+            "newRepo",
         ]
     )
 
@@ -488,90 +488,90 @@ class KojiWrapper(koji.ClientSession):
     # koji API call.
     safe_methods = set(
         [
-            'getEvent',
-            'getBuild',
-            'listArchives',
-            'listRPMs',
-            'getPackage',
-            'getPackageID',
-            'listTags',
-            'gssapi_login',
-            'sslLogin',
-            'getTaskInfo',
-            'build',
-            'buildContainer',
-            'buildImage',
-            'buildReferences',
-            'cancelBuild',
-            'cancelTask',
-            'cancelTaskChildren',
-            'cancelTaskFull',
-            'chainBuild',
-            'chainMaven',
-            'createImageBuild',
-            'createMavenBuild',
-            'filterResults',
-            'getAPIVersion',
-            'getArchive',
-            'getArchiveFile',
-            'getArchiveType',
-            'getArchiveTypes',
-            'getAverageBuildDuration',
-            'getBuildLogs',
-            'getBuildNotificationBlock',
-            'getBuildType',
-            'getBuildroot',
-            'getChangelogEntries',
-            'getImageArchive',
-            'getImageBuild',
-            'getLoggedInUser',
-            'getMavenArchive',
-            'getMavenBuild',
-            'getPerms',
-            'getRPM',
-            'getRPMDeps',
-            'getRPMFile',
-            'getRPMHeaders',
-            'getTaskChildren',
-            'getTaskDescendents',
-            'getTaskRequest',
-            'getTaskResult',
-            'getUser',
-            'getUserPerms',
-            'getVolume',
-            'getWinArchive',
-            'getWinBuild',
-            'hello',
-            'listArchiveFiles',
-            'listArchives',
-            'listBTypes',
-            'listBuildRPMs',
-            'listBuildroots',
-            'listRPMFiles',
-            'listRPMs',
-            'listTags',
-            'listTaskOutput',
-            'listTasks',
-            'listUsers',
-            'listVolumes',
-            'login',
-            'logout',
-            'logoutChild',
-            'makeTask',
-            'mavenEnabled',
-            'mergeScratch',
-            'moveAllBuilds',
-            'moveBuild',
-            'queryRPMSigs',
-            'resubmitTask',
-            'tagBuild',
-            'tagBuildBypass',
-            'taskFinished',
-            'taskReport',
-            'untagBuild',
-            'winEnabled',
-            'winBuild',
-            'uploadFile',
+            "getEvent",
+            "getBuild",
+            "listArchives",
+            "listRPMs",
+            "getPackage",
+            "getPackageID",
+            "listTags",
+            "gssapi_login",
+            "sslLogin",
+            "getTaskInfo",
+            "build",
+            "buildContainer",
+            "buildImage",
+            "buildReferences",
+            "cancelBuild",
+            "cancelTask",
+            "cancelTaskChildren",
+            "cancelTaskFull",
+            "chainBuild",
+            "chainMaven",
+            "createImageBuild",
+            "createMavenBuild",
+            "filterResults",
+            "getAPIVersion",
+            "getArchive",
+            "getArchiveFile",
+            "getArchiveType",
+            "getArchiveTypes",
+            "getAverageBuildDuration",
+            "getBuildLogs",
+            "getBuildNotificationBlock",
+            "getBuildType",
+            "getBuildroot",
+            "getChangelogEntries",
+            "getImageArchive",
+            "getImageBuild",
+            "getLoggedInUser",
+            "getMavenArchive",
+            "getMavenBuild",
+            "getPerms",
+            "getRPM",
+            "getRPMDeps",
+            "getRPMFile",
+            "getRPMHeaders",
+            "getTaskChildren",
+            "getTaskDescendents",
+            "getTaskRequest",
+            "getTaskResult",
+            "getUser",
+            "getUserPerms",
+            "getVolume",
+            "getWinArchive",
+            "getWinBuild",
+            "hello",
+            "listArchiveFiles",
+            "listArchives",
+            "listBTypes",
+            "listBuildRPMs",
+            "listBuildroots",
+            "listRPMFiles",
+            "listRPMs",
+            "listTags",
+            "listTaskOutput",
+            "listTasks",
+            "listUsers",
+            "listVolumes",
+            "login",
+            "logout",
+            "logoutChild",
+            "makeTask",
+            "mavenEnabled",
+            "mergeScratch",
+            "moveAllBuilds",
+            "moveBuild",
+            "queryRPMSigs",
+            "resubmitTask",
+            "tagBuild",
+            "tagBuildBypass",
+            "taskFinished",
+            "taskReport",
+            "untagBuild",
+            "winEnabled",
+            "winBuild",
+            "uploadFile",
         ]
     )
 
@@ -592,7 +592,7 @@ class KojiWrapper(koji.ClientSession):
         self._gss_logged_in: bool = False  # Tracks whether this instance has authenticated
         self.___before_timestamp = None
         if brew_event:
-            self.___before_timestamp = self.getEvent(self.___brew_event)['ts']
+            self.___before_timestamp = self.getEvent(self.___brew_event)["ts"]
 
     @classmethod
     def clear_global_cache(cls):
@@ -645,13 +645,13 @@ class KojiWrapper(koji.ClientSession):
         """
         brew_event = self.___brew_event
         if brew_event:
-            if method_name == 'queryHistory':
-                if 'beforeEvent' not in kwargs and 'before' not in kwargs:
+            if method_name == "queryHistory":
+                if "beforeEvent" not in kwargs and "before" not in kwargs:
                     # Only set the kwarg if the caller didn't
                     kwargs = kwargs or {}
-                    kwargs['beforeEvent'] = brew_event + 1
-            elif method_name == 'listBuilds':
-                if 'completeBefore' not in kwargs and 'createdBefore' not in kwargs:
+                    kwargs["beforeEvent"] = brew_event + 1
+            elif method_name == "listBuilds":
+                if "completeBefore" not in kwargs and "createdBefore" not in kwargs:
                     kwargs = kwargs or {}
                     # Recently brew started returning outdated results for filtering via float timestamps.
                     # Using a date string works around this issue.
@@ -659,12 +659,12 @@ class KojiWrapper(koji.ClientSession):
                     dt = None
                     if self.___before_timestamp:
                         dt = str(datetime.utcfromtimestamp(self.___before_timestamp))
-                    kwargs['completeBefore'] = dt
+                    kwargs["completeBefore"] = dt
             elif method_name in KojiWrapper.methods_with_event:
-                if 'event' not in kwargs:
+                if "event" not in kwargs:
                     # Only set the kwarg if the caller didn't
                     kwargs = kwargs or {}
-                    kwargs['event'] = brew_event
+                    kwargs["event"] = brew_event
             elif method_name in KojiWrapper.safe_methods:
                 # Let it go through
                 pass
@@ -672,7 +672,7 @@ class KojiWrapper(koji.ClientSession):
                 # If --brew-event has been specified and non-constrainable API call is invoked, raise
                 # an exception if the caller has not made clear that are ok with that via brew_event_aware option.
                 raise IOError(
-                    f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True'
+                    f"Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True"
                 )
 
         return kwargs
@@ -731,7 +731,7 @@ class KojiWrapper(koji.ClientSession):
             caching=(KojiWrapper.force_global_caching or self.force_instance_caching)
         )
 
-        if name == 'multiCall':
+        if name == "multiCall":
             # If this is a multiCall, we need to search through and modify each bundled invocation
             """
             Example args:
@@ -740,17 +740,17 @@ class KojiWrapper(koji.ClientSession):
             """
             multiArg = args[0]  # args is a tuple, the first should be our listing of method invocations.
             for call_dict in multiArg:  # For each method invocation in the multicall
-                method_name = call_dict['methodName']
-                params = self.modify_koji_call_params(method_name, call_dict['params'], aggregate_kw_opts)
+                method_name = call_dict["methodName"]
+                params = self.modify_koji_call_params(method_name, call_dict["params"], aggregate_kw_opts)
                 if params:
                     params = list(params)
                     # Assess whether we need to inject event of beforeEvent into the koji call kwargs
                     possible_kwargs = params[-1]  # last element could be normal arg or kwargs dict
-                    if isinstance(possible_kwargs, dict) and possible_kwargs.get('__starstar', None):
+                    if isinstance(possible_kwargs, dict) and possible_kwargs.get("__starstar", None):
                         # __starstar is a special identifier added by the koji library indicating
                         # the entry is kwargs and not normal args.
                         params[-1] = self.modify_koji_call_kwargs(method_name, possible_kwargs, aggregate_kw_opts)
-                call_dict['params'] = tuple(params)
+                call_dict["params"] = tuple(params)
         else:
             args = self.modify_koji_call_params(name, args, aggregate_kw_opts)
             kwargs = self.modify_koji_call_kwargs(name, kwargs, aggregate_kw_opts)
@@ -765,14 +765,14 @@ class KojiWrapper(koji.ClientSession):
         while retries > 0:
             try:
                 if logger:
-                    logger.info(f'koji-api-call-{my_id}: {name}(args={args}, kwargs={kwargs})')
+                    logger.info(f"koji-api-call-{my_id}: {name}(args={args}, kwargs={kwargs})")
 
                 def package_result(result, cache_hit: bool):
                     ret = result
                     if return_metadata:
                         # If KojiWrapperOpts asked for information about call metadata back,
                         # return the results in a wrapper containing that information.
-                        if name == 'multiCall':
+                        if name == "multiCall":
                             # Results are going to be returned as [ [result1], [result2], ... ] if there is no fault.
                             # If there is a fault, the fault entry will be a dict.
                             ret = []
@@ -793,16 +793,16 @@ class KojiWrapper(koji.ClientSession):
                     # and sorting keys is a deterministic way of achieving this.
                     caching_key = json.dumps(
                         {
-                            'method_name': name,
-                            'args': args,
-                            'kwargs': kwargs,
+                            "method_name": name,
+                            "args": args,
+                            "kwargs": kwargs,
                         },
                         sort_keys=True,
                     )
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:
                         if logger:
-                            logger.info(f'CACHE HIT: koji-api-call-{my_id}: {name} returned={result}')
+                            logger.info(f"CACHE HIT: koji-api-call-{my_id}: {name} returned={result}")
                         return package_result(result, True)
 
                 result = super()._callMethod(name, args, kwargs=kwargs, retry=retry)
@@ -811,7 +811,7 @@ class KojiWrapper(koji.ClientSession):
                     self._cache_result(caching_key, result)
 
                 if logger:
-                    logger.info(f'koji-api-call-{my_id}: {name} returned={result}')
+                    logger.info(f"koji-api-call-{my_id}: {name} returned={result}")
 
                 return package_result(result, False)
             except requests.exceptions.ConnectionError as ce:
@@ -829,7 +829,7 @@ class KojiWrapper(koji.ClientSession):
         # Prevent redundant logins for shared sessions.
         if self._gss_logged_in:
             if logger:
-                logger.warning('Attempted to login to already logged in KojiWrapper instance')
+                logger.warning("Attempted to login to already logged in KojiWrapper instance")
             return True
         self._gss_logged_in = super().gssapi_login(
             principal=principal, keytab=keytab, ccache=ccache, proxyuser=proxyuser
@@ -845,4 +845,4 @@ def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
     return koji_api.getLastEvent(
         KojiWrapperOpts(brew_event_aware=False),
         before=datetime_obj.timestamp(),
-    )['id']
+    )["id"]

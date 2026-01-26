@@ -15,12 +15,12 @@ class RepairBugsTestCase(unittest.TestCase):
         bz_bug = flexmock(id=1, status="MODIFIED", summary="")
         jira_bug = flexmock(id="OCPBUGS-1", status="MODIFIED", summary="")
         flexmock(Runtime).should_receive("initialize")
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(BugzillaBugTracker).should_receive("get_bug").with_args(1).and_return(bz_bug)
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").once()
 
-        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(JIRABugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
@@ -29,7 +29,7 @@ class RepairBugsTestCase(unittest.TestCase):
 
         result = runner.invoke(
             cli,
-            ['-g', 'openshift-4.6', 'repair-bugs', '--id', '1', '--id', 'OCPBUGS-1', '--to', 'ON_QA', '-a', '99999'],
+            ["-g", "openshift-4.6", "repair-bugs", "--id", "1", "--id", "OCPBUGS-1", "--to", "ON_QA", "-a", "99999"],
         )
         self.assertEqual(result.exit_code, 0)
 
@@ -37,7 +37,7 @@ class RepairBugsTestCase(unittest.TestCase):
         runner = CliRunner()
         bug = flexmock(id="OCPBUGS-1", status="MODIFIED", summary="Placeholder")
         flexmock(Runtime).should_receive("initialize")
-        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(JIRABugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
@@ -46,16 +46,16 @@ class RepairBugsTestCase(unittest.TestCase):
         result = runner.invoke(
             cli,
             [
-                '-g',
-                'openshift-4.6',
-                'repair-bugs',
-                '--close-placeholder',
-                '--id',
-                'OCPBUGS-1',
-                '--to',
-                'ON_QA',
-                '-a',
-                '99999',
+                "-g",
+                "openshift-4.6",
+                "repair-bugs",
+                "--close-placeholder",
+                "--id",
+                "OCPBUGS-1",
+                "--to",
+                "ON_QA",
+                "-a",
+                "99999",
             ],
         )
         if result.exit_code != 0:
@@ -69,7 +69,7 @@ class RepairBugsTestCase(unittest.TestCase):
         runner = CliRunner()
         bug = flexmock(id=1, status="MODIFIED", summary="")
         flexmock(Runtime).should_receive("initialize")
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(BugzillaBugTracker).should_receive("get_bug").with_args(1).and_return(bug)
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").once()
@@ -77,17 +77,17 @@ class RepairBugsTestCase(unittest.TestCase):
         result = runner.invoke(
             cli,
             [
-                '-g',
-                'openshift-4.6',
-                'repair-bugs',
-                '--id',
-                '1',
-                '--to',
-                'ON_QA',
-                '--comment',
-                'close bug',
-                '-a',
-                '99999',
+                "-g",
+                "openshift-4.6",
+                "repair-bugs",
+                "--id",
+                "1",
+                "--to",
+                "ON_QA",
+                "--comment",
+                "close bug",
+                "-a",
+                "99999",
             ],
         )
         self.assertIn("1 bugs successfully modified", result.output)
@@ -99,13 +99,13 @@ class RepairBugsTestCase(unittest.TestCase):
         jira_bug = flexmock(id="OCPBUGS-1", status="MODIFIED", summary="")
 
         flexmock(Runtime).should_receive("initialize")
-        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(BugzillaBugTracker).should_receive("get_bug").with_args(1).and_return(bug)
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").once()
         flexmock(BugzillaBugTracker).should_receive("add_comment").once()
 
-        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(JIRABugTracker).should_receive("get_config").and_return({"target_release": ["4.6.z"]})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
@@ -118,11 +118,11 @@ class RepairBugsTestCase(unittest.TestCase):
 
         result = runner.invoke(
             cli,
-            ['-g', 'openshift-4.6', 'repair-bugs', '--auto', '--to', 'ON_QA', '--comment', 'close bug', '-a', '99999'],
+            ["-g", "openshift-4.6", "repair-bugs", "--auto", "--to", "ON_QA", "--comment", "close bug", "-a", "99999"],
         )
         self.assertIn("1 bugs successfully modified", result.output)
         self.assertEqual(result.exit_code, 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

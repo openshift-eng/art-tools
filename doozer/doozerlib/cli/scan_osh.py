@@ -182,7 +182,7 @@ class ScanOshCli:
 
         tasks = result.strip().split("\n")
 
-        if tasks == ['']:
+        if tasks == [""]:
             # Skip components that have no scans
             return None, None
 
@@ -399,7 +399,7 @@ class ScanOshCli:
         tasks = result.strip().split("\n")
 
         # This will always be a list with len 1, since we're using --latest flag
-        return (package_name, None) if tasks == [''] else (package_name, tasks[0])
+        return (package_name, None) if tasks == [""] else (package_name, tasks[0])
 
     @exectools.limit_concurrency(16)
     async def get_osh_task_state(self, task_id, package_name):

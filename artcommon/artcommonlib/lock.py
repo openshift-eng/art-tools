@@ -2,7 +2,7 @@ from multiprocessing import Semaphore
 from pathlib import Path
 
 # See get_named_semaphore. The empty string key serves as a lock for the data structure.
-_NAMED_SEMAPHORES = {'': Semaphore(1)}
+_NAMED_SEMAPHORES = {"": Semaphore(1)}
 
 
 def get_named_semaphore(lock_name: str, is_dir=False, count=1):
@@ -17,10 +17,10 @@ def get_named_semaphore(lock_name: str, is_dir=False, count=1):
     :return: A semaphore associated with the lock_name.
     """
     if is_dir:
-        p = '_dir::' + str(Path(str(lock_name)).absolute())  # normalize (e.g. strip trailing /)
+        p = "_dir::" + str(Path(str(lock_name)).absolute())  # normalize (e.g. strip trailing /)
     else:
         p = lock_name
-    with _NAMED_SEMAPHORES['']:
+    with _NAMED_SEMAPHORES[""]:
         if p in _NAMED_SEMAPHORES:
             return _NAMED_SEMAPHORES[p]
         else:

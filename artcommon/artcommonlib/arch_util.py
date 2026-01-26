@@ -28,7 +28,7 @@ def go_suffix_for_arch(arch: str, is_private: bool = False) -> str:
     arch = go_arch_for_brew_arch(arch)  # translate either incoming arch style
     suffix = GO_ARCH_SUFFIXES[GO_ARCHES.index(arch)]
     if is_private:
-        suffix += '-priv'
+        suffix += "-priv"
     return suffix
 
 
