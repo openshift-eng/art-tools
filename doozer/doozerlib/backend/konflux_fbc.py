@@ -951,33 +951,44 @@ class KonfluxFbcRebaser:
 
         # Update the catalog
         def _update_channel(channel: Dict):
+            # Check if this bundle already exists in the channel (replacement case)
+            existing_bundle = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
+            is_replacement = existing_bundle is not None
+            
+            # For new channels where this will be the first (and only) bundle, don't add circular references
+            # This happens when we have an empty channel or when adding a bundle to a channel that will only contain this bundle after the update
+            will_be_first_bundle_only = (
+                len(channel['entries']) == 0 or 
+                (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
+            )
+            
             # Update "skips" in the channel
             # FIXME: We try to mimic how `skips` field is updated by the old ET centric process.
             # We should verify if this is correct.
             skips = None
-            bundle_with_skips = next(
-                (it for it in channel['entries'] if it.get('skips')), None
-            )  # Find which bundle has the skips field
-            if bundle_with_skips is not None:
-                # Then we move the skips field to the new bundle
-                # and add the bundle name of bundle_with_skips to the skips field
-                skips = set(bundle_with_skips.pop('skips'))
-                skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
-            elif len(channel['entries']) == 1:
-                # In case the channel only contain one single entry, that bundle should
-                # become the only member of new-entry's `skip`.
-                skips = {channel['entries'][0]['name']}
+            if not will_be_first_bundle_only:
+                bundle_with_skips = next(
+                    (it for it in channel['entries'] if it.get('skips')), None
+                )  # Find which bundle has the skips field
+                if bundle_with_skips is not None:
+                    # Then we move the skips field to the new bundle
+                    # and add the bundle name of bundle_with_skips to the skips field
+                    skips = set(bundle_with_skips.pop('skips'))
+                    skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
+                elif len(channel['entries']) == 1 and is_replacement:
+                    # Only set skips if we're replacing an existing bundle, not for new channels
+                    skips = {channel['entries'][0]['name']}
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
             replaces = None
-            if not self.group.startswith('openshift-'):
+            if not self.group.startswith('openshift-') and not will_be_first_bundle_only:
                 # Find the current head - the entry that is not replaced by any other entry
                 bundle_with_replaces = [it for it in channel['entries']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
                 current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
-                if current_head:
-                    # The new bundle should replace the current head
+                if current_head and current_head['name'] != olm_bundle_name:
+                    # The new bundle should replace the current head, but not itself
                     replaces = current_head['name']
 
             # Add the current bundle to the specified channel in the catalog
