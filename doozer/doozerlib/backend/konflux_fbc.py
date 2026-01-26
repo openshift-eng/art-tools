@@ -126,7 +126,7 @@ class KonfluxFbcImporter:
         metadata: ImageMetadata,
         index_image: str | None = None,
         strict: bool = True,
-        selective_channels: bool = True,
+        selective_channels: bool = False,
     ):
         """Create a file based catalog (FBC) by importing from an existing index image.
 
@@ -957,9 +957,12 @@ class KonfluxFbcRebaser:
             
             # For new channels where this will be the first (and only) bundle, don't add circular references
             # This happens when we have an empty channel or when adding a bundle to a channel that will only contain this bundle after the update
+            # Only apply this fix for non-OpenShift groups
             will_be_first_bundle_only = (
-                len(channel['entries']) == 0 or 
-                (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
+                not self.group.startswith('openshift-') and (
+                    len(channel['entries']) == 0 or 
+                    (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
+                )
             )
             
             # Update "skips" in the channel

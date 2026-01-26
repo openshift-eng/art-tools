@@ -56,7 +56,7 @@ class FbcImportCli:
         major_minor: Optional[str],
         message: str,
         dest_dir: str | None,
-        selective_channels: bool = True,
+        selective_channels: bool,
     ):
         self.runtime = runtime
         self.index_image = index_image
@@ -79,6 +79,10 @@ class FbcImportCli:
         if self.selective_channels and not self.index_image:
             raise ValueError(
                 "--selective-channels requires --from-index to be specified. Selective channels only works when importing from production."
+            )
+        if self.selective_channels and self.runtime.group.startswith('openshift-'):
+            raise ValueError(
+                "--selective-channels is only supported for non-OpenShift groups. OpenShift groups should use the standard import process."
             )
         # Ensure opm is installed
         try:
@@ -174,8 +178,8 @@ class FbcImportCli:
 )
 @click.option(
     "--selective-channels/--no-selective-channels",
-    default=True,
-    help="When importing from production, selectively preserve new channels from git while importing existing channels from production. Default: enabled.",
+    default=None,
+    help="When importing from production, selectively preserve new channels from git while importing existing channels from production. Default: auto-detected based on group type (enabled for non-OpenShift groups, disabled for OpenShift groups).",
 )
 @option_commit_message
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
@@ -188,7 +192,7 @@ async def fbc_import(
     fbc_repo: str,
     registry_auth: Optional[str],
     major_minor: Optional[str],
-    selective_channels: bool,
+    selective_channels: Optional[bool],
     message: str,
     dest_dir: Optional[str],
 ):
@@ -199,6 +203,10 @@ async def fbc_import(
 
     doozer --group=openshift-4.17 beta:fbc:import --from-index=registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
+    # Auto-detect selective channels based on group type if not explicitly set
+    if selective_channels is None:
+        selective_channels = not runtime.group.startswith('openshift-')
+        
     cli = FbcImportCli(
         runtime=runtime,
         index_image=from_index,
@@ -647,8 +655,10 @@ class FbcRebaseAndBuildCli:
 
         if self.reset_to_prod:
             self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
+            # Only use selective channels for non-OpenShift groups
+            use_selective_channels = not self.runtime.group.startswith('openshift-')
             await importer.import_from_index_image(
-                operator_meta, index_image=None, strict=False, selective_channels=True
+                operator_meta, index_image=None, strict=False, selective_channels=use_selective_channels
             )
 
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
