@@ -703,34 +703,6 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-def _get_latest_build_by_network_mode_config(image: ImageMetadata):
-    """
-    Queries for the latest build of an image, respecting its configured network mode.
-
-    This function determines the image's configured network mode (hermetic, internal-only, or open)
-    and queries for the latest build matching that mode.
-
-    For images configured as hermetic, only hermetic builds are retrieved,
-    preventing accidental shipping of non-hermetic builds.
-
-    For both internal-only and open modes, the query uses hermetic=False;
-    the distinction between these modes is enforced at build time (e.g., via NO_PROXY for internal-only).
-
-    Network mode precedence: runtime override > image config > group config > default "open".
-
-    Args:
-        image (ImageMetadata): The image metadata object to query the latest build for.
-    """
-    configured_network_mode = image.get_konflux_network_mode()
-    is_hermetic = configured_network_mode == "hermetic"
-    LOGGER.debug(
-        f"Querying latest build for {image.distgit_key} with network_mode={configured_network_mode} (hermetic={is_hermetic})"
-    )
-    return image.get_latest_build(
-        el_target=image.branch_el_target(), exclude_large_columns=True, extra_patterns={"hermetic": is_hermetic}
-    )
-
-
 async def find_builds_konflux(runtime, payload) -> list[dict]:
     """
     Find konflux builds for group/assembly, respecting network mode configuration.
@@ -753,7 +725,12 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
         image_metas.append(image)
 
     LOGGER.info("Fetching NVRs from DB...")
-    tasks = [_get_latest_build_by_network_mode_config(image) for image in image_metas]
+    tasks = [
+        image.get_latest_build(
+            enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
+        )
+        for image in image_metas
+    ]
     records: list[dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
     if len(records) != len(image_metas):
         raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
@@ -802,7 +779,11 @@ async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(_get_latest_build_by_network_mode_config(image))
+        tasks.append(
+            image.get_latest_build(
+                enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
+            )
+        )
     results = await asyncio.gather(*[task for task in tasks])
     records_with_olm = [
         (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None
