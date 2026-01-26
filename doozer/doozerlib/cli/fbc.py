@@ -75,6 +75,11 @@ class FbcImportCli:
         This function implements the main logic of the FBC import process
         following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/docs/konflux-onboarding.md#create-the-fbc-in-the-git-repository.
         """
+        # Validate flag combination
+        if self.selective_channels and not self.index_image:
+            raise ValueError(
+                "--selective-channels requires --from-index to be specified. Selective channels only works when importing from production."
+            )
         # Ensure opm is installed
         try:
             await opm.verify_opm()
@@ -130,9 +135,11 @@ class FbcImportCli:
         LOGGER.info("Importing FBC from index image...")
         LOGGER.info("Selective channels mode: %s", "enabled" if self.selective_channels else "disabled")
         if self.selective_channels:
-            LOGGER.info("Will preserve new channels from git while importing existing channels from production")
+            LOGGER.info(
+                "Will preserve new channels from git while importing existing channels from production (when production content is available)"
+            )
         else:
-            LOGGER.info("Will replace all content with production index content")
+            LOGGER.info("Will replace all content with production index content (when production content is available)")
         tasks = []
         for metadata in operator_metadatas:
             tasks.append(

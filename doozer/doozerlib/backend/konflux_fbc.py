@@ -46,6 +46,29 @@ BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-r
 FBC_BUILD_PRIORITY = "2"
 
 
+def _categorize_catalog_blobs(blobs: List[Dict]):
+    """Given a list of catalog blobs, categorize them by schema and package name.
+
+    :param blobs: A list of catalog blobs.
+    :return: a dictionary of the form {package_name: {schema: {blob_name: blob}}}
+    """
+    categorized_blobs = {}
+    for blob in blobs:
+        schema = blob["schema"]
+        package_name = None
+        match schema:
+            case "olm.package":
+                package_name = blob["name"]
+            case "olm.channel" | "olm.bundle" | "olm.deprecations":
+                package_name = blob["package"]
+            case _:  # Unknown schema
+                raise IOError(f"Found unsupported schema: {schema}")
+        if not package_name:
+            raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
+        categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob["name"]] = blob
+    return categorized_blobs
+
+
 def _generate_fbc_branch_name(
     group: str, assembly: str, distgit_key: str, ocp_version: Optional[Tuple[int, int]] = None
 ) -> str:
@@ -149,11 +172,10 @@ class KonfluxFbcImporter:
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Update the FBC directory
-        if selective_channels:
+        if selective_channels and catalog_blobs:
             logger.info("Using selective channel import strategy to preserve new channels from git")
             await self._selective_import_channels(build_repo, package_name, catalog_blobs, logger)
         else:
-            logger.info("Using traditional import strategy - will replace all content from production")
             await self._update_dir(build_repo, package_name, catalog_blobs, logger)
 
         # Validate the catalog
@@ -230,15 +252,15 @@ class KonfluxFbcImporter:
             logger.info("No existing catalog file found in git at %s", catalog_file_path)
 
         # Categorize both git and production content
-        git_categorized = self._catagorize_catalog_blobs(existing_git_blobs) if existing_git_blobs else {}
-        production_categorized = self._catagorize_catalog_blobs(production_catalog_blobs or [])
-        
+        git_categorized = _categorize_catalog_blobs(existing_git_blobs) if existing_git_blobs else {}
+        production_categorized = _categorize_catalog_blobs(production_catalog_blobs or [])
+
         # Log what we found
         if production_catalog_blobs:
             logger.info("Found %d production catalog blobs to process", len(production_catalog_blobs))
         else:
             logger.info("No production catalog blobs found - will use git content only")
-            
+
         git_channels = git_categorized.get(package_name, {}).get("olm.channel", {})
         prod_channels = production_categorized.get(package_name, {}).get("olm.channel", {})
         logger.info("Git channels found: %s", sorted(git_channels.keys()) if git_channels else "none")
@@ -350,8 +372,12 @@ class KonfluxFbcImporter:
         # Summary log
         final_channels = {blob["name"] for blob in merged_blobs if blob.get("schema") == "olm.channel"}
         final_bundles = {blob["name"] for blob in merged_blobs if blob.get("schema") == "olm.bundle"}
-        logger.info("Selective merge complete - final catalog contains %d channels (%s) and %d bundles", 
-                   len(final_channels), sorted(final_channels), len(final_bundles))
+        logger.info(
+            "Selective merge complete - final catalog contains %d channels (%s) and %d bundles",
+            len(final_channels),
+            sorted(final_channels),
+            len(final_bundles),
+        )
 
         return merged_blobs
 
@@ -909,7 +935,7 @@ class KonfluxFbcRebaser:
             icon = next(iter(csv.get("spec", {}).get("icon", [])), None)
             catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name, icon)
 
-        categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
+        categorized_catalog_blobs = _categorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
             raise IOError(f"Package {olm_package} not found in catalog. The FBC repo is not properly initialized.")
         if len(categorized_catalog_blobs) > 1:
@@ -1192,28 +1218,6 @@ class KonfluxFbcRebaser:
             raise IOError("Name not found in bundle blob")
         assert isinstance(olm_bundle_name, str), f"Expected bundle name to be a string, but got {type(olm_bundle_name)}"
         return olm_bundle_name, olm_package, olm_bundle_blob
-
-    def _catagorize_catalog_blobs(self, blobs: List[Dict]):
-        """Given a list of catalog blobs, categorize them by schema and package name.
-
-        :param blobs: A list of catalog blobs.
-        :return: a dictionary of the form {package_name: {schema: {blob_name: blob}}}
-        """
-        categorized_blobs = {}
-        for blob in blobs:
-            schema = blob["schema"]
-            package_name = None
-            match schema:
-                case "olm.package":
-                    package_name = blob["name"]
-                case "olm.channel" | "olm.bundle" | "olm.deprecations":
-                    package_name = blob["package"]
-                case _:  # Unknown schema
-                    raise IOError(f"Found unsupported schema: {schema}")
-            if not package_name:
-                raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
-            categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob["name"]] = blob
-        return categorized_blobs
 
 
 class KonfluxFbcBuildError(Exception):
