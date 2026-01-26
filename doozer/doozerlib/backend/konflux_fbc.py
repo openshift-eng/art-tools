@@ -275,6 +275,12 @@ class KonfluxFbcImporter:
             logger.info("Writing selectively merged catalog to %s", catalog_file_path)
             with catalog_file_path.open('w') as f:
                 yaml.dump_all(merged_blobs, f)
+            # Log the generated catalog content for debugging
+            logger.info("Generated catalog.yaml content:")
+            with catalog_file_path.open('r') as f:
+                catalog_content = f.read()
+                for i, line in enumerate(catalog_content.splitlines(), 1):
+                    logger.info("  %03d: %s", i, line)
         elif catalog_dir.exists():
             logger.info("No content to write, removing existing catalog directory %s", catalog_dir)
             shutil.rmtree(catalog_dir)
@@ -1034,6 +1040,12 @@ class KonfluxFbcRebaser:
         catalog_dir.mkdir(parents=True, exist_ok=True)
         with catalog_file_path.open("w") as f:
             yaml.dump_all(catalog_blobs, f)
+        # Log the final catalog content for debugging
+        logger.info("Final catalog.yaml content after rebase:")
+        with catalog_file_path.open('r') as f:
+            catalog_content = f.read()
+            for i, line in enumerate(catalog_content.splitlines(), 1):
+                logger.info("  %03d: %s", i, line)
 
         # Add ImageDigestMirrorSet .tekton/images-mirror-set.yaml to the build repo to make Enterprise Contract happy
         image_digest_mirror_set = self._generate_image_digest_mirror_set(
