@@ -6,9 +6,10 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from random import uniform
-from typing import BinaryIO, Dict, Iterable, List, Set, cast
+from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
 
 import aiofiles
 import aiohttp
@@ -219,6 +220,42 @@ class AsyncSignatory:
         return signature_meta
 
 
+@dataclass
+class ReleaseImageInfo:
+    """Information about a release image for signing purposes.
+
+    Attributes:
+        original_pullspec: The original input pullspec (may be manifest list or single manifest)
+        canonical_tag: The canonical tag for this release image (e.g., "4.16.1-x86_64" or "4.16.1-multi")
+        manifests_to_sign: List of individual manifest pullspecs discovered from this release image.
+            For manifest lists, these are the arch-specific manifests.
+            For single manifests, this is just [original_pullspec].
+            All manifests will be signed with the same canonical_tag.
+    """
+
+    original_pullspec: str
+    canonical_tag: str
+    manifests_to_sign: List[str] = field(default_factory=list)
+
+
+@dataclass
+class DiscoveryResult:
+    """Results from discovering pullspecs to sign.
+
+    Provides clear separation between release images (which need canonical tag signing)
+    and component images (which only need digest-based signing).
+    """
+
+    # Release images with their canonical tags and discovered manifests
+    release_images: List[ReleaseImageInfo] = field(default_factory=list)
+
+    # Component images to sign (no canonical tags needed)
+    component_images: Set[str] = field(default_factory=set)
+
+    # Any errors encountered during discovery
+    errors: Dict[str, Exception] = field(default_factory=dict)
+
+
 class SigstoreSignatory:
     """
     SigstoreSignatory uses sigstore's cosign to sign container image manifests keylessly and publish
@@ -244,9 +281,6 @@ class SigstoreSignatory:
         signing_key_ids: List[str],
         rekor_url: str,
         concurrency_limit: int,
-        sign_release: bool,
-        sign_components: bool,
-        verify_release: bool,
     ) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
@@ -254,13 +288,10 @@ class SigstoreSignatory:
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
-        self.sign_release = sign_release  # whether to sign release images that we examine
-        self.sign_components = sign_components  # whether to sign component images that we examine
-        self.verify_release = verify_release  # require a legacy signature on release images
 
     @staticmethod
-    def redigest_pullspec(pullspec, digest):
-        """form the pullspec for a digest in the same repo as an existing pullspec"""
+    def redigest_pullspec(pullspec: str, digest: str) -> str:
+        """Form the pullspec for a digest in the same repo as an existing pullspec."""
         if len(halves := pullspec.split("@sha256:")) == 2:  # assume that was a digest at the end
             return f"{halves[0]}@{digest}"
         elif len(halves := pullspec.rsplit(":", 1)) == 2:
@@ -268,115 +299,287 @@ class SigstoreSignatory:
             return f"{halves[0]}@{digest}"
         return f"{pullspec}@{digest}"  # assume it was a bare registry/repo
 
-    async def discover_pullspecs(self, pullspecs: Iterable[str], release_name: str) -> (Set[str], Dict[str, Exception]):
+    async def discover_release_image(
+        self,
+        pullspec: str,
+        canonical_tag: str,
+        release_name: str,
+        verify_legacy_sig: bool = False,
+    ) -> Tuple[ReleaseImageInfo, Dict[str, Exception]]:
         """
-        Recursively discover pullspecs that need signatures. Given manifest lists, examine the
-        digests of each platform. Given a release image, examine the digests of all payload
-        components. Come up with a list of the individual manifests we will actually sign.
+        Discover all manifests that need signing for a single release image.
 
-        :param pullspecs: List of pullspecs to begin discovery
-        :param release_name: Require any release images to have this release name
-        :return: a set of discovered pullspecs to sign, and a dict of any discovery errors
+        For manifest lists, this discovers all arch-specific manifests. All discovered manifests
+        will be signed with the same canonical_tag, enabling users to verify images pulled via
+        the manifest list tag without signedIdentity overrides.
+
+        :param pullspec: The release image pullspec (manifest list or single manifest)
+        :param canonical_tag: The canonical tag for this release (e.g., "4.16.1-multi")
+        :param release_name: Expected release name label value
+        :param verify_legacy_sig: If True, verify legacy signature exists before proceeding
+        :return: ReleaseImageInfo with discovered manifests, and any errors
         """
-        seen: Set[str] = set(pullspecs)  # prevent re-examination and multiple signings
-        need_signing: Set[str] = set()  # pullspecs for manifests to be signed
-        errors: Dict[str, Exception] = {}  # pullspec -> error when examining it
+        info = ReleaseImageInfo(
+            original_pullspec=pullspec,
+            canonical_tag=canonical_tag,
+        )
+        errors: Dict[str, Exception] = {}
+        seen: Set[str] = {pullspec}
 
-        need_examining: List[str] = list(pullspecs)
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+        img_info = await get_image_info(pullspec, True)
+
+        if isinstance(img_info, list):
+            # Manifest list: discover each arch manifest
+            self._logger.info("%s is a manifest list with %d manifests", pullspec, len(img_info))
+            for manifest in img_info:
+                manifest_pullspec = self.redigest_pullspec(manifest["name"], manifest["digest"])
+                if manifest_pullspec not in seen:
+                    seen.add(manifest_pullspec)
+                    info.manifests_to_sign.append(manifest_pullspec)
+        else:
+            # Single manifest release image
+            this_rn = img_info["config"]["config"]["Labels"].get("io.openshift.release")
+            if not this_rn:
+                errors[pullspec] = RuntimeError(f"{pullspec} is not a release image (missing label)")
+            elif release_name and release_name != this_rn:
+                # Only validate release name if one was provided
+                errors[pullspec] = RuntimeError(
+                    f"release image at {pullspec} has release name {this_rn}, not expected {release_name}"
+                )
+            elif verify_legacy_sig and not await self.verify_legacy_signature(img_info):
+                errors[pullspec] = RuntimeError(
+                    f"release image at {pullspec} does not have a required legacy signature"
+                )
+            else:
+                # Always use digest-based pullspec for signing (immutable reference)
+                digest = img_info.get("digest")
+                if digest:
+                    digest_pullspec = self.redigest_pullspec(pullspec, digest)
+                    info.manifests_to_sign.append(digest_pullspec)
+                else:
+                    # Fallback to original if no digest available
+                    info.manifests_to_sign.append(pullspec)
+
+        return info, errors
+
+    async def discover_component_images(
+        self,
+        release_pullspec: str,
+        release_name: str,
+    ) -> Tuple[Set[str], Dict[str, Exception]]:
+        """
+        Discover all component images referenced by a release image.
+
+        For multiarch components, this recursively discovers the individual arch manifests.
+        Component images don't need canonical tag signing - only digest-based signing.
+
+        :param release_pullspec: The release image pullspec
+        :param release_name: Expected release name for validation
+        :return: Set of component image pullspecs to sign, and any errors
+        """
+        component_images: Set[str] = set()
+        errors: Dict[str, Exception] = {}
+        seen: Set[str] = set()
+
+        # Get component references from the release image
+        try:
+            references = await self.get_release_image_references(release_pullspec)
+        except RuntimeError as exc:
+            errors[release_pullspec] = exc
+            return component_images, errors
+
+        # Examine each component to get individual manifests
+        need_examining = list(references)
+        seen.update(references)
+
         while need_examining:
-            args = [(ps, release_name) for ps in need_examining]
-            results = await run_limited_unordered(self._examine_pullspec, args, self.concurrency_limit)
+            args = [(ps,) for ps in need_examining]
+            results = await run_limited_unordered(self._examine_component, args, self.concurrency_limit)
 
-            need_examining = []
-            for next_signing, next_examining, next_errors in results:
-                need_signing.update(next_signing)
-                errors.update(next_errors)
-                for ps in next_examining:
+            next_to_examine = []
+            for idx, (to_sign, to_examine, errs) in enumerate(results):
+                component_images.update(to_sign)
+                errors.update(errs)
+
+                for ps in to_examine:
                     if ps not in seen:
                         seen.add(ps)
-                        need_examining.append(ps)
+                        next_to_examine.append(ps)
 
-        return need_signing, errors
+            need_examining = next_to_examine
 
-    async def _examine_pullspec(self, pullspec: str, release_name: str) -> (Set[str], Set[str], Dict[str, Exception]):
+        return component_images, errors
+
+    async def _examine_component(self, pullspec: str) -> Tuple[Set[str], Set[str], Dict[str, Exception]]:
         """
-        Determine what a pullspec is (single manifest, manifest list, release image) and
-        recursively add it or its references. limit concurrency or we can run out of processes.
-        :param pullspec: Pullspec to be signed
-        :param release_name: Require any release images to have this release name
-        :return: pullspecs needing signing, pullspecs needing examining, and any discovery errors
+        Examine a component image and return what needs signing/examining.
+
+        :param pullspec: Component image pullspec
+        :return: pullspecs to sign, pullspecs to examine further, any errors
         """
         need_signing: Set[str] = set()
         need_examining: Set[str] = set()
         errors: Dict[str, Exception] = {}
 
-        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
-        img_info = await get_image_info(pullspec, True)
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
 
-        if isinstance(img_info, list):  # pullspec is for a manifest list
-            self._logger.info("%s is a manifest list", pullspec)
-            # [lmeyer] AFAICS there is no signing for manifest lists, only manifests; cosign given a
-            # manifest list signs the manifests, and podman etc do not even look for a signature for
-            # the list, only the final image to be downloaded. we do however need to examine each
-            # manifest to see if that might be a release image.
+        try:
+            img_info = await get_image_info(pullspec, True)
+        except Exception as exc:
+            errors[pullspec] = exc
+            return need_signing, need_examining, errors
+
+        if isinstance(img_info, list):
+            # Manifest list: examine each arch manifest
+            self._logger.debug("%s is a manifest list", pullspec)
             for manifest in img_info:
                 need_examining.add(self.redigest_pullspec(manifest["name"], manifest["digest"]))
-        elif this_rn := img_info["config"]["config"]["Labels"].get("io.openshift.release"):
-            # release image; get references and examine those
-            self._logger.info("%s is a release image with name %s", pullspec, this_rn)
-            if release_name != this_rn:
-                errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}",
-                )
-            elif self.verify_release and not await self.verify_legacy_signature(img_info):
-                errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} does not have a required legacy signature",
-                )
-            else:
-                if self.sign_components:
-                    # look up the components referenced by this release image
-                    try:
-                        for child_spec in await self.get_release_image_references(pullspec):
-                            need_examining.add(child_spec)
-                            # [lmeyer] it might seem unnecessary to examine component images. we _could_
-                            # just give them to cosign to sign (recursively, to cover multiarch
-                            # components). however, with multiarch releases, this would lead to signing
-                            # most manifests at least five times (once for the single-arch release
-                            # image, and once for each arch in the multi-arch release), and "pod"
-                            # fillers even more; if we only ever sign at the level of manifests, we can
-                            # ensure we sign only once per release.
-                    except RuntimeError as exc:
-                        errors[pullspec] = exc
-                # also plan to sign the release image itself
-                if self.sign_release:
-                    need_signing.add(pullspec)
-        else:  # pullspec is for a normal image manifest
-            self._logger.info("%s is a single manifest", pullspec)
-            if self.sign_components:
-                need_signing.add(pullspec)
+        else:
+            # Single manifest: sign it
+            self._logger.debug("%s is a single manifest", pullspec)
+            need_signing.add(pullspec)
 
         return need_signing, need_examining, errors
 
     @staticmethod
     async def get_release_image_references(pullspec: str) -> Set[str]:
-        """Retrieve the pullspecs referenced by a release image"""
+        """Retrieve the pullspecs referenced by a release image."""
         return set(
             tag["from"]["name"] for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"]
         )
 
-    async def sign_pullspecs(self, need_signing: Iterable[str]) -> Dict[str, Exception]:
+    async def sign_release_images(
+        self,
+        release_images: List[ReleaseImageInfo],
+        tag_only: bool = False,
+    ) -> Dict[str, Exception]:
         """
-        Sign the given pullspecs via cosign with our KMS.
-        :param need_signing: Pullspecs to be signed
-        :return: dict with any signing errors per pullspec
+        Sign release image manifests with digest and/or canonical tag identities.
+
+        By default, each manifest is signed twice:
+        1. With digest-based identity (e.g., quay.io/.../ocp-release@sha256:...)
+        2. With tag-based identity (e.g., quay.io/.../ocp-release:4.16.1-multi)
+
+        The tag-based signature enables customers to verify images referenced by tag
+        without needing signedIdentity overrides in their policy.
+
+        :param release_images: List of ReleaseImageInfo with canonical tags and manifests to sign
+        :param tag_only: If True, only sign with tag identity (skip digest identity).
+            Useful for retroactive signing where digest signatures already exist.
+        :return: Dict of any signing errors per pullspec
         """
-        args = [(ps,) for ps in need_signing]
-        results = await run_limited_unordered(self._sign_single_manifest, args, self.concurrency_limit)
+        # Build args: (pullspec, canonical_tag, tag_only)
+        args: List[Tuple[str, str, bool]] = []
+        for info in release_images:
+            for pullspec in info.manifests_to_sign:
+                args.append((pullspec, info.canonical_tag, tag_only))
+
+        self._logger.info(
+            "Signing %d release image manifests (from %d release images)%s",
+            len(args),
+            len(release_images),
+            " [TAG ONLY]" if tag_only else "",
+        )
+
+        results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
         return {pullspec: err for result in results for pullspec, err in result.items()}
+
+    async def sign_component_images(
+        self,
+        component_images: Iterable[str],
+    ) -> Dict[str, Exception]:
+        """
+        Sign component images with digest-based identity only.
+
+        Component images don't need canonical tag signing since users reference them
+        via the release image, not directly by tag.
+
+        :param component_images: Pullspecs of component images to sign
+        :return: Dict of any signing errors per pullspec
+        """
+        pullspecs = list(component_images)
+        self._logger.info("Signing %d component images", len(pullspecs))
+
+        args = [(ps, None) for ps in pullspecs]
+        results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
+        return {pullspec: err for result in results for pullspec, err in result.items()}
+
+    async def _sign_manifest(
+        self,
+        pullspec: str,
+        canonical_tag: Optional[str] = None,
+        tag_only: bool = False,
+    ) -> Dict[str, Exception]:
+        """
+        Sign a manifest with cosign.
+
+        When canonical_tag is provided, the manifest is signed with both:
+        1. Digest-based identity (e.g., quay.io/.../ocp-release@sha256:...)
+        2. Tag-based identity (e.g., quay.io/.../ocp-release:4.16.1-multi)
+
+        When canonical_tag is None, only the digest-based identity is used.
+        When tag_only is True, only the tag-based identity is used (skips digest signing).
+
+        :param pullspec: Digest-based pullspec to sign
+        :param canonical_tag: Optional canonical tag for additional tag-based identity
+        :param tag_only: If True, only sign with tag identity (skip digest identity)
+        :return: Dict with any signing error
+        """
+        log = self._logger
+
+        # Build list of identities to sign with
+        identities = []
+        if not tag_only:
+            identities.append(pullspec)
+        if canonical_tag:
+            repo = pullspec.split("@sha256:")[0] if "@sha256:" in pullspec else pullspec.rsplit(":", 1)[0]
+            tag_identity = f"{repo}:{canonical_tag}"
+            identities.append(tag_identity)
+
+        if not identities:
+            log.warning("No identities to sign for %s (tag_only=True but no canonical_tag)", pullspec)
+            return {}
+
+        log.info("Signing manifest %s with identities: %s", pullspec, identities)
+
+        for identity in identities:
+            for signing_key_id in self.signing_key_ids:
+                cmd = [
+                    "cosign",
+                    "sign",
+                    "--yes",
+                    f"--sign-container-identity={identity}",
+                    "--key",
+                    f"awskms:///{signing_key_id}",
+                ]
+
+                if self.rekor_url:
+                    cmd.append(f"--rekor-url={self.rekor_url}")
+                else:
+                    cmd.append("--tlog-upload=false")
+
+                cmd.append(pullspec)
+
+                if self.dry_run:
+                    log.info("[DRY RUN] Would sign: %s", cmd)
+                    continue
+
+                log.debug("Running: %s", cmd)
+                try:
+                    stdout = await self._retrying_cosign(cmd)
+                    log.debug("Signed %s (identity=%s): %s", pullspec, identity, stdout)
+                    await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+                except Exception as exc:
+                    log.error("Failed signing %s (identity=%s): %s", pullspec, identity, exc)
+                    return {pullspec: exc}
+
+        return {}
 
     async def verify_legacy_signature(self, img_info: Dict) -> bool:
         """
-        Verify the signature from mirror.openshift.com matches the release image and RH public key
+        Verify the signature from mirror.openshift.com matches the release image and RH public key.
+
         :param img_info: the oc image info structure from the image
         :return: True if valid signature found, False otherwise
         """
@@ -398,49 +601,10 @@ class SigstoreSignatory:
                     self._logger.info(f"found sig file at {url}")
                     return True
 
-    async def _sign_single_manifest(self, pullspec: str) -> Dict[str, Exception]:
-        """
-        use sigstore to sign a single image manifest, with one or more signing keys, and upload the signature
-        :param pullspec: Pullspec to be signed
-        :return: dict with any signing errors for pullspec
-        """
-        log = self._logger
-        for signing_key_id in self.signing_key_ids:
-            cmd = [
-                "cosign",
-                "sign",
-                "--yes",
-                # https://issues.redhat.com/browse/ART-10052
-                f"--sign-container-identity={pullspec}",
-                "--key",
-                f"awskms:///{signing_key_id}",
-            ]
-
-            if self.rekor_url:
-                cmd.append(f"--rekor-url={self.rekor_url}")
-            else:
-                cmd.append("--tlog-upload=false")
-
-            cmd.append(pullspec)
-
-            if self.dry_run:
-                log.info("[DRY RUN] Would have signed image: %s", cmd)
-                continue
-
-            log.info("Signing %s with %s...", pullspec, signing_key_id)
-            try:
-                stdout = await self._retrying_sign_single_manifest(cmd)
-                log.debug("Successfully signed %s with %s:\n%s", pullspec, signing_key_id, stdout)
-                await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
-            except Exception as exc:
-                log.error("Failure signing %s with %s:\n%s", pullspec, signing_key_id, exc)
-                return {pullspec: exc}
-
-        return {}
-
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
-    async def _retrying_sign_single_manifest(self, cmd: List[str]) -> str:
-        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
+    async def _retrying_cosign(self, cmd: List[str]) -> str:
+        """Execute cosign with retry on failure."""
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
         if rc:
             raise RuntimeError(stderr)

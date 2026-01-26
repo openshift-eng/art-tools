@@ -1016,8 +1016,25 @@ class PromotePipeline:
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
-    async def sigstore_sign(self, release_name: str, release_infos: Dict):
-        """Signs release and component images with sigstore/cosign which publishes to quay"""
+    async def sigstore_sign(
+        self,
+        release_name: str,
+        release_infos: Dict,
+    ):
+        """Signs release and component images with sigstore/cosign which publishes to quay.
+
+        Release images are signed with both digest and canonical tag identities
+        (e.g., "quay.io/.../ocp-release:4.16.1-x86_64"). This enables customers to verify
+        images referenced by tag without needing signedIdentity overrides in their policy
+        configuration.
+
+        Component images are signed with digest identity only.
+
+        :param release_name: The release name (e.g., "4.16.1")
+        :param release_infos: Dict mapping arch to release info (containing "image" and "digest")
+        """
+        from pyartcd.signatory import ReleaseImageInfo
+
         CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
         signatory = SigstoreSignatory(
             logger=self._logger,
@@ -1027,25 +1044,66 @@ class PromotePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
-            sign_release=True,
-            sign_components=True,
-            verify_release=False,  # not needed when we're supplying the shasum pullspecs
         )
-        # recursively discover all the pullspecs that need to be signed.
-        images: List[str] = [
-            # for paranoia, refer to release image pullspecs with shasums
-            signatory.redigest_pullspec(info["image"], info["digest"])
-            for info in release_infos.values()
-        ]
-        need_signing: Set[str] = set()
-        errors: Dict[str, str] = {}  # pullspec -> exception
-        need_signing, errors = await signatory.discover_pullspecs(images, release_name)
 
-        if errors:
-            # this should be impossible given we just created the pullspecs
-            raise IOError(f"Not all pullspecs examined were viable: {errors}")
-        if errors := await signatory.sign_pullspecs(need_signing):
-            raise IOError(f"Not all signings succeeded, check errors: {errors}")
+        # --- Phase 1: Discover release images and their manifests ---
+        # For manifest lists, this discovers all arch-specific manifests.
+        # All manifests from a manifest list are signed with the same canonical tag.
+        release_images: List[ReleaseImageInfo] = []
+        all_errors: Dict[str, Exception] = {}
+
+        for arch, info in release_infos.items():
+            # For paranoia, refer to release image pullspecs with shasums
+            digest_pullspec = signatory.redigest_pullspec(info["image"], info["digest"])
+
+            # Extract the canonical tag (e.g., "4.16.1-x86_64" or "4.16.1-multi")
+            canonical_tag = info["image"].split(":")[-1]
+            self._logger.info("Discovering release image %s with canonical tag: %s", digest_pullspec, canonical_tag)
+
+            release_info, errors = await signatory.discover_release_image(
+                pullspec=digest_pullspec,
+                canonical_tag=canonical_tag,
+                release_name=release_name,
+            )
+            release_images.append(release_info)
+            all_errors.update(errors)
+
+        if all_errors:
+            raise IOError(f"Release image discovery failed: {all_errors}")
+
+        # --- Phase 2: Discover component images ---
+        # Component images don't need canonical tag signing.
+        component_images: Set[str] = set()
+
+        # Use the first release image to get component references
+        # (all arch variants have the same components)
+        first_release = next(iter(release_infos.values()))
+        first_pullspec = signatory.redigest_pullspec(first_release["image"], first_release["digest"])
+
+        self._logger.info("Discovering component images from %s", first_pullspec)
+        components, errors = await signatory.discover_component_images(
+            release_pullspec=first_pullspec,
+            release_name=release_name,
+        )
+        component_images.update(components)
+        all_errors.update(errors)
+
+        if all_errors:
+            raise IOError(f"Component image discovery failed: {all_errors}")
+
+        # --- Phase 3: Sign release images (with canonical tags) ---
+        self._logger.info(
+            "Signing %d release images with %d total manifests",
+            len(release_images),
+            sum(len(ri.manifests_to_sign) for ri in release_images),
+        )
+        if errors := await signatory.sign_release_images(release_images):
+            raise IOError(f"Release image signing failed: {errors}")
+
+        # --- Phase 4: Sign component images (digest only) ---
+        self._logger.info("Signing %d component images", len(component_images))
+        if errors := await signatory.sign_component_images(component_images):
+            raise IOError(f"Component image signing failed: {errors}")
 
     def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
         _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')

@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
-from pyartcd.signatory import AsyncSignatory
+from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
@@ -287,3 +287,107 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
             sig_file=sig_file,
         )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')
+
+
+class TestSigstoreSignatory(IsolatedAsyncioTestCase):
+    def _create_signatory(self) -> SigstoreSignatory:
+        """Create a SigstoreSignatory for testing"""
+        logger = MagicMock()
+        return SigstoreSignatory(
+            logger=logger,
+            dry_run=True,
+            signing_creds="/path/to/creds",
+            signing_key_ids=["test-key-id"],
+            rekor_url="",
+            concurrency_limit=10,
+        )
+
+    def test_redigest_pullspec_with_digest(self):
+        """Test redigest_pullspec with an existing digest reference"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:olddigest"
+        new_digest = "sha256:newdigest"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:newdigest")
+
+    def test_redigest_pullspec_with_tag(self):
+        """Test redigest_pullspec with a tag reference"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+        new_digest = "sha256:abc123"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:abc123")
+
+    def test_redigest_pullspec_bare_repo(self):
+        """Test redigest_pullspec with a bare repo (no tag or digest)"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release"
+        new_digest = "sha256:abc123"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:abc123")
+
+    async def test_sign_manifest_with_canonical_tag(self):
+        """Test signing a manifest with canonical tag signs with both digest and tag identities"""
+        signatory = self._create_signatory()
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        canonical_tag = "4.16.1-x86_64"
+        result = await signatory._sign_manifest(pullspec, canonical_tag)
+
+        self.assertEqual(result, {})
+        # Should have logged dry run messages twice (digest + tag identities)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 2)
+
+    async def test_sign_manifest_without_canonical_tag(self):
+        """Test signing a manifest without canonical tag signs with digest identity only"""
+        signatory = self._create_signatory()
+
+        pullspec = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
+        result = await signatory._sign_manifest(pullspec)
+
+        self.assertEqual(result, {})
+        # Should have logged dry run message once (digest identity only)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 1)
+
+    async def test_sign_release_images_with_multiple_manifests(self):
+        """Test signing release images where a manifest list has multiple arch manifests.
+
+        When a user pulls "ocp-release:4.16.1-multi", the registry returns an arch-specific
+        manifest. The signature for that manifest must have identity "ocp-release:4.16.1-multi"
+        (the tag the user requested), not an arch-specific tag.
+        """
+        from pyartcd.signatory import ReleaseImageInfo
+
+        signatory = self._create_signatory()
+
+        # Simulate a manifest list where multiple arch manifests are discovered
+        release_info = ReleaseImageInfo(
+            original_pullspec="quay.io/openshift-release-dev/ocp-release@sha256:manifest-list",
+            canonical_tag="4.16.1-multi",
+            manifests_to_sign=[
+                "quay.io/openshift-release-dev/ocp-release@sha256:x86-manifest",
+                "quay.io/openshift-release-dev/ocp-release@sha256:arm-manifest",
+            ],
+        )
+
+        result = await signatory.sign_release_images([release_info])
+
+        self.assertEqual(result, {})
+        # Should have logged for 4 signings: 2 manifests x 2 identities (digest + tag) each
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 4)
+
+    async def test_sign_component_images(self):
+        """Test signing component images signs with digest identity only"""
+        signatory = self._create_signatory()
+
+        component_images = [
+            "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:comp1",
+            "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:comp2",
+        ]
+
+        result = await signatory.sign_component_images(component_images)
+
+        self.assertEqual(result, {})
+        # Should have logged 2 dry run messages (one per component, digest only)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 2)

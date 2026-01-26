@@ -11,7 +11,7 @@ from semver import VersionInfo
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import GroupRuntime, Runtime
-from pyartcd.signatory import SigstoreSignatory
+from pyartcd.signatory import ReleaseImageInfo, SigstoreSignatory
 
 CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
 
@@ -63,9 +63,6 @@ class SigstorePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
-            sign_release=self.sign_release,
-            sign_components=self.sign_components,
-            verify_release=self.verify_release,
         )
 
     def check_environment_variables(self):
@@ -118,21 +115,72 @@ class SigstorePipeline:
                 """)
             self.pullspecs = self._lookup_release_images(release_name)
 
-        # given pullspecs that are most likely trees (either manifest lists or release images),
-        # recursively discover all the pullspecs that need to be signed.
-        need_signing: Set[str] = set()
-        errors: Dict[str, str] = {}  # pullspec -> exception
-        need_signing, errors = await self.signatory.discover_pullspecs(self.pullspecs, release_name)
+        all_errors: Dict[str, Exception] = {}
 
-        if errors:
-            print("Not all pullspecs examined were viable:")
-            for ps, err in errors.items():
-                print(f"{ps}: {err}")
+        # --- Phase 1: Discover release images and their manifests ---
+        release_images: List[ReleaseImageInfo] = []
+
+        if self.sign_release:
+            for pullspec in self.pullspecs:
+                # Extract canonical tag from tag-based pullspecs
+                if "@sha256:" in pullspec:
+                    logger.warning(
+                        "Pullspec %s is digest-based; cannot determine canonical tag. "
+                        "For proper canonical tag signing, use tag-based pullspecs.",
+                        pullspec,
+                    )
+                    # Can't do canonical tag signing without knowing the tag
+                    continue
+
+                canonical_tag = pullspec.split(":")[-1]
+                logger.info("Discovering release image %s with canonical tag: %s", pullspec, canonical_tag)
+
+                release_info, errors = await self.signatory.discover_release_image(
+                    pullspec=pullspec,
+                    canonical_tag=canonical_tag,
+                    release_name=release_name,
+                    verify_legacy_sig=self.verify_release,
+                )
+                release_images.append(release_info)
+                all_errors.update(errors)
+
+        # --- Phase 2: Discover component images ---
+        component_images: Set[str] = set()
+
+        if self.sign_components and self.pullspecs:
+            # Use first release image to get component references
+            first_pullspec = self.pullspecs[0]
+            logger.info("Discovering component images from %s", first_pullspec)
+
+            components, errors = await self.signatory.discover_component_images(
+                release_pullspec=first_pullspec,
+                release_name=release_name,
+            )
+            component_images.update(components)
+            all_errors.update(errors)
+
+        if all_errors:
+            print("Discovery errors:")
+            for ps, err in all_errors.items():
+                print(f"  {ps}: {err}")
             exit(1)
 
-        if errors := await self.signatory.sign_pullspecs(need_signing):
-            print(f"Not all signings succeeded, check errors: {errors}")
-            exit(1)
+        # --- Phase 3: Sign release images (with canonical tags) ---
+        if release_images:
+            total_manifests = sum(len(ri.manifests_to_sign) for ri in release_images)
+            logger.info("Signing %d release images with %d total manifests", len(release_images), total_manifests)
+            if errors := await self.signatory.sign_release_images(release_images):
+                print(f"Release image signing failed: {errors}")
+                exit(1)
+
+        # --- Phase 4: Sign component images (digest only) ---
+        if component_images:
+            logger.info("Signing %d component images", len(component_images))
+            if errors := await self.signatory.sign_component_images(component_images):
+                print(f"Component image signing failed: {errors}")
+                exit(1)
+
+        logger.info("Signing complete!")
 
     def _lookup_release_images(self, release_name):
         # NOTE: only do this for testing purposes. for secure signing, always supply an
