@@ -206,7 +206,7 @@ async def fbc_import(
     # Auto-detect selective channels based on group type if not explicitly set
     if selective_channels is None:
         selective_channels = not runtime.group.startswith('openshift-')
-        
+
     cli = FbcImportCli(
         runtime=runtime,
         index_image=from_index,

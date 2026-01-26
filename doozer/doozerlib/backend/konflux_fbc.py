@@ -954,17 +954,15 @@ class KonfluxFbcRebaser:
             # Check if this bundle already exists in the channel (replacement case)
             existing_bundle = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             is_replacement = existing_bundle is not None
-            
+
             # For new channels where this will be the first (and only) bundle, don't add circular references
             # This happens when we have an empty channel or when adding a bundle to a channel that will only contain this bundle after the update
             # Only apply this fix for non-OpenShift groups
-            will_be_first_bundle_only = (
-                not self.group.startswith('openshift-') and (
-                    len(channel['entries']) == 0 or 
-                    (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
-                )
+            will_be_first_bundle_only = not self.group.startswith('openshift-') and (
+                len(channel['entries']) == 0
+                or (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
             )
-            
+
             # Update "skips" in the channel
             # FIXME: We try to mimic how `skips` field is updated by the old ET centric process.
             # We should verify if this is correct.
