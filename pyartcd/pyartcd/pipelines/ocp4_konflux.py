@@ -335,8 +335,10 @@ class KonfluxOcp4Pipeline:
             LOGGER.error('record.log not found!')
             return
 
-        built_images = [entry['name'] for entry in record_log['image_build_konflux'] if not int(entry['status'])]
-        failed_images = [entry['name'] for entry in record_log['image_build_konflux'] if int(entry['status'])]
+        built_images = [
+            entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
+        ]
+        failed_images = [entry['name'] for entry in record_log.get('image_build_konflux', []) if int(entry['status'])]
         if 1 <= len(failed_images) <= 10:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         elif len(failed_images) > 10:
@@ -687,7 +689,7 @@ class KonfluxOcp4Pipeline:
             return
 
         # Get the list of successful builds
-        builds_to_mirror = [entry for entry in record_log['image_build_konflux'] if not int(entry['status'])]
+        builds_to_mirror = [entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])]
 
         async def sync_build(build):
             release = build["nvrs"].split("-")[-1]
