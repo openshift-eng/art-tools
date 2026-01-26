@@ -106,7 +106,7 @@ class ScanFipsCli:
         # Setup brew tags
         et_data = self.runtime.get_errata_config()
         brew_tags = [
-            tag.format(**self.runtime.group_config.vars) for tag in et_data.get('brew_tag_product_version_mapping', {})
+            tag.format(**self.runtime.group_config.vars) for tag in et_data.get("brew_tag_product_version_mapping", {})
         ]
         self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
 

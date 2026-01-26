@@ -42,19 +42,19 @@ class FindBuildsTestCase(unittest.TestCase):
         attempted change should fail"""
 
         command = constants.ELLIOTT_CMD + [
-            f'--group=openshift-{version}',
-            '--images=openshift-enterprise-cli',
-            'find-builds',
-            '--kind=image',
-            '--attach=57899',
+            f"--group=openshift-{version}",
+            "--images=openshift-enterprise-cli",
+            "find-builds",
+            "--kind=image",
+            "--attach=57899",
         ]
         result = subprocess.run(command, capture_output=True)
 
         self.assertEqual(
             result.returncode, 1, msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
         )
-        self.assertIn('Cannot change state', result.stdout.decode())
+        self.assertIn("Cannot change state", result.stdout.decode())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

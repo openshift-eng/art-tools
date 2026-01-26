@@ -52,5 +52,5 @@ class TestDistgitPullImage(unittest.TestCase):
         distgit.pull_image("my-image")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

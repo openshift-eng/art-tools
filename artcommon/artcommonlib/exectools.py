@@ -36,7 +36,7 @@ SUCCESS = 0
 logger = logutil.get_logger(__name__)
 TRACER = trace.get_tracer(__name__)
 
-F = TypeVar('F', bound=Callable[..., Awaitable])
+F = TypeVar("F", bound=Callable[..., Awaitable])
 
 cmd_counter_lock = threading.Lock()
 cmd_counter = 0  # Increments atomically to help search logs for command start/stop
@@ -129,7 +129,7 @@ def cmd_assert(
     :return: (stdout,stderr) if exit code is zero
     """
 
-    result, stdout, stderr = -1, '', ''
+    result, stdout, stderr = -1, "", ""
     try_num = 0
 
     for try_num in range(0, retries):
@@ -204,19 +204,19 @@ def cmd_gather(
 
     if not cwd:
         cwd = Dir.getcwd()
-    cmd_info_base = f'${my_id}: {cmd_list} - [cwd={cwd}]'
+    cmd_info_base = f"${my_id}: {cmd_list} - [cwd={cwd}]"
     cmd_info = cmd_info_base
 
     env = os.environ.copy()
     if set_env:
-        cmd_info = '{} [env={}]'.format(cmd_info, set_env)
+        cmd_info = "{} [env={}]".format(cmd_info, set_env)
         env.update(set_env)
 
     # Make sure output of launched commands is utf-8
-    env['LC_ALL'] = 'en_US.UTF-8'
+    env["LC_ALL"] = "en_US.UTF-8"
 
-    with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
-        logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
+    with timer(logger.debug, f"{cmd_info}: Executed:cmd_gather"):
+        logger.info(f"{cmd_info}: Executing:cmd_gather: {' '.join(cmd_list)}")
         try:
             proc = subprocess.Popen(
                 cmd_list, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
@@ -234,8 +234,8 @@ def cmd_gather(
                 out, err = proc.communicate()
             rc = proc.returncode
         else:
-            out = b''
-            err = b''
+            out = b""
+            err = b""
 
             # Many thanks to http://eyalarubas.com/python-subproc-nonblock.html
             # setup non-blocking read
@@ -281,15 +281,15 @@ def cmd_gather(
                     time.sleep(0.5)  # reduce busy-wait
 
         # We read in bytes representing utf-8 output; decode so that python recognizes them as unicode strings
-        out = out.decode('utf-8')
-        err = err.decode('utf-8')
+        out = out.decode("utf-8")
+        err = err.decode("utf-8")
 
         log_output_stdout = out
         log_output_stderr = err
         if not log_stdout and len(out) > 200:
-            log_output_stdout = f'{out[:200]}\n..truncated..'
+            log_output_stdout = f"{out[:200]}\n..truncated.."
         if not log_stderr and len(err) > 200:
-            log_output_stderr = f'{err[:200]}\n..truncated..'
+            log_output_stderr = f"{err[:200]}\n..truncated.."
 
         if rc:
             logger.debug(
@@ -321,9 +321,9 @@ def timer(out_method, msg):
     finally:
         time_elapsed = datetime.now() - start_time
         entry = (
-            f'Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} '
-            f'from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:'
-            f'{caller_caller.code_context[0].strip() if caller_caller.code_context else ""} : {msg}'
+            f"Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} "
+            f"from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:"
+            f"{caller_caller.code_context[0].strip() if caller_caller.code_context else ''} : {msg}"
         )
         out_method(entry)
 
@@ -409,11 +409,11 @@ def fire_and_forget(cwd, shell_cmd, quiet=True):
     """
 
     if quiet:
-        shell_cmd = f'{shell_cmd} > /dev/null 2>/dev/null'
+        shell_cmd = f"{shell_cmd} > /dev/null 2>/dev/null"
 
     # https://stackoverflow.com/a/13256908
     kwargs = {}
-    if platform.system() == 'Windows':
+    if platform.system() == "Windows":
         # from msdn [1]
         CREATE_NEW_PROCESS_GROUP = 0x00000200  # note: could get it from subprocess
         DETACHED_PROCESS = 0x00000008  # 0x8 | 0x200 == 0x208
@@ -426,7 +426,7 @@ def fire_and_forget(cwd, shell_cmd, quiet=True):
         kwargs.update(start_new_session=True)
 
     p = subprocess.Popen(
-        f'{shell_cmd}',
+        f"{shell_cmd}",
         env=os.environ.copy(),
         shell=True,
         stdin=None,
@@ -462,7 +462,7 @@ def parallel_exec(f, args, n_threads=None) -> MapResult:
         while not ret.ready():
             ret.wait(60)
     except KeyboardInterrupt:
-        logger.warning('SIGINT received, signaling threads to terminate...')
+        logger.warning("SIGINT received, signaling threads to terminate...")
         terminate_event.set()
     pool.join()
     return ret
@@ -502,14 +502,14 @@ async def manifest_tool(options, dry_run=False):
             auth_opt = f"--docker-cfg={auth_file}"
 
     if isinstance(options, str):
-        cmd = f'manifest-tool {auth_opt} {options}'
+        cmd = f"manifest-tool {auth_opt} {options}"
 
     elif isinstance(options, list):
-        cmd = ['manifest-tool', auth_opt]
+        cmd = ["manifest-tool", auth_opt]
         cmd.extend(options)
 
     else:
-        raise ValueError('Invalid type for manifest-tool options provided')
+        raise ValueError("Invalid type for manifest-tool options provided")
 
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)

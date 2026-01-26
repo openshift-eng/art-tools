@@ -15,7 +15,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         runtime = MagicMock(
             config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, dry_run=False
         )
-        fork_url = 'https://fork.com/ocp-build-data-fork.git'
+        fork_url = "https://fork.com/ocp-build-data-fork.git"
         pipeline = RebuildPipeline(
             runtime,
             group="openshift-4.9",
@@ -48,7 +48,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         tag_pvs = [("fake-tag-candidate", "FAKE-PRODUCT-VERSION")]
         embargoed_tags = ["fake-tag-embargoed"]
@@ -56,7 +56,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             "plashet1234", "plashet1234", 8, ["x86_64", "s390x"], tag_pvs, embargoed_tags, 12345
         )
         expected_local_dir = runtime.working_dir / "plashets/el8/art0001/plashet1234"
-        expected_remote_url = constants.PLASHET_REMOTES[0]['url'] + "/4.9-el8/art0001/plashet1234"
+        expected_remote_url = constants.PLASHET_REMOTES[0]["url"] + "/4.9-el8/art0001/plashet1234"
         self.assertEqual(actual, ("plashet1234", expected_local_dir, expected_remote_url))
         path_exists.assert_called_once_with()
         rmtree.assert_called_once_with(expected_local_dir)
@@ -81,11 +81,11 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         actual = await pipeline._build_plashet_for_assembly("plashet1234", "plashet1234", 8, ["x86_64", "s390x"], 12345)
         expected_local_dir = runtime.working_dir / "plashets/el8/art0001/plashet1234"
-        expected_remote_url = constants.PLASHET_REMOTES[0]['url'] + "/4.9-el8/art0001/plashet1234"
+        expected_remote_url = constants.PLASHET_REMOTES[0]["url"] + "/4.9-el8/art0001/plashet1234"
         self.assertEqual(actual, ("plashet1234", expected_local_dir, expected_remote_url))
         path_exists.assert_called_once_with()
         rmtree.assert_called_once_with(expected_local_dir)
@@ -110,11 +110,11 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         actual = await pipeline._build_plashet_for_assembly("plashet1234", "plashet1234", 8, ["x86_64", "s390x"], 12345)
         expected_local_dir = runtime.working_dir / "plashets/el8/art0001/plashet1234"
-        expected_remote_url = constants.PLASHET_REMOTES[0]['url'] + "/4.9-el8/art0001/plashet1234"
+        expected_remote_url = constants.PLASHET_REMOTES[0]["url"] + "/4.9-el8/art0001/plashet1234"
         self.assertEqual(actual, ("plashet1234", expected_local_dir, expected_remote_url))
         path_exists.assert_called_once_with()
         rmtree.assert_called_once_with(expected_local_dir)
@@ -130,20 +130,20 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         local_plashet_dir = "/path/to/local/plashets/el8/plashet1234"
         await pipeline._copy_plashet_out_to_remote(8, local_plashet_dir, "building")
         cmd_assert_async.assert_any_await(
             [
-                'ssh',
-                'ocp-artifacts',
-                '--',
-                'ln',
-                '-sfn',
-                '--',
-                'plashet1234',
-                '/mnt/data/pub/RHOCP/plashets/4.9-el8/art0001/building',
+                "ssh",
+                "ocp-artifacts",
+                "--",
+                "ln",
+                "-sfn",
+                "--",
+                "plashet1234",
+                "/mnt/data/pub/RHOCP/plashets/4.9-el8/art0001/building",
             ]
         )
         cmd_assert_async.assert_any_await(
@@ -165,7 +165,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         cmd_assert_async.assert_any_await(
             [
                 "ssh",
-                constants.PLASHET_REMOTES[0]['host'],
+                constants.PLASHET_REMOTES[0]["host"],
                 "--",
                 "ln",
                 "-sfn",
@@ -192,7 +192,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         _build_plashet_from_tags.return_value = PlashetBuildResult(
             "plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"
@@ -202,17 +202,17 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         )
         actual = await pipeline._build_plashets("202107160000", 8, group_config, None)
         _build_plashet_from_tags.assert_awaited_once_with(
-            'plashet-rebuild-basis',
-            'art0001-202107160000-rhcos-basis',
+            "plashet-rebuild-basis",
+            "art0001-202107160000-rhcos-basis",
             8,
             group_config["arches"],
-            (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),),
-            ['rhaos-4.9-rhel-8-embargoed'],
+            (("rhaos-4.9-rhel-8-candidate", "OSE-4.9-RHEL-8"),),
+            ["rhaos-4.9-rhel-8-embargoed"],
             group_config["signing_advisory"],
         )
         _build_plashet_for_assembly.assert_awaited_once_with(
-            'plashet-rebuild-overrides',
-            'art0001-202107160000-rhcos-overrides',
+            "plashet-rebuild-overrides",
+            "art0001-202107160000-rhcos-overrides",
             8,
             group_config["arches"],
             group_config["signing_advisory"],
@@ -242,7 +242,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         _build_plashet_from_tags.return_value = PlashetBuildResult(
             "plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"
@@ -253,26 +253,26 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         image_config = {"enabled_repos": ["rhel-8-server-ose-rpms-embargoed", "rhel-8-server-ironic-rpms"]}
         actual = await pipeline._build_plashets("202107160000", 8, group_config, image_config)
         _build_plashet_from_tags.assert_any_await(
-            'rhel-8-server-ose-rpms-embargoed',
-            'art0001-202107160000-image-foo-basis',
+            "rhel-8-server-ose-rpms-embargoed",
+            "art0001-202107160000-image-foo-basis",
             8,
             group_config["arches"],
-            (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),),
-            ['rhaos-4.9-rhel-8-embargoed'],
+            (("rhaos-4.9-rhel-8-candidate", "OSE-4.9-RHEL-8"),),
+            ["rhaos-4.9-rhel-8-embargoed"],
             group_config["signing_advisory"],
         )
         _build_plashet_from_tags.assert_any_await(
-            'rhel-8-server-ironic-rpms',
-            'art0001-202107160000-image-foo-ironic',
+            "rhel-8-server-ironic-rpms",
+            "art0001-202107160000-image-foo-ironic",
             8,
             group_config["arches"],
-            (('rhaos-4.9-ironic-rhel-8-candidate', 'OSE-IRONIC-4.9-RHEL-8'),),
-            ['rhaos-4.9-rhel-8-embargoed'],
+            (("rhaos-4.9-ironic-rhel-8-candidate", "OSE-IRONIC-4.9-RHEL-8"),),
+            ["rhaos-4.9-rhel-8-embargoed"],
             group_config["signing_advisory"],
         )
         _build_plashet_for_assembly.assert_awaited_once_with(
-            'plashet-rebuild-overrides',
-            'art0001-202107160000-image-foo-overrides',
+            "plashet-rebuild-overrides",
+            "art0001-202107160000-image-foo-overrides",
             8,
             group_config["arches"],
             group_config["signing_advisory"],
@@ -296,7 +296,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         plashets = [
             PlashetBuildResult(
@@ -376,7 +376,7 @@ priority = 1
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         out_file = StringIO()
         plashets = [
@@ -419,7 +419,7 @@ priority = 1
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         cmd_gather_async.return_value = (
             0,
@@ -443,7 +443,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         await pipeline._rebase_image("202107160000.p?")
 
@@ -462,7 +462,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         repo_url = "http://example.com/plashets/4.9-el8/art0001/art0001-image-foo-overrides/rebuild.repo"
         open.return_value.__enter__.return_value = StringIO("build|nvrs=foo-container-v1.2.3-1.p0.assembly.art0001|")
@@ -486,7 +486,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RPM,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         release = "202107160000.p?"
         open.return_value.__enter__.return_value = StringIO(
@@ -512,7 +512,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RPM,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         actual = pipeline._generate_example_schema(["foo-v1.2.3-1.el8", "foo-v1.2.3-1.el7"])
         expected = {
@@ -547,7 +547,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         actual = pipeline._generate_example_schema(["foo-container-v1.2.3-1"])
         expected = {
@@ -604,7 +604,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RPM,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         _rebase_and_build_rpm.return_value = ["foo-v1.2.3-1.el8", "foo-v1.2.3-1.el7"]
         _generate_example_schema.return_value = {"some_key": "some_value"}
@@ -648,7 +648,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.IMAGE,
             dg_key="foo",
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],
@@ -713,7 +713,7 @@ images:
             plashet_remote=constants.PLASHET_REMOTES[0],
             type=RebuildType.RHCOS,
             dg_key=None,
-            ocp_build_data_url='',
+            ocp_build_data_url="",
         )
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],

@@ -29,8 +29,8 @@ def validate(file, data, images_dir=None):
 
     # Validate that the image has a delivery.delivery_repo_names field if it is not disabled or for_release is false
     if data.get("mode") != "disabled" and data.get("for_release") is not False:
-        delivery_info = data.get('delivery')
-        if not delivery_info or 'delivery_repo_names' not in delivery_info:
+        delivery_info = data.get("delivery")
+        if not delivery_info or "delivery_repo_names" not in delivery_info:
             errors.append(
                 "Image must have a 'delivery.delivery_repo_names' field unless 'mode' is 'disabled' or 'for_release' is false."
             )
@@ -55,4 +55,4 @@ def validate(file, data, images_dir=None):
                 if dependent not in image_files:
                     errors.append(f"dependents: Dependent image '{dependent}' not found in {images_dir}")
 
-    return '\n'.join(errors) if errors else None
+    return "\n".join(errors) if errors else None

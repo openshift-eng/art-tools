@@ -28,11 +28,11 @@ class RPMMetadata(Metadata):
         source_modifier_factory=SourceModifierFactory(),
         prevent_cloning: Optional[bool] = False,
     ):
-        super(RPMMetadata, self).__init__('rpm', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
+        super(RPMMetadata, self).__init__("rpm", runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
 
         self.source = self.config.content.source
         if self.source is Missing:
-            raise ValueError('RPM config must contain source entry.')
+            raise ValueError("RPM config must contain source entry.")
         self.source_modifier_factory = source_modifier_factory
         self.rpm_name = self.config.name
         self.version = None
@@ -74,7 +74,7 @@ class RPMMetadata(Metadata):
             self.specfile = os.path.join(self.source_path, self.source.specfile)
             if not os.path.isfile(self.specfile):
                 raise ValueError(
-                    '{} config specified a spec file that does not exist: {}'.format(
+                    "{} config specified a spec file that does not exist: {}".format(
                         self.config_filename,
                         self.specfile,
                     )
@@ -82,12 +82,12 @@ class RPMMetadata(Metadata):
         else:
             with Dir(self.source_path):
                 specs = []
-                for spec in glob.glob('*.spec'):
+                for spec in glob.glob("*.spec"):
                     specs.append(spec)
                 if len(specs) > 1:
-                    raise ValueError('More than one spec file found. Specify correct file in config yaml')
+                    raise ValueError("More than one spec file found. Specify correct file in config yaml")
                 elif len(specs) == 0:
-                    raise ValueError('Unable to find any spec files in {}'.format(self.source_path))
+                    raise ValueError("Unable to find any spec files in {}".format(self.source_path))
                 else:
                     self.specfile = os.path.join(self.source_path, specs[0])
         return self.source_path
@@ -95,7 +95,7 @@ class RPMMetadata(Metadata):
     def set_nvr(self, version, release):
         self.version = version
         self.release = release
-        self.tag = '{}-{}-{}'.format(self.config.name, self.version, self.release)
+        self.tag = "{}-{}-{}".format(self.config.name, self.version, self.release)
 
     def _run_modifications(self, specfile: Optional[os.PathLike] = None, cwd: Optional[os.PathLike] = None):
         """
@@ -104,7 +104,7 @@ class RPMMetadata(Metadata):
         :param specfile: Path to an alternative specfile. None means use the specfile in the source dir
         :param cwd: If set, change current working directory. None means use the source dir
         """
-        with io.open(specfile or self.specfile, 'r', encoding='utf-8') as df:
+        with io.open(specfile or self.specfile, "r", encoding="utf-8") as df:
             specfile_data = df.read()
 
         self.logger.debug("About to start modifying spec file [{}]:\n{}\n".format(self.name, specfile_data))
@@ -113,7 +113,7 @@ class RPMMetadata(Metadata):
         # specific paths for the group and the individual config but
         # expect most scripts to apply across multiple groups.
         metadata_scripts_path = self.runtime.data_dir + "/modifications"
-        path = os.pathsep.join([os.environ['PATH'], metadata_scripts_path])
+        path = os.pathsep.join([os.environ["PATH"], metadata_scripts_path])
         new_specfile_data = specfile_data
         context = {
             "component_name": self.name,
@@ -121,8 +121,8 @@ class RPMMetadata(Metadata):
             "content": new_specfile_data,
             "set_env": {
                 "PATH": path,
-                "BREW_EVENT": f'{self.runtime.brew_event}',
-                "BREW_TAG": f'{self.candidate_brew_tag()}',
+                "BREW_EVENT": f"{self.runtime.brew_event}",
+                "BREW_TAG": f"{self.candidate_brew_tag()}",
             },
             "runtime_assembly": self.runtime.assembly,
             "release_name": "",
@@ -147,7 +147,7 @@ class RPMMetadata(Metadata):
                 )
 
         if new_specfile_data is not None and new_specfile_data != specfile_data:
-            with io.open(specfile or self.specfile, 'w', encoding='utf-8') as df:
+            with io.open(specfile or self.specfile, "w", encoding="utf-8") as df:
                 df.write(new_specfile_data)
 
     target_golangs = {}  # a dict of cached target -> golang_version mappings
@@ -235,17 +235,17 @@ class RPMMetadata(Metadata):
         :return: The package name if detected in the distgit spec file. Otherwise, the specified default.
                 If default is not passed in, an exception will be raised if the package name can't be found.
         """
-        specs = glob.glob(f'{self.distgit_repo().distgit_dir}/*.spec')
+        specs = glob.glob(f"{self.distgit_repo().distgit_dir}/*.spec")
         if len(specs) != 1:
-            raise IOError('Unable to find .spec file in RPM distgit: ' + self.qualified_name)
+            raise IOError("Unable to find .spec file in RPM distgit: " + self.qualified_name)
 
         spec_path = specs[0]
-        with open(spec_path, mode='r', encoding='utf-8') as f:
+        with open(spec_path, mode="r", encoding="utf-8") as f:
             for line in f.readlines():
-                if line.lower().startswith('name:'):
+                if line.lower().startswith("name:"):
                     return line[5:].strip()  # Exclude "Name:" and then remove whitespace
 
-        raise IOError(f'Unable to find Name: field in rpm spec: {spec_path}')
+        raise IOError(f"Unable to find Name: field in rpm spec: {spec_path}")
 
     def get_package_name(self) -> str:
         """

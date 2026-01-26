@@ -96,8 +96,8 @@ class AssemblyInspector:
             if issue.code == AssemblyIssueCode.IMPERMISSIBLE:
                 # permitting '*' still doesn't permit impermissible
                 return False
-            if permit.code == '*' or issue.code.name == permit.code:
-                if permit.component == '*' or issue.component == permit.component:
+            if permit.code == "*" or issue.code.name == permit.code:
+                if permit.component == "*" or issue.component == permit.component:
                     return True
         return False
 
@@ -118,7 +118,7 @@ class AssemblyInspector:
         for package_name, rpm_build in rpm_packages.items():
             if package_name in self._rpm_deliveries:
                 rpm_delivery_config = self._rpm_deliveries[package_name]
-                self.runtime.logger.info("Getting tags for rpm build %s...", rpm_build['nvr'])
+                self.runtime.logger.info("Getting tags for rpm build %s...", rpm_build["nvr"])
                 tag_names = {
                     tag["name"]
                     for tag in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=rpm_build["id"])
@@ -127,7 +127,7 @@ class AssemblyInspector:
                 if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
                     issues.append(
                         AssemblyIssue(
-                            f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
+                            f"{component_description} has {rpm_build['nvr']}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}",
                             component=component,
                             code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
                         )
@@ -150,7 +150,7 @@ class AssemblyInspector:
         # If rpm_deliveries is configured, check if the image build has rpms respecting the stop-ship/ship-ok tag
         issues.extend(
             self._check_installed_packages_for_rpm_delivery(
-                dg_key, f'Image build {build_record_inspector.get_nvr()}', installed_packages
+                dg_key, f"Image build {build_record_inspector.get_nvr()}", installed_packages
             )
         )
         return issues
@@ -168,7 +168,7 @@ class AssemblyInspector:
         :param rhcos_build: The RHCOS build to analyze.
         :return: Returns a (potentially empty) list of inconsistencies in the build.
         """
-        self.runtime.logger.info(f'Checking RHCOS build for consistency: {str(rhcos_build)}...')
+        self.runtime.logger.info(f"Checking RHCOS build for consistency: {str(rhcos_build)}...")
 
         issues: List[AssemblyIssue] = []
         required_packages: Dict[str, str] = (
@@ -181,13 +181,13 @@ class AssemblyInspector:
 
         self.runtime.logger.info("Getting rpms in RHCOS build %s...", rhcos_build.build_id)
         rhel_base_version = rhcos_build.get_rhel_base_version()
-        el_tag = f'el{rhel_base_version}'
+        el_tag = f"el{rhel_base_version}"
         installed_packages = rhcos_build.get_package_build_objects()
 
         # If rpm_deliveries is configured, check if the RHCOS build has rpms with the stop-ship/ship-ok tag
         issues.extend(
             self._check_installed_packages_for_rpm_delivery(
-                'rhcos', f'RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch})', installed_packages
+                "rhcos", f"RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch})", installed_packages
             )
         )
 
@@ -223,20 +223,20 @@ class AssemblyInspector:
                         )
                         desired_packages[package_name] = installed_rpm["nvr"]
                 else:
-                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
+                    raise ValueError(f"Unknown check_external_packages condition: {entry['condition']}")
 
         # Honor group dependencies
         for package_entry in self.runtime.get_group_config().dependencies or []:
             if el_tag in package_entry:
                 nvr = package_entry[el_tag]
-                package_name = parse_nvr(nvr)['name']
+                package_name = parse_nvr(nvr)["name"]
                 desired_packages[package_name] = nvr
 
         # Honor RHCOS dependencies
         for package_entry in self.assembly_rhcos_config.dependencies or []:
             if el_tag in package_entry:
                 nvr = package_entry[el_tag]
-                package_name = parse_nvr(nvr)['name']
+                package_name = parse_nvr(nvr)["name"]
                 required_packages[package_name] = nvr
                 desired_packages[package_name] = nvr  # Override if something else was at the group level
 
@@ -246,21 +246,21 @@ class AssemblyInspector:
                 # This is impermissible because it can simply be fixed in the assembly definition.
                 issues.append(
                     AssemblyIssue(
-                        f'Expected assembly defined rhcos dependency {desired_nvr} to be installed in {rhcos_build.build_id} ({rhcos_build.brew_arch}) but that package was not installed',
-                        component='rhcos',
+                        f"Expected assembly defined rhcos dependency {desired_nvr} to be installed in {rhcos_build.build_id} ({rhcos_build.brew_arch}) but that package was not installed",
+                        component="rhcos",
                     )
                 )
 
             if package_name in installed_packages:
                 installed_build_dict = installed_packages[package_name]
-                installed_nvr = installed_build_dict['nvr']
+                installed_nvr = installed_build_dict["nvr"]
                 if installed_nvr != desired_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
                     issues.append(
                         AssemblyIssue(
-                            f'Expected {desired_nvr} to be installed in RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch}) but found {installed_nvr}',
-                            component='rhcos',
+                            f"Expected {desired_nvr} to be installed in RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch}) but found {installed_nvr}",
+                            component="rhcos",
                             code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY,
                         )
                     )
@@ -273,26 +273,26 @@ class AssemblyInspector:
         ).items():
             if not assembly_rpm_build:
                 continue
-            package_name = assembly_rpm_build['package_name']
-            assembly_nvr = assembly_rpm_build['nvr']
+            package_name = assembly_rpm_build["package_name"]
+            assembly_nvr = assembly_rpm_build["nvr"]
             if package_name in installed_packages:
-                installed_nvr = installed_packages[package_name]['nvr']
+                installed_nvr = installed_packages[package_name]["nvr"]
                 if assembly_nvr != installed_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
-                    if package_name == 'ose-aws-ecr-image-credential-provider':
+                    if package_name == "ose-aws-ecr-image-credential-provider":
                         # FIXME: This package is special. It is built in the OCP build system, but it is
                         # consumed in RHCOS RHEL layer. However, the version of the package that
                         # RHCOS consumes is not necessarily the latest build in the OCP build system.
                         # So we permit this discrepancy.
                         self.runtime.logger.warning(
-                            f'RHCOS {rhcos_build.build_id} ({rhcos_build.brew_arch}) has {installed_nvr} installed but assembly expects {assembly_nvr}; permitting this discrepancy because {package_name} is special'
+                            f"RHCOS {rhcos_build.build_id} ({rhcos_build.brew_arch}) has {installed_nvr} installed but assembly expects {assembly_nvr}; permitting this discrepancy because {package_name} is special"
                         )
                         continue
                     issues.append(
                         AssemblyIssue(
-                            f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed',
-                            component='rhcos',
+                            f"Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed",
+                            component="rhcos",
                             code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED,
                         )
                     )
@@ -319,7 +319,7 @@ class AssemblyInspector:
         :param rpm_meta: The rpm metadata to evaluate
         :return: Returns a (potentially empty) list of reasons the rpm should be rebuilt.
         """
-        self.runtime.logger.info(f'Checking group RPM for consistency: {rpm_meta.distgit_key}...')
+        self.runtime.logger.info(f"Checking group RPM for consistency: {rpm_meta.distgit_key}...")
         issues: List[AssemblyIssue] = []
 
         for rpm_meta in self.runtime.rpm_metas():
@@ -328,7 +328,7 @@ class AssemblyInspector:
                 brew_build_dict = self.get_group_rpm_build_dicts(el_ver=el_ver)[dgk]
                 if not brew_build_dict:
                     # Impermissible. The RPM should be built for each target.
-                    issues.append(AssemblyIssue(f'Did not find rhel-{el_ver} build for {dgk}', component=dgk))
+                    issues.append(AssemblyIssue(f"Did not find rhel-{el_ver} build for {dgk}", component=dgk))
                     continue
 
                 """
@@ -357,12 +357,12 @@ class AssemblyInspector:
                             # Each package build gets git commits encoded into the
                             # release field of the NVR. So the NVR should contain
                             # the desired commit.
-                            build_nvr = brew_build_dict['nvr']
+                            build_nvr = brew_build_dict["nvr"]
                             if target_branch[:7] not in build_nvr:
                                 # Impermissible because the assembly definition can simply be changed.
                                 issues.append(
                                     AssemblyIssue(
-                                        f'{dgk} build for rhel-{el_ver} did not find git commit {target_branch[:7]} in package RPM NVR {build_nvr}',
+                                        f"{dgk} build for rhel-{el_ver} did not find git commit {target_branch[:7]} in package RPM NVR {build_nvr}",
                                         component=dgk,
                                     )
                                 )
@@ -385,7 +385,7 @@ class AssemblyInspector:
         :param package_rpm_finder: used to retrieve a list of RPMs installed in a Konflux build
         """
         image_meta = build_record_inspector.get_image_meta()
-        self.runtime.logger.info(f'Checking group image for consistency: {image_meta.distgit_key}...')
+        self.runtime.logger.info(f"Checking group image for consistency: {image_meta.distgit_key}...")
         issues: List[AssemblyIssue] = []
         required_packages: Dict[str, str] = (
             dict()
@@ -440,7 +440,7 @@ class AssemblyInspector:
                         )
                         desired_packages[package_name] = installed_rpm["nvr"]
                 else:
-                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
+                    raise ValueError(f"Unknown check_external_packages condition: {entry['condition']}")
 
         """
         If an image contains an RPM from the doozer group, make sure it is the current
@@ -453,9 +453,9 @@ class AssemblyInspector:
                 if not assembly_rpm_build:
                     # The RPM doesn't claim to build for this image's RHEL base, so ignore it.
                     continue
-                package_name = assembly_rpm_build['package_name']
+                package_name = assembly_rpm_build["package_name"]
                 group_rpm_package_names.add(package_name)
-                assembly_nvr = assembly_rpm_build['nvr']
+                assembly_nvr = assembly_rpm_build["nvr"]
                 desired_packages[package_name] = assembly_nvr
 
         for package_name, desired_nvr in desired_packages.items():
@@ -466,7 +466,7 @@ class AssemblyInspector:
                 # and not in the final. In this case, it should be permitted in the assembly definition.
                 issues.append(
                     AssemblyIssue(
-                        f'Expected image to contain assembly member override dependencies NVR {desired_nvr} but it was not installed',
+                        f"Expected image to contain assembly member override dependencies NVR {desired_nvr} but it was not installed",
                         component=dgk,
                         code=AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY,
                     )
@@ -474,12 +474,12 @@ class AssemblyInspector:
 
             if package_name in installed_packages:
                 installed_build_dict = installed_packages[package_name]
-                installed_nvr = installed_build_dict['nvr']
+                installed_nvr = installed_build_dict["nvr"]
                 if installed_nvr != desired_nvr:
                     if package_name not in group_rpm_package_names:
                         issues.append(
                             AssemblyIssue(
-                                f'Expected image to contain assembly override dependencies NVR {desired_nvr} but found {installed_nvr} installed',
+                                f"Expected image to contain assembly override dependencies NVR {desired_nvr} but found {installed_nvr} installed",
                                 component=dgk,
                                 code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY,
                             )
@@ -487,7 +487,7 @@ class AssemblyInspector:
                     else:
                         issues.append(
                             AssemblyIssue(
-                                f'Expected image to contain assembly RPM build {desired_nvr} but found {installed_nvr} installed',
+                                f"Expected image to contain assembly RPM build {desired_nvr} but found {installed_nvr} installed",
                                 component=dgk,
                                 code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED,
                             )
@@ -509,7 +509,7 @@ class AssemblyInspector:
                 # Impermissible as artist can just fix upstream git source in assembly definition
                 issues.append(
                     AssemblyIssue(
-                        f'Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build',
+                        f"Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build",
                         component=dgk,
                     )
                 )
@@ -526,7 +526,7 @@ class AssemblyInspector:
                         # Impermissible as artist can just fix the assembly definition.
                         issues.append(
                             AssemblyIssue(
-                                f'Expected image build git commit {target_branch} but {build_commit} was found in the build',
+                                f"Expected image build git commit {target_branch} but {build_commit} was found in the build",
                                 component=dgk,
                             )
                         )
@@ -561,7 +561,7 @@ class AssemblyInspector:
                     latest_build = rpm_meta.get_latest_brew_build(default=None, el_target=el_ver)
                     if not latest_build:
                         raise IOError(
-                            f'RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected'
+                            f"RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected"
                         )
                     assembly_rpm_dicts[rpm_meta.distgit_key] = latest_build
                 else:
@@ -576,7 +576,7 @@ class AssemblyInspector:
         :return: a dict. key is Brew tag name, value is another (component_name, rpm_build) dict
         """
         et_data = self.runtime.get_errata_config()
-        tag_pv_map = cast(Optional[Dict[str, str]], et_data.get('brew_tag_product_version_mapping'))
+        tag_pv_map = cast(Optional[Dict[str, str]], et_data.get("brew_tag_product_version_mapping"))
         if not tag_pv_map:
             return {}
         cache = self._external_rpm_build_cache
@@ -630,7 +630,7 @@ class AssemblyInspector:
             if self.runtime.assembly_type != AssemblyTypes.STREAM:
                 if container_conf.primary:
                     raise Exception(
-                        f'Assembly {runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid'
+                        f"Assembly {runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid"
                     )
                 # require the primary container at least to be specified, but
                 # allow the edge case where we add an RHCOS container type and

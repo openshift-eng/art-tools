@@ -31,5 +31,5 @@ class ChangeStateTestCase(unittest.TestCase):
         self.assertIn("Current state is not NEW_FILES: SHIPPED_LIVE", result.stdout.decode())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

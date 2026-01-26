@@ -13,24 +13,24 @@ async def run_for(group: str, assembly: str, runtime: Runtime, lock_manager: Loc
     # Skip if locked on scan
     scan_lock_name = Lock.SCAN_PLASHET_RPMS.value.format(assembly=assembly, group=group)
     if await lock_manager.is_locked(scan_lock_name):
-        runtime.logger.info('[%s/%s] Locked on %s, skipping', group, assembly, scan_lock_name)
+        runtime.logger.info("[%s/%s] Locked on %s, skipping", group, assembly, scan_lock_name)
         return
 
     # Check if build is permitted (not frozen)
     if not await util.is_build_permitted(
         group=group, doozer_working=str(runtime.working_dir / f"doozer_working-{group}")
     ):
-        runtime.logger.info('[%s/%s] Not permitted (frozen), skipping', group, assembly)
+        runtime.logger.info("[%s/%s] Not permitted (frozen), skipping", group, assembly)
         return
 
     # Schedule scan
-    runtime.logger.info('[%s/%s] Scheduling plashet-rpms scan', group, assembly)
+    runtime.logger.info("[%s/%s] Scheduling plashet-rpms scan", group, assembly)
     jenkins.start_scan_plashet_rpms(group=group, assembly=assembly, block_until_building=False)
 
 
-@cli.command('schedule-scan-plashet-rpms')
-@click.option('--group', '-g', required=True, help='OCP group to scan (e.g., openshift-4.17)', multiple=True)
-@click.option('--assembly', '-a', multiple=True, default=['stream'], help='Assembly to scan (default: stream)')
+@cli.command("schedule-scan-plashet-rpms")
+@click.option("--group", "-g", required=True, help="OCP group to scan (e.g., openshift-4.17)", multiple=True)
+@click.option("--assembly", "-a", multiple=True, default=["stream"], help="Assembly to scan (default: stream)")
 @pass_runtime
 @click_coroutine
 async def schedule_scan_plashet_rpms(runtime: Runtime, group: tuple, assembly: tuple):

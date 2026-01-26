@@ -26,7 +26,7 @@ OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf
             "",
         )
         expected = [
-            'OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf73a1dd.assembly.stream.tar.gz'
+            "OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf73a1dd.assembly.stream.tar.gz"
         ]
         pipeline = TarballSourcesPipeline(
             MagicMock(dry_run=False), "fake-group-4.10", "fake-assembly", ["fake-component"], []
@@ -42,7 +42,7 @@ OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf
         )
         await pipeline._copy_to_spmm_utils("fake-working/sources")
         cmd_assert_async.assert_awaited_once_with(
-            ['rsync', '-avz', '--no-perms', '--no-owner', '--omit-dir-times', '--no-group', 'fake-working/sources', ANY]
+            ["rsync", "-avz", "--no-perms", "--no-owner", "--omit-dir-times", "--no-group", "fake-working/sources", ANY]
         )
 
     def test_create_jira(self):

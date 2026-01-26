@@ -15,7 +15,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
 
     def _make_runtime(self, assembly=None):
         runtime = mock.MagicMock()
-        runtime.build_system = 'brew'
+        runtime.build_system = "brew"
         runtime.group_config.public_upstreams = [
             {"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}
         ]
@@ -47,7 +47,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
 
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.clone_source = mock.MagicMock(return_value=source_sha)
-        rpm.get_package_name_from_spec = mock.Mock(return_value='foo')
+        rpm.get_package_name_from_spec = mock.Mock(return_value="foo")
         rpm.logger = mock.MagicMock(spec=logging.Logger)
         rpm.private_fix = False
         rpm.pre_init_sha = source_sha
@@ -117,10 +117,10 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         dg.commit.assert_called_once_with(
             f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
             commit_attributes={
-                'version': '1.2.3',
-                'release': '202104070000.test.p0.g3f17b42',
-                'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
-                'io.openshift.build.source-location': None,
+                "version": "1.2.3",
+                "release": "202104070000.test.p0.g3f17b42",
+                "io.openshift.build.commit.id": "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722",
+                "io.openshift.build.source-location": None,
             },
         )
         dg.push_async.assert_called_once()
@@ -142,7 +142,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     ):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
-        runtime = self._make_runtime(assembly='tester')
+        runtime = self._make_runtime(assembly="tester")
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
         mocked_cmd_gather_async.side_effect = lambda cmd, **kwargs: {
@@ -155,7 +155,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         actual = await builder.rebase(rpm, "1.2.3", "202104070000.test.p?")
 
         self.assertEqual(actual, distgit_sha)
-        self.assertEqual(rpm.release, "202104070000.test.p0.g" + source_sha[:7] + '.assembly.tester')
+        self.assertEqual(rpm.release, "202104070000.test.p0.g" + source_sha[:7] + ".assembly.tester")
         mocked_open.assert_called_once_with(dg.dg_path / "foo.spec", "w")
         mocked_open.return_value.__aenter__.return_value.writelines.assert_called_once_with(["fake spec content"])
         mocked_cmd_assert_async.assert_any_call(
@@ -175,14 +175,14 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         mocked_cmd_gather_async.assert_called_with(["spectool", "--", str(dg.dg_path / "foo.spec")], cwd=dg.dg_path)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "a.diff", dg.dg_path / "a.diff", follow_symlinks=False)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "b/c.diff", dg.dg_path / "b/c.diff", follow_symlinks=False)
-        rpm._run_modifications.assert_called_once_with(f'{rpm.source_path}/foo.spec', rpm.source_path)
+        rpm._run_modifications.assert_called_once_with(f"{rpm.source_path}/foo.spec", rpm.source_path)
         dg.commit.assert_called_once_with(
             f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
             commit_attributes={
-                'version': '1.2.3',
-                'release': '202104070000.test.p0.g3f17b42.assembly.tester',
-                'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
-                'io.openshift.build.source-location': None,
+                "version": "1.2.3",
+                "release": "202104070000.test.p0.g3f17b42.assembly.tester",
+                "io.openshift.build.commit.id": "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722",
+                "io.openshift.build.source-location": None,
             },
         )
         dg.push_async.assert_called_once()

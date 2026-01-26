@@ -11,13 +11,13 @@ class BuildVisibility(Enum):
 
 
 VISIBILITY_SUFFIX = {
-    'brew': {
-        BuildVisibility.PUBLIC: 'p0',
-        BuildVisibility.PRIVATE: 'p1',
+    "brew": {
+        BuildVisibility.PUBLIC: "p0",
+        BuildVisibility.PRIVATE: "p1",
     },
-    'konflux': {
-        BuildVisibility.PUBLIC: 'p2',
-        BuildVisibility.PRIVATE: 'p3',
+    "konflux": {
+        BuildVisibility.PUBLIC: "p2",
+        BuildVisibility.PRIVATE: "p3",
     },
 }
 
@@ -70,9 +70,9 @@ def isolate_pflag_in_release(release: str) -> Optional[str]:
     If it does, it returns the matched suffix (e.g., 'p0', 'p1', 'p2', 'p3').
     If not found, returns None.
     """
-    suffixes = get_all_visibility_suffixes() + ['p?']
-    suffix_pattern = '|'.join(re.escape(suffix) for suffix in suffixes)
-    pattern = rf'\.({suffix_pattern})(?:\.|$)'
+    suffixes = get_all_visibility_suffixes() + ["p?"]
+    suffix_pattern = "|".join(re.escape(suffix) for suffix in suffixes)
+    pattern = rf"\.({suffix_pattern})(?:\.|$)"
     match = re.search(pattern, release)
     if match:
         return match.group(1)

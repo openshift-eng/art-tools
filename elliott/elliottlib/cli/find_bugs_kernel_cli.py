@@ -53,7 +53,7 @@ class FindBugsKernelCli:
         if self._runtime.assembly_type is not AssemblyTypes.STREAM:
             raise ElliottFatalError("This command only supports stream assembly")
         group_config = self._runtime.group_config
-        raw_config = self._runtime.gitdata.load_data(key='bug', replace_vars=group_config.vars).data.get(
+        raw_config = self._runtime.gitdata.load_data(key="bug", replace_vars=group_config.vars).data.get(
             "kernel_bug_sweep"
         )
         if not raw_config:
@@ -124,8 +124,8 @@ class FindBugsKernelCli:
             "status != Closed",
         ]
         if labels:
-            conditions.extend([f"labels = \"{label}\"" for label in labels])
-        jql = f'{" AND ".join(conditions)} ORDER BY created DESC'
+            conditions.extend([f'labels = "{label}"' for label in labels])
+        jql = f"{' AND '.join(conditions)} ORDER BY created DESC"
         # 50 most recently created KMAINT trackers should be more than enough
         matched_issues = _search_issues(jira_client, jql, maxResults=50)
         return cast(List[Issue], matched_issues)
@@ -163,7 +163,7 @@ class FindBugsKernelCli:
                 continue
             if target_release not in target_releases:
                 logger.warning(
-                    "Bug %s is skipped because target release \"%s\" is not listed", bug.weburl, target_release
+                    'Bug %s is skipped because target release "%s" is not listed', bug.weburl, target_release
                 )
                 continue
             logger.info("Found bug %s matching target release %s", bug_id, target_release)
@@ -218,7 +218,7 @@ class FindBugsKernelCli:
         bugs = sorted(report.get("kernel_bugs", []), key=lambda bug: bug["id"])
         clones = report.get("clones", {})
         for bug in bugs:
-            cloned_issues = clones.get(bug['id'], [])
+            cloned_issues = clones.get(bug["id"], [])
             text = f"{bug['tracker']}\t{bug['id']}\t{'N/A' if not cloned_issues else ','.join(cloned_issues)}\t{bug['status']}\t{bug['summary']}"
             print_func(text, file=out)
 
@@ -268,8 +268,8 @@ class FindBugsKernelCli:
         fields = {
             "project": {"key": conf.project},
             "components": [{"name": conf.component}],
-            "security": {'name': 'Red Hat Employee'} if 'private' in bug_groups or 'redhat' in bug_groups else None,
-            "priority": {'name': priority_mapping.get(bug.priority, "Undefined")},
+            "security": {"name": "Red Hat Employee"} if "private" in bug_groups or "redhat" in bug_groups else None,
+            "priority": {"name": priority_mapping.get(bug.priority, "Undefined")},
             "summary": summary,
             "description": bug.description,
             "issuetype": {"name": "Bug"},
@@ -313,7 +313,7 @@ class FindBugsKernelCli:
 
 @cli.command("find-bugs:kernel", short_help="Find kernel bugs")
 @click.option(
-    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True, help="Find by the specified KMAINT tracker JIRA_KEY"
+    "--tracker", "trackers", metavar="JIRA_KEY", multiple=True, help="Find by the specified KMAINT tracker JIRA_KEY"
 )
 @click.option("--clone", is_flag=True, default=False, help="Clone kernel bugs into OCP Jira")
 @click.option(

@@ -7,8 +7,8 @@ from pydantic import BaseModel, RootModel
 if TYPE_CHECKING:
     from artcommonlib.config.plashet import PlashetConfig
 
-RepoType = Literal['external', 'plashet']
-BrewArch = Literal['x86_64', 's390x', 'ppc64le', 'aarch64']
+RepoType = Literal["external", "plashet"]
+BrewArch = Literal["x86_64", "s390x", "ppc64le", "aarch64"]
 
 
 class PlashetRepo(BaseModel):
@@ -23,7 +23,7 @@ class PlashetRepo(BaseModel):
 
 
 class BrewSource(BaseModel):
-    type: Literal['brew']
+    type: Literal["brew"]
     from_tags: list["BrewTag"]
     embargoed_tags: list[str] = []
 
@@ -88,19 +88,19 @@ class Repo(BaseModel):
         Raises:
             ValueError: If required parameters are missing
         """
-        if self.type == 'plashet':
+        if self.type == "plashet":
             if not plashet_config:
-                raise ValueError('plashet_config is required for plashet repos')
+                raise ValueError("plashet_config is required for plashet repos")
             if not self.plashet:
-                raise ValueError('plashet configuration is missing for plashet repo')
+                raise ValueError("plashet configuration is missing for plashet repo")
 
             # Get slug (defaults to repo name if not specified)
             slug = self.plashet.slug or self.name
 
             # Variables for template substitution
             vars_dict = {
-                'slug': slug,
-                'arch': arch,
+                "slug": slug,
+                "arch": arch,
             }
             # Merge in any additional variables provided by caller
             if replace_vars:
@@ -122,14 +122,14 @@ class Repo(BaseModel):
             base_dir_template = string.Template(plashet_config.base_dir)
             base_dir = base_dir_template.substitute(vars_dict)
 
-            base_url = plashet_config.base_url.rstrip('/')
+            base_url = plashet_config.base_url.rstrip("/")
 
             # Use provided plashet_dir or default to symlink_name
             dir_in_url = plashet_dir if plashet_dir is not None else plashet_config.symlink_name
 
             # Validate that dir_in_url is not empty
             if not dir_in_url:
-                raise ValueError('plashet_dir cannot be empty')
+                raise ValueError("plashet_dir cannot be empty")
 
             # Construct URL: {base_url}/{base_dir}/{dir}/{arch}/os/
             url_parts = [base_url, base_dir, dir_in_url, arch]
@@ -137,26 +137,26 @@ class Repo(BaseModel):
             if plashet_config.create_repo_subdirs:
                 url_parts.append(plashet_config.repo_subdir)
 
-            return '/'.join(url_parts) + '/'
+            return "/".join(url_parts) + "/"
 
-        elif self.type == 'external':
+        elif self.type == "external":
             if not self.conf:
-                raise ValueError('conf is missing for external repo')
+                raise ValueError("conf is missing for external repo")
 
-            baseurl = self.conf.get('baseurl', {})
+            baseurl = self.conf.get("baseurl", {})
             if not baseurl:
-                raise ValueError('conf.baseurl is missing for external repo')
+                raise ValueError("conf.baseurl is missing for external repo")
 
             # Try arch-specific URL first, then default
             if arch in baseurl:
                 return baseurl[arch]
-            elif 'default' in baseurl:
-                return baseurl['default']
+            elif "default" in baseurl:
+                return baseurl["default"]
             else:
-                raise ValueError(f'No baseurl found for arch={arch} or default')
+                raise ValueError(f"No baseurl found for arch={arch} or default")
 
         else:
-            raise ValueError(f'Unknown repo type: {self.type}')
+            raise ValueError(f"Unknown repo type: {self.type}")
 
 
 RepoList = RootModel[list[Repo]]

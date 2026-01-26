@@ -427,11 +427,11 @@ AWS_EC2_REGION_IP_RANGES = {
 
 # Redirect to this S3 bucket if the request comes from an EC2 IP
 S3_BUCKET_NAME = "art-srv-enterprise"
-S3_REGION_NAME = 'us-east-1'
+S3_REGION_NAME = "us-east-1"
 
 
 # Ensure s3v4 signature is used regardless of the region the lambda is executing in.
-BOTO3_CLIENT_CONFIG = Config(signature_version='s3v4')
+BOTO3_CLIENT_CONFIG = Config(signature_version="s3v4")
 # According to https://docs.aws.amazon.com/codeguru/detector-library/python/lambda-client-reuse/
 # s3 clients can and should be reused. This allows the client to be cached in an execution
 # environment and reused if possible. Initialize these lazily so we can handle ANY s3 errors easily.
@@ -440,13 +440,13 @@ s3_client = None
 
 def unauthorized():
     return {
-        'status': 401,
-        'statusDescription': 'Unauthorized',
-        'headers': {
-            'www-authenticate': [
+        "status": 401,
+        "statusDescription": "Unauthorized",
+        "headers": {
+            "www-authenticate": [
                 {
-                    'key': 'WWW-Authenticate',
-                    'value': 'Basic',
+                    "key": "WWW-Authenticate",
+                    "value": "Basic",
                 }
             ],
         },
@@ -455,12 +455,12 @@ def unauthorized():
 
 def redirect(uri: str, code: int = 302, description="Found"):
     return {
-        'status': code,
-        'statusDescription': description,
-        'headers': {
+        "status": code,
+        "statusDescription": description,
+        "headers": {
             "location": [
                 {
-                    'key': 'Location',
+                    "key": "Location",
                     "value": str(uri),
                 }
             ],
@@ -505,8 +505,8 @@ def get_secrets_manager_secret_dict(secret_name):
 
     # We need to read in the secret from AWS SecretManager
     secrets_client = boto3.client(
-        service_name='secretsmanager',
-        region_name='us-east-1',
+        service_name="secretsmanager",
+        region_name="us-east-1",
     )
     try:
         get_secret_value_response = secrets_client.get_secret_value(
@@ -516,7 +516,7 @@ def get_secrets_manager_secret_dict(secret_name):
         raise
     else:
         # Assume it is a key/value pair secret and parse as json
-        username_password_keypairs_str = get_secret_value_response['SecretString']
+        username_password_keypairs_str = get_secret_value_response["SecretString"]
         return json.loads(username_password_keypairs_str)
 
 
@@ -525,33 +525,33 @@ def lambda_handler(event: Dict, context: Dict):
     global ENTERPRISE_SERVICE_ACCOUNTS
     global POCKET_SERVICE_ACCOUNTS
 
-    request: Dict = event['Records'][0]['cf']['request']
-    uri: str = request['uri']
-    headers: Dict[str, List[Dict[str, str]]] = request['headers']
-    request_ip = request['clientIp']
+    request: Dict = event["Records"][0]["cf"]["request"]
+    uri: str = request["uri"]
+    headers: Dict[str, List[Dict[str, str]]] = request["headers"]
+    request_ip = request["clientIp"]
 
-    if uri.startswith('/srv/enterprise/'):
+    if uri.startswith("/srv/enterprise/"):
         # Strip off '/srv'. This was the original location I uploaded things to.
         # but it makes more sense for everything to be in the root.
         uri = uri[4:]
 
     # prefixes that should be swapped on access; used to be done with symlinks on mirror.
     links = {
-        '/pub/openshift-v4/amd64/': '/pub/openshift-v4/x86_64/',
-        '/pub/openshift-v4/arm64/': '/pub/openshift-v4/aarch64/',
-        '/pub/openshift-v4/clients/': '/pub/openshift-v4/x86_64/clients/',
-        '/pub/openshift-v4/dependencies/': '/pub/openshift-v4/x86_64/dependencies/',
+        "/pub/openshift-v4/amd64/": "/pub/openshift-v4/x86_64/",
+        "/pub/openshift-v4/arm64/": "/pub/openshift-v4/aarch64/",
+        "/pub/openshift-v4/clients/": "/pub/openshift-v4/x86_64/clients/",
+        "/pub/openshift-v4/dependencies/": "/pub/openshift-v4/x86_64/dependencies/",
     }
     for prefix, link in links.items():
         if uri.startswith(prefix):
             uri = link + uri[len(prefix) :]
             break
 
-    if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt' and uri != '/404.html':
+    if not uri.startswith("/pub") and uri != "/favicon.ico" and uri != "/robots.txt" and uri != "/404.html":
         # Anything not in /pub (or few exceptions) requires basic auth header
         authorization = headers.get("authorization", [])
         if not authorization:
-            if uri == '/':
+            if uri == "/":
                 # The one exception is if the user hits / without auth, we try to be friendly and redirect them..
                 return redirect("/pub/")
             return unauthorized()
@@ -562,7 +562,7 @@ def lambda_handler(event: Dict, context: Dict):
         if auth_schema.lower() != "basic":
             return unauthorized()
         auth_val: str = base64.b64decode(b64_auth_val).decode()
-        auth_val_split = auth_val.split(':', maxsplit=1)
+        auth_val_split = auth_val.split(":", maxsplit=1)
         if len(auth_val_split) != 2:
             return unauthorized()
         username, password = auth_val_split
@@ -572,10 +572,10 @@ def lambda_handler(event: Dict, context: Dict):
         # /libra is an ancient location on the old mirrors. It was synchronized
         # to the s3 bucket once in order to not break any service delivery
         # system which relied on it. It is not kept up-to-date.
-        if uri.startswith('/enterprise/') or uri.startswith('/libra/'):
+        if uri.startswith("/enterprise/") or uri.startswith("/libra/"):
             if not ENTERPRISE_SERVICE_ACCOUNTS:
                 ENTERPRISE_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS'
+                    "art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS"
                 )
 
             if username in ENTERPRISE_SERVICE_ACCOUNTS:
@@ -586,16 +586,16 @@ def lambda_handler(event: Dict, context: Dict):
         # Pockets provide a means of authenticated / private access for users to a particular
         # set of mirror artifacts. A pocket user should only be able to access the pocket
         # associated with their service account and not all pockets.
-        if uri.startswith('/pockets/'):
+        if uri.startswith("/pockets/"):
             # The username for pockets should be of the form '<pocketName>+<anonymized user id>' . Extract the pocket
             # name. The user must only have access to the pocket specified in their username.
-            if username.index('+') > 0:
+            if username.index("+") > 0:
                 if not POCKET_SERVICE_ACCOUNTS:
                     POCKET_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS'
+                        "art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS"
                     )
-                pocket_name = username.split('+')[0]
-                if uri.startswith(f'/pockets/{pocket_name}/'):
+                pocket_name = username.split("+")[0]
+                if uri.startswith(f"/pockets/{pocket_name}/"):
                     if username in POCKET_SERVICE_ACCOUNTS:
                         if hmac.compare_digest(password, POCKET_SERVICE_ACCOUNTS[username]):
                             authorized = True
@@ -605,24 +605,24 @@ def lambda_handler(event: Dict, context: Dict):
 
     # Check whether the URI is missing a file name.
     if uri.endswith("/"):
-        uri += 'index.html'
+        uri += "index.html"
     elif find_region(request_ip):
         if s3_client is None:
             s3_client = boto3.client("s3", region_name=S3_REGION_NAME, config=BOTO3_CLIENT_CONFIG)
         url = s3_client.generate_presigned_url(
-            ClientMethod='get_object',
+            ClientMethod="get_object",
             Params={
-                'Bucket': S3_BUCKET_NAME,
-                'Key': unquote(uri[1:]),  # Strip '/'
+                "Bucket": S3_BUCKET_NAME,
+                "Key": unquote(uri[1:]),  # Strip '/'
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )
         # Redirect the request to S3 bucket for cost management
-        return redirect(url, code=307, description='S3Redirect')
+        return redirect(url, code=307, description="S3Redirect")
 
     # Some clients may send in URL with literal '+' and other chars that need to be escaped
     # in order for the URL to resolve via an S3 HTTP request. decoding and then
     # re-encoding should ensure that clients that do or don't encode will always
     # head toward the S3 origin encoded.
-    request['uri'] = quote(unquote(uri))
+    request["uri"] = quote(unquote(uri))
     return request

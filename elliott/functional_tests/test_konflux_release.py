@@ -24,5 +24,5 @@ class ReleaseTestCases(unittest.TestCase):
         self.assertRegex(result.stdout.decode(), "Release successful!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

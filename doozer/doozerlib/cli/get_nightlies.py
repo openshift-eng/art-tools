@@ -40,7 +40,7 @@ logger = logutil.get_logger(__name__)
     multiple=True,
     help="Exclude arch(es) normally included in this version (multi,aarch64,...)",
 )
-@click.option("--limit", default=1, type=int, metavar='NUM', help="Number of sets of nightlies to print")
+@click.option("--limit", default=1, type=int, metavar="NUM", help="Number of sets of nightlies to print")
 @click.option("--details", is_flag=True, help="Print some nightly details including RHCOS build id")
 @click.option("--latest", is_flag=True, help="Just get the latest nightlies for all arches (accepted or not)")
 @click.pass_obj
@@ -360,7 +360,7 @@ class Nightly:
             tag: commit for tag, commit in self.commit_for_tag.items() if tag == "pod" or commit != pod_commit
         }
 
-    def __eq__(self, other: 'Nightly'):
+    def __eq__(self, other: "Nightly"):
         """
         Determine whether self and other are source-commit equivalent.
 
@@ -414,7 +414,7 @@ class Nightly:
             self.nvr_for_tag[tag] = labels if all(labels) else None
         return self.nvr_for_tag[tag]
 
-    async def deeper_equivalence(self, other: 'Nightly') -> bool:
+    async def deeper_equivalence(self, other: "Nightly") -> bool:
         """
         Do a deeper equivalence check that requires populate_nightly_content
         having been called beforehand. This checks that group images NVRs and
@@ -441,7 +441,7 @@ class Nightly:
 
         return self.deeper_nightly_rhcos(other)
 
-    def deeper_nightly_rhcos(self, other: 'Nightly') -> bool:
+    def deeper_nightly_rhcos(self, other: "Nightly") -> bool:
         """Check that the two have the same RHCOS contents according to build records"""
         for nightly in (self, other):
             if not nightly.rhcos_inspector:
@@ -481,7 +481,7 @@ class NightlySet:
         self.nightly_for_arch = nightly_for_arch
         self.timestamp = max(nightly.release_image_info["config"]["created"] for nightly in nightly_for_arch.values())
 
-    def generate_equivalents_with(self, arch: str, nightlies: List[Nightly]) -> List['NightlySet']:
+    def generate_equivalents_with(self, arch: str, nightlies: List[Nightly]) -> List["NightlySet"]:
         """
         Test each nightly for equivalence with all existing set members, and
         return a list of new sets extended with those that match.

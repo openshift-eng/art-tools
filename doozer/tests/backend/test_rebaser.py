@@ -29,8 +29,8 @@ class TestRebaser(TestCase):
 
         actual = KonfluxRebaser.split_dockerfile_into_stages(dfp)
         expected = [
-            [{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}],
-            [{'FROM': 'base2'}, {'USER': '2000'}, {'RUN': 'commands'}],
+            [{"FROM": "base"}, {"LABEL": 'foo="bar baz"'}, {"USER": "1000"}],
+            [{"FROM": "base2"}, {"USER": "2000"}, {"RUN": "commands"}],
         ]
 
         self.assertEqual(len(actual), 2)
@@ -45,7 +45,7 @@ class TestRebaser(TestCase):
         """
 
         actual = KonfluxRebaser.split_dockerfile_into_stages(dfp)
-        expected = [[{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}]]
+        expected = [[{"FROM": "base"}, {"LABEL": 'foo="bar baz"'}, {"USER": "1000"}]]
 
         self.assertEqual(len(actual), 1)
         self.assertEqual(actual, expected)
@@ -361,7 +361,7 @@ USER 3000
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
         mock_generator.generate_lockfile.assert_awaited_once_with(metadata, Path("."))
-        rebaser._logger.info.assert_called_with('Generating RPM lockfile for foo')
+        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo")
 
     def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()
@@ -376,7 +376,7 @@ USER 3000
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
         mock_generator.generate_lockfile.assert_not_called()
-        rebaser._logger.debug.assert_called_with('RPM lockfile generation is disabled for foo')
+        rebaser._logger.debug.assert_called_with("RPM lockfile generation is disabled for foo")
 
     def test_go_version_regex_pattern(self):
         """Test the regex pattern used to match go version lines"""

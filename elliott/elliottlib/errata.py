@@ -47,7 +47,7 @@ class Advisory(Erratum):
         :raises ErrataException:
         """
         if target_state not in constants.errata_states:
-            raise ValueError(f'Desired state {target_state} is not a valid Errata state {constants.errata_states}')
+            raise ValueError(f"Desired state {target_state} is not a valid Errata state {constants.errata_states}")
         if self.errata_state != target_state:
             self.setState(target_state)
             self.commit()
@@ -64,7 +64,7 @@ class Advisory(Erratum):
         if kind not in {"rpm", "image"}:
             raise ValueError(f"{kind} should be one of 'rpm' or 'image'")
 
-        file_type = 'tar' if kind == 'image' else 'rpm'
+        file_type = "tar" if kind == "image" else "rpm"
         product_version_set = {build.product_version for build in builds}
         for pv in product_version_set:
             self.addBuilds(
@@ -74,8 +74,8 @@ class Advisory(Erratum):
             )
 
         build_nvrs = sorted(build.nvr for build in builds)
-        green_print('Attached build(s) successfully:')
-        click.echo(' '.join(build_nvrs))
+        green_print("Attached build(s) successfully:")
+        click.echo(" ".join(build_nvrs))
 
     def set_cdn_repos(self, cdn_repos):
         """
@@ -93,7 +93,7 @@ class Advisory(Erratum):
         """
         click.echo(f"Removing build(s) from advisory {self.errata_id}: {' '.join(to_remove)}")
         self.removeBuilds(to_remove)
-        green_print('Removed build(s) successfully')
+        green_print("Removed build(s) successfully")
 
 
 def get_raw_erratum(advisory_id):
@@ -116,7 +116,7 @@ def add_jira_issue(advisory_id, jira_issue_id):
     Attach a jira issue to advisory
     Response code will return
     """
-    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={'jira_issue': jira_issue_id})
+    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={"jira_issue": jira_issue_id})
 
 
 def sync_jira_issue(jira_issue_id):
@@ -133,7 +133,7 @@ def remove_jira_issue(advisory_id, jira_issue_id):
     Response code will return
     """
     return ErrataConnector()._post(
-        f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={'jira_issue': jira_issue_id}
+        f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={"jira_issue": jira_issue_id}
     )
 
 
@@ -145,7 +145,7 @@ def remove_multi_jira_issues(advisory_id, jira_list: List):
     ec = ErrataConnector()
     res = []
     for jira_id in jira_list:
-        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={'jira_issue': jira_id}))
+        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={"jira_issue": jira_id}))
     return res
 
 
@@ -177,7 +177,7 @@ def add_multi_jira_issues(advisory_id, jira_list: List):
     ec = ErrataConnector()
     res = []
     for jira_id in jira_list:
-        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={'jira_issue': jira_id}))
+        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={"jira_issue": jira_id}))
     return res
 
 
@@ -204,9 +204,9 @@ def get_bug_ids(advisory_id) -> dict:
     :return: A dict with keys 'bugzilla' and 'jira' containing lists of bug IDs
     """
     raw_erratum = get_raw_erratum(advisory_id)
-    bugzilla_ids = [bug['bug']['id'] for bug in raw_erratum['bugs']['bugs']]
-    jira_ids = raw_erratum['jira_issues']['idsfixed']
-    return {'bugzilla': bugzilla_ids, 'jira': jira_ids}
+    bugzilla_ids = [bug["bug"]["id"] for bug in raw_erratum["bugs"]["bugs"]]
+    jira_ids = raw_erratum["jira_issues"]["idsfixed"]
+    return {"bugzilla": bugzilla_ids, "jira": jira_ids}
 
 
 def get_errata_live_id(advisory_id):
@@ -214,7 +214,7 @@ def get_errata_live_id(advisory_id):
     Extract live ID from advisory info
     """
     raw_erratum = get_raw_erratum(advisory_id)
-    erratum = raw_erratum.get('errata')
+    erratum = raw_erratum.get("errata")
     for key in erratum:
         live_id = erratum[key].get("fulladvisory").rsplit("-", 1)[0]
         return live_id
@@ -222,11 +222,11 @@ def get_errata_live_id(advisory_id):
 
 def get_erratum_content_type(advisory_id: str):
     raw_erratum = get_raw_erratum(advisory_id)
-    erratum = raw_erratum.get('errata')
+    erratum = raw_erratum.get("errata")
     for t in constants.ADVISORY_TYPES:
         data = erratum.get(t)
         if data is not None:
-            return data.get('content_types')[0]
+            return data.get("content_types")[0]
     return None
 
 
@@ -265,7 +265,7 @@ def new_erratum(
     :return: An Advisory object
     :raises: exceptions.ErrataToolUnauthenticatedException if the user is not authenticated to make the request
     """
-    if errata_type not in ['RHBA', 'RHEA']:
+    if errata_type not in ["RHBA", "RHEA"]:
         raise ValueError("errata_type must be one of 'RHBA' or 'RHEA'")
 
     if not release_date:
@@ -277,23 +277,23 @@ def new_erratum(
     if boilerplate_name not in et_data["boilerplates"]:
         raise ValueError(f"Boilerplate {boilerplate_name} not found in erratatool.yml")
 
-    boilerplate = et_data['boilerplates'][boilerplate_name]
+    boilerplate = et_data["boilerplates"][boilerplate_name]
 
-    if 'release' in boilerplate:
-        release = boilerplate['release']
+    if "release" in boilerplate:
+        release = boilerplate["release"]
     else:
-        release = et_data['release']
+        release = et_data["release"]
 
     e = Advisory(
-        product=et_data['product'],
+        product=et_data["product"],
         release=release,
         errata_type=errata_type,
-        synopsis=boilerplate['synopsis'],
-        topic=boilerplate['topic'],
-        description=boilerplate['description'],
-        solution=boilerplate['solution'],
+        synopsis=boilerplate["synopsis"],
+        topic=boilerplate["topic"],
+        description=boilerplate["description"],
+        solution=boilerplate["solution"],
         qe_email=assigned_to,
-        qe_group=et_data['quality_responsibility_name'],
+        qe_group=et_data["quality_responsibility_name"],
         owner_email=package_owner,
         manager_email=manager,
         date=release_date,
@@ -315,7 +315,7 @@ def build_signed(build):
     filter_endpoint = constants.errata_get_build_url.format(id=build)
     res = requests.get(filter_endpoint, verify=ssl.get_default_verify_paths().openssl_cafile, auth=HTTPSPNEGOAuth())
     if res.status_code == 200:
-        return res.json()['rpms_signed']
+        return res.json()["rpms_signed"]
     elif res.status_code == 401:
         raise exceptions.ErrataToolUnauthenticatedException(res.text)
     else:
@@ -325,11 +325,11 @@ def build_signed(build):
 
 
 def get_art_release_from_erratum(advisory_id):
-    erratum = get_raw_erratum(advisory_id)['errata']
+    erratum = get_raw_erratum(advisory_id)["errata"]
     advisory_type_key = list(erratum.keys())[0]
-    synopsis = erratum[advisory_type_key]['synopsis']
+    synopsis = erratum[advisory_type_key]["synopsis"]
     # OpenShift Container Platform 4.14.z bug fix update
-    match = re.search(r'OpenShift Container Platform (\d\.\d+)', synopsis)
+    match = re.search(r"OpenShift Container Platform (\d\.\d+)", synopsis)
     if match:
         return match.group(1)
     return None
@@ -419,7 +419,7 @@ def get_brew_builds(errata_id, session=None):
     if res.status_code == 200:
         jlist = res.json()
         for key in jlist.keys():
-            for obj in jlist[key]['builds']:
+            for obj in jlist[key]["builds"]:
                 brew_list.append(brew.Build(nvr=list(obj.keys())[0], product_version=key))
         return brew_list
     else:
@@ -427,7 +427,7 @@ def get_brew_builds(errata_id, session=None):
 
 
 @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
+def get_brew_build(nvr, product_version="", session=None) -> brew.Build:
     """5.2.2.1. GET /api/v1/build/{id_or_nvr}
 
     Get Brew build details.
@@ -489,7 +489,7 @@ def parse_exception_error_message(e):
 
     :return: [1685399, 1685398]
     """
-    return [int(b.split('#')[1]) for b in re.findall(r'Bug #[0-9]*', str(e))]
+    return [int(b.split("#")[1]) for b in re.findall(r"Bug #[0-9]*", str(e))]
 
 
 def remove_bugzilla_bugs(advisory_obj, bugids: List):
@@ -511,21 +511,21 @@ def add_bugzilla_bugs_with_retry(
     :param batch_size: perform operation in batches of given size
     :return:
     """
-    logger.info(f'Request to attach {len(bugids)} bugs to the advisory {advisory.errata_id}')
+    logger.info(f"Request to attach {len(bugids)} bugs to the advisory {advisory.errata_id}")
     if not advisory:
         raise exceptions.ElliottFatalError("Error: advisory object cannot be empty")
 
     existing_bugs = bzutil.BugzillaBugTracker.advisory_bug_ids(advisory)
     new_bugs = set(bugids) - set(existing_bugs)
-    logger.info(f'New bugs (not already attached to advisory): {len(new_bugs)}')
-    logger.debug(f'New bugs: {sorted(new_bugs)}')
-    logger.debug(f'Bugs already attached: {sorted(set(bugids) & set(existing_bugs))}')
+    logger.info(f"New bugs (not already attached to advisory): {len(new_bugs)}")
+    logger.debug(f"New bugs: {sorted(new_bugs)}")
+    logger.debug(f"Bugs already attached: {sorted(set(bugids) & set(existing_bugs))}")
     if not new_bugs:
         return
 
     for chunk_of_bugs in chunk(list(new_bugs), batch_size):
         if noop:
-            logger.info('Dry run: Would have attached bugs')
+            logger.info("Dry run: Would have attached bugs")
             continue
         try:
             advisory.addBugs(chunk_of_bugs)
@@ -541,7 +541,7 @@ def add_bugzilla_bugs_with_retry(
                 advisory.addBugs(retry_list)
                 advisory.commit()
             except ErrataException as e:
-                raise exceptions.ElliottFatalError(getattr(e, 'message', repr(e)))
+                raise exceptions.ElliottFatalError(getattr(e, "message", repr(e)))
             logger.info("remaining bugs attached")
         logger.info("All bugzilla bugs attached")
 
@@ -555,20 +555,20 @@ def add_jira_bugs_with_retry(
     :param noop: do not modify anything
     :param batch_size: perform operation in batches of given size
     """
-    logger.info(f'Request to attach {len(bugids)} bugs to the advisory {advisory.errata_id}')
+    logger.info(f"Request to attach {len(bugids)} bugs to the advisory {advisory.errata_id}")
     if not advisory:
         raise exceptions.ElliottFatalError("Error: advisory object cannot be empty")
 
     existing_bugs = bzutil.JIRABugTracker.advisory_bug_ids(advisory)
     new_bugs = set(bugids) - set(existing_bugs)
-    logger.info(f'New bugs (not already attached to advisory): {len(new_bugs)}')
-    logger.debug(f'New bugs: {sorted(new_bugs)}')
-    logger.debug(f'Bugs already attached: {sorted(set(bugids) & set(existing_bugs))}')
+    logger.info(f"New bugs (not already attached to advisory): {len(new_bugs)}")
+    logger.debug(f"New bugs: {sorted(new_bugs)}")
+    logger.debug(f"Bugs already attached: {sorted(set(bugids) & set(existing_bugs))}")
     if not new_bugs:
         return
     for chunk_of_bugs in chunk(bugids, batch_size):
         if noop:
-            logger.info('Dry run: Would have attached bugs')
+            logger.info("Dry run: Would have attached bugs")
             continue
         try:
             advisory.addJiraIssues(chunk_of_bugs)
@@ -585,7 +585,7 @@ def add_jira_bugs_with_retry(
 
 
 def get_image_cdns(advisory_id):
-    return ErrataConnector()._get(f'/api/v1/push_metadata/cdn_docker_file_list/{advisory_id}.json')
+    return ErrataConnector()._get(f"/api/v1/push_metadata/cdn_docker_file_list/{advisory_id}.json")
 
 
 @lru_cache()  # advisories slow to look up, and not expected to change during a run
@@ -604,10 +604,10 @@ def get_advisory_images(image_advisory_id, raw=False):
     cdn_docker_file_list = get_image_cdns(image_advisory_id)
 
     if raw:
-        return '\n'.join(cdn_docker_file_list.keys())
+        return "\n".join(cdn_docker_file_list.keys())
 
     def _get_image_name(nvr, repo):
-        name = next(iter(repo['docker']['target']['external_repos'].keys()), None)
+        name = next(iter(repo["docker"]["target"]["external_repos"].keys()), None)
         if not name:
             raise ValueError(
                 f"Couldn't get repo name for {nvr}. Please open a ticket for CLOUDWF to set up the CDN repo."
@@ -615,14 +615,14 @@ def get_advisory_images(image_advisory_id, raw=False):
         return name
 
     def _get_vr(component):
-        parts = component.split('-')
-        return '{}-{}'.format(parts[-2], parts[-1])
+        parts = component.split("-")
+        return "{}-{}".format(parts[-2], parts[-1])
 
     image_list = [
-        '{}:{}'.format(_get_image_name(nvr, repo), _get_vr(nvr)) for nvr, repo in sorted(cdn_docker_file_list.items())
+        "{}:{}".format(_get_image_name(nvr, repo), _get_vr(nvr)) for nvr, repo in sorted(cdn_docker_file_list.items())
     ]
 
-    return '#########\n{}\n#########'.format('\n'.join(image_list))
+    return "#########\n{}\n#########".format("\n".join(image_list))
 
 
 def get_advisory_builds(advisory, session=None):
@@ -632,11 +632,11 @@ def get_advisory_builds(advisory, session=None):
     try:
         builds = get_builds(advisory, session=session)
     except exceptions.ErrataToolError as ex:
-        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise exceptions.ElliottFatalError(getattr(ex, "message", repr(ex)))
 
     advisory_builds = []
     for tag in builds.keys():
-        for build in builds[tag]['builds']:
+        for build in builds[tag]["builds"]:
             for name in build.keys():
                 advisory_builds.append(build[name])
 
@@ -650,19 +650,19 @@ def get_advisory_nvrs(advisory):
     try:
         builds = get_builds(advisory)
     except exceptions.ErrataToolError as ex:
-        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise exceptions.ElliottFatalError(getattr(ex, "message", repr(ex)))
 
     all_advisory_nvrs: Dict[str, str] = {}
     # Results come back with top level keys which are brew tags
     for tag in builds.keys():
         # Each top level has a key 'builds' which is a list of dicts
-        for build in builds[tag]['builds']:
+        for build in builds[tag]["builds"]:
             # Each dict has a top level key which might be the actual
             # 'nvr' but I don't have enough data to know for sure
             # yet. Also I don't know when there might be more than one
             # key in the build dict. We'll loop over it to be sure.
             for name in build.keys():
-                n, v, r = name.rsplit('-', 2)
+                n, v, r = name.rsplit("-", 2)
                 version_release = "{}-{}".format(v, r)
                 all_advisory_nvrs[n] = version_release
 
@@ -676,15 +676,15 @@ def get_all_advisory_nvrs(advisory):
     try:
         builds = get_builds(advisory)
     except exceptions.ErrataToolError as ex:
-        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise exceptions.ElliottFatalError(getattr(ex, "message", repr(ex)))
 
     all_advisory_nvrs = []
     # Results come back with top level keys which are brew tags
     for tag in builds.keys():
         # Each top level has a key 'builds' which is a list of dicts
-        for build in builds[tag]['builds']:
+        for build in builds[tag]["builds"]:
             for name in build.keys():
-                n, v, r = name.rsplit('-', 2)
+                n, v, r = name.rsplit("-", 2)
                 all_advisory_nvrs.append((n, v, r))
 
     return all_advisory_nvrs
@@ -697,26 +697,26 @@ def get_advisory_nvrs_flattened(advisory: str | int) -> List[str]:
     try:
         builds = get_builds(advisory)
     except exceptions.ErrataToolError as ex:
-        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise exceptions.ElliottFatalError(getattr(ex, "message", repr(ex)))
 
     all_advisory_nvrs = []
     # Results come back with top level keys which are brew tags
     for tag in builds.keys():
         # Each top level has a key 'builds' which is a list of dicts
-        for build in builds[tag]['builds']:
+        for build in builds[tag]["builds"]:
             for name in build.keys():
-                n, v, r = name.rsplit('-', 2)
+                n, v, r = name.rsplit("-", 2)
                 all_advisory_nvrs.append(f"{n}-{v}-{r}")
 
     return all_advisory_nvrs
 
 
 def get_advisory(advisory_id):
-    return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}')
+    return ErrataConnector()._get(f"/api/v1/erratum/{advisory_id}")
 
 
 def is_security_advisory(advisory):
-    return advisory.errata_type == 'RHSA'
+    return advisory.errata_type == "RHSA"
 
 
 def is_advisory_impact_smaller_than(advisory, impact):
@@ -732,7 +732,7 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
     :param blocking_state: a valid advisory state like "SHIPPED_LIVE" (default to "SHIPPED_LIVE")
     """
     response = ErrataConnector()._post(
-        f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata', json={"blocking_errata": blocking_advisory_id}
+        f"/api/v1/erratum/{target_advisory_id}/add_blocking_errata", json={"blocking_errata": blocking_advisory_id}
     )
     if response.status_code != requests.codes.created:
         # The endpoint 404s if the advisory is already in the list
@@ -740,17 +740,17 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
         # so only warn if the error is something else
         if "Advisory already listed" not in response.text:
             logger.warning(
-                f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id}'
-                f' with error: {response.text} status code: {response.status_code}'
+                f"Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id}"
+                f" with error: {response.text} status code: {response.status_code}"
             )
     data = {"blocking_errata": blocking_advisory_id, "blocker_state": blocking_state}
     response = ErrataConnector()._post(
-        f'/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata', json=data
+        f"/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata", json=data
     )
     if response.status_code != requests.codes.created:
         raise IOError(
-            f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} '
-            f'with error: {response.text} status code: {response.status_code}'
+            f"Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} "
+            f"with error: {response.text} status code: {response.status_code}"
         )
     return response.json()
 
@@ -763,7 +763,7 @@ def get_blocking_advisories(advisory_id) -> List[int]:
     :return: a list of advisory ids
     """
     advisory_id = int(advisory_id)
-    errata = get_advisory(advisory_id)['errata']
+    errata = get_advisory(advisory_id)["errata"]
     # This response is unnecessarily nested, so we need to dig into it
     """
     "errata": {
@@ -774,8 +774,8 @@ def get_blocking_advisories(advisory_id) -> List[int]:
     """
     for k in errata:
         if errata[k]["id"] == advisory_id:
-            return errata[k]['blocking_advisories']
-    raise IOError(f'Failed to find blocking advisories for {advisory_id} in ET response: {errata}')
+            return errata[k]["blocking_advisories"]
+    raise IOError(f"Failed to find blocking advisories for {advisory_id} in ET response: {errata}")
 
 
 def get_dependent_advisories(advisory_id) -> List[int]:
@@ -786,7 +786,7 @@ def get_dependent_advisories(advisory_id) -> List[int]:
     :return: a list of advisory ids
     """
     advisory_id = int(advisory_id)
-    errata = get_advisory(advisory_id)['errata']
+    errata = get_advisory(advisory_id)["errata"]
     # This response is unnecessarily nested, so we need to dig into it
     """
     "errata": {
@@ -797,32 +797,32 @@ def get_dependent_advisories(advisory_id) -> List[int]:
     """
     for k in errata:
         if errata[k]["id"] == advisory_id:
-            return errata[k]['dependent_advisories']
-    raise IOError(f'Failed to find dependent advisories for {advisory_id} in ET response: {errata}')
+            return errata[k]["dependent_advisories"]
+    raise IOError(f"Failed to find dependent advisories for {advisory_id} in ET response: {errata}")
 
 
 def remove_dependent_advisories(advisory_id):
-    endpoint = f'/api/v1/erratum/{advisory_id}/remove_dependent_errata'
+    endpoint = f"/api/v1/erratum/{advisory_id}/remove_dependent_errata"
     for dependent in get_dependent_advisories(advisory_id):
         data = {"dependent_errata": int(dependent)}
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove dependent {dependent} from {advisory_id}'
-                f'with code {response.status_code} and error: {response.text}'
+                f"Failed to remove dependent {dependent} from {advisory_id}"
+                f"with code {response.status_code} and error: {response.text}"
             )
 
 
 def remove_blocking_advisories_depends(advisory_id):
     # Remove advisory from blocking advisory's depends_on list
     for blocking_advisory in get_blocking_advisories(advisory_id):
-        endpoint = f'/api/v1/erratum/{blocking_advisory}/remove_blocking_errata'
+        endpoint = f"/api/v1/erratum/{blocking_advisory}/remove_blocking_errata"
         data = {"blocking_errata": int(advisory_id)}
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
-                f'with code {response.status_code} and error: {response.text}'
+                f"Failed to remove blocking {advisory_id} from {blocking_advisory}"
+                f"with code {response.status_code} and error: {response.text}"
             )
 
 
@@ -843,7 +843,7 @@ def get_file_meta(advisory_id) -> List[dict]:
     "rank": 1
     },..]
     """
-    return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
+    return ErrataConnector()._get(f"/api/v1/erratum/{advisory_id}/filemeta")
 
 
 def create_batch(release_version, release_date):
@@ -863,34 +863,34 @@ def create_batch(release_version, release_date):
     }
     response = ErrataConnector()._post("/api/v1/batches", json=data)
     if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to create batch with code {response.status_code} and error: {response.text}')
+        raise IOError(f"Failed to create batch with code {response.status_code} and error: {response.text}")
     else:
-        return response.json()['data']['id']
+        return response.json()["data"]["id"]
 
 
 def lock_batch(batch_id):
     """Update lock status of a batch.
     PUT /api/v1/batches/{id}
     """
-    response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": True})
+    response = ErrataConnector()._put(f"/api/v1/batches/{batch_id}", json={"is_locked": True})
     if response.status_code != requests.codes.ok:
-        raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
+        raise IOError(f"Failed to lock batch with code {response.status_code} and error: {response.text}")
 
 
 def unlock_batch(batch_id):
     """Update lock status of a batch.
     PUT /api/v1/batches/{id}
     """
-    response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": False})
+    response = ErrataConnector()._put(f"/api/v1/batches/{batch_id}", json={"is_locked": False})
     if response.status_code != requests.codes.ok:
-        raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
+        raise IOError(f"Failed to lock batch with code {response.status_code} and error: {response.text}")
 
 
 def get_advisory_batch(advisory_id):
     """Get the batch id for an advisory."""
-    erratum = get_raw_erratum(advisory_id)['errata']
+    erratum = get_raw_erratum(advisory_id)["errata"]
     advisory_type_key = list(erratum.keys())[0]
-    return erratum[advisory_type_key]['batch_id']
+    return erratum[advisory_type_key]["batch_id"]
 
 
 def set_advisory_batch(advisory_id, batch_id):
@@ -906,9 +906,9 @@ def set_advisory_batch(advisory_id, batch_id):
     unlock_batch(batch_id)
 
     # Set the batch
-    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"batch_id": batch_id})
+    response = ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/change_batch", json={"batch_id": batch_id})
     if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to set advisory batch with code {response.status_code} and error: {response.text}')
+        raise IOError(f"Failed to set advisory batch with code {response.status_code} and error: {response.text}")
 
     # Lock the batch
     lock_batch(batch_id)
@@ -920,23 +920,23 @@ def unset_advisory_batch(advisory_id):
     """
     batch_id = get_advisory_batch(advisory_id)
     if not batch_id:
-        logger.info(f'No batch found for {advisory_id}')
+        logger.info(f"No batch found for {advisory_id}")
         return
 
     # Make sure the batch is unlocked
-    logger.info(f'Unlocking batch {batch_id} for advisory {advisory_id}')
+    logger.info(f"Unlocking batch {batch_id} for advisory {advisory_id}")
     unlock_batch(batch_id)
 
     # Clear batch
-    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"clear_batch": True})
+    response = ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/change_batch", json={"clear_batch": True})
     logger.info(
-        f'Attempted to remove advisory {advisory_id} from batch {batch_id}, got http status {response.status_code}'
+        f"Attempted to remove advisory {advisory_id} from batch {batch_id}, got http status {response.status_code}"
     )
     if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to unset advisory batch with code {response.status_code} and error: {response.text}')
+        raise IOError(f"Failed to unset advisory batch with code {response.status_code} and error: {response.text}")
 
     # Lock the batch
-    logger.info(f'Locking batch {batch_id} for advisory {advisory_id}')
+    logger.info(f"Locking batch {batch_id} for advisory {advisory_id}")
     lock_batch(batch_id)
 
 
@@ -944,7 +944,7 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """Update the metadata for some or all files in this advisory.
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta
     """
-    return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true', json=file_meta)
+    return ErrataConnector()._put(f"/api/v1/erratum/{advisory_id}/filemeta?put_rank=true", json=file_meta)
 
 
 def push_cdn_stage(advisory_id):
@@ -952,7 +952,7 @@ def push_cdn_stage(advisory_id):
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#pushing-advisories
     """
     response = ErrataConnector()._post(
-        f'/api/v1/erratum/{advisory_id}/push', json=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}]
+        f"/api/v1/erratum/{advisory_id}/push", json=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}]
     )
     if response.status_code == 400 and "dependencies" in response.text:
         # if advisory has push dependencies then it will return 400, this is expected
@@ -961,7 +961,7 @@ def push_cdn_stage(advisory_id):
 
 
 def is_advisory_editable(advisory_id: int) -> bool:
-    erratum = get_raw_erratum(advisory_id)['errata']
+    erratum = get_raw_erratum(advisory_id)["errata"]
     advisory_type_key = list(erratum.keys())[0]
-    status = erratum[advisory_type_key]['status']
+    status = erratum[advisory_type_key]["status"]
     return status in {"NEW_FILES", "QE"}

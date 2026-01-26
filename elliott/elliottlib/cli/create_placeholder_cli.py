@@ -8,8 +8,8 @@ from elliottlib.exceptions import ElliottFatalError
 LOGGER = logutil.get_logger(__name__)
 
 
-@cli.command('create-placeholder', short_help='Create a placeholder bug')
-@click.option('--attach', '-a', 'advisory_id', type=int, metavar='ADVISORY', help='Attach the bug to ADVISORY')
+@cli.command("create-placeholder", short_help="Create a placeholder bug")
+@click.option("--attach", "-a", "advisory_id", type=int, metavar="ADVISORY", help="Attach the bug to ADVISORY")
 @use_default_advisory_option
 @click.option(
     "--noop",
@@ -34,7 +34,7 @@ def create_placeholder_cli(runtime, kind, advisory_id, default_advisory_type, no
     if default_advisory_type is not None:
         advisory_id = find_default_advisory(runtime, default_advisory_type)
 
-    create_placeholder(advisory_id, runtime.get_bug_tracker('jira'), noop)
+    create_placeholder(advisory_id, runtime.get_bug_tracker("jira"), noop)
 
 
 def create_placeholder(advisory_id, bug_tracker, noop):

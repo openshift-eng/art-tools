@@ -250,7 +250,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             "aarch64",
             False,
         )
-        parsed_build_id = self.rhcos_nvr.split('-', 1)[1]
+        parsed_build_id = self.rhcos_nvr.split("-", 1)[1]
         mock_finder_instance.rhcos_build_meta.assert_called_with(parsed_build_id)
         self.assertEqual(mock_get_container_pullspec.call_count, 2)
         expected_assembly_config = {

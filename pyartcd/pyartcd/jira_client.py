@@ -22,16 +22,16 @@ class JIRAClient:
         return self._client.issue(key)
 
     def add_comment(self, key, comment):
-        self._client.add_comment(key, comment, visibility={'type': 'group', 'value': 'Red Hat Employee'})
+        self._client.add_comment(key, comment, visibility={"type": "group", "value": "Red Hat Employee"})
 
     def assign_to_me(self, key):
-        self._client.assign_issue(key, 'openshift-art-jira-bot')
+        self._client.assign_issue(key, "openshift-art-jira-bot")
 
     def close_task(self, key):
-        self._client.transition_issue(key, 'Closed')
+        self._client.transition_issue(key, "Closed")
 
     def start_task(self, key):
-        self._client.transition_issue(key, 'In Progress')
+        self._client.transition_issue(key, "In Progress")
 
     def complete_subtask(self, parent_jira_id, subtask_keyword, comment):
         parent_jira = self.get_issue(parent_jira_id)
@@ -39,7 +39,7 @@ class JIRAClient:
             if subtask_keyword in subtask.fields.summary:
                 self.add_comment(subtask, comment)
                 self.assign_to_me(subtask)
-                if subtask.fields.status.name != 'Closed':
+                if subtask.fields.status.name != "Closed":
                     self.close_task(subtask)
 
     @classmethod

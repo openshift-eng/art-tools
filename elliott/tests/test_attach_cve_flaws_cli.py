@@ -16,7 +16,7 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         self.mock_runtime.get_major_minor_patch.return_value = (4, 4, 42)
         self.mock_runtime.get_bug_tracker.return_value = Mock()
         self.mock_runtime.group_config.advisories = {}
-        self.mock_runtime.build_system = 'brew'
+        self.mock_runtime.build_system = "brew"
         self.mock_runtime.assembly = None
         self.mock_runtime.get_releases_config.return_value = {}
         self.mock_runtime.get_bug_tracker.side_effect = lambda t: Mock(
@@ -26,23 +26,23 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
     def test_get_updated_advisory_rhsa(self):
         boilerplate = {
-            'security_reviewer': 'some reviewer',
-            'synopsis': 'some synopsis',
-            'description': 'some description with {CVES}',
-            'topic': "some topic {IMPACT}",
-            'solution': 'some solution',
+            "security_reviewer": "some reviewer",
+            "synopsis": "some synopsis",
+            "description": "some description with {CVES}",
+            "topic": "some topic {IMPACT}",
+            "solution": "some solution",
         }
         advisory = Mock(
             errata_type="RHBA",
             cve_names="something",
             security_impact="Low",
             update=Mock(),
-            topic='some topic',
+            topic="some topic",
         )
 
         flaw_bugs = [
-            Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo'),
-            Mock(alias=['CVE-2022-456'], severity='high', summary='CVE-2022-456 bar'),
+            Mock(alias=["CVE-2022-123"], severity="urgent", summary="CVE-2022-123 foo"),
+            Mock(alias=["CVE-2022-456"], severity="high", summary="CVE-2022-456 bar"),
         ]
 
         pipeline = AttachCveFlaws(
@@ -53,8 +53,8 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             output="json",
             noop=False,
         )
-        pipeline.minor = '4'
-        pipeline.patch = '42'
+        pipeline.minor = "4"
+        pipeline.patch = "42"
         pipeline.get_updated_advisory_rhsa(
             boilerplate,
             advisory,
@@ -62,26 +62,26 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         )
 
         advisory.update.assert_any_call(
-            errata_type='RHSA',
-            security_reviewer=boilerplate['security_reviewer'],
-            synopsis=boilerplate['synopsis'],
-            topic=boilerplate['topic'].format(IMPACT="Low"),
-            solution=boilerplate['solution'],
-            security_impact='Low',
+            errata_type="RHSA",
+            security_reviewer=boilerplate["security_reviewer"],
+            synopsis=boilerplate["synopsis"],
+            topic=boilerplate["topic"].format(IMPACT="Low"),
+            solution=boilerplate["solution"],
+            security_impact="Low",
         )
 
-        impact = 'Critical'
+        impact = "Critical"
         advisory.update.assert_any_call(
-            topic=boilerplate['topic'].format(IMPACT=impact),
+            topic=boilerplate["topic"].format(IMPACT=impact),
         )
         advisory.update.assert_any_call(
-            cve_names='CVE-2022-123 CVE-2022-456',
+            cve_names="CVE-2022-123 CVE-2022-456",
         )
         advisory.update.assert_any_call(
             security_impact=impact,
         )
         advisory.update.assert_any_call(
-            description='some description with * foo (CVE-2022-123)\n* bar (CVE-2022-456)',
+            description="some description with * foo (CVE-2022-123)\n* bar (CVE-2022-456)",
         )
 
     @patch("elliottlib.errata_async.AsyncErrataUtils.associate_builds_with_cves", autospec=True)
@@ -148,18 +148,18 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             cast(Dict[int, Iterable], tracker_flaws),
         )
         expected_builds = [
-            'a-1.0.0-1.el8',
-            'b-1.0.0-1.el8',
-            'c-1.0.0-1.el8',
-            'd-1.0.0-1.el8',
-            'a-1.0.0-1.el7',
-            'e-1.0.0-1.el7',
-            'f-1.0.0-1.el7',
+            "a-1.0.0-1.el8",
+            "b-1.0.0-1.el8",
+            "c-1.0.0-1.el8",
+            "d-1.0.0-1.el8",
+            "a-1.0.0-1.el7",
+            "e-1.0.0-1.el7",
+            "f-1.0.0-1.el7",
         ]
         expected_cve_component_mapping = {
-            'CVE-2099-1': {'a', 'd', 'b'},
-            'CVE-2099-3': {'a', 'd', 'b', 'c'},
-            'CVE-2099-2': {'c', 'e'},
+            "CVE-2099-1": {"a", "d", "b"},
+            "CVE-2099-3": {"a", "d", "b", "c"},
+            "CVE-2099-2": {"c", "e"},
         }
         fake_urls_associate_builds_with_cves.assert_awaited_once_with(
             errata_api, 12345, expected_builds, expected_cve_component_mapping, dry_run=False
@@ -200,15 +200,15 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
     def test_get_cve_component_mapping_rhcos(self):
         with patch("artcommonlib.arch_util.RHCOS_BREW_COMPONENTS", {"rhcos-x86_64", "rhcos-aarch64"}):
             flaw_bugs = [
-                BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+                BugzillaBug(Mock(id=101, alias=["CVE-2022-1"])),
             ]
             attached_tracker_bugs = [
-                BugzillaBug(Mock(id=1, whiteboard='component: rhcos')),
+                BugzillaBug(Mock(id=1, whiteboard="component: rhcos")),
             ]
             tracker_flaws = {
                 1: [101],
             }
-            attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
+            attached_components = {"rhcos-x86_64", "rhcos-aarch64", "some-other-component"}
 
             result = AttachCveFlaws.get_cve_component_mapping(
                 self.mock_runtime,
@@ -217,15 +217,15 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
                 cast(Dict[int, Iterable], tracker_flaws),
                 attached_components,
             )
-            expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
+            expected = {"CVE-2022-1": {"rhcos-x86_64", "rhcos-aarch64"}}
             self.assertEqual(result, expected)
 
     def test_get_cve_component_non_attached_flaw(self):
         flaw_bugs = [
-            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+            BugzillaBug(Mock(id=101, alias=["CVE-2022-1"])),
         ]
         attached_tracker_bugs = [
-            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+            BugzillaBug(Mock(id=1, whiteboard="component: component-a")),
         ]
         tracker_flaws = {
             1: [101, 102],  # 102 is not in flaw_bugs, so it gets ignored
@@ -236,7 +236,7 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             cast(List[Bug], attached_tracker_bugs),
             cast(Dict[int, Iterable], tracker_flaws),
         )
-        expected = {'CVE-2022-1': {'component-a'}}
+        expected = {"CVE-2022-1": {"component-a"}}
         self.assertEqual(result, expected)
 
     def test_get_cve_component_invalid_alias(self):
@@ -244,10 +244,10 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             BugzillaBug(Mock(id=101, alias=[])),
         ]
         flaw_bugs_multiple_aliases = [
-            BugzillaBug(Mock(id=101, alias=['CVE-2022-1', 'CVE-2022-2'])),
+            BugzillaBug(Mock(id=101, alias=["CVE-2022-1", "CVE-2022-2"])),
         ]
         attached_tracker_bugs = [
-            BugzillaBug(Mock(id=1, whiteboard='component: component-a')),
+            BugzillaBug(Mock(id=1, whiteboard="component: component-a")),
         ]
         tracker_flaws = {
             1: [101],
@@ -269,10 +269,10 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
     def test_get_cve_component_mapping_missing_whiteboard(self):
         flaw_bugs = [
-            BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+            BugzillaBug(Mock(id=101, alias=["CVE-2022-1"])),
         ]
         attached_tracker_bugs = [
-            BugzillaBug(Mock(id=1, whiteboard='component: ')),
+            BugzillaBug(Mock(id=1, whiteboard="component: ")),
         ]
         tracker_flaws = {
             1: [101],
@@ -286,5 +286,5 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

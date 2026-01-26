@@ -26,7 +26,7 @@ def _urlopen_json_cm(mock_urlopen, content, rc=200):
     # serializes content as json and has the urlopen context manager return it
     cm = MagicMock()
     cm.getcode.return_value = rc
-    cm.read.return_value = bytes(json.dumps(content), 'utf-8')
+    cm.read.return_value = bytes(json.dumps(content), "utf-8")
     cm.__enter__.return_value = cm
     mock_urlopen.return_value = cm
 
@@ -38,7 +38,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         runtime = MockRuntime(self.logger)
         self.runtime = runtime
         self.koji_mock = runtime.pooled_koji_client_session.return_value.__enter__.return_value
-        self.respath = Path(os.path.dirname(__file__), 'resources')
+        self.respath = Path(os.path.dirname(__file__), "resources")
 
     def tearDown(self):
         pass
@@ -67,29 +67,29 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("4.x-aarch64", rhcos.RHCOSBuildFinder(self.runtime, "4.9", "aarch64").rhcos_release_url())
         self.assertIn("4.9-s390x", rhcos.RHCOSBuildFinder(self.runtime, "4.9", "s390x").rhcos_release_url())
 
-    @patch('urllib.request.urlopen')
+    @patch("urllib.request.urlopen")
     def test_build_id(self, mock_urlopen):
-        builds = [{'id': 'id-1'}, {'id': 'id-2'}]
+        builds = [{"id": "id-1"}, {"id": "id-2"}]
         _urlopen_json_cm(mock_urlopen, dict(builds=builds))
-        self.assertEqual('id-1', rhcos.RHCOSBuildFinder(self.runtime, "4.4")._latest_rhcos_build_id())
-        self.assertIn('/rhcos-4.4/', mock_urlopen.call_args_list[0][0][0])
+        self.assertEqual("id-1", rhcos.RHCOSBuildFinder(self.runtime, "4.4")._latest_rhcos_build_id())
+        self.assertIn("/rhcos-4.4/", mock_urlopen.call_args_list[0][0][0])
 
-    @patch('urllib.request.urlopen')
+    @patch("urllib.request.urlopen")
     def test_build_id_no_builds(self, mock_urlopen):
         _urlopen_json_cm(mock_urlopen, dict(builds=[]))
         self.assertIsNone(rhcos.RHCOSBuildFinder(self.runtime, "4.2", "ppc64le")._latest_rhcos_build_id())
-        self.assertIn('/rhcos-4.2-ppc64le/', mock_urlopen.call_args_list[0][0][0])
+        self.assertIn("/rhcos-4.2-ppc64le/", mock_urlopen.call_args_list[0][0][0])
 
-    @patch('urllib.request.urlopen')
+    @patch("urllib.request.urlopen")
     def test_build_id_multi(self, mock_urlopen):
-        builds = [{'id': 'id-1', 'arches': ['arch1', 'arch2']}, {'id': 'id-2', 'arches': ['arch1', 'arch2', 'arch3']}]
+        builds = [{"id": "id-1", "arches": ["arch1", "arch2"]}, {"id": "id-2", "arches": ["arch1", "arch2", "arch3"]}]
         _urlopen_json_cm(mock_urlopen, dict(builds=builds))
-        self.runtime.group_config.urls = Model(dict(rhcos_release_base=dict(multi='some_url')))
-        self.runtime.group_config.arches = ['arch1', 'arch2', 'arch3']
-        self.assertEqual('id-2', rhcos.RHCOSBuildFinder(self.runtime, "4.4")._latest_rhcos_build_id())
+        self.runtime.group_config.urls = Model(dict(rhcos_release_base=dict(multi="some_url")))
+        self.runtime.group_config.arches = ["arch1", "arch2", "arch3"]
+        self.assertEqual("id-2", rhcos.RHCOSBuildFinder(self.runtime, "4.4")._latest_rhcos_build_id())
 
-    @patch('urllib.request.urlopen')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("urllib.request.urlopen")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     def test_build_id_build_release_job_completes(self, rhcos_build_meta, mock_urlopen):  # XXX: Change name
         # If not all required attributes exist, which can happen if the rhcos release job did not successfully complete, take the previous
         self.runtime.group_config.rhcos = Model(
@@ -105,29 +105,29 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             # arch1 of id-1 is complete, arch2 is incomplete
             # both arches of id-2 are complete
             # id-2 should be picked up
-            if build_id == 'id-1':
-                if arch == 'arch1':
-                    return {'spam': 'sha:123', 'eggs': 'sha:kkk'}
-                if arch == 'arch2':
-                    return {'spam': 'sha:123'}
-            if build_id == 'id-2':
-                return {'spam': 'sha:345', 'eggs': 'sha:789'}
+            if build_id == "id-1":
+                if arch == "arch1":
+                    return {"spam": "sha:123", "eggs": "sha:kkk"}
+                if arch == "arch2":
+                    return {"spam": "sha:123"}
+            if build_id == "id-2":
+                return {"spam": "sha:345", "eggs": "sha:789"}
 
         rhcos_build_meta.side_effect = mock_rhcos_build_meta
-        builds = [{'id': 'id-1', 'arches': ['arch1', 'arch2']}, {'id': 'id-2', 'arches': ['arch1', 'arch2']}]
+        builds = [{"id": "id-1", "arches": ["arch1", "arch2"]}, {"id": "id-2", "arches": ["arch1", "arch2"]}]
         _urlopen_json_cm(mock_urlopen, dict(builds=builds))
-        self.runtime.group_config.urls = Model(dict(rhcos_release_base=dict(multi='some_url')))
-        self.runtime.group_config.arches = ['arch1', 'arch2']
-        self.assertEqual('id-2', rhcos.RHCOSBuildFinder(self.runtime, "4.14")._latest_rhcos_build_id())
+        self.runtime.group_config.urls = Model(dict(rhcos_release_base=dict(multi="some_url")))
+        self.runtime.group_config.arches = ["arch1", "arch2"]
+        self.assertEqual("id-2", rhcos.RHCOSBuildFinder(self.runtime, "4.14")._latest_rhcos_build_id())
 
-    @patch('urllib.request.urlopen')
+    @patch("urllib.request.urlopen")
     def test_build_find_failure(self, mock_urlopen):
         mock_urlopen.side_effect = URLError("test")
         with self.assertRaises(rhcos.RHCOSNotFound):
             rhcos.RHCOSBuildFinder(self.runtime, "4.9")._latest_rhcos_build_id()
 
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.latest_rhcos_build_id')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.latest_rhcos_build_id")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     def test_latest_container(self, meta_mock, id_mock):
         # "normal" lookup
         id_mock.return_value = "dummy"
@@ -153,36 +153,36 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             ("dummy", "test@sha256:abcd1234alt"), rhcos.RHCOSBuildFinder(self.runtime, "4.4").latest_container()
         )
 
-    @patch('artcommonlib.exectools.cmd_assert')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("artcommonlib.exectools.cmd_assert")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     def test_rhcos_build_inspector(self, rhcos_build_meta_mock, cmd_assert_mock):
         """
         Tests the RHCOS build inspector abstraction to ensure it correctly parses and utilizes
         pre-canned data.
         """
         # Data source: https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/?stream=releases/rhcos-4.7-s390x&release=47.83.202107261211-0#47.83.202107261211-0
-        rhcos_meta = json.loads(self.respath.joinpath('rhcos1', '47.83.202107261211-0.meta.json').read_text())
+        rhcos_meta = json.loads(self.respath.joinpath("rhcos1", "47.83.202107261211-0.meta.json").read_text())
         rhcos_commitmeta = json.loads(
-            self.respath.joinpath('rhcos1', '47.83.202107261211-0.commitmeta.json').read_text()
+            self.respath.joinpath("rhcos1", "47.83.202107261211-0.commitmeta.json").read_text()
         )
         # NOTE: loading and parsing these fixtures can take a few seconds, no cause for concern
-        rpm_defs = yaml.safe_load(self.respath.joinpath('rhcos1', '47.83.202107261211-0.rpm_defs.yaml').read_text())
+        rpm_defs = yaml.safe_load(self.respath.joinpath("rhcos1", "47.83.202107261211-0.rpm_defs.yaml").read_text())
         pkg_build_dicts = yaml.safe_load(
-            self.respath.joinpath('rhcos1', '47.83.202107261211-0.pkg_builds.yaml').read_text()
+            self.respath.joinpath("rhcos1", "47.83.202107261211-0.pkg_builds.yaml").read_text()
         )
 
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "47.83.202107261211-0"}}}}', None)
-        test_digest = 'sha256:spamneggs'
-        test_pullspec = f'somereg/somerepo@{test_digest}'
-        pullspecs = {'machine-os-content': test_pullspec}
+        test_digest = "sha256:spamneggs"
+        test_pullspec = f"somereg/somerepo@{test_digest}"
+        pullspecs = {"machine-os-content": test_pullspec}
         runtime = MockRuntime(self.logger)
         runtime.get_major_minor_fields.return_value = 4, 7
-        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
-        self.assertEqual(rhcos_build.brew_arch, 's390x')
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, "s390x")
+        self.assertEqual(rhcos_build.brew_arch, "s390x")
         self.assertEqual(rhcos_build.get_container_pullspec(), test_pullspec)
 
-        self.assertEqual(rhcos_build.stream_version, '4.7')
+        self.assertEqual(rhcos_build.stream_version, "4.7")
         self.assertEqual(rhcos_build.get_rhel_base_version(), 8)
 
         def canned_getRPM(nvra, *_, **__):
@@ -199,65 +199,65 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("util-linux-2.32.1-24.el8", rhcos_build.get_rpm_nvrs())
         self.assertEqual(rhcos_build.get_container_digest(), test_digest)
 
-    @patch('artcommonlib.exectools.cmd_assert')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("artcommonlib.exectools.cmd_assert")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     def test_rhcos_build_inspector_extension(self, rhcos_build_meta_mock, cmd_assert_mock):
         """
         Tests the RHCOS build inspector to ensure it additionally includes RPMs from extensions.
         """
         # Data source: https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/4.13/builds/413.86.202212021619-0/x86_64/commitmeta.json
-        rhcos_meta = json.loads(self.respath.joinpath('rhcos2', '4.13-meta.json').read_text())
-        rhcos_commitmeta = json.loads(self.respath.joinpath('rhcos2', '4.13-commitmeta.json').read_text())
+        rhcos_meta = json.loads(self.respath.joinpath("rhcos2", "4.13-meta.json").read_text())
+        rhcos_commitmeta = json.loads(self.respath.joinpath("rhcos2", "4.13-commitmeta.json").read_text())
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
 
-        pullspecs = {'machine-os-content': 'somereg/somerepo@sha256:spamneggs'}
+        pullspecs = {"machine-os-content": "somereg/somerepo@sha256:spamneggs"}
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         runtime = MockRuntime(self.logger)
         runtime.get_major_minor_fields.return_value = 4, 13
-        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, "x86_64")
 
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6.x86_64", rhcos_build.get_rpm_nvras())
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6", rhcos_build.get_rpm_nvrs())
         self.assertIn("qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6", rhcos_build.get_rpm_nvrs())  # epoch stripped
 
-    @patch('artcommonlib.exectools.cmd_assert')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("artcommonlib.exectools.cmd_assert")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     def test_inspector_get_container_pullspec(self, rhcos_build_meta_mock, cmd_assert_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
-        pullspecs = {'machine-os-content': 'spam@eggs'}
+        pullspecs = {"machine-os-content": "spam@eggs"}
         runtime = MockRuntime(self.logger)
         runtime.get_major_minor_fields.return_value = 4, 12
-        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, "s390x")
 
         # test its behavior on misconfiguration / edge case
-        container_conf = dict(name='spam', build_metadata_key='eggs')
+        container_conf = dict(name="spam", build_metadata_key="eggs")
         with self.assertRaises(RhcosMissingContainerException):
             rhcos_build.get_container_pullspec(Model(container_conf))
 
-    @patch('artcommonlib.exectools.cmd_assert')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("artcommonlib.exectools.cmd_assert")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     async def test_find_non_latest_rpms_with_missing_enabled_repos(self, rhcos_build_meta_mock, cmd_assert_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
-        pullspecs = {'machine-os-content': 'spam@eggs'}
+        pullspecs = {"machine-os-content": "spam@eggs"}
         runtime = MockRuntime(self.logger)
         runtime.group_config.rhcos = Model({})
         runtime.get_major_minor_fields.return_value = 4, 12
-        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, "s390x")
         with self.assertRaises(ValueError):
             await rhcos_build.find_non_latest_rpms()
 
-    @patch('doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list')
+    @patch("doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list")
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @patch('artcommonlib.exectools.cmd_assert')
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
+    @patch("artcommonlib.exectools.cmd_assert")
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
     async def test_find_non_latest_rpms(
         self,
         rhcos_build_meta_mock: Mock,
@@ -270,7 +270,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
-        pullspecs = {'machine-os-content': 'spam@eggs'}
+        pullspecs = {"machine-os-content": "spam@eggs"}
         self.runtime.group_config.rhcos = Model(
             {
                 "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
@@ -297,36 +297,36 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         )
         runtime.get_major_minor_fields.return_value = 4, 12
         get_repodata_threadsafe.return_value = Repodata(
-            name='rhel-8-appstream-rpms',
+            name="rhel-8-appstream-rpms",
             primary_rpms=[
                 Rpm.from_dict(
                     {
-                        'name': 'foo',
-                        'version': '1.0.0',
-                        'release': '1.el9',
-                        'epoch': '0',
-                        'arch': 'x86_64',
-                        'nvr': 'foo-1.0.0-1.el9',
+                        "name": "foo",
+                        "version": "1.0.0",
+                        "release": "1.el9",
+                        "epoch": "0",
+                        "arch": "x86_64",
+                        "nvr": "foo-1.0.0-1.el9",
                     }
                 ),
                 Rpm.from_dict(
                     {
-                        'name': 'bar',
-                        'version': '1.1.0',
-                        'release': '1.el9',
-                        'epoch': '0',
-                        'arch': 'x86_64',
-                        'nvr': 'bar-1.1.0-1.el9',
+                        "name": "bar",
+                        "version": "1.1.0",
+                        "release": "1.el9",
+                        "epoch": "0",
+                        "arch": "x86_64",
+                        "nvr": "bar-1.1.0-1.el9",
                     }
                 ),
             ],
         )
         get_os_metadata_rpm_list.return_value = [
-            ['foo', '0', '1.0.0', '1.el9', 'x86_64', 'rhel-8-baseos-rpms'],
-            ['bar', '0', '1.0.0', '1.el9', 'x86_64', 'rhel-8-appstream-rpms'],
+            ["foo", "0", "1.0.0", "1.el9", "x86_64", "rhel-8-baseos-rpms"],
+            ["bar", "0", "1.0.0", "1.el9", "x86_64", "rhel-8-appstream-rpms"],
         ]
-        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, "x86_64")
         actual = await rhcos_build.find_non_latest_rpms()
         get_repodata_threadsafe.assert_awaited()
         get_os_metadata_rpm_list.assert_called_once_with(False)
-        self.assertEqual(actual, [('bar-0:1.0.0-1.el9.x86_64', 'bar-0:1.1.0-1.el9.x86_64', 'rhel-8-appstream-rpms')])
+        self.assertEqual(actual, [("bar-0:1.0.0-1.el9.x86_64", "bar-0:1.1.0-1.el9.x86_64", "rhel-8-appstream-rpms")])

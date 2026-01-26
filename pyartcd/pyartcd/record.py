@@ -38,33 +38,33 @@ def get_distgit_notify(record_log: dict) -> dict:
     result = {}
 
     # It's possible there were no commits or no one specified to notify
-    if not record_log.get('distgit_commit', None):  # or not record_log.get('dockerfile_notify', None):
+    if not record_log.get("distgit_commit", None):  # or not record_log.get('dockerfile_notify', None):
         return result
 
-    source = record_log.get('source_alias', [])
-    commit = record_log.get('distgit_commit', [])
-    failure = record_log.get('distgit_commit_failure', [])
-    notify = record_log.get('dockerfile_notify', [])
+    source = record_log.get("source_alias", [])
+    commit = record_log.get("distgit_commit", [])
+    failure = record_log.get("distgit_commit_failure", [])
+    notify = record_log.get("dockerfile_notify", [])
 
     # will use source alias to look up where Dockerfile came from
     source_alias = {}
     for i in range(len(source)):
-        source_alias[source[i]['alias']] = source[i]
+        source_alias[source[i]["alias"]] = source[i]
 
     # get notification emails by distgit name
     for i in range(len(notify)):
-        notify[i]['source_alias'] = source_alias.get(notify[i]['source_alias'], {})
-        result[notify[i]['distgit']] = notify[i]
+        notify[i]["source_alias"] = source_alias.get(notify[i]["source_alias"], {})
+        result[notify[i]["distgit"]] = notify[i]
 
     # match commit hash with notify email record
     for i in range(len(commit)):
-        if result.get(commit[i]['distgit'], None):
-            result[commit[i]['distgit']]['sha'] = commit[i]['sha']
+        if result.get(commit[i]["distgit"], None):
+            result[commit[i]["distgit"]]["sha"] = commit[i]["sha"]
 
     # OR see if the notification is for a merge failure
     for i in range(len(failure)):
-        if result.get(failure[i]['distgit'], None):
-            result[failure[i]['distgit']]['failure'] = failure[i]['message']
+        if result.get(failure[i]["distgit"], None):
+            result[failure[i]["distgit"]]["failure"] = failure[i]["message"]
 
     return result
 
@@ -74,17 +74,17 @@ def get_failed_builds(record_log: dict, full_record: bool = False) -> dict:
     Returns a map of distgit => task_url OR full record.log dict entry IFF the distgit's build failed
     """
 
-    builds = record_log.get('build', [])
+    builds = record_log.get("build", [])
     failed_map = {}
 
     for build in builds:
-        distgit = build['distgit']
+        distgit = build["distgit"]
 
-        if build['status'] != '0':
-            failed_map[distgit] = build if full_record else build.get('task_url', 'No task URL available')
+        if build["status"] != "0":
+            failed_map[distgit] = build if full_record else build.get("task_url", "No task URL available")
 
-        elif build['push_status'] != '0':
-            failed_map[distgit] = build if full_record else 'Failed to push built image. See debug.log'
+        elif build["push_status"] != "0":
+            failed_map[distgit] = build if full_record else "Failed to push built image. See debug.log"
 
         else:
             # build may have succeeded later. If so, remove.
@@ -101,14 +101,14 @@ def determine_build_failure_ratio(record_log: dict) -> dict:
     """
 
     last_status = {}
-    for build in record_log.get('build', []):
-        last_status[build['distgit']] = build['status']
+    for build in record_log.get("build", []):
+        last_status[build["distgit"]] = build["status"]
 
     total = len(last_status)
-    failed = len({distgit for distgit, status in last_status.items() if status != '0'})
+    failed = len({distgit for distgit, status in last_status.items() if status != "0"})
     ratio = failed / total if total else 0
 
-    return {'failed': failed, 'total': total, 'ratio': ratio}
+    return {"failed": failed, "total": total, "ratio": ratio}
 
 
 def get_successful_builds(record_log: dict, full_record: bool = False) -> dict:
@@ -116,13 +116,13 @@ def get_successful_builds(record_log: dict, full_record: bool = False) -> dict:
     Returns a map of distgit => task_url OR full record.log dict entry IFF the distgit's build succeeded
     """
 
-    builds = record_log.get('build', [])
+    builds = record_log.get("build", [])
     success_map = {}
 
     for build in builds:
-        distgit = build['distgit']
-        if build['status'] == '0':
-            success_map[distgit] = build if full_record else build.get('task_url', 'No task URL available')
+        distgit = build["distgit"]
+        if build["status"] == "0":
+            success_map[distgit] = build if full_record else build.get("task_url", "No task URL available")
 
     return success_map
 

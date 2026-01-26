@@ -33,11 +33,11 @@ class SourceResolverTestCase(TestCase):
     def test_detect_remote_source_branch(self):
         sr = self.create_source_resolver()
         source_details = dict(
-            url='some_git_repo',
+            url="some_git_repo",
             branch=dict(
-                target='main_branch',
-                fallback='fallback_branch',
-                stage='stage_branch',
+                target="main_branch",
+                fallback="fallback_branch",
+                stage="stage_branch",
             ),
         )
 
@@ -157,17 +157,17 @@ class SourceResolverTestCase(TestCase):
         """Test that detect_remote_source_branch uses url_pull when available."""
         sr = self.create_source_resolver()
         source_details = dict(
-            url='https://push.example.com/repo.git',
-            url_pull='https://pull.example.com/repo.git',
+            url="https://push.example.com/repo.git",
+            url_pull="https://pull.example.com/repo.git",
             branch=dict(
-                target='main_branch',
-                fallback='fallback_branch',
+                target="main_branch",
+                fallback="fallback_branch",
             ),
         )
 
         # Mock the _get_remote_branch_ref to expect pull URL
         flexmock(SourceResolver).should_receive("_get_remote_branch_ref").with_args(
-            'https://pull.example.com/repo.git', 'main_branch'
+            "https://pull.example.com/repo.git", "main_branch"
         ).once().and_return("commit_hash")
 
         result = sr.detect_remote_source_branch(source_details, stage=False)
@@ -177,16 +177,16 @@ class SourceResolverTestCase(TestCase):
         """Test that detect_remote_source_branch falls back to url when url_pull is not available."""
         sr = self.create_source_resolver()
         source_details = dict(
-            url='https://push.example.com/repo.git',
+            url="https://push.example.com/repo.git",
             branch=dict(
-                target='main_branch',
-                fallback='fallback_branch',
+                target="main_branch",
+                fallback="fallback_branch",
             ),
         )
 
         # Mock the _get_remote_branch_ref to expect main URL
         flexmock(SourceResolver).should_receive("_get_remote_branch_ref").with_args(
-            'https://push.example.com/repo.git', 'main_branch'
+            "https://push.example.com/repo.git", "main_branch"
         ).once().and_return("commit_hash")
 
         result = sr.detect_remote_source_branch(source_details, stage=False)

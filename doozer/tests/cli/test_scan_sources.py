@@ -14,7 +14,7 @@ class TestScanSourcesCli(IsolatedAsyncioTestCase):
             "stderr",
         )
 
-        runtime = MagicMock(rpm_map=[], build_system='brew')
+        runtime = MagicMock(rpm_map=[], build_system="brew")
         cli = ConfigScanSources(runtime, "kc.conf", False)
 
         self.assertEqual("id-1", cli._tagged_rhcos_id("cname", "4.2", "s390x", True))
@@ -36,17 +36,17 @@ class TestScanSourcesCli(IsolatedAsyncioTestCase):
         runtime = MagicMock(group_config=Model())
         runtime.get_minor_version.return_value = "4.2"
         runtime.get_major_minor_fields.return_value = 4, 2
-        runtime.arches = ['s390x']
+        runtime.arches = ["s390x"]
 
         cli = ConfigScanSources(runtime, "dummy", False)
 
         statuses = await cli._detect_rhcos_status()
         self.assertEqual(2, len(statuses), "expect public and private status reported")
-        self.assertTrue(all(s['updated'] for s in statuses), "expect changed status reported")
-        self.assertTrue(all("id-1" in s['reason'] for s in statuses), "expect previous id in reason")
-        self.assertTrue(all("id-2" in s['reason'] for s in statuses), "expect changed id in reason")
+        self.assertTrue(all(s["updated"] for s in statuses), "expect changed status reported")
+        self.assertTrue(all("id-1" in s["reason"] for s in statuses), "expect previous id in reason")
+        self.assertTrue(all("id-2" in s["reason"] for s in statuses), "expect changed id in reason")
 
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.latest_rhcos_build_id')
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.latest_rhcos_build_id")
     def test_build_find_failure(self, mock_get_build):
         # pedantic to have this test but don't want this to silently break again
         mock_get_build.side_effect = Exception("test")

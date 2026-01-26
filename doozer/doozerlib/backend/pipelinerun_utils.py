@@ -134,7 +134,7 @@ class PodInfo:
         :param container_logs: Optional dict mapping container names to their log content (pre-fetched)
         """
         # Convert ResourceInstance to dict if needed
-        if hasattr(pod, 'to_dict'):
+        if hasattr(pod, "to_dict"):
             self._pod_dict = pod.to_dict()
         else:
             self._pod_dict = pod
@@ -272,7 +272,7 @@ class PipelineRunInfo:
         :param pods: Dictionary mapping pod names to PodInfo objects
         """
         # Convert ResourceInstance to dict if needed
-        if hasattr(pipelinerun, 'to_dict'):
+        if hasattr(pipelinerun, "to_dict"):
             self._pipelinerun_dict = pipelinerun.to_dict()
         else:
             self._pipelinerun_dict = pipelinerun
@@ -354,7 +354,7 @@ class PipelineRunInfo:
 
     def __str__(self):
         """Return a human-readable string representation of the PipelineRun."""
-        succeeded_condition = self.find_condition('Succeeded')
+        succeeded_condition = self.find_condition("Succeeded")
         status = "Unknown"
         if succeeded_condition:
             if succeeded_condition.status == "True":

@@ -48,16 +48,16 @@ class TestGetNetworkModeCli(IsolatedAsyncioTestCase):
             results,
             [
                 {
-                    'name': self.build1.name,
-                    'nvr': self.build1.nvr,
-                    'network_mode': 'hermetic',
-                    'pullspec': self.build1.image_pullspec,
+                    "name": self.build1.name,
+                    "nvr": self.build1.nvr,
+                    "network_mode": "hermetic",
+                    "pullspec": self.build1.image_pullspec,
                 },
                 {
-                    'name': self.build2.name,
-                    'nvr': self.build2.nvr,
-                    'network_mode': 'open',
-                    'pullspec': self.build2.image_pullspec,
+                    "name": self.build2.name,
+                    "nvr": self.build2.nvr,
+                    "network_mode": "open",
+                    "pullspec": self.build2.image_pullspec,
                 },
             ],
         )
@@ -83,10 +83,10 @@ class TestGetNetworkModeCli(IsolatedAsyncioTestCase):
             results,
             [
                 {
-                    'name': self.build1.name,
-                    'nvr': self.build1.nvr,
-                    'network_mode': 'hermetic',
-                    'pullspec': self.build1.image_pullspec,
+                    "name": self.build1.name,
+                    "nvr": self.build1.nvr,
+                    "network_mode": "hermetic",
+                    "pullspec": self.build1.image_pullspec,
                 },
             ],
         )
@@ -105,10 +105,10 @@ class TestGetNetworkModeCli(IsolatedAsyncioTestCase):
             results,
             [
                 {
-                    'name': self.build2.name,
-                    'nvr': self.build2.nvr,
-                    'network_mode': 'open',
-                    'pullspec': self.build2.image_pullspec,
+                    "name": self.build2.name,
+                    "nvr": self.build2.nvr,
+                    "network_mode": "open",
+                    "pullspec": self.build2.image_pullspec,
                 },
             ],
         )
@@ -166,10 +166,10 @@ class TestGetNetworkModeCli(IsolatedAsyncioTestCase):
             results,
             [
                 {
-                    'name': 'ironic',
-                    'network_mode': 'hermetic',
-                    'nvr': 'ironic-container-v4.21.0-1',
-                    'pullspec': 'registry.example.com/ironic@sha256:abc123',
+                    "name": "ironic",
+                    "network_mode": "hermetic",
+                    "nvr": "ironic-container-v4.21.0-1",
+                    "pullspec": "registry.example.com/ironic@sha256:abc123",
                 }
             ],
         )

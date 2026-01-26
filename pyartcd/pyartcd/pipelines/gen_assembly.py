@@ -87,7 +87,7 @@ class GenAssemblyPipeline:
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
 
-        self._github_token = os.environ.get('GITHUB_TOKEN')
+        self._github_token = os.environ.get("GITHUB_TOKEN")
         if not self._github_token and not self.runtime.dry_run:
             raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request.")
 
@@ -143,8 +143,8 @@ class GenAssemblyPipeline:
             self._logger.info("Generated assembly definition:\n%s", out.getvalue())
 
             # For Konflux, stop here at the moment
-            if self.build_system == 'konflux' and not uses_konflux_imagestream_override(
-                self.group.removeprefix('openshift-')
+            if self.build_system == "konflux" and not uses_konflux_imagestream_override(
+                self.group.removeprefix("openshift-")
             ):
                 return
 
@@ -162,9 +162,9 @@ class GenAssemblyPipeline:
             )
             if not self.skip_get_nightlies:
                 if not self.ignore_non_x86_nightlies and latest_nightly not in candidate_nightlies:
-                    message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
+                    message += "\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly"
             else:
-                message += '\n\n:warning: note that `gen-assembly` was run with `--skip-get-nightlies`'
+                message += "\n\n:warning: note that `gen-assembly` was run with `--skip-get-nightlies`"
 
             await self._slack_client.say(message, slack_thread)
 
@@ -175,16 +175,16 @@ class GenAssemblyPipeline:
             raise
 
     async def _get_latest_accepted_nightly(self):
-        self._logger.info('Retrieving most recent accepted amd64 nightly...')
+        self._logger.info("Retrieving most recent accepted amd64 nightly...")
         major, minor = isolate_major_minor_in_group(self.group)
         tag_base = get_nightly_tag_base(major, minor, self.build_system)
         rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/latest"
         async with aiohttp.ClientSession() as session:
             async with session.get(rc_endpoint) as response:
                 if response.status != 200:
-                    self._logger.warning('Failed retrieving latest accepted nighly from %s', rc_endpoint)
+                    self._logger.warning("Failed retrieving latest accepted nighly from %s", rc_endpoint)
                     return None
-                return (await response.json()).get('name')
+                return (await response.json()).get("name")
 
     async def _get_nightlies(self):
         """
@@ -293,7 +293,7 @@ class GenAssemblyPipeline:
             if self.auto_trigger_build_sync:
                 self._logger.info("[DRY RUN] Would have triggered build-sync with the PR assembly definition")
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
-            result = namedtuple('pull_request', d.keys())(*d.values())
+            result = namedtuple("pull_request", d.keys())(*d.values())
             return result
 
         # Clone ocp-build-data
@@ -341,14 +341,14 @@ class GenAssemblyPipeline:
 @cli.command("gen-assembly")
 @click.option(
     "--data-path",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
@@ -359,7 +359,7 @@ class GenAssemblyPipeline:
     "--build-system",
     metavar="BUILD_SYSTEM",
     required=False,
-    default='brew',
+    default="brew",
     help="What build system we're operating on ('brew'|'konflux')",
 )
 @click.option(
@@ -381,7 +381,7 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
 )
-@click.option('--auto-trigger-build-sync', is_flag=True, help='Will trigger build-sync automatically after PR creation')
+@click.option("--auto-trigger-build-sync", is_flag=True, help="Will trigger build-sync automatically after PR creation")
 @click.option(
     "--arch",
     "arches",
@@ -389,38 +389,38 @@ class GenAssemblyPipeline:
     multiple=True,
     help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list",
 )
-@click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
+@click.option("--in-flight", "in_flight", metavar="EDGE", help="An in-flight release that can upgrade to this release")
 @click.option(
-    '--previous',
-    'previous_list',
-    metavar='EDGES',
+    "--previous",
+    "previous_list",
+    metavar="EDGES",
     default=[],
     multiple=True,
-    help='A list of releases that can upgrade to this release',
+    help="A list of releases that can upgrade to this release",
 )
 @click.option(
-    '--auto-previous',
-    'auto_previous',
+    "--auto-previous",
+    "auto_previous",
     is_flag=True,
-    help='If specified, previous list is calculated from Cincinnati graph',
+    help="If specified, previous list is calculated from Cincinnati graph",
 )
 @click.option(
-    '--skip-get-nightlies',
-    'skip_get_nightlies',
-    is_flag=True,
-    default=False,
-    help='Skip get_nightlies_function (Use only for special cases)',
-)
-@click.option(
-    '--ignore-non-x86-nightlies',
-    'ignore_non_x86_nightlies',
+    "--skip-get-nightlies",
+    "skip_get_nightlies",
     is_flag=True,
     default=False,
-    help='Ignore non-x86 nightlies, only use x86 nightly',
+    help="Skip get_nightlies_function (Use only for special cases)",
+)
+@click.option(
+    "--ignore-non-x86-nightlies",
+    "ignore_non_x86_nightlies",
+    is_flag=True,
+    default=False,
+    help="Ignore non-x86 nightlies, only use x86 nightly",
 )
 @click.option(
     "--gen-microshift",
-    'gen_microshift',
+    "gen_microshift",
     default=False,
     is_flag=True,
     help="Create microshift entry for assembly release.",

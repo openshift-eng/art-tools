@@ -16,7 +16,7 @@ LOGGER = logging.getLogger(__name__)
 class FindBugsBlocker(FindBugsMode):
     def __init__(self):
         super().__init__(
-            status={'NEW', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_DEV', 'ON_QA'},
+            status={"NEW", "ASSIGNED", "POST", "MODIFIED", "ON_DEV", "ON_QA"},
             cve_only=False,
         )
 
@@ -30,7 +30,7 @@ class FindBugsBlocker(FindBugsMode):
 @cli.command("find-bugs:blocker", short_help="List active blocker bugs")
 @click.option(
     "--include-status",
-    'include_status',
+    "include_status",
     multiple=True,
     default=None,
     required=False,
@@ -39,7 +39,7 @@ class FindBugsBlocker(FindBugsMode):
 )
 @click.option(
     "--exclude-status",
-    'exclude_status',
+    "exclude_status",
     multiple=True,
     default=None,
     required=False,
@@ -47,12 +47,12 @@ class FindBugsBlocker(FindBugsMode):
     help="Exclude bugs of this status",
 )
 @click.option(
-    '--output',
-    '-o',
+    "--output",
+    "-o",
     required=False,
-    type=click.Choice(['text', 'json', 'slack']),
-    default='text',
-    help='Display format for output',
+    type=click.Choice(["text", "json", "slack"]),
+    default="text",
+    help="Display format for output",
 )
 @click.pass_obj
 def find_bugs_blocker_cli(runtime: Runtime, include_status, exclude_status, output):
@@ -74,25 +74,25 @@ def find_bugs_blocker_cli(runtime: Runtime, include_status, exclude_status, outp
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
     exit_code = 0
-    for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
+    for b in [runtime.get_bug_tracker("jira"), runtime.get_bug_tracker("bugzilla")]:
         try:
             find_bugs_blocker(runtime, output, find_bugs_obj, b)
         except Exception as e:
             LOGGER.error(traceback.format_exc())
-            LOGGER.error(f'exception with {b.type} bug tracker: {e}')
+            LOGGER.error(f"exception with {b.type} bug tracker: {e}")
             exit_code = 1
     sys.exit(exit_code)
 
 
 def find_bugs_blocker(runtime, output, find_bugs_obj, bug_tracker):
-    if output == 'text':
+    if output == "text":
         statuses = sorted(find_bugs_obj.status)
         tr = bug_tracker.target_release()
         green_prefix(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
 
-    if output == 'text':
+    if output == "text":
         green_prefix(f"Found {len(bugs)} bugs: ")
         click.echo(", ".join(sorted(str(b.id) for b in bugs)))
 

@@ -41,12 +41,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
         image_meta.mode = mode
 
         # Create config with mode and okd section
-        config_dict = {'mode': mode, 'for_release': True, 'konflux': {'mode': 'enabled'}}
+        config_dict = {"mode": mode, "for_release": True, "konflux": {"mode": "enabled"}}
 
         if okd_mode is not Missing:
-            config_dict['okd'] = {'mode': okd_mode}
+            config_dict["okd"] = {"mode": okd_mode}
         else:
-            config_dict['okd'] = Missing
+            config_dict["okd"] = Missing
 
         image_meta.config = Model(config_dict)
         return image_meta
@@ -57,12 +57,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should be skipped.
         """
-        image_meta = self._create_image_meta('test-image', 'disabled')
+        image_meta = self._create_image_meta("test-image", "disabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -73,12 +73,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should NOT be skipped (OKD override takes precedence).
         """
-        image_meta = self._create_image_meta('test-image', 'disabled', okd_mode='enabled')
+        image_meta = self._create_image_meta("test-image", "disabled", okd_mode="enabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -89,12 +89,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should be skipped (OKD override takes precedence).
         """
-        image_meta = self._create_image_meta('test-image', 'enabled', okd_mode='disabled')
+        image_meta = self._create_image_meta("test-image", "enabled", okd_mode="disabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -105,12 +105,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should NOT be skipped.
         """
-        image_meta = self._create_image_meta('test-image', 'enabled')
+        image_meta = self._create_image_meta("test-image", "enabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -121,12 +121,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should be skipped.
         """
-        image_meta = self._create_image_meta('test-image', 'disabled')
+        image_meta = self._create_image_meta("test-image", "disabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -137,12 +137,12 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Image should NOT be skipped.
         """
-        image_meta = self._create_image_meta('test-image', 'enabled')
+        image_meta = self._create_image_meta("test-image", "enabled")
         self.mock_runtime.image_metas.return_value = [image_meta]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -153,16 +153,16 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         Expected: Only images with effective mode 'enabled' should be processed.
         """
-        image1 = self._create_image_meta('image-1', 'disabled')  # Should skip
-        image2 = self._create_image_meta('image-2', 'disabled', okd_mode='enabled')  # Should NOT skip
-        image3 = self._create_image_meta('image-3', 'enabled', okd_mode='disabled')  # Should skip
-        image4 = self._create_image_meta('image-4', 'enabled')  # Should NOT skip
+        image1 = self._create_image_meta("image-1", "disabled")  # Should skip
+        image2 = self._create_image_meta("image-2", "disabled", okd_mode="enabled")  # Should NOT skip
+        image3 = self._create_image_meta("image-3", "enabled", okd_mode="disabled")  # Should skip
+        image4 = self._create_image_meta("image-4", "enabled")  # Should NOT skip
 
         self.mock_runtime.image_metas.return_value = [image1, image2, image3, image4]
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, "get_concerns", new=AsyncMock()) as mock_get_concerns:
             await pipeline.run()
             # Only image2 and image4 should be processed
             self.assertEqual(mock_get_concerns.call_count, 2)

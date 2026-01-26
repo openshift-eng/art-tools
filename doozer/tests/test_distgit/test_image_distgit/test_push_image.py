@@ -17,7 +17,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
                 urls=flexmock(brew_image_host="brew-img-host", brew_image_namespace="brew-img-ns"),
                 insecure_source=False,
             ),
-            resolve_brew_image_url=lambda *_, **__: '',
+            resolve_brew_image_url=lambda *_, **__: "",
             working_dir="my-working-dir",
             branch="some-branch",
             command="some-command",
@@ -26,7 +26,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
             record_logger=Mock(),
         )
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_is_late_push(self, _):
         metadata = flexmock(
             config=flexmock(push=flexmock(late=True), distgit=flexmock(branch="_irrelevant_")),
@@ -43,7 +43,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image([], "push_to_defaults")
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_nothing_to_push(self, _):
         metadata = flexmock(
             config=flexmock(push=flexmock(late=distgit.Missing), distgit=flexmock(branch="_irrelevant_")),
@@ -63,7 +63,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image([], push_to_defaults)
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_to_defaults(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -101,7 +101,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"))
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_without_version_release_tuple(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -140,7 +140,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults)
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_no_push_tags(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -180,7 +180,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"), dry_run=True)
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_dry_run(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -219,7 +219,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"), dry_run=True)
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_without_a_push_config_dir_previously_present(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -257,7 +257,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"))
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_fail_to_create_a_push_config_dir(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -298,7 +298,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
             OSError, repo.push_image, tag_list, push_to_defaults, version_release_tuple=version_release_tuple
         )
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_push_config_dir_already_created_by_another_thread(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -338,7 +338,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"))
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_to_defaults_fail_mirroring(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -383,7 +383,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
             expected_msg = "Error pushing image: stderr"
             self.assertEqual(expected_msg, str(e))
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_to_defaults_with_lstate(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -432,7 +432,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(tag_list, push_to_defaults, version_release_tuple=("version", "release"))
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_to_defaults_fail_mirroring_with_lstate(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -501,7 +501,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         except IOError as e:
             self.assertEqual(expected_msg, str(e))
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_insecure_source(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -549,11 +549,11 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
 
         expected = ("my-distgit-key", True)
         actual = repo.push_image(
-            tag_list, push_to_defaults, version_release_tuple=("version", "release"), filter_by_os='amd64'
+            tag_list, push_to_defaults, version_release_tuple=("version", "release"), filter_by_os="amd64"
         )
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
+    @patch("doozerlib.image.ImageMetadata.canonical_builders_enabled", return_value=False)
     def test_push_image_registry_config(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
@@ -562,7 +562,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         flexmock(distgit.os.path).should_receive("isfile").and_return(True)
         flexmock(distgit.os).should_receive("remove").replace_with(lambda _: None)
         (flexmock(io).should_receive("open").and_return(flexmock(write=lambda *_: None, readlines=lambda *_: [])))
-        flexmock(distgit.util).should_receive("get_docker_config_json").and_return('/auth/config.json')
+        flexmock(distgit.util).should_receive("get_docker_config_json").and_return("/auth/config.json")
 
         expected_cmd = "oc image mirror   --insecure=true --filename=some-workdir/push/my-distgit-key --registry-config=/auth/config.json"
 
@@ -600,10 +600,10 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
 
         expected = ("my-distgit-key", True)
         actual = repo.push_image(
-            tag_list, push_to_defaults, version_release_tuple=("version", "release"), registry_config_dir='/auth'
+            tag_list, push_to_defaults, version_release_tuple=("version", "release"), registry_config_dir="/auth"
         )
         self.assertEqual(expected, actual)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

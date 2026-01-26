@@ -31,7 +31,7 @@ class AssemblyPinBuildsCli:
 
     async def run(self):
         # load disabled configs to enable processing of special components like microshift
-        self.runtime.initialize(mode='both', disabled=True)
+        self.runtime.initialize(mode="both", disabled=True)
 
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
         releases_config = self.runtime.get_releases_config()
@@ -52,16 +52,16 @@ class AssemblyPinBuildsCli:
         nvrs = set(self.nvrs)
         for nvr in nvrs:
             parsed = parse_nvr(nvr)
-            if parsed['name'] in art_images_by_comp:
-                if f"{major}.{minor}" not in parsed['version']:
+            if parsed["name"] in art_images_by_comp:
+                if f"{major}.{minor}" not in parsed["version"]:
                     raise ValueError(f"Does nvr belong to the current group? {nvr}")
                 images.append(nvr)
-            elif parsed['name'].startswith("rhcos"):
-                if f"{major}{minor}" not in parsed['version']:
+            elif parsed["name"].startswith("rhcos"):
+                if f"{major}{minor}" not in parsed["version"]:
                     raise ValueError(f"Does rhcos nvr belong to the current group: {nvr}")
                 rhcos.append(nvr)
-            elif parsed['name'] in art_rpms_by_comp:
-                if f"{major}.{minor}" not in parsed['version']:
+            elif parsed["name"] in art_rpms_by_comp:
+                if f"{major}.{minor}" not in parsed["version"]:
                     raise ValueError(f"Does nvr belong to the current group? {nvr}")
                 art_rpms.append(nvr)
             else:
@@ -145,7 +145,7 @@ class AssemblyPinBuildsCli:
         org_repo_suffix = repo_url.split("github.com/")[1]
         github_api_repo_url = "https://api.github.com/repos"
         pr_api_url = f"{github_api_repo_url}/{org_repo_suffix}/pulls/{pr_url.split('/')[-1]}"
-        LOGGER.info('Fetching url %s', pr_api_url)
+        LOGGER.info("Fetching url %s", pr_api_url)
         response = requests.get(
             pr_api_url,
             headers={
@@ -167,7 +167,7 @@ class AssemblyPinBuildsCli:
         LOGGER.info("Validating image and rpm NVRs exist in brew...")
         with self.runtime.shared_koji_client_session() as koji_api:
             build_objects = get_build_objects(nvrs_to_fetch, koji_api)
-        found_nvrs = [b['nvr'] for b in build_objects if b is not None]
+        found_nvrs = [b["nvr"] for b in build_objects if b is not None]
         if len(found_nvrs) != len(nvrs_to_fetch):
             missing = set(nvrs_to_fetch) - set(found_nvrs)
             raise ValueError(f"Could not find the following NVRs in brew: {missing}")
@@ -185,7 +185,7 @@ class AssemblyPinBuildsCli:
         pinned_member_images = self.assembly_config["members"]["images"].primitive()
         pinned_member_images = {i["distgit_key"]: i for i in pinned_member_images}
         for i in images:
-            comp = parse_nvr(i)['name']
+            comp = parse_nvr(i)["name"]
             dg_key = art_images_by_comp[comp].distgit_key
             image_pin = {
                 "distgit_key": dg_key,
@@ -196,7 +196,7 @@ class AssemblyPinBuildsCli:
             }
             if dg_key in pinned_member_images:
                 # we only care if the nvr is different
-                if pinned_member_images[dg_key]["metadata"]['is'] != image_pin["metadata"]['is']:
+                if pinned_member_images[dg_key]["metadata"]["is"] != image_pin["metadata"]["is"]:
                     pinned_member_images[dg_key] = image_pin
                     changed = True
             else:
@@ -214,9 +214,9 @@ class AssemblyPinBuildsCli:
         pinned_member_rpms = {r["distgit_key"]: r for r in pinned_member_rpms}
         for r in rpms:
             parsed = parse_nvr(r)
-            comp = parsed['name']
+            comp = parsed["name"]
             dg_key = art_rpms_by_comp[comp].distgit_key
-            el_v = isolate_el_version_in_release(parsed['release'])
+            el_v = isolate_el_version_in_release(parsed["release"])
             rpm_pin = {
                 "distgit_key": dg_key,
                 "metadata": {
@@ -253,13 +253,13 @@ class AssemblyPinBuildsCli:
         self.assembly_config["group"].setdefault("dependencies", Model({})).setdefault("rpms", ListModel([]))
         pinned_non_art_rpms = self.assembly_config["group"]["dependencies"]["rpms"].primitive()
         # pinned_non_art_rpms: nvr -> pin
-        pinned_non_art_rpms = {r[next(k for k in r.keys() if 'el' in k)]: r for r in pinned_non_art_rpms}
+        pinned_non_art_rpms = {r[next(k for k in r.keys() if "el" in k)]: r for r in pinned_non_art_rpms}
         for r in rpms:
             if r in pinned_non_art_rpms:
                 continue
 
             parsed = parse_nvr(r)
-            el_v = isolate_el_version_in_release(parsed['release'])
+            el_v = isolate_el_version_in_release(parsed["release"])
             if not el_v:
                 raise ValueError(f"Could not determine RHEL version for {r}")
             rpm_pin = {
@@ -337,7 +337,7 @@ async def assembly_pin_builds_cli(runtime: Runtime, nvrs: List[str], pr: Optiona
 
     github_token = None
     if pr:
-        github_token = os.environ.get('GITHUB_TOKEN')
+        github_token = os.environ.get("GITHUB_TOKEN")
         if not github_token:
             raise ValueError("GITHUB_TOKEN must be set in the environment to query PR information")
 

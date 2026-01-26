@@ -88,11 +88,11 @@ LOGGER = logging.getLogger(__name__)
 # advisory:get
 #
 @cli.command("get", short_help="Get information for an ADVISORY")
-@click.argument('advisory', type=int, required=False)
+@click.argument("advisory", type=int, required=False)
 @use_default_advisory_option
-@click.option('--details', is_flag=True, default=False, help="Print the full object of the advisory")
-@click.option('--id-only', is_flag=True, default=False, help="Print only the ID of the default advisory")
-@click.option('--json', 'as_json', metavar="FILE_NAME", help="Dump the advisory as JSON to a file (or '-' for stdout)")
+@click.option("--details", is_flag=True, default=False, help="Print the full object of the advisory")
+@click.option("--id-only", is_flag=True, default=False, help="Print only the ID of the default advisory")
+@click.option("--json", "as_json", metavar="FILE_NAME", help="Dump the advisory as JSON to a file (or '-' for stdout)")
 @pass_runtime
 @click.pass_context
 def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory):
@@ -154,11 +154,11 @@ def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory
 
     json_data = advisory.get_erratum_data()
 
-    json_data['bugs'] = advisory.errata_bugs
-    json_data['jira_issues'] = advisory.jira_issues
-    json_data['current_flags'] = advisory.current_flags
-    json_data['errata_builds'] = advisory.errata_builds
-    json_data['rpmdiffs'] = advisory.externalTests(test_type='rpmdiff')
+    json_data["bugs"] = advisory.errata_bugs
+    json_data["jira_issues"] = advisory.jira_issues
+    json_data["current_flags"] = advisory.current_flags
+    json_data["errata_builds"] = advisory.errata_builds
+    json_data["rpmdiffs"] = advisory.externalTests(test_type="rpmdiff")
 
     if as_json == "-":
         click.echo(json.dumps(json_data, indent=4, sort_keys=True))
@@ -174,7 +174,7 @@ def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory
 #
 @cli.command("poll-signed", short_help="Poll for RPM build 'signed' status")
 @click.option("--minutes", "-m", required=False, default=15, type=int, help="How long to poll before quitting")
-@click.option("--advisory", "-a", type=int, metavar='ADVISORY', help="Advisory to watch")
+@click.option("--advisory", "-a", type=int, metavar="ADVISORY", help="Advisory to watch")
 @use_default_advisory_option
 @click.option(
     "--noop",
@@ -246,12 +246,12 @@ def poll_signed(runtime, minutes, advisory, default_advisory_type, noop):
             click.secho("[", nl=False)
 
             build_sigs = pool.map(
-                lambda build: progress_func(lambda: elliottlib.errata.build_signed(build), '*'), all_builds
+                lambda build: progress_func(lambda: elliottlib.errata.build_signed(build), "*"), all_builds
             )
             # Wait for results
             pool.close()
             pool.join()
-            click.echo(']')
+            click.echo("]")
 
             if all(build_sigs):
                 all_signed = True
@@ -275,7 +275,7 @@ def poll_signed(runtime, minutes, advisory, default_advisory_type, noop):
             green_prefix("All builds signed: ")
             click.echo("Enjoy!")
     except ErrataException as ex:
-        raise ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise ElliottFatalError(getattr(ex, "message", repr(ex)))
 
 
 # Register additional commands / groups
@@ -333,9 +333,9 @@ def main():
         # nicely instead of a gross stack-trace.
         # All internal errors that should simply cause the app
         # to exit with an error code should use ElliottFatalError
-        red_print(getattr(ex, 'message', repr(ex)))
+        red_print(getattr(ex, "message", repr(ex)))
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

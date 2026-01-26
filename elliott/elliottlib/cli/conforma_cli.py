@@ -122,9 +122,9 @@ class ConformaVerifyCli:
         snapshot_pipeline = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config={
-                'kubeconfig': self.konflux_kubeconfig,
-                'namespace': KONFLUX_DEFAULT_NAMESPACE,
-                'context': None,
+                "kubeconfig": self.konflux_kubeconfig,
+                "namespace": KONFLUX_DEFAULT_NAMESPACE,
+                "context": None,
             },
             image_repo_pull_secret=self.pull_secret,
             builds=batch_nvrs,
@@ -171,9 +171,9 @@ class ConformaVerifyCli:
         snapshot_pipeline = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config={
-                'kubeconfig': self.konflux_kubeconfig,
-                'namespace': KONFLUX_DEFAULT_NAMESPACE,
-                'context': None,
+                "kubeconfig": self.konflux_kubeconfig,
+                "namespace": KONFLUX_DEFAULT_NAMESPACE,
+                "context": None,
             },
             image_repo_pull_secret=self.pull_secret,
             builds=sample_nvrs,
@@ -196,10 +196,10 @@ class ConformaVerifyCli:
     async def run(self) -> Dict[str, Dict]:
         """Run conforma verification for all NVRs in batches and return merged results."""
 
-        self.runtime.initialize(build_system='konflux', mode='images')
+        self.runtime.initialize(build_system="konflux", mode="images")
 
         if self.pullspec:
-            rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
+            rhcos_images = {c["name"] for c in get_container_configs(self.runtime)}
             nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
             self.nvrs = []
             for component, (v, r) in nvr_map.items():
@@ -229,15 +229,15 @@ class ConformaVerifyCli:
 
                     # Log batch results for real-time monitoring
                     LOGGER.info("=== Batch %d/%d Results ===", i, len(batches))
-                    LOGGER.info("Batch success: %s", batch_result['success'])
-                    LOGGER.info("Failed NVRs in batch: %d/%d", batch_result['failed_nvrs'], batch_result['total_nvrs'])
+                    LOGGER.info("Batch success: %s", batch_result["success"])
+                    LOGGER.info("Failed NVRs in batch: %d/%d", batch_result["failed_nvrs"], batch_result["total_nvrs"])
 
-                    if batch_result['nvr_results']:
+                    if batch_result["nvr_results"]:
                         LOGGER.info("NVR Results:")
-                        for nvr, result in batch_result['nvr_results'].items():
-                            status = "✓ PASS" if result['success'] else "✗ FAIL"
+                        for nvr, result in batch_result["nvr_results"].items():
+                            status = "✓ PASS" if result["success"] else "✗ FAIL"
                             violations_info = ""
-                            if 'violations' in result:
+                            if "violations" in result:
                                 violations_info = f" ({result['violations']['total']} violations: {', '.join(result['violations']['codes'])})"
                             LOGGER.info("  %s: %s%s", nvr, status, violations_info)
                     else:
@@ -269,7 +269,7 @@ class ConformaVerifyCli:
 
                 # Create truncated version for YAML (only first 10 violation codes)
                 truncated_for_yaml = self._truncate_violations_for_yaml(progressive_result)
-                with open(results_file, 'w') as f:
+                with open(results_file, "w") as f:
                     yaml.dump(truncated_for_yaml, f)
                 LOGGER.info(
                     "Progressive results updated in %s (processed %d/%d batches)", results_file, i, len(batches)
@@ -311,7 +311,7 @@ class ConformaVerifyCli:
         cosign_pub_file = os.path.join(temp_dir, "cosign.pub")
 
         # Download and process EnterpriseContractPolicy
-        if self.policy_path.startswith(('http://', 'https://')):
+        if self.policy_path.startswith(("http://", "https://")):
             # Download the EnterpriseContractPolicy YAML
             temp_download = os.path.join(temp_dir, "ec_policy.yaml")
 
@@ -324,44 +324,44 @@ class ConformaVerifyCli:
             await cmd_assert_async(cmd)
 
             # Parse the YAML and extract the spec section
-            with open(temp_download, 'r') as f:
+            with open(temp_download, "r") as f:
                 full_policy = yaml.load(f)
 
-            if 'spec' not in full_policy:
+            if "spec" not in full_policy:
                 raise RuntimeError("Downloaded EnterpriseContractPolicy does not contain a 'spec' section")
 
             # Write just the spec content to the policy file
-            with open(policy_file, 'w') as f:
-                yaml.dump(full_policy['spec'], f)
+            with open(policy_file, "w") as f:
+                yaml.dump(full_policy["spec"], f)
 
         else:
             # Local file path - check if it's a full EnterpriseContractPolicy or just the spec
             if not os.path.exists(self.policy_path):
                 raise FileNotFoundError(f"Policy file not found: {self.policy_path}")
 
-            with open(self.policy_path, 'r') as f:
+            with open(self.policy_path, "r") as f:
                 policy_content = yaml.load(f)
 
             # If it's a full EnterpriseContractPolicy, extract the spec
-            if 'kind' in policy_content and policy_content['kind'] == 'EnterpriseContractPolicy':
-                if 'spec' not in policy_content:
+            if "kind" in policy_content and policy_content["kind"] == "EnterpriseContractPolicy":
+                if "spec" not in policy_content:
                     raise RuntimeError("EnterpriseContractPolicy does not contain a 'spec' section")
 
-                with open(policy_file, 'w') as f:
-                    yaml.dump(policy_content['spec'], f)
+                with open(policy_file, "w") as f:
+                    yaml.dump(policy_content["spec"], f)
             else:
                 # Assume it's already a spec-only file
                 policy_file = self.policy_path
 
         # workaround for https://gitlab.cee.redhat.com/releng/konflux-release-data/-/merge_requests/8746
         # setting spec.sources.ruleData.policy_intention explicitly to match managed-pipeline runs
-        policy_content = yaml.load(open(policy_file, 'r'))
+        policy_content = yaml.load(open(policy_file, "r"))
         policy_intention_set = False
-        for source in policy_content['sources']:
-            if source['name'] != "Release Policies":
+        for source in policy_content["sources"]:
+            if source["name"] != "Release Policies":
                 continue
-            rule_data = source.get('ruleData', {})
-            policy_intention = rule_data.get('policy_intention')
+            rule_data = source.get("ruleData", {})
+            policy_intention = rule_data.get("policy_intention")
             if policy_intention:
                 if self.env == "stage" and policy_intention != "staging":
                     raise ValueError(
@@ -375,10 +375,10 @@ class ConformaVerifyCli:
                 policy_intention_set = True
             else:
                 if self.env == "stage":
-                    rule_data['policy_intention'] = "staging"
+                    rule_data["policy_intention"] = "staging"
                 else:
-                    rule_data['policy_intention'] = "production"
-                with open(policy_file, 'w') as f:
+                    rule_data["policy_intention"] = "production"
+                with open(policy_file, "w") as f:
                     yaml.dump(policy_content, f)
                 LOGGER.info(
                     f"Policy intention was not set in {policy_file}, setting to {rule_data['policy_intention']}"
@@ -395,9 +395,9 @@ class ConformaVerifyCli:
             cmd.extend(["--kubeconfig", self.konflux_kubeconfig])
         _, stdout, _ = await cmd_gather_async(cmd)
         secret_data = json.loads(stdout)
-        cosign_pub_data = base64.b64decode(secret_data['data']['cosign.pub']).decode('utf-8')
+        cosign_pub_data = base64.b64decode(secret_data["data"]["cosign.pub"]).decode("utf-8")
 
-        with open(cosign_pub_file, 'w') as f:
+        with open(cosign_pub_file, "w") as f:
             f.write(cosign_pub_data)
 
         LOGGER.info("Verification files prepared: policy=%s, cosign.pub=%s", policy_file, cosign_pub_file)
@@ -504,7 +504,7 @@ class ConformaVerifyCli:
 
 
 @cli.command("verify-conforma", short_help="Verify given builds (NVRs) with Conforma")
-@click.argument('nvrs', metavar='<NVR>', nargs=-1, required=False, default=None)
+@click.argument("nvrs", metavar="<NVR>", nargs=-1, required=False, default=None)
 @click.option(
     "--nvrs-file",
     "-f",
@@ -523,34 +523,34 @@ class ConformaVerifyCli:
     help="Path to EnterpriseContractPolicy YAML file or URL. Defaults to the official OCP Konflux policy.",
 )
 @click.option(
-    '--konflux-kubeconfig',
-    metavar='PATH',
-    help='Path to the kubeconfig file to use. Can also be set via KUBECONFIG env var.',
+    "--konflux-kubeconfig",
+    metavar="PATH",
+    help="Path to the kubeconfig file to use. Can also be set via KUBECONFIG env var.",
 )
 @click.option(
-    '--pull-secret',
-    metavar='PATH',
-    help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
+    "--pull-secret",
+    metavar="PATH",
+    help="Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.",
 )
 @click.option(
-    '--env',
-    metavar='ENV',
+    "--env",
+    metavar="ENV",
     help='Environment to use for the policy. Defaults to "prod".',
     type=click.Choice(["stage", "prod"]),
     default="prod",
 )
 @click.option(
-    '--batch-size',
-    metavar='SIZE',
-    help='Number of NVRs to process in each batch. Defaults to 10.',
+    "--batch-size",
+    metavar="SIZE",
+    help="Number of NVRs to process in each batch. Defaults to 10.",
     type=int,
     default=10,
 )
 @click.option(
-    '--fail-fast',
+    "--fail-fast",
     is_flag=True,
     default=False,
-    help='Stop processing immediately if any NVR fails in a batch.',
+    help="Stop processing immediately if any NVR fails in a batch.",
 )
 @click.pass_obj
 @click_coroutine
@@ -596,10 +596,10 @@ async def verify_conforma_cli(
         nvrs = [line.strip() for line in nvrs_file.readlines()]
 
     if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        konflux_kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
 
     if not pull_secret:
-        pull_secret = os.environ.get('KONFLUX_ART_IMAGES_AUTH_FILE')
+        pull_secret = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
 
     pipeline = ConformaVerifyCli(
         runtime=runtime,

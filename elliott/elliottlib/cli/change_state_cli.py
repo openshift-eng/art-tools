@@ -8,18 +8,18 @@ from elliottlib.cli.common import cli, find_default_advisory, use_default_adviso
 @cli.command("change-state", short_help="Change ADVISORY state")
 @click.option(
     "--state",
-    '-s',
+    "-s",
     required=True,
-    type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+    type=click.Choice(["NEW_FILES", "QE", "REL_PREP"]),
     help="New state for the Advisory. NEW_FILES, QE, REL_PREP",
 )
 @click.option(
     "--from",
     "from_state",
-    type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+    type=click.Choice(["NEW_FILES", "QE", "REL_PREP"]),
     help="(Optional) Only change state if the advisory is in this state",
 )
-@click.option("--advisory", "-a", metavar='ADVISORY', type=int, help="Change state of ADVISORY")
+@click.option("--advisory", "-a", metavar="ADVISORY", type=int, help="Change state of ADVISORY")
 @click.option("--default-advisories", is_flag=True, help="Change state of all advisories of specified group")
 @use_default_advisory_option
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Do not actually change anything")
@@ -96,7 +96,7 @@ def change_state_cli(runtime, state, from_state, advisory, default_advisories, d
                     green_prefix(f"Changed state ({advisory}): ")
                     click.echo(f"{old_state} ➔ {state}")
         except ErrataException as ex:
-            click.echo(f'Error fetching/changing state of {advisory}: {ex}')
+            click.echo(f"Error fetching/changing state of {advisory}: {ex}")
             errors.append(ex)
 
     if errors:

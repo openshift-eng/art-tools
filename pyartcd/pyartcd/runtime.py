@@ -18,9 +18,9 @@ class Runtime:
     def __init__(self, config: Dict[str, Any], working_dir: Path, dry_run: bool):
         self.config = config
         self.working_dir = working_dir
-        self.doozer_working = os.path.abspath(f'{self.working_dir / "doozer_working"}')
+        self.doozer_working = os.path.abspath(f"{self.working_dir / 'doozer_working'}")
         self.dry_run = dry_run
-        self.logger = logging.getLogger('pyartcd')
+        self.logger = logging.getLogger("pyartcd")
 
         # checks working_dir
         if not self.working_dir.is_dir():
@@ -60,17 +60,17 @@ class Runtime:
         Removes the git sources cloned by Doozer using rsync
         """
 
-        source_path = f'{self.doozer_working}/{source_dir_name}'
-        self.logger.info('About to remove source dir %s...', source_path)
-        empty_to_overwrite_path = f'{self.doozer_working}/empty_to_overwrite/'
+        source_path = f"{self.doozer_working}/{source_dir_name}"
+        self.logger.info("About to remove source dir %s...", source_path)
+        empty_to_overwrite_path = f"{self.doozer_working}/empty_to_overwrite/"
 
         # Create the empty directory and delete the source dir with rsync --delete
         Path(empty_to_overwrite_path).mkdir(parents=True, exist_ok=True)
-        cmd = ['rsync', '-a', '--delete', f'{empty_to_overwrite_path}', source_path]
-        self.logger.info('Executing rsync delete operation: %s', ' '.join(cmd))
+        cmd = ["rsync", "-a", "--delete", f"{empty_to_overwrite_path}", source_path]
+        self.logger.info("Executing rsync delete operation: %s", " ".join(cmd))
         start_time = datetime.now()
         await cmd_gather_async(cmd)
-        self.logger.info('Deleted %s in %s seconds', source_path, (datetime.now() - start_time).seconds)
+        self.logger.info("Deleted %s in %s seconds", source_path, (datetime.now() - start_time).seconds)
 
 
 class GroupRuntime(runtime.GroupRuntime):
@@ -97,7 +97,7 @@ class GroupRuntime(runtime.GroupRuntime):
         group: str,
         assembly: str = "test",
         doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-        doozer_data_gitref: str = '',
+        doozer_data_gitref: str = "",
     ):
         self.config = config
         self.working_dir = working_dir

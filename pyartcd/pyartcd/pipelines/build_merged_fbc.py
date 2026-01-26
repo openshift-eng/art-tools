@@ -9,7 +9,7 @@ from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
-yaml = YAML(typ='safe')
+yaml = YAML(typ="safe")
 
 
 class BuildMergedFbcPipeline:
@@ -54,43 +54,43 @@ class BuildMergedFbcPipeline:
             logger.info("Successfully built merged FBC for OCP %s: %s", self.version, target_index)
 
         except Exception as e:
-            self._logger.error('Encountered error: %s', e)
+            self._logger.error("Encountered error: %s", e)
             await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building merged stage FBC for {self.version}*\n'
+                f"*:heavy_exclamation_mark: Error building merged stage FBC for {self.version}*\n"
             )
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
         cmd = [
-            'doozer',
-            '--build-system=konflux',
-            f'--working-dir={self.runtime.doozer_working}',
-            '--assembly=stream',
-            f'--group=openshift-{self.version}{"@" + self.data_gitref if self.data_gitref else ""}',
+            "doozer",
+            "--build-system=konflux",
+            f"--working-dir={self.runtime.doozer_working}",
+            "--assembly=stream",
+            f"--group=openshift-{self.version}{'@' + self.data_gitref if self.data_gitref else ''}",
         ]
         if self.data_path:
-            cmd.append(f'--data-path={self.data_path}')
+            cmd.append(f"--data-path={self.data_path}")
         if only:
-            cmd.append(f'--images={only}')
+            cmd.append(f"--images={only}")
         if exclude:
-            cmd.append(f'--exclude={exclude}')
+            cmd.append(f"--exclude={exclude}")
         cmd += opts
-        self._logger.info(f'Running doozer command: {" ".join(cmd)}')
+        self._logger.info(f"Running doozer command: {' '.join(cmd)}")
         return await exectools.cmd_gather_async(cmd, stderr=None)
 
     async def _build_merged_fbc(self, operator_dgks: List[str]):
         version = self.version
         target_index = f"quay.io/openshift-art/stage-fbc-fragments:ocp-{version}"
         doozer_opts = [
-            'beta:fbc:merge',
-            f'--target-index={target_index}',
+            "beta:fbc:merge",
+            f"--target-index={target_index}",
         ]
         if self.runtime.dry_run:
-            doozer_opts.append('--dry-run')
+            doozer_opts.append("--dry-run")
         if self.fbc_repo:
-            doozer_opts.extend(['--fbc-repo', self.fbc_repo])
+            doozer_opts.extend(["--fbc-repo", self.fbc_repo])
         if self.kubeconfig:
-            doozer_opts.extend(['--konflux-kubeconfig', self.kubeconfig])
+            doozer_opts.extend(["--konflux-kubeconfig", self.kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -98,10 +98,10 @@ class BuildMergedFbcPipeline:
             plr_template_url = constants.KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
                 owner=plr_template_owner, branch_name=plr_template_branch
             )
-            doozer_opts.extend(['--plr-template', plr_template_url])
+            doozer_opts.extend(["--plr-template", plr_template_url])
         if self.skip_checks:
-            doozer_opts.append('--skip-checks')
-        doozer_opts.append('--')
+            doozer_opts.append("--skip-checks")
+        doozer_opts.append("--")
         stage_index_repo = "quay.io/openshift-art/stage-fbc-fragments"
         for dgk in operator_dgks:
             doozer_opts.append(f"{stage_index_repo}:ocp__{version}__{dgk}")
@@ -114,44 +114,44 @@ class BuildMergedFbcPipeline:
         """
         # Run doozer config:print for the specified DKGs
         doozer_opts = [
-            'config:print',
-            '--yaml',
+            "config:print",
+            "--yaml",
         ]
         _, out, _ = await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude)
         configs = yaml.load(out)
         return configs
 
 
-@cli.command('build-merged-fbc', help='Merge per-component FBC fragments into one single operator index')
-@click.option('--version', required=True, help='OCP version')
+@cli.command("build-merged-fbc", help="Merge per-component FBC fragments into one single operator index")
+@click.option("--version", required=True, help="OCP version")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
-@click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
+@click.option("--data-gitref", required=False, help="(Optional) Doozer data path git [branch / tag / sha] to use")
 @click.option(
-    '--only',
+    "--only",
     required=False,
-    help='(Optional) List **only** the operators you want to build, everything else gets ignored.\n'
-    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-    'Leave empty to build all (except EXCLUDE, if defined)',
+    help="(Optional) List **only** the operators you want to build, everything else gets ignored.\n"
+    "Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n"
+    "Leave empty to build all (except EXCLUDE, if defined)",
 )
 @click.option(
-    '--exclude',
+    "--exclude",
     required=False,
-    help='(Optional) List the operators you **don\'t** want to build, everything else gets built.\n'
-    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-    'Leave empty to build all (or ONLY, if defined)',
+    help="(Optional) List the operators you **don't** want to build, everything else gets built.\n"
+    "Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n"
+    "Leave empty to build all (or ONLY, if defined)",
 )
-@click.option('--fbc-repo', required=False, default='', help='(Optional) URL of the FBC repository')
+@click.option("--fbc-repo", required=False, default="", help="(Optional) URL of the FBC repository")
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
-    default='',
-    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+    default="",
+    help="Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>",
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @pass_runtime

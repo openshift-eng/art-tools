@@ -16,20 +16,20 @@ from pyartcd.util import get_freeze_automation, is_manual_build
 
 class RpmMirror:
     def __init__(self):
-        self.url = ''
-        self.local_plashet_path = ''
-        self.plashet_dir_name = ''
+        self.url = ""
+        self.local_plashet_path = ""
+        self.plashet_dir_name = ""
 
 
 class BuildPlashetsPipeline:
     def __init__(
-        self, runtime: Runtime, group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False
+        self, runtime: Runtime, group, release, assembly, repos=None, data_path="", data_gitref="", copy_links=False
     ):
         self.runtime = runtime
         self.group = group
         self.release = release
         self.assembly = assembly
-        self.repos = repos.split(',') if repos else []
+        self.repos = repos.split(",") if repos else []
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.copy_links = copy_links
@@ -47,11 +47,11 @@ class BuildPlashetsPipeline:
         # Build plashets
         await self.build()
 
-        if self.assembly != 'stream':
+        if self.assembly != "stream":
             return
 
         # If group looks like openshift-<MAJOR.MINOR>, trigger CI sync for plashets
-        if self.group.startswith('openshift-'):
+        if self.group.startswith("openshift-"):
             major, minor = isolate_major_minor_in_group(self.group)
             if major is not None:
                 version = f"{major}.{minor}"
@@ -74,15 +74,15 @@ class BuildPlashetsPipeline:
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
             )
-            self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
+            self.runtime.logger.info("Built plashets: %s", json.dumps(plashets_built, indent=4))
 
         except ChildProcessError as e:
-            error_msg = f'Failed building compose: {e}'
+            error_msg = f"Failed building compose: {e}"
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
-            channel = self.group if self.group.startswith('openshift-') else None
+            channel = self.group if self.group.startswith("openshift-") else None
             self.slack_client.bind_channel(channel)
-            await self.slack_client.say(f'Failed building compose for {self.group}')
+            await self.slack_client.say(f"Failed building compose for {self.group}")
             raise
 
     async def is_compose_build_permitted(self) -> bool:
@@ -99,16 +99,16 @@ class BuildPlashetsPipeline:
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
         )
-        self.runtime.logger.info('Automation freeze state for %s: %s', self.group, automation_freeze_state)
+        self.runtime.logger.info("Automation freeze state for %s: %s", self.group, automation_freeze_state)
 
         # If automation is not frozen, allow compose
-        if automation_freeze_state not in ['scheduled', 'yes', 'True']:
+        if automation_freeze_state not in ["scheduled", "yes", "True"]:
             return True
 
         # If scheduled automation is frozen and this is a manual build, allow compose
-        if automation_freeze_state == 'scheduled' and is_manual_build():
+        if automation_freeze_state == "scheduled" and is_manual_build():
             # Send a Slack notification since we're running compose build during automation freeze
-            channel = self.group if self.group.startswith('openshift-') else None
+            channel = self.group if self.group.startswith("openshift-") else None
             self.slack_client.bind_channel(channel)
             await self.slack_client.say(f":alert: ocp4 build compose running during automation freeze for {self.group}")
             return True
@@ -122,23 +122,23 @@ class BuildPlashetsPipeline:
     help="Create multiple yum repos (one for each arch) based on -candidate tags "
     "Those repos can be signed (release state) or unsigned (pre-release state)",
 )
-@click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.14')
-@click.option('--release', required=True, help='e.g. 201901011200.?')
-@click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
+@click.option("--group", required=True, help="OCP group to scan, e.g. openshift-4.14")
+@click.option("--release", required=True, help="e.g. 201901011200.?")
+@click.option("--assembly", required=True, help="The name of an assembly to rebase & build for")
 @click.option(
-    '--repos',
+    "--repos",
     required=False,
-    default='',
+    default="",
     help='(optional) limit the repos to build to this list. If empty, build all repos. e.g. ["rhel-8-server-ose-rpms"]',
 )
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
+@click.option("--data-gitref", required=False, default="", help="Doozer data path git [branch / tag / sha] to use")
+@click.option("--copy-links", is_flag=True, default=False, help="Call rsync with --copy-links instead of --links")
 @pass_runtime
 @click_coroutine
 async def build_plashets_cli(
@@ -166,7 +166,7 @@ async def build_plashets_cli(
     lock_name = lock.value.format(assembly=assembly, group=group)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+        runtime.logger.warning("Env var BUILD_URL has not been defined: a random identifier will be used for the locks")
 
     await locks.run_with_lock(
         coro=pipeline.run(),

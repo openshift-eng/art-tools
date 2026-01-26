@@ -8,13 +8,13 @@ from packaging import version
 
 api_key = None
 try:
-    api_key = open(os.path.expanduser('~/.bugzilla_apikey')).read().strip()
+    api_key = open(os.path.expanduser("~/.bugzilla_apikey")).read().strip()
 except FileNotFoundError:
     #  api key in ~/.config/python-bugzilla/bugzillarc will be used
     pass
 
 bz = bugzilla.RHBugzilla(url=None, api_key=api_key)
-bz.connect('https://bugzilla.redhat.com')
+bz.connect("https://bugzilla.redhat.com")
 
 PRODUCT_NAME = "OpenShift Container Platform"
 try:
