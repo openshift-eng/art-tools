@@ -56,6 +56,7 @@ class FbcImportCli:
         major_minor: Optional[str],
         message: str,
         dest_dir: str | None,
+        selective_channels: bool = True,
     ):
         self.runtime = runtime
         self.index_image = index_image
@@ -67,6 +68,7 @@ class FbcImportCli:
         self.dest_dir = (
             Path(dest_dir) if dest_dir else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES)
         )
+        self.selective_channels = selective_channels
 
     async def run(self):
         """Run the FBC import process
@@ -126,9 +128,16 @@ class FbcImportCli:
         )
 
         LOGGER.info("Importing FBC from index image...")
+        LOGGER.info("Selective channels mode: %s", "enabled" if self.selective_channels else "disabled")
+        if self.selective_channels:
+            LOGGER.info("Will preserve new channels from git while importing existing channels from production")
+        else:
+            LOGGER.info("Will replace all content with production index content")
         tasks = []
         for metadata in operator_metadatas:
-            tasks.append(importer.import_from_index_image(metadata, self.index_image))
+            tasks.append(
+                importer.import_from_index_image(metadata, self.index_image, selective_channels=self.selective_channels)
+            )
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_tasks = []
         for metadata, result in zip(operator_metadatas, results):
@@ -156,6 +165,11 @@ class FbcImportCli:
     metavar='MAJOR.MINOR',
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
+@click.option(
+    "--selective-channels/--no-selective-channels",
+    default=True,
+    help="When importing from production, selectively preserve new channels from git while importing existing channels from production. Default: enabled.",
+)
 @option_commit_message
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
 @pass_runtime
@@ -167,6 +181,7 @@ async def fbc_import(
     fbc_repo: str,
     registry_auth: Optional[str],
     major_minor: Optional[str],
+    selective_channels: bool,
     message: str,
     dest_dir: Optional[str],
 ):
@@ -186,6 +201,7 @@ async def fbc_import(
         major_minor=major_minor,
         message=message,
         dest_dir=dest_dir,
+        selective_channels=selective_channels,
     )
     await cli.run()
 
@@ -624,7 +640,9 @@ class FbcRebaseAndBuildCli:
 
         if self.reset_to_prod:
             self._logger.info(f"Resetting FBC source content to production index image for {operator_meta.name}...")
-            await importer.import_from_index_image(operator_meta, index_image=None, strict=False)
+            await importer.import_from_index_image(
+                operator_meta, index_image=None, strict=False, selective_channels=True
+            )
 
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)

@@ -99,13 +99,18 @@ class KonfluxFbcImporter:
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
     async def import_from_index_image(
-        self, metadata: ImageMetadata, index_image: str | None = None, strict: bool = True
+        self,
+        metadata: ImageMetadata,
+        index_image: str | None = None,
+        strict: bool = True,
+        selective_channels: bool = True,
     ):
         """Create a file based catalog (FBC) by importing from an existing index image.
 
         :param metadata: The metadata of the operator image.
         :param index_image: The index image to import from. If not provided, a default index image is used.
         :param strict: If True, raises an error if the index image is not found.
+        :param selective_channels: If True, preserves new channels from git while importing existing channels from production.
         """
         # bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -144,7 +149,12 @@ class KonfluxFbcImporter:
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
         # Update the FBC directory
-        await self._update_dir(build_repo, package_name, catalog_blobs, logger)
+        if selective_channels:
+            logger.info("Using selective channel import strategy to preserve new channels from git")
+            await self._selective_import_channels(build_repo, package_name, catalog_blobs, logger)
+        else:
+            logger.info("Using traditional import strategy - will replace all content from production")
+            await self._update_dir(build_repo, package_name, catalog_blobs, logger)
 
         # Validate the catalog
         logger.info("Validating the catalog")
@@ -196,6 +206,154 @@ class KonfluxFbcImporter:
         await opm.generate_dockerfile(repo_dir, "catalog", base_image=base_image, builder_image=base_image)
 
         logger.info("FBC directory updated")
+
+    async def _selective_import_channels(
+        self,
+        build_repo: BuildRepo,
+        package_name: str,
+        production_catalog_blobs: List[Dict] | None,
+        logger: logging.Logger,
+    ):
+        """Selectively import channels from production while preserving new channels from git."""
+        repo_dir = build_repo.local_dir
+        catalog_dir = repo_dir.joinpath("catalog", package_name)
+        catalog_file_path = catalog_dir.joinpath("catalog.yaml")
+
+        # Load existing git catalog content
+        existing_git_blobs = []
+        if catalog_file_path.exists():
+            logger.info("Loading existing catalog from git: %s", catalog_file_path)
+            with catalog_file_path.open() as f:
+                existing_git_blobs = list(yaml.load_all(f))
+            logger.info("Found %d existing catalog blobs in git", len(existing_git_blobs))
+        else:
+            logger.info("No existing catalog file found in git at %s", catalog_file_path)
+
+        # Categorize both git and production content
+        git_categorized = self._catagorize_catalog_blobs(existing_git_blobs) if existing_git_blobs else {}
+        production_categorized = self._catagorize_catalog_blobs(production_catalog_blobs or [])
+        
+        # Log what we found
+        if production_catalog_blobs:
+            logger.info("Found %d production catalog blobs to process", len(production_catalog_blobs))
+        else:
+            logger.info("No production catalog blobs found - will use git content only")
+            
+        git_channels = git_categorized.get(package_name, {}).get("olm.channel", {})
+        prod_channels = production_categorized.get(package_name, {}).get("olm.channel", {})
+        logger.info("Git channels found: %s", sorted(git_channels.keys()) if git_channels else "none")
+        logger.info("Production channels found: %s", sorted(prod_channels.keys()) if prod_channels else "none")
+
+        # Determine channel merge strategy
+        merged_blobs = self._merge_channels_selectively(git_categorized, production_categorized, package_name, logger)
+
+        # Write merged content
+        if merged_blobs:
+            catalog_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Writing selectively merged catalog to %s", catalog_file_path)
+            with catalog_file_path.open('w') as f:
+                yaml.dump_all(merged_blobs, f)
+        elif catalog_dir.exists():
+            logger.info("No content to write, removing existing catalog directory %s", catalog_dir)
+            shutil.rmtree(catalog_dir)
+
+        # Generate Dockerfile (same as original _update_dir method)
+        df_path = repo_dir.joinpath("catalog.Dockerfile")
+        logger.info("Generating Dockerfile %s", df_path)
+        if df_path.exists():
+            logger.info("Removing existing Dockerfile %s", df_path)
+            df_path.unlink()
+        base_image_format = (
+            BASE_IMAGE_RHEL9_PULLSPEC_FORMAT if self.ocp_version >= (4, 15) else BASE_IMAGE_RHEL8_PULLSPEC_FORMAT
+        )
+        base_image = base_image_format.format(major=self.ocp_version[0], minor=self.ocp_version[1])
+        await opm.generate_dockerfile(repo_dir, "catalog", base_image=base_image, builder_image=base_image)
+
+        logger.info("FBC directory updated with selective channel import")
+
+    def _merge_channels_selectively(
+        self,
+        git_categorized: Dict[str, Dict[str, Dict[str, Any]]],
+        production_categorized: Dict[str, Dict[str, Dict[str, Any]]],
+        package_name: str,
+        logger: logging.Logger,
+    ) -> List[Dict[str, Any]]:
+        """Merge channels: import existing channels from production, keep new channels from git."""
+
+        merged_blobs = []
+
+        # Get production and git channels
+        prod_channels = production_categorized.get(package_name, {}).get("olm.channel", {})
+        git_channels = git_categorized.get(package_name, {}).get("olm.channel", {})
+
+        # Start with production package blob (authoritative)
+        if package_name in production_categorized:
+            package_blob = production_categorized[package_name].get("olm.package", {}).get(package_name)
+            if package_blob:
+                logger.info("Using package definition from production")
+                merged_blobs.append(package_blob)
+        elif package_name in git_categorized:
+            # Fallback to git package blob if production doesn't have it
+            package_blob = git_categorized[package_name].get("olm.package", {}).get(package_name)
+            if package_blob:
+                logger.info("Using package definition from git (production doesn't have it)")
+                merged_blobs.append(package_blob)
+
+        # Merge channels selectively
+        all_channel_names = set(prod_channels.keys()) | set(git_channels.keys())
+        logger.info("Merging channels - total unique channels: %d", len(all_channel_names))
+
+        for channel_name in sorted(all_channel_names):
+            if channel_name in prod_channels:
+                # Channel exists in production - use production version (authoritative)
+                logger.info("Importing existing channel '%s' from production", channel_name)
+                merged_blobs.append(prod_channels[channel_name])
+            else:
+                # Channel only exists in git - preserve it (new channel)
+                logger.info("Preserving new channel '%s' from git", channel_name)
+                merged_blobs.append(git_channels[channel_name])
+
+        # Add all bundles from production (they're authoritative)
+        prod_bundles = production_categorized.get(package_name, {}).get("olm.bundle", {})
+        if prod_bundles:
+            logger.info("Adding %d bundles from production", len(prod_bundles))
+            for bundle_blob in prod_bundles.values():
+                merged_blobs.append(bundle_blob)
+        else:
+            logger.info("No bundles found in production")
+
+        # Add bundles from git that don't exist in production (new bundles for new channels)
+        git_bundles = git_categorized.get(package_name, {}).get("olm.bundle", {})
+        new_git_bundles = 0
+        for bundle_name, bundle_blob in git_bundles.items():
+            if bundle_name not in prod_bundles:
+                logger.info("Preserving new bundle '%s' from git", bundle_name)
+                merged_blobs.append(bundle_blob)
+                new_git_bundles += 1
+        if new_git_bundles > 0:
+            logger.info("Preserved %d new bundles from git", new_git_bundles)
+
+        # Add other schema types from production (if any)
+        for schema_type in production_categorized.get(package_name, {}):
+            if schema_type not in ["olm.package", "olm.channel", "olm.bundle"]:
+                for blob in production_categorized[package_name][schema_type].values():
+                    merged_blobs.append(blob)
+
+        # Add other schema types from git that don't exist in production
+        for schema_type in git_categorized.get(package_name, {}):
+            if schema_type not in ["olm.package", "olm.channel", "olm.bundle"]:
+                if schema_type not in production_categorized.get(package_name, {}):
+                    for blob in git_categorized[package_name][schema_type].values():
+                        logger.info("Preserving new schema type '%s' from git", schema_type)
+                        merged_blobs.append(blob)
+
+        # Summary log
+        final_channels = {blob["name"] for blob in merged_blobs if blob.get("schema") == "olm.channel"}
+        final_bundles = {blob["name"] for blob in merged_blobs if blob.get("schema") == "olm.bundle"}
+        logger.info("Selective merge complete - final catalog contains %d channels (%s) and %d bundles", 
+                   len(final_channels), sorted(final_channels), len(final_bundles))
+
+        return merged_blobs
 
     @alru_cache
     async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
