@@ -1172,13 +1172,17 @@ class KonfluxRebaser:
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
             f"ENV ART_BUILD_NETWORK={network_mode}",
-            # A current cachi2 issue allows cached go artifacts to persist through image build stages.
-            # This was detected when one builder stage was rhel8 and another rhel9, leaving rhel8
-            # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
-            # As a temporary guard against this cache pollution, clean the cache after every stage.
-            # Use || true to prevent an error if this not a builder stage.
-            "RUN go clean -cache || true",
         ]
+
+        # A current cachi2 issue allows cached go artifacts to persist through image build stages.
+        # This was detected when one builder stage was rhel8 and another rhel9, leaving rhel8
+        # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
+        # As a temporary guard against this cache pollution, clean the cache after every stage.
+        # Use || true to prevent an error if this not a builder stage.
+        # Can be disabled via konflux.no_shell for build stages without /bin/sh
+        no_shell = metadata.config.konflux.get("no_shell", False)
+        if not no_shell:
+            konflux_lines.append("RUN go clean -cache || true")
 
         # Three modes for handling upstreams depending on old
         # cachito functionality
@@ -1326,7 +1330,7 @@ class KonfluxRebaser:
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
         ]
 
-        if network_mode != "hermetic":
+        if network_mode != "hermetic" and not no_shell:
             konflux_lines.append("USER 0")
             if self.variant is BuildVariant.OKD:
                 konflux_lines.append("RUN mkdir -p /tmp/art")
