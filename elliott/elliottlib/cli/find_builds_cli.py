@@ -703,11 +703,17 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-async def find_builds_konflux(runtime, payload):
+async def find_builds_konflux(runtime, payload) -> list[dict]:
     """
-    Find konflux builds for group/assembly
-    """
+    Find konflux builds for group/assembly, respecting network mode configuration.
 
+    Args:
+        runtime: The runtime object providing access to image metadata and the Konflux database.
+        payload: If True, only include payload images; if False, only non-payload images.
+
+    Returns:
+        list[dict]: List of build records matching the configured network mode for each image.
+    """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
     image_metas: list[ImageMetadata] = []
@@ -720,7 +726,10 @@ async def find_builds_konflux(runtime, payload):
 
     LOGGER.info("Fetching NVRs from DB...")
     tasks = [
-        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
+        image.get_latest_build(
+            enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
+        )
+        for image in image_metas
     ]
     records: list[dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
     if len(records) != len(image_metas):
@@ -731,11 +740,11 @@ async def find_builds_konflux(runtime, payload):
 async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
-    and fetch related OLM bundle builds.
+    and fetch related OLM bundle builds. Respects network mode configuration for each image.
 
     This function:
     - Iterates over image metadata from the runtime, filtering out base-only and non-release images.
-    - For each image, determines if it is a payload image and collects its build record.
+    - For each image, determines the configured network mode and queries for the latest build matching that mode.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
     - Returns a dictionary with four categorized lists:
@@ -770,7 +779,11 @@ async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
+        tasks.append(
+            image.get_latest_build(
+                enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
+            )
+        )
     results = await asyncio.gather(*[task for task in tasks])
     records_with_olm = [
         (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None
