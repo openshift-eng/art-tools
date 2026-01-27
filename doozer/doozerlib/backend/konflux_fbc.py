@@ -171,11 +171,16 @@ class KonfluxFbcImporter:
         build_repo = BuildRepo(url=self.fbc_git_repo, branch=build_branch, local_dir=repo_dir, logger=logger)
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
 
-        # Update the FBC directory
-        if selective_channels and catalog_blobs:
+        # Update the FBC directory - choose import strategy based on selective_channels flag
+        if selective_channels:
+            # Selective import: preserve new channels from git while importing existing channels from production
+            # This solves the "Channel stable-v8.1 not found in package" error for new channels
+            # Always use selective import when flag is true, even with empty catalog_blobs to preserve git-only content
             logger.info("Using selective channel import strategy to preserve new channels from git")
             await self._selective_import_channels(build_repo, package_name, catalog_blobs, logger)
         else:
+            # Standard import: completely replace catalog content with production content
+            # This is the original behavior, suitable for all cases where selective merging isn't needed
             await self._update_dir(build_repo, package_name, catalog_blobs, logger)
 
         # Validate the catalog
@@ -236,12 +241,19 @@ class KonfluxFbcImporter:
         production_catalog_blobs: List[Dict] | None,
         logger: logging.Logger,
     ):
-        """Selectively import channels from production while preserving new channels from git."""
+        """Selectively import channels from production while preserving new channels from git.
+
+        This is the core selective channel import functionality that:
+        1. Loads existing channels from git repository
+        2. Categorizes both git and production catalog content by schema type
+        3. Merges channels strategically - preserves new channels from git, imports existing ones from production
+        4. Only applies to non-OpenShift groups (groups not starting with 'openshift-')
+        """
         repo_dir = build_repo.local_dir
         catalog_dir = repo_dir.joinpath("catalog", package_name)
         catalog_file_path = catalog_dir.joinpath("catalog.yaml")
 
-        # Load existing git catalog content
+        # Load existing git catalog content - this preserves any new channels that don't exist in production yet
         existing_git_blobs = []
         if catalog_file_path.exists():
             logger.info("Loading existing catalog from git: %s", catalog_file_path)
@@ -251,7 +263,8 @@ class KonfluxFbcImporter:
         else:
             logger.info("No existing catalog file found in git at %s", catalog_file_path)
 
-        # Categorize both git and production content
+        # Categorize both git and production content by schema type (olm.package, olm.channel, olm.bundle)
+        # This allows us to merge selectively by comparing channels between git and production
         git_categorized = _categorize_catalog_blobs(existing_git_blobs) if existing_git_blobs else {}
         production_categorized = _categorize_catalog_blobs(production_catalog_blobs or [])
 
@@ -266,7 +279,8 @@ class KonfluxFbcImporter:
         logger.info("Git channels found: %s", sorted(git_channels.keys()) if git_channels else "none")
         logger.info("Production channels found: %s", sorted(prod_channels.keys()) if prod_channels else "none")
 
-        # Determine channel merge strategy
+        # Apply selective merge strategy: preserve new channels from git, import existing channels from production
+        # This is the key logic that solves the "Channel stable-v8.1 not found in package" error
         merged_blobs = self._merge_channels_selectively(git_categorized, production_categorized, package_name, logger)
 
         # Write merged content
@@ -300,7 +314,14 @@ class KonfluxFbcImporter:
         package_name: str,
         logger: logging.Logger,
     ) -> List[Dict[str, Any]]:
-        """Merge channels: import existing channels from production, keep new channels from git."""
+        """Merge channels: import existing channels from production, keep new channels from git.
+
+        Key merge strategy:
+        - Package definition: Use production version (authoritative)
+        - Channels: If channel exists in production, use production version
+                   If channel only exists in git, preserve it (this solves the new channel problem)
+        - Bundles: Use production bundles (authoritative for existing channels)
+        """
 
         merged_blobs = []
 
@@ -328,10 +349,12 @@ class KonfluxFbcImporter:
         for channel_name in sorted(all_channel_names):
             if channel_name in prod_channels:
                 # Channel exists in production - use production version (authoritative)
+                # This ensures we get the latest bundles and proper upgrade graph from production
                 logger.info("Importing existing channel '%s' from production", channel_name)
                 merged_blobs.append(prod_channels[channel_name])
             else:
                 # Channel only exists in git - preserve it (new channel)
+                # This is the key fix: preserves new channels that don't exist in production yet
                 logger.info("Preserving new channel '%s' from git", channel_name)
                 merged_blobs.append(git_channels[channel_name])
 
@@ -949,18 +972,21 @@ class KonfluxFbcRebaser:
             existing_bundle = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             is_replacement = existing_bundle is not None
 
+            # Fix circular reference issue for new channels in non-OpenShift groups
             # For new channels where this will be the first (and only) bundle, don't add circular references
+            # This prevents "no channel head found in graph" validation errors
             # This happens when we have an empty channel or when adding a bundle to a channel that will only contain this bundle after the update
-            # Only apply this fix for non-OpenShift groups
+            # Only apply this fix for non-OpenShift groups (groups not starting with 'openshift-')
             will_be_first_bundle_only = not self.group.startswith('openshift-') and (
                 len(channel['entries']) == 0
                 or (len(channel['entries']) == 1 and channel['entries'][0]['name'] == olm_bundle_name)
             )
 
-            # Update "skips" in the channel
+            # Update "skips" in the channel - manages upgrade path skips
             # FIXME: We try to mimic how `skips` field is updated by the old ET centric process.
             # We should verify if this is correct.
             skips = None
+            # Only set skips if this isn't a first bundle (avoids circular references)
             if not will_be_first_bundle_only:
                 bundle_with_skips = next(
                     (it for it in channel['entries'] if it.get('skips')), None
@@ -974,9 +1000,10 @@ class KonfluxFbcRebaser:
                     # Only set skips if we're replacing an existing bundle, not for new channels
                     skips = {channel['entries'][0]['name']}
 
+            # Update "replaces" in the channel - manages direct bundle replacement
             # For an operator bundle that uses replaces -- such as OADP
-            # Update "replaces" in the channel
             replaces = None
+            # Only set replaces for non-OpenShift groups and when not the first bundle (avoids circular references)
             if not self.group.startswith('openshift-') and not will_be_first_bundle_only:
                 # Find the current head - the entry that is not replaced by any other entry
                 bundle_with_replaces = [it for it in channel['entries']]

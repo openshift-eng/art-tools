@@ -12,6 +12,7 @@ from doozerlib.backend.konflux_fbc import (
     KonfluxFbcFragmentMerger,
     KonfluxFbcImporter,
     KonfluxFbcRebaser,
+    _categorize_catalog_blobs,
     _generate_fbc_branch_name,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo, PodInfo
@@ -542,7 +543,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         result_catalog_file.seek(0)
         result_catalog_blobs = list(yaml.load_all(result_catalog_file))
-        result_catalog_blobs = self.rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+        result_catalog_blobs = _categorize_catalog_blobs(result_catalog_blobs)
         self.assertEqual(result_catalog_blobs.keys(), {"test-package"})
         self.assertEqual(
             result_catalog_blobs["test-package"]["olm.channel"]["test-channel"]["entries"],
@@ -673,7 +674,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
             {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         ]
-        actual = self.rebaser._catagorize_catalog_blobs(catalog_blobs)
+        actual = _categorize_catalog_blobs(catalog_blobs)
         self.assertEqual(actual.keys(), {"test-package", "test-package2"})
         self.assertEqual(actual["test-package"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
         self.assertEqual(

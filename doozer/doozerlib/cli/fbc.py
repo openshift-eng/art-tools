@@ -75,11 +75,8 @@ class FbcImportCli:
         This function implements the main logic of the FBC import process
         following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/docs/konflux-onboarding.md#create-the-fbc-in-the-git-repository.
         """
-        # Validate flag combination
-        if self.selective_channels and not self.index_image:
-            raise ValueError(
-                "--selective-channels requires --from-index to be specified. Selective channels only works when importing from production."
-            )
+        # Restrict selective channels to non-OpenShift groups only (groups not starting with 'openshift-')
+        # OpenShift groups use the standard import process for consistency and safety
         if self.selective_channels and self.runtime.group.startswith('openshift-'):
             raise ValueError(
                 "--selective-channels is only supported for non-OpenShift groups. OpenShift groups should use the standard import process."
@@ -204,6 +201,8 @@ async def fbc_import(
     doozer --group=openshift-4.17 beta:fbc:import --from-index=registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
     # Auto-detect selective channels based on group type if not explicitly set
+    # Automatically enable selective channels for non-OpenShift groups (e.g., mta-8.1)
+    # Keep disabled for OpenShift groups (e.g., openshift-4.17) to maintain existing behavior
     if selective_channels is None:
         selective_channels = not runtime.group.startswith('openshift-')
 

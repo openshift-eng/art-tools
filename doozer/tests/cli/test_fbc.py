@@ -32,6 +32,7 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
             message="Test commit",
             dest_dir="/tmp/fbc",
             registry_auth="/path/to/auth/file.json",
+            selective_channels=False,
         )
 
     @mock.patch("doozerlib.cli.fbc.opm.verify_opm")
@@ -48,8 +49,16 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
         await self.fbc_import_cli.run()
         mock_import_from_index_image.assert_has_calls(
             [
-                mock.call(self.runtime.ordered_image_metas()[0], "example.com/test/test-index-image:latest"),
-                mock.call(self.runtime.ordered_image_metas()[1], "example.com/test/test-index-image:latest"),
+                mock.call(
+                    self.runtime.ordered_image_metas()[0],
+                    "example.com/test/test-index-image:latest",
+                    selective_channels=False,
+                ),
+                mock.call(
+                    self.runtime.ordered_image_metas()[1],
+                    "example.com/test/test-index-image:latest",
+                    selective_channels=False,
+                ),
             ]
         )
 
