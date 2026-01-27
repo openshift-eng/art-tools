@@ -47,6 +47,7 @@ class Jobs(Enum):
     OADP = 'aos-cd-builds/build%2Foadp'
     OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
+    SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
 
 
 def get_jenkins_url():
@@ -748,6 +749,18 @@ def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> O
 
     return start_build(
         job=Jobs.OADP_SCAN,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_scan_operator(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+
+    return start_build(
+        job=Jobs.SCAN_OPERATOR,
         params=params,
         **kwargs,
     )

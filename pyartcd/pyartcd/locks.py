@@ -30,6 +30,7 @@ class Lock(enum.Enum):
     OADP_SCAN = 'lock:oadp-scan:{group}'
     BUILD_OKD4 = 'lock:build-okd4:{version}'
     SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
+    SCAN_OPERATOR = 'lock:scan-operator:{version}'
 
 
 class Keys(enum.Enum):
@@ -135,6 +136,11 @@ LOCK_POLICY = {
     },
     Lock.BUILD_OKD4: {
         'retry_count': 36000 * 1,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SCAN_OPERATOR: {
+        'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },

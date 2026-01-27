@@ -39,6 +39,7 @@ from pyartcd.pipelines import (
     review_cvp,
     scan_fips,
     scan_for_kernel_bugs,
+    scan_operator,
     scan_plashet_rpms,
     sigstore_sign,
     sync_rhcos_bfb,
@@ -52,6 +53,7 @@ from pyartcd.pipelines.scheduled import (
     schedule_ocp4_scan,
     schedule_ocp4_scan_konflux,
     schedule_scan_plashet_rpms,
+    schedule_scan_operator,
 )
 
 
