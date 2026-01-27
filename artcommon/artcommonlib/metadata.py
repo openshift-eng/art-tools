@@ -184,9 +184,7 @@ class MetadataBase(object):
         el_target: str | int | None = None,
         honor_is: bool = True,
         complete_before_event: int | None = None,
-        exclude_large_columns: bool = False,  # Ignored for Brew builds (Konflux-only parameter)
-        max_window_days: int | None = None,  # Ignored for Brew builds (Konflux-only parameter)
-        enforce_network_mode: bool = False,  # Ignored for Brew builds (Konflux-only parameter)
+        **kwargs,
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
