@@ -374,7 +374,7 @@ class KonfluxOcp4Pipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD=False,
+            SKIP_MULTI_ARCH_PAYLOAD="false",
         )
 
     async def mirror_streams_to_ci(self):
