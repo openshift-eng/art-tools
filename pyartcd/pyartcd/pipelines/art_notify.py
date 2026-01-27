@@ -194,7 +194,7 @@ class ArtNotifyPipeline:
             return None
 
         for pr in prs:
-            if pr['state'] == 'open' and pr['title'] == 'Update Konflux references':
+            if pr['state'] == 'open' and 'update konflux references' in pr['title'].lower():
                 pr_url = pr['html_url']
                 self.logger.info(f'Found open Konflux template update PR: {pr_url}')
 
