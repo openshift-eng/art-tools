@@ -194,6 +194,10 @@ class AttachCveFlaws:
         self.errata_api: Optional[AsyncErrataAPI] = None
         self.major, self.minor, self.patch = self.runtime.get_major_minor_patch()
         self._replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch}
+        self._update_rpm_advisory_live_id()
+
+    def _update_rpm_advisory_live_id(self):
+        """Update the RPM_ADVISORY placeholder in _replace_vars with the live advisory ID."""
         rpm_advisory = self.runtime.group_config.advisories.get("rpm")
         if rpm_advisory is not None:
             live_id = get_errata_live_id(rpm_advisory)
@@ -337,6 +341,11 @@ class AttachCveFlaws:
                 # Set the release notes type to RHSA
                 self.logger.info("Converting release notes to RHSA type.")
                 release_notes.type = 'RHSA'
+
+            # Re-fetch RPM advisory live ID in case it was also converted to RHSA
+            self._update_rpm_advisory_live_id()
+            if "RPM_ADVISORY" in self._replace_vars:
+                self.logger.info(f"Updated RPM_ADVISORY placeholder to: {self._replace_vars['RPM_ADVISORY']}")
 
             # Add the CVE component mapping to the cve field
             cve_component_mapping = AttachCveFlaws.get_cve_component_mapping(
@@ -593,6 +602,12 @@ class AttachCveFlaws:
             updated = True
             low_impact = 'Low'
             self._replace_vars['IMPACT'] = low_impact
+
+            # Re-fetch RPM advisory live ID in case it was also converted to RHSA
+            self._update_rpm_advisory_live_id()
+            if "RPM_ADVISORY" in self._replace_vars:
+                self.logger.info(f"Updated RPM_ADVISORY placeholder to: {self._replace_vars['RPM_ADVISORY']}")
+
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
