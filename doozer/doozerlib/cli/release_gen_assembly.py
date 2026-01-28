@@ -305,19 +305,38 @@ class GenAssemblyCli:
             if major_minor != self.runtime.get_minor_version():
                 self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
-            rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
-            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(
-                self.runtime.group.removeprefix('openshift-')
-            ):
-                release_suffix = f'konflux-release{rc_suffix}'
-            else:
-                release_suffix = f'release{rc_suffix}'
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'
                 )
+
+            # Extract major version to determine imagestream naming
+            major_version = int(major_minor.split('.')[0])
+            arch_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+
+            # Determine version suffix for repo naming
+            # OCP 4.x: no version suffix
+            # OCP 5.x: add version suffix (e.g., '-5')
+            if major_version == 4:
+                version_suffix = ''
+            elif major_version == 5:
+                version_suffix = f'-{major_version}'
+            else:
+                self._exit_with_error(f'Unsupported OCP major version: {major_version}')
+
+            # Determine base repository name based on build system
+            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(major_minor):
+                base_repo = 'konflux-release'
+            else:
+                base_repo = 'release'
+
+            # Construct repository name: base + version_suffix + arch_suffix
+            # e.g., 'release-5-s390x' for OCP 5.x s390x, 'release' for OCP 4.x amd64
+            repo = f'{base_repo}{version_suffix}{arch_suffix}'
+
+            # Construct the full pullspec
+            nightly_pullspec = f'registry.ci.openshift.org/ocp{arch_suffix}/{repo}:{nightly_name}'
             self.release_pullspecs[brew_cpu_arch] = nightly_pullspec
 
         for standard_release_name in self.standards:
