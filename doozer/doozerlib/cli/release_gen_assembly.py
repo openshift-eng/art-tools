@@ -15,7 +15,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Konfl
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import get_assembly_release_date, uses_konflux_imagestream_override
+from artcommonlib.util import get_assembly_release_date
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -27,6 +27,7 @@ from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector,
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
+from doozerlib.util import get_nightly_pullspec
 
 
 @cli.group("release:gen-assembly", short_help="Output assembly metadata based on inputs")
@@ -301,19 +302,9 @@ class GenAssemblyCli:
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
-            major_minor, brew_cpu_arch, priv = util.isolate_nightly_name_components(nightly_name)
-            if major_minor != self.runtime.get_minor_version():
-                self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
+            _, brew_cpu_arch, _ = util.isolate_nightly_name_components(nightly_name)
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
-            rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
-
-            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(
-                self.runtime.group.removeprefix('openshift-')
-            ):
-                release_suffix = f'konflux-release{rc_suffix}'
-            else:
-                release_suffix = f'release{rc_suffix}'
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
+            nightly_pullspec = get_nightly_pullspec(self.runtime, nightly_name)
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'

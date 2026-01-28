@@ -16,7 +16,7 @@ from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.model import Model
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
-from doozerlib.util import isolate_nightly_name_components
+from doozerlib.util import get_nightly_pullspec
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.util import get_advisory_boilerplate
@@ -440,16 +440,13 @@ class BuildMicroShiftPipeline:
             self._logger.info(f"Changed {advisory_id} to QE")
             push_cdn_stage(advisory_id)
 
-    @staticmethod
-    async def parse_release_payloads(payloads: Iterable[str]):
+    async def parse_release_payloads(self, payloads: Iterable[str]):
         result = {}
         pullspecs = []
         for payload in payloads:
             if "/" not in payload:
-                # Convert nightly name to pullspec
-                # 4.12.0-0.nightly-2022-10-25-210451 ==> registry.ci.openshift.org/ocp/release:4.12.0-0.nightly-2022-10-25-210451
-                _, brew_cpu_arch, _ = isolate_nightly_name_components(payload)
-                pullspecs.append(constants.NIGHTLY_PAYLOAD_REPOS[brew_cpu_arch] + ":" + payload)
+                pullspec = get_nightly_pullspec(self.runtime, payload)
+                pullspecs.append(pullspec)
             else:
                 # payload is a pullspec
                 pullspecs.append(payload)

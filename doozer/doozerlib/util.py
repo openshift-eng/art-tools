@@ -23,7 +23,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.util import isolate_major_minor_in_group, uses_konflux_imagestream_override
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -296,6 +296,24 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
         go_arch = possible_arch
     brew_arch = brew_arch_for_go_arch(go_arch)
     return major_minor, brew_arch, is_private
+
+
+def get_nightly_pullspec(runtime, nightly: str) -> str:
+    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
+    if major_minor != runtime.get_minor_version():
+        raise ValueError(f"Specified nightly {nightly} does not match group major.minor {major_minor}")
+
+    if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
+        major, _ = runtime.get_major_minor_fields()
+        if major == 5:
+            release_suffix = "release-5"
+        else:
+            release_suffix = "release"
+    else:
+        release_suffix = 'konflux-release'
+
+    rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+    return f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
 
 
 # https://code.activestate.com/recipes/577504/
