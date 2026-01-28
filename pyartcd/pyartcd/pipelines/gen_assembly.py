@@ -333,6 +333,7 @@ class GenAssemblyPipeline:
                 doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
                 # to build-sync because we always create branch on the base repo
                 doozer_data_gitref=branch,
+                SKIP_MULTI_ARCH_PAYLOAD=False,
             )
 
         return result
