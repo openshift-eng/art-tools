@@ -1353,9 +1353,20 @@ class PrepareReleaseKonfluxPipeline:
             await self.build_data_repo.create_branch(branch)
 
         new_releases_config = self.releases_config.copy()
-        new_releases_config["releases"][self.assembly]["assembly"]["group"] = (
-            self.updated_assembly_group_config.primitive()
-        )
+        updated_group_config = self.updated_assembly_group_config.primitive()
+
+        # If this assembly has a basis assembly, use the override marker (!) for shipment and advisories
+        # to prevent inheritance from causing deletion markers to be lost on subsequent runs
+        assembly_def = new_releases_config["releases"][self.assembly]["assembly"]
+        if assembly_def.get("basis", {}).get("assembly"):
+            # Use override markers to ensure these fields completely replace parent values
+            # This prevents issues where deletion markers (like url-:) are lost after merge
+            if "shipment" in updated_group_config:
+                updated_group_config["shipment!"] = updated_group_config.pop("shipment")
+            if "advisories" in updated_group_config:
+                updated_group_config["advisories!"] = updated_group_config.pop("advisories")
+
+        new_releases_config["releases"][self.assembly]["assembly"]["group"] = updated_group_config
 
         out = StringIO()
         yaml.dump(new_releases_config, out)
