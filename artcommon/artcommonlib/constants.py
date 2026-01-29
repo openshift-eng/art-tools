@@ -68,4 +68,4 @@ COREOS_RHEL10_STREAMS = [
     "rhel-coreos-10",
     "rhel-coreos-10-extensions",
 ]
-ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
+# Legacy constant removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead

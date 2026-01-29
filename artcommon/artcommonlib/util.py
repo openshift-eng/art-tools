@@ -393,6 +393,40 @@ def uses_konflux_imagestream_override(version: str) -> bool:
     return (int(match[1]), int(match[2])) >= (4, 12)
 
 
+def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> str:
+    """
+    Get the ART production image repository for a specific OCP major version.
+
+    For OCP 4.x: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    For OCP 5.x: quay.io/openshift-release-dev/ocp-v5.0-art-dev
+
+    :param major: OCP major version (e.g., 4, 5)
+    :param repo_type: Type of repository - "dev", "dev-priv", "prev", or "test"
+    :return: Full repository URL
+    :raises ValueError: If major version < 4 or repo_type is invalid
+
+    Examples:
+        >>> get_art_prod_image_repo_for_version(4, "dev")
+        'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+        >>> get_art_prod_image_repo_for_version(5, "dev")
+        'quay.io/openshift-release-dev/ocp-v5.0-art-dev'
+        >>> get_art_prod_image_repo_for_version(5, "dev-priv")
+        'quay.io/openshift-release-dev/ocp-v5.0-art-dev-priv'
+
+    TODO: In the future, this function will respect repository configurations in ocp-build-data
+    instead of using hardcoded repository URLs. This will allow for more flexibility in
+    configuring image repositories per OCP version.
+    """
+    if major < 4:
+        raise ValueError(f"ART image repos only exist for OCP 4.x and later (requested: {major}.x)")
+
+    valid_repo_types = {"dev", "dev-priv", "prev", "test"}
+    if repo_type not in valid_repo_types:
+        raise ValueError(f"Invalid repo_type '{repo_type}'. Must be one of: {valid_repo_types}")
+
+    return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
+
+
 def extract_group_from_nvr(nvr: str) -> Optional[str]:
     """
     Extract the group from an NVR by matching -vMAJOR.MINOR pattern.

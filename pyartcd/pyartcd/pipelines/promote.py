@@ -962,7 +962,7 @@ class PromotePipeline:
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
         major, minor = isolate_major_minor_in_group(self.group)
-        if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
+        if (major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
@@ -1111,7 +1111,7 @@ class PromotePipeline:
 
         # Check rhel version (used for archive naming)
         major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 16:
+        if (major, minor) < (4, 16):
             rhel_version = 'rhel8'
             binary_name = 'openshift-baremetal-install'
         else:
@@ -1307,7 +1307,7 @@ class PromotePipeline:
             return
 
         major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 14:
+        if (major, minor) < (4, 14):
             self._logger.info("Skip microshift build for version < 4.14")
             return
 

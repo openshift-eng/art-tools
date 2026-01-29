@@ -144,15 +144,23 @@ class Ocp4ScanPipeline:
         jenkins.update_title(' [SOURCE CHANGES]')
         self.logger.info('Detected at least one updated image')
 
-        # Trigger ocp4/okd4 jobs
-        # Do NOT trigger builds in dry-run mode
-        if self.runtime.dry_run:
-            self.logger.info('Would have triggered a %s ocp4 build', self.version)
-            self.logger.info('Would have triggered a %s okd4 build', self.version)
-            return
+        # Determine major version to call the appropriate job
+        major_version = int(self.version.split('.')[0])
 
-        self.trigger_ocp4()
-        self.trigger_okd4()
+        # Trigger jobs based on major version
+        # Note: OCP5 uses the same ocp4-konflux job as OCP4
+        match major_version:
+            case 5 | 4:
+                if self.runtime.dry_run:
+                    self.logger.info('Would have triggered a %s ocp4 build', self.version)
+                    if major_version == 4:
+                        self.logger.info('Would have triggered a %s okd4 build', self.version)
+                else:
+                    self.trigger_ocp4()
+                    if major_version == 4:
+                        self.trigger_okd4()
+            case _:
+                raise ValueError(f'Unsupported OCP major version: {major_version}')
 
     def trigger_ocp4(self):
         image_list = self.changes.get('images', [])

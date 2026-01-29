@@ -395,6 +395,49 @@ class TestNormalizeGroupNameForK8s(unittest.TestCase):
         self.assertEqual(result, "group123-4-56")
 
 
+class TestArtImageRepoHelpers(unittest.TestCase):
+    """Tests for get_art_prod_image_repo_for_version"""
+
+    def test_get_art_image_repo_ocp_4_dev(self):
+        """Test OCP 4.x dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "dev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-dev")
+
+    def test_get_art_image_repo_ocp_5_dev(self):
+        """Test OCP 5.x dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(5, "dev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v5.0-art-dev")
+
+    def test_get_art_image_repo_ocp_5_dev_priv(self):
+        """Test OCP 5.x private dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(5, "dev-priv")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v5.0-art-dev-priv")
+
+    def test_get_art_image_repo_ocp_4_prev(self):
+        """Test OCP 4.x prev repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "prev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-prev")
+
+    def test_get_art_image_repo_ocp_4_test(self):
+        """Test OCP 4.x test repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "test")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-test")
+
+    def test_get_art_image_repo_rejects_ocp_3(self):
+        """Test that OCP 3.x is rejected"""
+        with self.assertRaises(ValueError) as ctx:
+            util.get_art_prod_image_repo_for_version(3, "dev")
+        self.assertIn("ART image repos only exist for OCP 4.x and later", str(ctx.exception))
+        self.assertIn("3.x", str(ctx.exception))
+
+    def test_get_art_image_repo_invalid_repo_type(self):
+        """Test invalid repo_type parameter"""
+        with self.assertRaises(ValueError) as ctx:
+            util.get_art_prod_image_repo_for_version(4, "invalid")
+        self.assertIn("Invalid repo_type", str(ctx.exception))
+        self.assertIn("invalid", str(ctx.exception))
+
+
 class TestKonfluxImagestreamOverride(unittest.TestCase):
     """Tests for uses_konflux_imagestream_override"""
 
