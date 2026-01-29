@@ -267,11 +267,9 @@ class KonfluxOlmBundleRebaser:
             ]
             for candidate in candidate_paths:
                 if candidate.exists():
-                    properties_path = candidate
+                    dest_properties_path = bundle_metadata_dir / "properties.yaml"
+                    shutil.copy2(candidate, dest_properties_path)
                     break
-            if properties_path:
-                dest_properties_path = bundle_metadata_dir / "properties.yaml"
-                shutil.copy2(properties_path, dest_properties_path)
 
         # Generate bundle's Dockerfile
         nvr = await asyncio.to_thread(
