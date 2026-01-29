@@ -50,22 +50,22 @@ ironic_previous_packages_for_4_15_plus = [
 
 def plashet_config_for_major_minor(major, minor):
     return {
-        "rhel-10-server-ose-rpms-embargoed": {
-            "slug": "el10-embargoed",
-            "tag": f"rhaos-{major}.{minor}-rhel-10-candidate",
-            "product_version": f"OSE-{major}.{minor}-RHEL-10",
-            "include_embargoed": True,
-            "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-10-embargoed"],
-            "include_previous_packages": previous_packages,
-        },
-        "rhel-10-server-ose-rpms": {
-            "slug": "el10",
-            "tag": f"rhaos-{major}.{minor}-rhel-10-candidate",
-            "product_version": f"OSE-{major}.{minor}-RHEL-10",
-            "include_embargoed": False,
-            "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-10-embargoed"],
-            "include_previous_packages": previous_packages,
-        },
+        # "rhel-10-server-ose-rpms-embargoed": {
+        #     "slug": "el10-embargoed",
+        #     "tag": f"rhaos-{major}.{minor}-rhel-10-candidate",
+        #     "product_version": f"OSE-{major}.{minor}-RHEL-10",
+        #     "include_embargoed": True,
+        #     "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-10-embargoed"],
+        #     "include_previous_packages": previous_packages,
+        # },
+        # "rhel-10-server-ose-rpms": {
+        #     "slug": "el10",
+        #     "tag": f"rhaos-{major}.{minor}-rhel-10-candidate",
+        #     "product_version": f"OSE-{major}.{minor}-RHEL-10",
+        #     "include_embargoed": False,
+        #     "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-10-embargoed"],
+        #     "include_previous_packages": previous_packages,
+        # },
         "rhel-9-server-ose-rpms-embargoed": {
             "slug": "el9-embargoed",
             "tag": f"rhaos-{major}.{minor}-rhel-9-candidate",
