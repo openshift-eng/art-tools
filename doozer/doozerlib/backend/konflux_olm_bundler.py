@@ -260,6 +260,7 @@ class KonfluxOlmBundleRebaser:
 
             # Non-OCP products, such as Logging, may use properties.yaml
             # Check for properties.yaml (in preferred location order)
+            properties_path = None
             candidate_paths = [
                 operator_manifests_dir / "openshift" / "metadata" / "properties.yaml",
                 operator_manifests_dir / "metadata" / "properties.yaml",
