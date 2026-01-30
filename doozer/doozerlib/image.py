@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import json
+import pathlib
+import re
 from collections import OrderedDict
 from copy import copy
+from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -10,14 +13,77 @@ from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
+from dockerfile_parse import DockerfileParser
 
 import doozerlib
 from doozerlib import brew, coverity, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
+from doozerlib.source_resolver import SourceResolver
+
+
+@lru_cache(maxsize=256)
+def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple[int, int] | None]:
+    """
+    Extract RHEL version and golang version from a container image pullspec.
+
+    This function is cached to avoid repeated image inspections for the same pullspec.
+
+    First attempts to extract versions from the pullspec tag, then falls back to
+    inspecting the image's 'release' and 'version' labels.
+
+    Args:
+        pullspec: Full image pullspec (e.g., registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21)
+
+    Returns:
+        Tuple of (rhel_version, golang_version) where:
+        - rhel_version: int or None (e.g., 9)
+        - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+    """
+    rhel_version = None
+    golang_version = None
+
+    try:
+        # Try to extract versions from the tag (fast path)
+        if ':' in pullspec:
+            tag = pullspec.split(':')[-1]
+            # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
+            match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', tag)
+            if match:
+                rhel_version = int(match.group(1))
+                # Try to extract golang version from tag (e.g., golang-1.21 or golang-1.21.3)
+                golang_match = re.search(r'golang-?(\d+)\.(\d+)', tag)
+                if golang_match:
+                    golang_version = (int(golang_match.group(1)), int(golang_match.group(2)))
+                    # Got both values from tag parsing - return immediately
+                    return rhel_version, golang_version
+
+        # At this point, we're missing at least one value - fall back to inspecting image labels
+        image_info = cast(Dict, util.oc_image_info_for_arch__caching(pullspec))
+        labels = image_info['config']['config']['Labels']
+
+        # Extract RHEL version from release label if we don't have it yet
+        if not rhel_version:
+            release_label = labels.get('release')
+            if release_label:
+                rhel_version = isolate_el_version_in_release(release_label)
+
+        # Extract golang version from version label if we don't have it yet
+        if not golang_version:
+            version_label = labels.get('version')
+            if version_label:
+                version_fields = util.extract_version_fields(version_label, at_least=2)
+                golang_version = (version_fields[0], version_fields[1])
+
+    except Exception:
+        # Return whatever we managed to extract before the error
+        pass
+
+    return rhel_version, golang_version
 
 
 class ImageMetadata(Metadata):
@@ -49,7 +115,27 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being built. """
         self.build_status = False
         """ True if this image has been successfully built. """
-        if clone_source:
+
+        # Apply alternative upstream config if canonical builders is enabled
+        # This must happen early so config is correct for all subsequent operations
+        if self.canonical_builders_enabled:
+            if prevent_cloning:
+                raise IOError(
+                    f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
+                    'Cannot determine upstream RHEL version without cloning source.'
+                )
+            if not clone_source:
+                self.logger.warning(
+                    '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
+                    'Source will be cloned anyway to determine upstream RHEL version.',
+                    self.distgit_key,
+                )
+            # When canonical_builders_from_upstream is enabled, we need to determine
+            # the upstream RHEL version and merge alternative_upstream config if needed.
+            # This will clone source as part of the process.
+            self._apply_alternative_upstream_config()
+        elif clone_source:
+            # Normal case: clone source if requested (and canonical builders not enabled)
             runtime.source_resolver.resolve_source(self)
 
         self.installed_rpms = None
@@ -672,6 +758,129 @@ class ImageMetadata(Metadata):
             )
             return False
         return canonical_builders_from_upstream
+
+    def _apply_alternative_upstream_config(self) -> None:
+        """
+        When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
+        This must happen early in initialization so config is correct for all subsequent operations.
+
+        This method determines both ART and upstream intended RHEL versions, then merges the appropriate
+        alternative_upstream config stanza if the versions differ. If versions match, no merge is needed.
+
+        Raises:
+            IOError: If image doesn't have upstream source
+            IOError: If source is not available or upstream RHEL version cannot be determined
+            IOError: If RHEL versions differ but no matching alternative_upstream config is found
+        """
+        # Check if this image has upstream source
+        if not self.has_source():
+            raise IOError(
+                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but image does not have '
+                'upstream source. Cannot determine upstream RHEL version.'
+            )
+
+        # Determine ART intended RHEL version using branch_el_target()
+        art_intended_el_version = self.branch_el_target()
+
+        # Get the source resolution
+        source_resolution = self.runtime.source_resolver.resolve_source(self)
+        if not source_resolution:
+            raise IOError(
+                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but source could not be resolved. '
+                'Cannot determine upstream RHEL version.'
+            )
+
+        # Get the source directory
+        source_dir = SourceResolver.get_source_dir(source_resolution, self)
+
+        # Determine upstream intended RHEL version and golang version from upstream Dockerfile
+        upstream_intended_el_version, _ = self._determine_upstream_builder_info(source_dir)
+
+        if not upstream_intended_el_version:
+            raise IOError(
+                f'[{self.distgit_key}] Could not determine upstream RHEL version. '
+                'Cannot apply alternative_upstream config.'
+            )
+
+        # If ART and upstream RHEL versions match, no config merge needed
+        if upstream_intended_el_version == art_intended_el_version:
+            self.logger.info(
+                '[%s] ART and upstream intended RHEL versions match (el%s). No alternative config merge needed.',
+                self.distgit_key,
+                art_intended_el_version,
+            )
+            return
+
+        # RHEL versions differ - look for matching alternative_upstream config
+        alt_configs = self.config.alternative_upstream
+        matched = False
+        for alt_config in alt_configs or []:
+            if alt_config['when'] == f'el{upstream_intended_el_version}':
+                self.logger.info(
+                    '[%s] Merging rhel%s alternative_upstream config to match upstream',
+                    self.distgit_key,
+                    upstream_intended_el_version,
+                )
+                # Merge the alternative config
+                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
+                matched = True
+                break
+
+        if not matched:
+            raise IOError(
+                f'[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses '
+                f'el{art_intended_el_version}, and no matching alternative_upstream config was found. '
+                f'Please add an alternative_upstream config with "when: el{upstream_intended_el_version}".'
+            )
+
+        # Update targets after config merge
+        self.targets = self.determine_targets()
+
+    def _determine_upstream_builder_info(
+        self, source_dir: pathlib.Path
+    ) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
+        """
+        Determine the upstream intended RHEL version and golang version from the last build layer in the upstream Dockerfile.
+
+        Delegates to extract_builder_info_from_pullspec() for the actual extraction logic.
+
+        Args:
+            source_dir: Path to the upstream source directory (already includes content.source.path if applicable)
+
+        Returns:
+            Tuple of (rhel_version, golang_version) where:
+            - rhel_version: int or None (e.g., 9)
+            - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+        """
+        df_name = self.config.content.source.dockerfile
+        if not df_name:
+            df_name = 'Dockerfile'
+
+        df_path = source_dir.joinpath(df_name)
+        rhel_version = None
+        golang_version = None
+
+        try:
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
+
+            # We will infer the versions from the last build layer in the upstream Dockerfile
+            last_layer_pullspec = parent_images[-1]
+
+            # Use the cached function to extract builder info
+            rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
+
+        except Exception as e:
+            # Log the exception but don't raise - caller will decide how to handle None return
+            self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
+
+        if not rhel_version:
+            self.logger.warning('[%s] Could not determine rhel version from upstream', self.distgit_key)
+        if not golang_version:
+            self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
+
+        return rhel_version, golang_version
 
     def _default_brew_target(self):
         """Returns derived brew target name from the distgit branch name"""
