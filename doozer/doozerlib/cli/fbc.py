@@ -584,6 +584,7 @@ class FbcRebaseAndBuildCli:
         where = {
             "name": fbc_name,
             "group": self.runtime.group,
+            "assembly": self.runtime.assembly,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
 
