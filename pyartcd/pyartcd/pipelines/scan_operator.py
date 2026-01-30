@@ -81,7 +81,7 @@ class ScanOperatorPipeline:
         # Check if it's a valid version
         if not uses_konflux_imagestream_override(self.version):
             self.logger.info(
-                f'Version {self.version} does not use Konflux imagestream override (< 4.12), skipping'
+                f'Version {self.version} is not a valid version'
             )
             return
 
@@ -125,8 +125,8 @@ class ScanOperatorPipeline:
 
         Returns distgit keys (metadata names) like 'dpu-operator', not component names.
         """
-        # Use doozer to list operator metadata names (distgit keys)
-        cmd = self.doozer_base_command + ['olm-bundle:print', 'distgit_key']
+        # Use doozer to list operator distgit keys)
+        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'distgit-key']
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         operator_names = set(out.strip().split('\n')) if out.strip() else set()
@@ -135,7 +135,6 @@ class ScanOperatorPipeline:
 
     async def get_latest_operator_builds(self, operator_names: Set[str]) -> List[KonfluxBuildRecord]:
         """Get the latest successful build for each operator."""
-        # Query all operators in parallel
         tasks = [
             self.operator_db.get_latest_build(
                 name=operator_name,
