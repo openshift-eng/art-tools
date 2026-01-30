@@ -10,7 +10,7 @@ from io import StringIO
 from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Collection, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import httpx
 import truststore
@@ -34,8 +34,15 @@ from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
+from elliottlib.shipment_utils import get_shipment_config_from_mr
 from kubernetes.dynamic import resource
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+
+class AssemblyBundleCsvInfo(NamedTuple):
+    """CSV info extracted from an assembly's bundle component."""
+    csv_name: str
+    skip_range: Optional[str]
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -71,6 +78,73 @@ def _generate_fbc_branch_name(
             raise ValueError(f"ocp_version is required for non-OpenShift group '{group}'")
         ocp_version_str = f"{ocp_version[0]}.{ocp_version[1]}"
         return f"art-{group}-ocp-{ocp_version_str}-assembly-{assembly}-fbc-{distgit_key}"
+
+
+async def _fetch_csv_from_git(
+    git_url: str,
+    revision: str,
+    work_dir: Path,
+    logger: logging.Logger,
+) -> Optional[Dict]:
+    """
+    Clone a git repo at a specific revision and extract the clusterserviceversion.yaml.
+
+    Args:
+        git_url: The git repository URL (e.g., https://github.com/openshift-priv/ptp-operator)
+        revision: The git commit SHA to checkout
+        work_dir: Working directory for the git clone
+        logger: Logger instance
+
+    Returns:
+        Parsed CSV content as a dict, or None if not found
+    """
+    repo_dir = work_dir / "csv_repo"
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
+
+    try:
+        # Clone the repository
+        logger.info("Cloning %s at revision %s", git_url, revision)
+        await exectools.cmd_gather_async(
+            ["git", "clone", "--no-checkout", "--depth=1", git_url, str(repo_dir)],
+            check=True
+        )
+
+        # Fetch the specific revision
+        await exectools.cmd_gather_async(
+            ["git", "-C", str(repo_dir), "fetch", "--depth=1", "origin", revision],
+            check=True
+        )
+
+        # Checkout the revision
+        await exectools.cmd_gather_async(
+            ["git", "-C", str(repo_dir), "checkout", revision],
+            check=True
+        )
+
+        # Find the clusterserviceversion.yaml file in manifests/
+        manifests_dir = repo_dir / "manifests"
+        if not manifests_dir.exists():
+            logger.warning("manifests/ directory not found in %s", git_url)
+            return None
+
+        csv_files = list(manifests_dir.glob("*clusterserviceversion.yaml"))
+        if not csv_files:
+            logger.warning("No clusterserviceversion.yaml found in manifests/")
+            return None
+
+        csv_file = csv_files[0]
+        logger.info("Found CSV file: %s", csv_file.name)
+
+        with csv_file.open() as f:
+            return yaml.load(f)
+
+    except Exception as e:
+        logger.warning("Failed to fetch CSV from git: %s", e)
+        return None
+    finally:
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
 
 
 class KonfluxFbcImporter:
@@ -601,6 +675,104 @@ class KonfluxFbcRebaser:
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
 
+    async def _get_assembly_bundle_csv_info(
+        self,
+        metadata: ImageMetadata,
+        logger: logging.Logger,
+    ) -> Optional[AssemblyBundleCsvInfo]:
+        """
+        Get bundle CSV info (name and skipRange) from a named assembly's shipment.
+
+        This method looks up the shipment MR for the latest named assembly, finds the bundle
+        component for the operator, clones the source at the specified revision,
+        and extracts the CSV metadata.
+
+        For stream builds, it finds the latest named assembly from releases.yml.
+        For named assembly builds, it uses the current assembly.
+
+        Args:
+            metadata: The operator image metadata
+            logger: Logger instance
+
+        Returns:
+            AssemblyBundleCsvInfo with csv_name and skip_range, or None if not found
+        """
+        try:
+            # 1. Determine which assembly to look up
+            releases_config = metadata.runtime.get_releases_config()
+            if self.assembly == 'stream':
+                # For stream builds, use the first (latest) named assembly
+                release_names = list(releases_config.releases.keys())
+                if not release_names:
+                    logger.debug("No releases found in releases.yml")
+                    return None
+                assembly = release_names[0]
+                logger.info("Stream build: using latest named assembly %s", assembly)
+            else:
+                assembly = self.assembly
+
+            # 2. Get shipment URL from releases.yml
+            assembly_config = releases_config.releases.get(assembly, {})
+            if not assembly_config:
+                logger.debug("Assembly %s not found in releases.yml", assembly)
+                return None
+
+            shipment_info = assembly_config.get("assembly", {}).get("group", {}).get("shipment", {})
+            shipment_url = shipment_info.get("url")
+
+            if not shipment_url:
+                logger.debug("No shipment URL found for assembly %s", assembly)
+                return None
+
+            # 2. Get "metadata" shipment config from MR
+            # All components in metadata shipment are bundle builds
+            logger.info("Fetching shipment config from %s", shipment_url)
+            metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
+            if not metadata_shipment or not metadata_shipment.shipment.snapshot:
+                logger.debug("No metadata shipment or snapshot found for assembly %s", assembly)
+                return None
+
+            # 3. Find matching bundle component by operator name
+            operator_name = metadata.distgit_key
+            bundle_component = None
+            for component in metadata_shipment.shipment.snapshot.spec.components:
+                if operator_name in component.name:
+                    bundle_component = component
+                    break
+
+            if not bundle_component:
+                logger.debug("Bundle component for %s not found in assembly %s", operator_name, assembly)
+                return None
+
+            # 4. Get git source info
+            git_url = bundle_component.source.git.url
+            git_revision = bundle_component.source.git.revision
+            logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, git_revision)
+
+            # 5. Fetch CSV from git
+            work_dir = self.base_dir / f"assembly_csv_{assembly}"
+            work_dir.mkdir(parents=True, exist_ok=True)
+
+            csv_content = await _fetch_csv_from_git(git_url, git_revision, work_dir, logger)
+            if not csv_content:
+                logger.warning("Failed to fetch CSV for %s from assembly %s", operator_name, assembly)
+                return None
+
+            # 6. Extract name and skipRange
+            csv_name = csv_content.get('metadata', {}).get('name')
+            skip_range = csv_content.get('metadata', {}).get('annotations', {}).get('olm.skipRange')
+
+            if not csv_name:
+                logger.warning("CSV name not found in clusterserviceversion.yaml")
+                return None
+
+            logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
+            return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range)
+
+        except Exception as e:
+            logger.warning("Failed to get assembly bundle CSV info: %s", e)
+            return None
+
     async def rebase(
         self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str
     ) -> str:
@@ -759,6 +931,10 @@ class KonfluxFbcRebaser:
                 f"The catalog file {catalog_file_path} has multiple packages: {','.join(categorized_catalog_blobs.keys())}"
             )
 
+        # Get assembly bundle info from the latest named assembly's shipment
+        assembly_csv_info: Optional[AssemblyBundleCsvInfo] = None
+        assembly_csv_info = await self._get_assembly_bundle_csv_info(metadata, logger)
+
         # Update the catalog
         def _update_channel(channel: Dict):
             # Update "skips" in the channel
@@ -777,6 +953,18 @@ class KonfluxFbcRebaser:
                 # In case the channel only contain one single entry, that bundle should
                 # become the only member of new-entry's `skip`.
                 skips = {channel['entries'][0]['name']}
+
+            # Add assembly bundle to skips from the latest named assembly's shipment
+            if assembly_csv_info:
+                if skips is None:
+                    skips = set()
+                skips.add(assembly_csv_info.csv_name)
+                # Also add assembly entry to channel if not exists
+                if not any(e['name'] == assembly_csv_info.csv_name for e in channel['entries']):
+                    assembly_entry = {"name": assembly_csv_info.csv_name}
+                    if assembly_csv_info.skip_range:
+                        assembly_entry["skipRange"] = assembly_csv_info.skip_range
+                    channel['entries'].append(assembly_entry)
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
