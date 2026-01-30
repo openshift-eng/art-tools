@@ -676,6 +676,7 @@ class PrepareReleaseKonfluxPipeline:
         cmd = self._doozer_base_command + [
             f'--assembly={self.assembly}',
             "beta:fbc:rebase-and-build",
+            "--force",
             f"--version={version}",
             f"--release={release_str}",
             f"--message={message}",
