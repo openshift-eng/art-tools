@@ -98,6 +98,7 @@ class KonfluxOkd4Pipeline:
         await self.initialize()
         await self.rebase_and_build_images()
         await self.update_imagestreams()
+        await self.mirror_coreos_imagestreams()
         self.finalize()
 
     async def initialize(self):
@@ -479,6 +480,47 @@ class KonfluxOkd4Pipeline:
             failure_msg = f'Imagestream update failures: {", ".join(failed_tags)}'
             jenkins.update_description(f'{failure_msg}<br>')
             LOGGER.warning(failure_msg)
+
+    async def mirror_coreos_imagestreams(self):
+        """
+        Mirror OKD CoreOS imagestream tags from RHCOS team's tags to ART's imagestreams.
+        This is a temporary solution until the RHCOS team starts mirroring to ART's imagestreams directly.
+
+        Mirrors from: origin/scos-{version}:stream-coreos
+        To: origin/scos-{version}-art:stream-coreos
+        """
+
+        if self.assembly != 'stream':
+            LOGGER.info('Assembly is not "stream"; skipping CoreOS imagestream mirroring')
+            return
+
+        if self.runtime.dry_run:
+            LOGGER.info('[DRY RUN] Would mirror CoreOS imagestream tag')
+            LOGGER.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{self.version}:stream-coreos')
+            LOGGER.info(
+                f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:stream-coreos',
+            )
+            return
+
+        source_tag = f'{self.imagestream_namespace}/scos-{self.version}:stream-coreos'
+        target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:stream-coreos'
+
+        LOGGER.info('Mirroring CoreOS imagestream from %s to %s', source_tag, target_tag)
+
+        env = os.environ.copy()
+
+        try:
+            await self._tag_image_to_stream(source_pullspec=source_tag, target_tag=target_tag, env=env)
+            success_msg = f'Mirrored CoreOS tag: {source_tag} -> {target_tag}'
+            jenkins.update_description(f'{success_msg}<br>')
+            LOGGER.info(success_msg)
+
+        except Exception as e:
+            failure_msg = f'Failed to mirror CoreOS imagestream tag: {e}'
+            jenkins.update_description(f'{failure_msg}<br>')
+            LOGGER.warning(failure_msg)
+            # Don't fail the entire pipeline if CoreOS mirroring fails
+            LOGGER.warning('Continuing pipeline despite CoreOS mirroring failure')
 
     async def _tag_image_to_stream(self, source_pullspec: str, target_tag: str, env: dict):
         """
