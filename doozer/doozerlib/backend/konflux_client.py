@@ -758,6 +758,7 @@ class KonfluxClient:
                     self._logger.info("Removing fbc-fips-check-oci-ta task since skip_fips_check is enabled")
                     continue
                 tasks.append(task)
+            obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
