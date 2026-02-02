@@ -98,27 +98,36 @@ async def _fetch_csv_from_git(
     Returns:
         Parsed CSV content as a dict, or None if not found
     """
+    from artcommonlib import git_helper
+
     repo_dir = work_dir / "csv_repo"
     if repo_dir.exists():
         shutil.rmtree(repo_dir)
 
     try:
-        # Clone the repository
+        # Use GITHUB_TOKEN for authentication if available
+        clone_url = git_url
+        github_token = os.environ.get(constants.GITHUB_TOKEN)
+        if github_token and 'github.com' in git_url:
+            # Embed token in URL for authentication
+            clone_url = git_url.replace('https://github.com', f'https://{github_token}@github.com')
+
+        # Clone the repository using git_helper which handles auth environment
         logger.info("Cloning %s at revision %s", git_url, revision)
-        await exectools.cmd_gather_async(
-            ["git", "clone", "--no-checkout", "--depth=1", git_url, str(repo_dir)],
+        await git_helper.run_git_async(
+            ["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)],
             check=True
         )
 
         # Fetch the specific revision
-        await exectools.cmd_gather_async(
-            ["git", "-C", str(repo_dir), "fetch", "--depth=1", "origin", revision],
+        await git_helper.run_git_async(
+            ["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision],
             check=True
         )
 
         # Checkout the revision
-        await exectools.cmd_gather_async(
-            ["git", "-C", str(repo_dir), "checkout", revision],
+        await git_helper.run_git_async(
+            ["-C", str(repo_dir), "checkout", revision],
             check=True
         )
 
