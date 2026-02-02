@@ -605,6 +605,7 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Optional[Sequence[str]] = None,
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
         build_priority: str = None,
         hermetic: Optional[bool] = None,
         sast: Optional[bool] = None,
@@ -749,6 +750,15 @@ class KonfluxClient:
 
             obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
+        if skip_fips_check:
+            tasks = []
+            for task in obj["spec"]["pipelineSpec"]["tasks"]:
+                task_name = task.get("name")
+                if task_name == "fbc-fips-check-oci-ta":
+                    self._logger.info("Removing fbc-fips-check-oci-ta task since skip_fips_check is enabled")
+                    continue
+                tasks.append(task)
+
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
@@ -820,6 +830,7 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
         build_priority: str = None,
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
@@ -847,6 +858,7 @@ class KonfluxClient:
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param skip_fips_check: Whether to skip the FIPS compliance check.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
         :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
@@ -880,6 +892,7 @@ class KonfluxClient:
             build_platforms=build_platforms,
             git_auth_secret=git_auth_secret,
             skip_checks=skip_checks,
+            skip_fips_check=skip_fips_check,
             hermetic=hermetic,
             additional_tags=additional_tags,
             dockerfile=dockerfile,
