@@ -89,6 +89,7 @@ class KonfluxOkd4Pipeline:
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             '--build-system=konflux',
+            '--load-okd-only',
             f'--arches={",".join(OKD_ARCHES)}',
             group_param,
         ]
@@ -118,6 +119,7 @@ class KonfluxOkd4Pipeline:
             build_system='konflux',
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
+            load_okd_only=True,
         )
         self.build_plan.active_image_count = len(self.group_images)
 
