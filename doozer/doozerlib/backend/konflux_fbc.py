@@ -693,9 +693,12 @@ class KonfluxFbcRebaser:
         """
         Get bundle CSV info (name and skipRange) from a named assembly's shipment.
 
-        This method looks up the shipment MR for the latest named assembly, finds the bundle
-        component for the operator, clones the source at the specified revision,
-        and extracts the CSV metadata.
+        This method:
+        1. Looks up the shipment MR for the latest named assembly
+        2. Gets the "metadata" shipment to find the bundle component
+        3. Clones the bundle source at the specified revision and extracts CSV metadata
+        4. Gets the "fbc" shipment to find the FBC component
+        5. Renders the FBC image with opm to get the olm.bundle blob
 
         For stream builds, it finds the latest named assembly from releases.yml.
         For named assembly builds, it uses the current assembly.
@@ -705,7 +708,7 @@ class KonfluxFbcRebaser:
             logger: Logger instance
 
         Returns:
-            AssemblyBundleCsvInfo with csv_name and skip_range, or None if not found
+            AssemblyBundleCsvInfo with csv_name, skip_range, and bundle_blob, or None if not found
         """
         try:
             # 1. Determine which assembly to look up
@@ -734,16 +737,53 @@ class KonfluxFbcRebaser:
                 logger.debug("No shipment URL found for assembly %s", assembly)
                 return None
 
-            # 3. Get "fbc" shipment config from MR
-            # FBC components have containerImage pointing to the FBC catalog image
+            # 3. Get "metadata" shipment config from MR to find bundle component
+            logger.info("Fetching metadata shipment config from %s", shipment_url)
+            metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
+            if not metadata_shipment or not metadata_shipment.shipment.snapshot:
+                logger.debug("No metadata shipment or snapshot found for assembly %s", assembly)
+                return None
+
+            # 4. Find matching bundle component by operator name
+            operator_name = metadata.distgit_key
+            bundle_component = None
+            for component in metadata_shipment.shipment.snapshot.spec.components:
+                if operator_name in component.name:
+                    bundle_component = component
+                    break
+
+            if not bundle_component:
+                logger.debug("Bundle component for %s not found in assembly %s", operator_name, assembly)
+                return None
+
+            # 5. Clone bundle source and extract CSV name and skipRange
+            git_url = bundle_component.source.git.url
+            revision = bundle_component.source.git.revision
+            logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, revision)
+
+            csv_data = await _fetch_csv_from_git(git_url, revision, self.base_dir, logger)
+            if not csv_data:
+                logger.warning("Could not fetch CSV from bundle source")
+                return None
+
+            csv_name = csv_data.get("metadata", {}).get("name")
+            skip_range = csv_data.get("metadata", {}).get("annotations", {}).get("olm.skipRange")
+
+            if not csv_name:
+                logger.warning("Could not extract CSV name from bundle source")
+                return None
+
+            logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
+
+            # 6. Get "fbc" shipment config to find FBC component for bundle blob
             logger.info("Fetching FBC shipment config from %s", shipment_url)
             fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
             if not fbc_shipment or not fbc_shipment.shipment.snapshot:
                 logger.debug("No FBC shipment or snapshot found for assembly %s", assembly)
-                return None
+                # Return CSV info without bundle blob
+                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
 
-            # 4. Find matching FBC component by operator name
-            operator_name = metadata.distgit_key
+            # 7. Find matching FBC component by operator name
             fbc_component = None
             for component in fbc_shipment.shipment.snapshot.spec.components:
                 if operator_name in component.name:
@@ -752,41 +792,28 @@ class KonfluxFbcRebaser:
 
             if not fbc_component:
                 logger.debug("FBC component for %s not found in assembly %s", operator_name, assembly)
-                return None
+                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
 
-            # 5. Get containerImage pullspec and render with opm
+            # 8. Render the FBC image to get the olm.bundle blob
             fbc_pullspec = fbc_component.containerImage
-            logger.info("Found FBC component %s with pullspec %s", fbc_component.name, fbc_pullspec)
-
-            # Render the FBC image to get catalog blobs
-            logger.info("Rendering FBC image %s", fbc_pullspec)
+            logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
             blobs = await opm.render(fbc_pullspec)
             if not blobs:
                 logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
-                return None
+                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
 
-            # 6. Extract name and skipRange from olm.channel, and get the olm.bundle blob
-            csv_name = None
-            skip_range = None
+            # 9. Find the olm.bundle blob matching the csv_name
             bundle_blob = None
-
             for blob in blobs:
-                schema = blob.get("schema")
-                if schema == "olm.channel":
-                    # Get the first entry's name and skipRange
-                    entries = blob.get("entries", [])
-                    if entries:
-                        entry = entries[0]
-                        csv_name = entry.get("name")
-                        skip_range = entry.get("skipRange")
-                elif schema == "olm.bundle":
+                if blob.get("schema") == "olm.bundle" and blob.get("name") == csv_name:
                     bundle_blob = blob
+                    break
 
-            if not csv_name:
-                logger.warning("Could not extract bundle name from FBC catalog blobs")
-                return None
+            if bundle_blob:
+                logger.info("Found olm.bundle blob for %s", csv_name)
+            else:
+                logger.warning("Could not find olm.bundle blob for %s in FBC image", csv_name)
 
-            logger.info("Found assembly bundle: name=%s, skipRange=%s", csv_name, skip_range)
             return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=bundle_blob)
 
         except Exception as e:
