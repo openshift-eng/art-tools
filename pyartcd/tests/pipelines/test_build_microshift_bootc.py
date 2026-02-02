@@ -37,12 +37,14 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         self.group = "openshift-4.21"
         self.assembly = "4.21.0"
         os.environ["GITHUB_TOKEN"] = "fake-token"
+        os.environ["GITLAB_TOKEN"] = "fake-gitlab-token"
 
     def tearDown(self):
         """
         Clean up test fixtures after each test method
         """
         os.environ.pop("GITHUB_TOKEN", None)
+        os.environ.pop("GITLAB_TOKEN", None)
 
     @patch('pyartcd.pipelines.build_microshift_bootc.ShipmentConfig')
     @patch('pyartcd.pipelines.build_microshift_bootc.KonfluxImageBuilder.get_application_name')
@@ -137,8 +139,8 @@ shipment:
         pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
 
         pipeline.releases_config = {"releases": {self.assembly: {}}}
-        pipeline._get_gitlab = Mock()
 
+        mock_gitlab_client = Mock()
         mock_shipment_config = Mock()
         mock_shipment_config.shipment.metadata.product = "ocp"
         mock_shipment_config.shipment.metadata.group = self.group
@@ -150,7 +152,8 @@ shipment:
         mock_mr = Mock()
         mock_mr.web_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
         mock_project.mergerequests.create.return_value = mock_mr
-        pipeline._get_gitlab().projects.get.return_value = mock_project
+        mock_gitlab_client.get_project.return_value = mock_project
+        pipeline._gitlab = mock_gitlab_client
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
@@ -193,8 +196,8 @@ shipment:
         pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
 
         pipeline.releases_config = {"releases": {self.assembly: {}}}
-        pipeline._get_gitlab = Mock()
 
+        mock_gitlab_client = Mock()
         mock_shipment_config = Mock()
         mock_shipment_config.shipment.metadata.product = "ocp"
         mock_shipment_config.shipment.metadata.group = self.group
@@ -206,7 +209,8 @@ shipment:
         mock_mr = Mock()
         mock_mr.web_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
         mock_project.mergerequests.create.return_value = mock_mr
-        pipeline._get_gitlab().projects.get.return_value = mock_project
+        mock_gitlab_client.get_project.return_value = mock_project
+        pipeline._gitlab = mock_gitlab_client
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.18.1"):

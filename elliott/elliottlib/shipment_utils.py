@@ -3,8 +3,7 @@ import os
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
-import gitlab
-from artcommonlib.jira_config import JIRA_DOMAIN_NAME
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 
@@ -31,16 +30,12 @@ def get_shipment_configs_from_mr(
         raise ValueError("GITLAB_TOKEN environment variable is required for Konflux operations")
 
     parsed_url = urlparse(mr_url)
-    project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-    mr_id = parsed_url.path.split('/')[-1]
     gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    gl = gitlab.Gitlab(gitlab_url, private_token=gitlab_token)
-    gl.auth()
+    gl = GitLabClient(gitlab_url, gitlab_token)
 
-    project = gl.projects.get(project_path)
-    mr = project.mergerequests.get(mr_id)
-    source_project = gl.projects.get(mr.source_project_id)
+    mr = gl.get_mr_from_url(mr_url)
+    source_project = gl.get_project(mr.source_project_id)
 
     diff_info = mr.diffs.list(all=True)[0]
     diff = mr.diffs.get(diff_info.id)

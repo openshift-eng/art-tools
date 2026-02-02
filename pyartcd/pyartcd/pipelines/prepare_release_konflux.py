@@ -18,11 +18,11 @@ from urllib.parse import urlparse
 import aiohttp
 import asyncstdlib as a
 import click
-import gitlab
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
@@ -181,10 +181,8 @@ class PrepareReleaseKonfluxPipeline:
         return AsyncErrataAPI()
 
     @cached_property
-    def _gitlab(self) -> gitlab.Gitlab:
-        gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
-        gl.auth()
-        return gl
+    def _gitlab(self) -> GitLabClient:
+        return GitLabClient(self.gitlab_url, self.gitlab_token, self.dry_run)
 
     @cached_property
     def release_name(self) -> str:
@@ -796,7 +794,7 @@ class PrepareReleaseKonfluxPipeline:
         mr_id = parsed_url.path.split('/')[-1]
 
         # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
+        project = self._gitlab.get_project(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
         # Make sure MR is valid
@@ -809,7 +807,7 @@ class PrepareReleaseKonfluxPipeline:
                 f"MR target project {target_project_path} does not match the pull repo {self.shipment_data_repo_pull_url}"
             )
 
-        source_project_path = self._gitlab.projects.get(mr.source_project_id).path_with_namespace
+        source_project_path = self._gitlab.get_project(mr.source_project_id).path_with_namespace
         if source_project_path not in self.shipment_data_repo_push_url:
             raise ValueError(
                 f"MR source project {source_project_path} does not match the push repo {self.shipment_data_repo_push_url}"
@@ -1038,7 +1036,7 @@ class PrepareReleaseKonfluxPipeline:
         def _get_project(url):
             parsed_url = urlparse(url)
             project_path = parsed_url.path.strip('/').removesuffix('.git')
-            return self._gitlab.projects.get(project_path)
+            return self._gitlab.get_project(project_path)
 
         source_project = _get_project(self.shipment_data_repo_push_url)
         target_project = _get_project(self.shipment_data_repo_pull_url)
@@ -1089,7 +1087,7 @@ class PrepareReleaseKonfluxPipeline:
         mr_id = parsed_url.path.split('/')[-1]
 
         # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
+        project = self._gitlab.get_project(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
         # Store the MR URL for later use
@@ -1122,75 +1120,27 @@ class PrepareReleaseKonfluxPipeline:
         return True
 
     async def set_shipment_mr_ready(self):
-        """Mark the shipment MR as ready by removing the Draft prefix from the title.
+        """
+        Mark the shipment MR as ready by removing the Draft prefix from the title.
         This should be called at the end of the pipeline when all work is complete.
         """
-        if not self.shipment_mr_url:
-            self.logger.info("No shipment MR URL stored, skipping setting to ready")
-            return
+        mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
 
-        self.logger.info("Setting shipment MR to ready: %s", self.shipment_mr_url)
+        if mr and not self.dry_run:
+            await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
 
-        # Parse the shipment URL to extract project and MR details
-        parsed_url = urlparse(self.shipment_mr_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+            # Trigger CI pipeline after marking as ready
+            # wait for 30 seconds to ensure the MR is updated
+            self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
+            await asyncio.sleep(30)
 
-        # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
-        mr = project.mergerequests.get(mr_id)
-
-        # Remove draft prefix from title
-        if mr.title.startswith("Draft: "):
-            mr.title = mr.title.removeprefix("Draft: ")
-            if self.dry_run:
-                self.logger.info("[DRY-RUN] Would have set MR to ready with title: %s", mr.title)
+            pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+            if pipeline_url:
+                await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
             else:
-                mr.save()
-                self.logger.info("Shipment MR marked as ready: %s", self.shipment_mr_url)
-                await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
-
-                # Trigger CI pipeline after marking as ready
-                # wait for 30 seconds to ensure the MR is updated
-                self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
-                await asyncio.sleep(30)
-                await self.trigger_ci_pipeline(mr)
-        else:
-            self.logger.info("MR is already ready (no draft prefix found)")
-
-    async def trigger_ci_pipeline(self, mr):
-        """Trigger a GitLab Merge Request pipeline using the MR API.
-
-        Args:
-            mr: GitLab merge request object
-        """
-        try:
-            self.logger.info(
-                "Triggering CI pipeline for MR !%s on branch %s",
-                mr.iid,
-                mr.source_branch,
-            )
-
-            if self.dry_run:
-                self.logger.info(
-                    "[DRY-RUN] Would have triggered MR pipeline for MR !%s (branch: %s)",
-                    mr.iid,
-                    mr.source_branch,
+                await self._slack_client.say_in_thread(
+                    f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
                 )
-                return
-
-            # Create a new pipeline for this merge request using MR API
-            pipeline = mr.pipelines.create({'ref': mr.source_branch})
-
-            pipeline_url = pipeline.web_url
-            self.logger.info("CI MR pipeline triggered successfully: %s", pipeline_url)
-            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
-
-        except Exception as ex:
-            self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {ex}")
-            await self._slack_client.say_in_thread(
-                f"Failed to trigger CI pipeline for MR branch {mr.source_branch}: {ex}"
-            )
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
