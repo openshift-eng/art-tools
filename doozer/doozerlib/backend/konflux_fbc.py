@@ -40,9 +40,10 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 
 class AssemblyBundleCsvInfo(NamedTuple):
-    """CSV info extracted from an assembly's bundle component."""
+    """Catalog info extracted from an assembly's FBC component."""
     csv_name: str
     skip_range: Optional[str]
+    bundle_blob: Optional[Dict]  # The olm.bundle blob to add to the catalog
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -733,50 +734,60 @@ class KonfluxFbcRebaser:
                 logger.debug("No shipment URL found for assembly %s", assembly)
                 return None
 
-            # 2. Get "metadata" shipment config from MR
-            # All components in metadata shipment are bundle builds
-            logger.info("Fetching shipment config from %s", shipment_url)
-            metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
-            if not metadata_shipment or not metadata_shipment.shipment.snapshot:
-                logger.debug("No metadata shipment or snapshot found for assembly %s", assembly)
+            # 3. Get "fbc" shipment config from MR
+            # FBC components have containerImage pointing to the FBC catalog image
+            logger.info("Fetching FBC shipment config from %s", shipment_url)
+            fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
+            if not fbc_shipment or not fbc_shipment.shipment.snapshot:
+                logger.debug("No FBC shipment or snapshot found for assembly %s", assembly)
                 return None
 
-            # 3. Find matching bundle component by operator name
+            # 4. Find matching FBC component by operator name
             operator_name = metadata.distgit_key
-            bundle_component = None
-            for component in metadata_shipment.shipment.snapshot.spec.components:
+            fbc_component = None
+            for component in fbc_shipment.shipment.snapshot.spec.components:
                 if operator_name in component.name:
-                    bundle_component = component
+                    fbc_component = component
                     break
 
-            if not bundle_component:
-                logger.debug("Bundle component for %s not found in assembly %s", operator_name, assembly)
+            if not fbc_component:
+                logger.debug("FBC component for %s not found in assembly %s", operator_name, assembly)
                 return None
 
-            # 4. Get git source info
-            git_url = bundle_component.source.git.url
-            git_revision = bundle_component.source.git.revision
-            logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, git_revision)
+            # 5. Get containerImage pullspec and render with opm
+            fbc_pullspec = fbc_component.containerImage
+            logger.info("Found FBC component %s with pullspec %s", fbc_component.name, fbc_pullspec)
 
-            # 5. Fetch CSV from git
-            work_dir = self.base_dir / f"assembly_csv_{assembly}"
-            work_dir.mkdir(parents=True, exist_ok=True)
-
-            csv_content = await _fetch_csv_from_git(git_url, git_revision, work_dir, logger)
-            if not csv_content:
-                logger.warning("Failed to fetch CSV for %s from assembly %s", operator_name, assembly)
+            # Render the FBC image to get catalog blobs
+            logger.info("Rendering FBC image %s", fbc_pullspec)
+            blobs = await opm.render(fbc_pullspec)
+            if not blobs:
+                logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
                 return None
 
-            # 6. Extract name and skipRange
-            csv_name = csv_content.get('metadata', {}).get('name')
-            skip_range = csv_content.get('metadata', {}).get('annotations', {}).get('olm.skipRange')
+            # 6. Extract name and skipRange from olm.channel, and get the olm.bundle blob
+            csv_name = None
+            skip_range = None
+            bundle_blob = None
+
+            for blob in blobs:
+                schema = blob.get("schema")
+                if schema == "olm.channel":
+                    # Get the first entry's name and skipRange
+                    entries = blob.get("entries", [])
+                    if entries:
+                        entry = entries[0]
+                        csv_name = entry.get("name")
+                        skip_range = entry.get("skipRange")
+                elif schema == "olm.bundle":
+                    bundle_blob = blob
 
             if not csv_name:
-                logger.warning("CSV name not found in clusterserviceversion.yaml")
+                logger.warning("Could not extract bundle name from FBC catalog blobs")
                 return None
 
-            logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
-            return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range)
+            logger.info("Found assembly bundle: name=%s, skipRange=%s", csv_name, skip_range)
+            return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=bundle_blob)
 
         except Exception as e:
             logger.warning("Failed to get assembly bundle CSV info: %s", e)
@@ -1013,6 +1024,14 @@ class KonfluxFbcRebaser:
                 categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
                 catalog_blobs.append(channel)
             _update_channel(channel)
+
+        # Add the assembly bundle blob to the catalog if available
+        if assembly_csv_info and assembly_csv_info.bundle_blob:
+            assembly_bundle_name = assembly_csv_info.csv_name
+            if assembly_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
+                logger.info("Adding assembly bundle %s to package %s", assembly_bundle_name, olm_package)
+                categorized_catalog_blobs[olm_package]["olm.bundle"][assembly_bundle_name] = assembly_csv_info.bundle_blob
+                catalog_blobs.append(assembly_csv_info.bundle_blob)
 
         # Set default channel
         if default_channel_name:
