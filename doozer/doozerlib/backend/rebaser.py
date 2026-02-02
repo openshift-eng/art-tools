@@ -9,7 +9,7 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
 import bashlex
@@ -2213,10 +2213,20 @@ class KonfluxRebaser:
         image_refs: list,
         registry: str,
         image_map: dict,
+        external_image_names: Optional[Set[str]] = None,
     ) -> None:
         """Replace internal ART-built image references in the CSV file.
 
         Collects all replacements first, then performs a single read-modify-write cycle.
+
+        Args:
+            metadata: The ImageMetadata for this operator bundle.
+            csv_file: Path to the CSV file.
+            image_refs: List of image references from image-references file.
+            registry: The registry to use for replacements.
+            image_map: Mapping of image names.
+            external_image_names: Set of image names defined in external-images config.
+                                  These will be skipped as they are handled by _replace_external_image_refs.
         """
 
         def _map_image_name(name, image_map):
@@ -2229,12 +2239,21 @@ class KonfluxRebaser:
         if not namespace:
             raise ValueError('csv_namespace is required in group.yaml when any image defines update-csv')
 
+        if external_image_names is None:
+            external_image_names = set()
+
         # Collect all replacements first
         replacements: List[Tuple[str, str]] = []
         for ref in image_refs:
             name = ref['name']
             name = _map_image_name(name, image_map)
             spec = ref['from']['name']
+
+            # Skip images that are defined in external-images config
+            # They will be handled by _replace_external_image_refs
+            if name in external_image_names:
+                self._logger.info(f"Skipping {name} - defined in external-images config")
+                continue
 
             distgit = self._runtime.name_in_bundle_map.get(name, None)
             # fail if upstream is referring to an image we don't actually build
@@ -2485,6 +2504,37 @@ class KonfluxRebaser:
                 else:
                     self._logger.info(f"Source image {source} not found in {refs_path}, nothing to replace")
 
+    def _get_external_image_names(self, dest_dir: Path, csv_config: dict) -> Set[str]:
+        """Get the set of image names defined in external-images config from art.yaml.
+
+        These images are not ART-built and will be handled separately by _replace_external_image_refs.
+
+        Args:
+            dest_dir: The destination directory containing the operator bundle.
+            csv_config: The 'update-csv' configuration from the image metadata.
+
+        Returns:
+            Set of image names defined in external-images config, or empty set if none.
+        """
+        manifests_dir, _, _ = self._get_bundle_paths(csv_config)
+        manifests_base = os.path.join(dest_dir, manifests_dir)
+        art_yaml_path = os.path.join(manifests_base, 'art.yaml')
+
+        if not os.path.isfile(art_yaml_path):
+            return set()
+
+        try:
+            with io.open(art_yaml_path, 'r', encoding="utf-8") as art_file:
+                art_yaml_data = yaml.full_load(art_file.read())
+        except Exception:
+            return set()
+
+        external_images = art_yaml_data.get('external-images', [])
+        if not external_images:
+            return set()
+
+        return {ext_img.get('name') for ext_img in external_images if ext_img.get('name')}
+
     @start_as_current_span_async(TRACER, "rebase.update_csv")
     async def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str):
         csv_config = metadata.config.get('update-csv', None)
@@ -2495,8 +2545,13 @@ class KonfluxRebaser:
         registry = csv_config['registry'].rstrip("/")
         image_map = csv_config.get('image-map', {})
 
+        # Get external image names to skip in internal image replacement
+        external_image_names = self._get_external_image_names(dest_dir, csv_config)
+
         # Replace internal ART-built image references
-        await self._replace_internal_image_refs(metadata, csv_file, image_refs, registry, image_map)
+        await self._replace_internal_image_refs(
+            metadata, csv_file, image_refs, registry, image_map, external_image_names
+        )
 
         # Apply art.yaml search-and-replace updates and get parsed art.yaml data.
         # The returned art_yaml_data is passed to _replace_external_image_refs to avoid
