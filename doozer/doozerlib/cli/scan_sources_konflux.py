@@ -1655,6 +1655,7 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
 
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
+    # Note: caller must use --load-okd-only flag to load OKD-only images for scanning
     runtime.initialize(mode='both', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:

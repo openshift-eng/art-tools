@@ -207,6 +207,7 @@ class FbcMergeCli:
         registry_auth: Optional[str],
         message: Optional[str],
         skip_checks: bool,
+        skip_fips_check: bool,
         plr_template: Optional[str],
         target_index: Optional[str],
         major_minor: Optional[str],
@@ -226,6 +227,7 @@ class FbcMergeCli:
         self.registry_auth = registry_auth
         self.message = message
         self.skip_checks = skip_checks
+        self.skip_fips_check = skip_fips_check
         self.plr_template = plr_template
         self.target_index = target_index
         self.major_minor = major_minor
@@ -323,6 +325,7 @@ class FbcMergeCli:
             konflux_kubeconfig=self.konflux_kubeconfig,
             konflux_namespace=self.konflux_namespace,
             skip_checks=self.skip_checks,
+            skip_fips_check=self.skip_fips_check,
             plr_template=self.plr_template,
             major_minor_override=(major, minor) if self.major_minor else None,
         )
@@ -352,7 +355,6 @@ class FbcMergeCli:
     metavar='NAMESPACE',
     help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
-@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--fbc-repo',
     metavar='FBC_REPO',
@@ -373,6 +375,7 @@ class FbcMergeCli:
     help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
 )
 @click.option('--skip-checks', is_flag=True, default=False, help='Skip all post build checks')
+@click.option('--skip-fips-check', is_flag=True, default=False, help='Skip the FIPS compliance check task')
 @click.option(
     '--target-index',
     metavar='TARGET_INDEX',
@@ -399,6 +402,7 @@ async def fbc_merge(
     dest_dir: Optional[str],
     registry_auth: Optional[str],
     skip_checks: bool,
+    skip_fips_check: bool,
     plr_template: Optional[str],
     target_index: Optional[str],
     major_minor: Optional[str],
@@ -428,6 +432,7 @@ async def fbc_merge(
         konflux_context=konflux_context,
         konflux_namespace=resolved_namespace,
         skip_checks=skip_checks,
+        skip_fips_check=skip_fips_check,
         plr_template=plr_template,
         target_index=target_index,
         major_minor=major_minor,

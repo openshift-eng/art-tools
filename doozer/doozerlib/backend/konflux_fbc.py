@@ -360,6 +360,7 @@ class KonfluxFbcFragmentMerger:
         fbc_git_password: str | None = None,
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
         plr_template: Optional[str] = None,
         major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
@@ -384,6 +385,7 @@ class KonfluxFbcFragmentMerger:
         self.fbc_git_password = fbc_git_password
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
+        self.skip_fips_check = skip_fips_check
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
         self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
@@ -639,6 +641,7 @@ class KonfluxFbcFragmentMerger:
             hermetic=True,  # FBC should be built in hermetic mode
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
+            skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
             build_priority=FBC_BUILD_PRIORITY,
         )

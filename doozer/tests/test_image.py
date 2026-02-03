@@ -536,6 +536,248 @@ class TestImageMetadata(unittest.TestCase):
         self.assertTrue(digest.startswith('sha256:'))
         self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
 
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_apply_alternative_upstream_config_matching_rhel_version(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test alternative config is merged when upstream RHEL version matches"""
+        metadata = self._create_image_metadata('openshift/test_alt_config')
+
+        # Mock config with alternative_upstream
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_alt_config',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+
+        # Mock branch_el_target to return 9 (ART intended RHEL version)
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir to return a path
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile content with rhel-8 parent image
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1', 'target-2'])
+
+            # Call the method
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was merged (branch should be updated to rhel-8)
+        self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+        # Verify targets were updated
+        metadata.determine_targets.assert_called_once()
+        self.assertEqual(metadata.targets, ['target-1', 'target-2'])
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_apply_alternative_upstream_config_no_match(self, mock_joinpath, mock_open, mock_source_resolver):
+        """Test that IOError is raised when upstream RHEL version doesn't match ART nor any alternative_upstream"""
+        metadata = self._create_image_metadata('openshift/test_alt_config_no_match')
+
+        # Mock config with alternative_upstream for el7 (won't match upstream's el8)
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_alt_config_no_match',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-7'}}],
+            }
+        )
+
+        # Mock branch_el_target to return 9 (ART version)
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with rhel-8 (upstream=8, ART=9, alternative_upstream=el7 - no match!)
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Should raise IOError since upstream=8, ART=9, but only el7 alternative exists
+            with self.assertRaises(IOError) as context:
+                metadata._apply_alternative_upstream_config()
+
+        # Verify error message mentions the mismatch
+        self.assertIn('Upstream uses el8 but ART uses el9', str(context.exception))
+        self.assertIn('no matching alternative_upstream', str(context.exception))
+
+    def test_apply_alternative_upstream_config_no_source(self):
+        """Test that IOError is raised when image has no source"""
+        metadata = self._create_image_metadata('openshift/test_no_source')
+
+        # Mock config without source
+        metadata.config = Model({'name': 'openshift/test_no_source', 'distgit': {'branch': 'rhaos-4.16-rhel-9'}})
+
+        # Mock has_source to return False
+        metadata.has_source = MagicMock(return_value=False)
+
+        # Should raise IOError
+        with self.assertRaises(IOError) as context:
+            metadata._apply_alternative_upstream_config()
+
+        self.assertIn('does not have upstream source', str(context.exception))
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_apply_alternative_upstream_config_no_alternative_config(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test when upstream and ART versions match - no alternative config needed"""
+        metadata = self._create_image_metadata('openshift/test_no_alt')
+
+        original_branch = 'rhaos-4.16-rhel-9'
+        # Mock config WITHOUT alternative_upstream
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_no_alt',
+                'distgit': {'branch': original_branch},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+
+        # Mock branch_el_target to return 9
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with rhel-9 (matches ART version, no merge needed)
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Call the method - should not fail since versions match
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was NOT changed (upstream=9 matches ART=9, no merge needed)
+        self.assertEqual(metadata.config['distgit']['branch'], original_branch)
+        # Targets should not be updated when versions match
+        metadata.determine_targets.assert_not_called()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_determine_upstream_rhel_version_ubi_pattern(self, mock_joinpath, mock_open, mock_source_resolver):
+        """Test RHEL version detection from ubi-based images"""
+        metadata = self._create_image_metadata('openshift/test_ubi')
+
+        # Mock config
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_ubi',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+
+        # Mock branch_el_target
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with ubi8 pattern in tag (no dash)
+        dockerfile_content = """FROM registry.access.redhat.com/ubi/minimal:ubi8
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = ['registry.access.redhat.com/ubi/minimal:ubi8']
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1', 'target-2'])
+
+            # Call the method
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was merged (should detect el8 from ubi8 tag)
+        self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")

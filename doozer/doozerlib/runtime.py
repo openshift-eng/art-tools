@@ -90,6 +90,7 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.load_wip = False
         self.load_disabled = False
+        self.load_okd_only = False
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -590,10 +591,11 @@ class Runtime(GroupRuntime):
 
             def filter_enabled(n, d):
                 mode = d.get('mode', 'enabled')
-                # Include if generally enabled OR has okd.mode: enabled
+                # Include if generally enabled
                 if mode == 'enabled':
                     return True
-                if mode == 'disabled':
+                # Include if has okd.mode: enabled AND --load-okd-only flag is set
+                if mode == 'disabled' and self.load_okd_only:
                     okd_config = d.get('okd', {})
                     if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
                         return True
@@ -1100,11 +1102,11 @@ class Runtime(GroupRuntime):
 
         mode = data_obj.data.get("mode", "enabled")
 
-        # Check if image has OKD mode override that enables it
+        # Check if image has OKD mode override that enables it (only when load_okd_only is set)
         okd_config = data_obj.data.get("okd", {})
-        okd_enabled = okd_config.get("mode") == "enabled"
+        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.load_okd_only
 
-        # Skip loading if disabled (unless okd.mode: enabled or load_disabled is set)
+        # Skip loading if disabled (unless okd.mode: enabled with load_okd_only or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))

@@ -83,6 +83,9 @@ class BuildMicroShiftBootcPipeline:
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
 
+        # Track existing shipment timestamp to avoid creating new files on MR updates
+        self.existing_shipment_timestamp = None
+
         # Check if GitHub token is available (unless in dry-run mode)
         if not runtime.dry_run:
             github_token = os.environ.get("GITHUB_TOKEN")
@@ -742,6 +745,11 @@ class BuildMicroShiftBootcPipeline:
             latest_file = max(matching_files)
             self._logger.info("Loading existing shipment config from: %s", latest_file)
 
+            # Extract timestamp from filename: {assembly}.microshift-bootc.{timestamp}.yaml
+            filename = Path(latest_file).name
+            timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
+            self.existing_shipment_timestamp = timestamp_part
+
             with open(latest_file, 'r') as f:
                 shipment_data = yaml.load(f.read())
 
@@ -832,7 +840,8 @@ class BuildMicroShiftBootcPipeline:
         # Branch handling is now done in _load_or_init_shipment_config
         source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
         target_branch = "main"
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        # Use existing timestamp if available (updating existing MR), otherwise create new one
+        timestamp = self.existing_shipment_timestamp or datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
 
         # Check if branch exists and switch to it, or create it
         branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")

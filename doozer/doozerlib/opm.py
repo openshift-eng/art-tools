@@ -70,17 +70,22 @@ async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, **
                     }
                 )
 
-    if not auth_content:
-        LOGGER.warning("No registry auth provided. Running opm without auth.")
-        rc, out, err = await exectools.cmd_gather_async(["opm", *args], **kwargs)
-        return rc, out, err
-
-    with TemporaryDirectory(prefix="_doozer_") as auth_dir:
-        auth_file = Path(auth_dir, "config.json")
-        auth_file.write_text(auth_content)
+    # Use a temporary directory for OPM's internal temp files (opm-registry-*, bundle_tmp*, etc.)
+    # Setting TMPDIR ensures these files are cleaned up when the context exits,
+    # preventing leftover directories on build machines.
+    with TemporaryDirectory(prefix="_doozer_opm_") as opm_tmpdir:
         env = kwargs.pop("env", None)
         env = env.copy() if env is not None else os.environ.copy()
-        env["DOCKER_CONFIG"] = str(auth_dir)  # Set the DOCKER_CONFIG environment variable to the auth directory for opm
+        env["TMPDIR"] = opm_tmpdir
+
+        if not auth_content:
+            LOGGER.warning("No registry auth provided. Running opm without auth.")
+            rc, out, err = await exectools.cmd_gather_async(["opm", *args], env=env, **kwargs)
+            return rc, out, err
+
+        auth_file = Path(opm_tmpdir, "config.json")
+        auth_file.write_text(auth_content)
+        env["DOCKER_CONFIG"] = opm_tmpdir
         rc, out, err = await exectools.cmd_gather_async(["opm", *args], env=env, **kwargs)
     return rc, out, err
 
