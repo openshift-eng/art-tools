@@ -94,6 +94,7 @@ class ImageMetadata(Metadata):
         commitish: Optional[str] = None,
         clone_source: Optional[bool] = False,
         prevent_cloning: Optional[bool] = False,
+        process_dependents: Optional[bool] = True,
     ):
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
         self.required = self.config.get('required', False)
@@ -101,12 +102,18 @@ class ImageMetadata(Metadata):
         self.children = []  # list of ImageMetadata which use this image as a parent.
         self.dependencies: Set[str] = set()
         dependents = self.config.get('dependents', [])
-        for d in dependents:
-            dependent = self.runtime.late_resolve_image(d, add=True, required=False)
-            if not dependent:
-                continue
-            dependent.dependencies.add(self.distgit_key)
-            self.children.append(dependent)
+
+        # Only process dependents if this image is being added to image_map for building.
+        # When loading an image just to query its latest build (process_dependents=False),
+        # we should not add its dependents to image_map as a side effect.
+        # This prevents unwanted circular dependencies and incorrect CSV image references.
+        if process_dependents:
+            for d in dependents:
+                dependent = self.runtime.late_resolve_image(d, add=True, required=False)
+                if not dependent:
+                    continue
+                dependent.dependencies.add(self.distgit_key)
+                self.children.append(dependent)
         self.rebase_event = Event()
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
