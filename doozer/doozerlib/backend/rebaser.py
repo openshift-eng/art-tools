@@ -41,6 +41,8 @@ CPE_PRODUCT_NAME_MAPPING = {
     'rhmtc': 'rhmt',
     'oadp': 'openshift_api_data_protection',
     'mta': 'migration_toolkit_applications',
+    'logging': 'logging',
+    'openshift-logging': 'logging',
 }
 
 LOGGER = logging.getLogger(__name__)
