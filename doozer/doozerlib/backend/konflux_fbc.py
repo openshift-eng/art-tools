@@ -41,9 +41,11 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 class AssemblyBundleCsvInfo(NamedTuple):
     """Catalog info extracted from an assembly's FBC component."""
+
     csv_name: str
     skip_range: Optional[str]
     bundle_blob: Optional[Dict]  # The olm.bundle blob to add to the catalog
+
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -115,22 +117,13 @@ async def _fetch_csv_from_git(
 
         # Clone the repository using git_helper which handles auth environment
         logger.info("Cloning %s at revision %s", git_url, revision)
-        await git_helper.run_git_async(
-            ["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)],
-            check=True
-        )
+        await git_helper.run_git_async(["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True)
 
         # Fetch the specific revision
-        await git_helper.run_git_async(
-            ["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision],
-            check=True
-        )
+        await git_helper.run_git_async(["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision], check=True)
 
         # Checkout the revision
-        await git_helper.run_git_async(
-            ["-C", str(repo_dir), "checkout", revision],
-            check=True
-        )
+        await git_helper.run_git_async(["-C", str(repo_dir), "checkout", revision], check=True)
 
         # Find the clusterserviceversion.yaml file in manifests/
         manifests_dir = repo_dir / "manifests"
@@ -1057,7 +1050,9 @@ class KonfluxFbcRebaser:
             assembly_bundle_name = assembly_csv_info.csv_name
             if assembly_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
                 logger.info("Adding assembly bundle %s to package %s", assembly_bundle_name, olm_package)
-                categorized_catalog_blobs[olm_package]["olm.bundle"][assembly_bundle_name] = assembly_csv_info.bundle_blob
+                categorized_catalog_blobs[olm_package]["olm.bundle"][assembly_bundle_name] = (
+                    assembly_csv_info.bundle_blob
+                )
                 catalog_blobs.append(assembly_csv_info.bundle_blob)
 
         # Set default channel

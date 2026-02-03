@@ -2227,7 +2227,9 @@ class KonfluxRebaser:
             distgit = self._runtime.name_in_bundle_map.get(mapped_name, None)
             # fail if upstream is referring to an image we don't actually build
             if not distgit:
-                raise ValueError('Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key))
+                raise ValueError(
+                    'Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key)
+                )
 
             meta = self._runtime.image_map.get(distgit, None)
             if meta:  # image is currently be processed
