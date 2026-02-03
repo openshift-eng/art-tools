@@ -1121,7 +1121,9 @@ class Runtime(GroupRuntime):
         # Only process dependents if this image will be added to image_map.
         # When add=False, we're just loading the image to query its latest build,
         # so we should not trigger loading its dependents as a side effect.
-        meta = ImageMetadata(self, data_obj, self.upstream_commitish_overrides.get(data_obj.key), process_dependents=add)
+        meta = ImageMetadata(
+            self, data_obj, self.upstream_commitish_overrides.get(data_obj.key), process_dependents=add
+        )
         if add:
             self.image_map[distgit_name] = meta
         self.component_map[meta.get_component_name()] = meta
