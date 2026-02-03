@@ -152,8 +152,7 @@ class Ocp4ScanPipeline:
         match major_version:
             case 5 | 4:
                 self.trigger_ocp4()
-                if major_version == 4:
-                    self.trigger_okd4()
+                self.trigger_okd()
             case _:
                 raise ValueError(f'Unsupported OCP major version: {major_version}')
 
@@ -192,11 +191,11 @@ class Ocp4ScanPipeline:
             rpm_list=changed_rpm,
         )
 
-    def trigger_okd4(self):
+    def trigger_okd(self):
         # Only trigger OKD builds for enabled versions
         if self.version not in constants.OKD_ENABLED_VERSIONS:
             self.logger.info(
-                'Skipping OKD4 build for version %s (enabled versions: %s)',
+                'Skipping OKD build for version %s (enabled versions: %s)',
                 self.version,
                 constants.OKD_ENABLED_VERSIONS,
             )
@@ -235,22 +234,22 @@ class Ocp4ScanPipeline:
                 continue
 
         if not changed_okd_images:
-            self.logger.info('No images found with valid rebuild reasons for OKD4')
+            self.logger.info('No images found with valid rebuild reasons for OKD')
             return
 
         # Update Jenkins title and description
         jenkins.update_title(' [SOURCE CHANGES]')
-        jenkins.update_description(f'Changed {len(changed_okd_images)} images for OKD4<br/>')
+        jenkins.update_description(f'Changed {len(changed_okd_images)} images for OKD<br/>')
 
         if self.runtime.dry_run:
             self.logger.info(
-                'Would have triggered a %s okd4 build with images %s', self.version, ','.join(changed_okd_images)
+                'Would have triggered a %s okd build with images %s', self.version, ','.join(changed_okd_images)
             )
             return
 
         # Trigger okd4 build
-        self.logger.info('Triggering a %s okd4 build with %d images', self.version, len(changed_okd_images))
-        jenkins.start_okd4(
+        self.logger.info('Triggering a %s okd build with %d images', self.version, len(changed_okd_images))
+        jenkins.start_okd(
             build_version=self.version,
             assembly='stream',
             image_list=changed_okd_images,

@@ -31,7 +31,7 @@ class Jobs(Enum):
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
-    OKD4 = 'aos-cd-builds/build%2Fokd4'
+    OKD = 'aos-cd-builds/build%2Fokd'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
@@ -373,7 +373,7 @@ def start_ocp4(
     )
 
 
-def start_okd4(
+def start_okd(
     build_version: str,
     assembly: str,
     image_list: list,
@@ -389,7 +389,7 @@ def start_okd4(
     }
 
     return start_build(
-        job=Jobs.OKD4,
+        job=Jobs.OKD,
         params=params,
         **kwargs,
     )

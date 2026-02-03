@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 
 """
-Unit tests for the okd4 pipeline.
+Unit tests for the okd pipeline.
 """
 
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
-from pyartcd.pipelines.okd4 import BuildPlan, KonfluxOkd4Pipeline
+from pyartcd.pipelines.okd import BuildPlan, KonfluxOkdPipeline
 
 
-class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
+class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
     def setUp(self):
         """
         Set up common test fixtures.
@@ -35,7 +35,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
         """
 
         # given
-        pipeline = KonfluxOkd4Pipeline(
+        pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -52,7 +52,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
 
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd4.jenkins') as mock_jenkins,
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -80,7 +80,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
         """
 
         # given
-        pipeline = KonfluxOkd4Pipeline(
+        pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -109,7 +109,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
 
         # given
         self.mock_runtime.dry_run = True
-        pipeline = KonfluxOkd4Pipeline(
+        pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -137,7 +137,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
         """
 
         # given
-        pipeline = KonfluxOkd4Pipeline(
+        pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -154,7 +154,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
 
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd4.jenkins') as mock_jenkins,
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
         ):
             # Simulate a failure for both tags
             mock_tag.side_effect = Exception('oc tag failed')
@@ -180,7 +180,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
         """
 
         # given
-        pipeline = KonfluxOkd4Pipeline(
+        pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -197,7 +197,7 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
 
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd4.jenkins'),
+            patch('pyartcd.pipelines.okd.jenkins'),
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -235,7 +235,7 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
 
         self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
 
-        self.pipeline = KonfluxOkd4Pipeline(
+        self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -343,7 +343,7 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
 
-        self.pipeline = KonfluxOkd4Pipeline(
+        self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,
@@ -450,7 +450,7 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
         self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
 
-        self.pipeline = KonfluxOkd4Pipeline(
+        self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
             image_build_strategy='all',
             image_list=None,

@@ -42,7 +42,7 @@ class BuildPlan:
         return json.dumps(self.__dict__, indent=4, cls=EnumEncoder)
 
 
-class KonfluxOkd4Pipeline:
+class KonfluxOkdPipeline:
     def __init__(
         self,
         runtime: Runtime,
@@ -604,7 +604,7 @@ class KonfluxOkd4Pipeline:
             return yaml.safe_load(state_yaml)
 
 
-@cli.command("okd4", help="A pipeline to build images with Konflux for OCP 4")
+@cli.command("okd", help="A pipeline to build images with Konflux for OCP")
 @click.option(
     '--image-build-strategy',
     required=True,
@@ -653,7 +653,7 @@ class KonfluxOkd4Pipeline:
 )
 @pass_runtime
 @click_coroutine
-async def okd4(
+async def okd(
     runtime: Runtime,
     image_build_strategy: str,
     image_list: Optional[str],
@@ -670,7 +670,7 @@ async def okd4(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = KonfluxOkd4Pipeline(
+    pipeline = KonfluxOkdPipeline(
         runtime=runtime,
         image_build_strategy=image_build_strategy,
         image_list=image_list,
@@ -690,7 +690,7 @@ async def okd4(
     else:
         await locks.run_with_lock(
             coro=pipeline.run(),
-            lock=Lock.BUILD_OKD4,
-            lock_name=Lock.BUILD_OKD4.value.format(version=version),
+            lock=Lock.BUILD_OKD,
+            lock_name=Lock.BUILD_OKD.value.format(version=version),
             lock_id=lock_identifier,
         )
