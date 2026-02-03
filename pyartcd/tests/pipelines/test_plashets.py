@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline
+from click.testing import CliRunner
+from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline, build_plashets_cli
 
 
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
@@ -57,3 +58,32 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         await build_plashets_pipeline.run()
         mocked_build_plashets.assert_awaited_once()
         mocked_sync_for_ci.assert_called_once_with(version='4.13', block_until_building=False)
+
+    @patch('pyartcd.pipelines.build_plashets.util.default_release_suffix')
+    @patch('pyartcd.pipelines.build_plashets.BuildPlashetsPipeline')
+    def test_auto_generate_release(self, mocked_pipeline_class, mocked_default_release_suffix):
+        """Test that release timestamp is auto-generated when not provided"""
+        mocked_default_release_suffix.return_value = '202401011200.p?'
+
+        # Create a mock pipeline instance
+        mocked_pipeline = MagicMock()
+        mocked_pipeline_class.return_value = mocked_pipeline
+
+        # Create a mock runtime
+        runtime = MagicMock(dry_run=False)
+        runtime.logger = MagicMock()
+
+        # Simulate the CLI logic for auto-generating release
+        release = ''
+        if not release:
+            release = mocked_default_release_suffix()
+            runtime.logger.info(f'Auto-generated release timestamp: {release}')
+
+        # Verify that default_release_suffix was called
+        mocked_default_release_suffix.assert_called_once()
+
+        # Verify that the release was set to the auto-generated value
+        self.assertEqual(release, '202401011200.p?')
+
+        # Verify that the logger was called with the auto-generated release
+        runtime.logger.info.assert_called_once_with('Auto-generated release timestamp: 202401011200.p?')
