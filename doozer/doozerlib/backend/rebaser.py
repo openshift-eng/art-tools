@@ -2438,11 +2438,11 @@ class KonfluxRebaser:
 
         for ext_img in external_images:
             name = ext_img.get('name')
-            source = ext_img.get('source')
-            target = ext_img.get('target')
+            source = ext_img.get('search')
+            target = ext_img.get('replace')
 
             if not source or not target:
-                self._logger.warning(f"External image configuration for {name} is missing source or target")
+                self._logger.warning(f"External image configuration for {name} is missing search or replace")
                 continue
 
             self._logger.info(f"Resolving digest for external image {target}")
