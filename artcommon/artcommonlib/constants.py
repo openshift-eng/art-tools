@@ -51,6 +51,7 @@ PRODUCT_NAMESPACE_MAP = {
     "mta": "art-mta-tenant",
     "rhmtc": "art-mtc-tenant",
     "logging": "art-logging-tenant",
+    "openshift-logging": "art-logging-tenant",
     "ocp": "ocp-art-tenant",
 }
 
@@ -59,6 +60,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
+    "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "ocp": "KONFLUX_SA_KUBECONFIG",
 }
 
