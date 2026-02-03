@@ -51,6 +51,7 @@ PRODUCT_NAMESPACE_MAP = {
     "mta": "art-mta-tenant",
     "rhmtc": "art-mtc-tenant",
     "logging": "art-logging-tenant",
+    "openshift-logging": "art-logging-tenant",
     "ocp": "ocp-art-tenant",
 }
 
