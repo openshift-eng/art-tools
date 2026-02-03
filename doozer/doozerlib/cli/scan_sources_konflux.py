@@ -1563,14 +1563,18 @@ class ConfigScanSources:
             if is_changing:
                 key = f'{image_meta.qualified_key}+{is_changing}'
                 code = self.assessment_code.get(key)
-                image_results.append(
-                    {
-                        'name': dgk,
-                        'changed': is_changing,
-                        'code': code.name if code else None,
-                        'reason': self.assessment_reason.get(key),
-                    }
-                )
+                # Check if this is an okd-only image (mode: disabled, okd.mode: enabled)
+                is_okd_only = not image_meta.enabled and self._is_okd_enabled(image_meta)
+                result = {
+                    'name': dgk,
+                    'changed': is_changing,
+                    'code': code.name if code else None,
+                    'reason': self.assessment_reason.get(key),
+                }
+                # Only add okd_only flag if True to avoid polluting the report
+                if is_okd_only:
+                    result['okd_only'] = True
+                image_results.append(result)
 
         rpm_results = []
         for rpm_meta in self.all_rpm_metas:
