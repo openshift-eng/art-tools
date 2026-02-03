@@ -58,11 +58,21 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
             await pipeline.mirror_coreos_imagestreams()
 
             # then
-            mock_tag.assert_called_once()
-            call_args = mock_tag.call_args
-            self.assertEqual(call_args[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
-            self.assertEqual(call_args[1]['target_tag'], 'origin/scos-4.22-art:stream-coreos')
-            mock_jenkins.update_description.assert_called_once()
+            # Should be called twice - once for stream-coreos, once for stream-coreos-extensions
+            self.assertEqual(mock_tag.call_count, 2)
+
+            # Check first call (stream-coreos)
+            first_call = mock_tag.call_args_list[0]
+            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
+            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.22-art:stream-coreos')
+
+            # Check second call (stream-coreos-extensions)
+            second_call = mock_tag.call_args_list[1]
+            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.22-art:stream-coreos-extensions')
+
+            # Should update Jenkins description twice (once per successful tag)
+            self.assertEqual(mock_jenkins.update_description.call_count, 2)
 
     async def test_mirror_coreos_imagestreams_skipped_for_non_stream_assembly(self):
         """
@@ -146,21 +156,23 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
             patch('pyartcd.pipelines.okd4.jenkins') as mock_jenkins,
         ):
-            # Simulate a failure
+            # Simulate a failure for both tags
             mock_tag.side_effect = Exception('oc tag failed')
 
             # when
             await pipeline.mirror_coreos_imagestreams()
 
             # then
-            mock_tag.assert_called_once()
-            # Verify error was logged to Jenkins
-            self.assertTrue(
-                any(
-                    'Failed to mirror CoreOS imagestream tag' in str(call)
-                    for call in mock_jenkins.update_description.call_args_list
-                )
-            )
+            # Should be called twice - once for each tag
+            self.assertEqual(mock_tag.call_count, 2)
+
+            # Verify errors were logged to Jenkins (twice, once for each tag)
+            error_calls = [
+                call
+                for call in mock_jenkins.update_description.call_args_list
+                if 'Failed to mirror CoreOS imagestream tag' in str(call)
+            ]
+            self.assertEqual(len(error_calls), 2)
 
     async def test_mirror_coreos_imagestreams_custom_namespace(self):
         """
@@ -191,9 +203,18 @@ class TestKonfluxOkd4Pipeline(IsolatedAsyncioTestCase):
             await pipeline.mirror_coreos_imagestreams()
 
             # then
-            call_args = mock_tag.call_args
-            self.assertEqual(call_args[1]['source_pullspec'], 'custom-namespace/scos-4.21:stream-coreos')
-            self.assertEqual(call_args[1]['target_tag'], 'custom-namespace/scos-4.21-art:stream-coreos')
+            # Should be called twice with custom namespace
+            self.assertEqual(mock_tag.call_count, 2)
+
+            # Check first call uses custom namespace
+            first_call = mock_tag.call_args_list[0]
+            self.assertEqual(first_call[1]['source_pullspec'], 'custom-namespace/scos-4.21:stream-coreos')
+            self.assertEqual(first_call[1]['target_tag'], 'custom-namespace/scos-4.21-art:stream-coreos')
+
+            # Check second call uses custom namespace
+            second_call = mock_tag.call_args_list[1]
+            self.assertEqual(second_call[1]['source_pullspec'], 'custom-namespace/scos-4.21:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.21-art:stream-coreos-extensions')
 
 
 class TestGetPayloadTagName(IsolatedAsyncioTestCase):
