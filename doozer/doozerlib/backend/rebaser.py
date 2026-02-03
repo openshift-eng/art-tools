@@ -2447,7 +2447,8 @@ class KonfluxRebaser:
 
             self._logger.info(f"Resolving digest for external image {target}")
             try:
-                image_info = await util.oc_image_info_for_arch_async__caching(target)
+                registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
+                image_info = await util.oc_image_info_for_arch_async__caching(target, registry_config=registry_auth)
                 digest = image_info.get('digest')
             except Exception as e:
                 self._logger.error(f"Failed to resolve digest for {target}: {e}")
