@@ -256,10 +256,7 @@ class Ocp4ScanPipeline:
         )
 
     async def handle_rhcos_changes(self):
-        rhcos_changes = False
-
         if self.rhcos_inconsistent or self.rhcos_outdated:
-            rhcos_changes = True
             # Update Jenkins title and description
             jenkins.update_title(' [RHCOS CHANGES]')
 
@@ -282,7 +279,6 @@ class Ocp4ScanPipeline:
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
-            rhcos_changes = True
             self.logger.info('Detected at least one updated RHCOS')
 
             if self.runtime.dry_run:
