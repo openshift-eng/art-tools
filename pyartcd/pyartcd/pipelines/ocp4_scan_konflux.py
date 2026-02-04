@@ -297,9 +297,6 @@ class Ocp4ScanPipeline:
                 build_system="konflux",
             )
 
-        if rhcos_changes:
-            jenkins.update_title(' [RHCOS CHANGES]')
-
 
 @cli.command('beta:konflux:ocp4-scan')
 @click.option('--version', required=True, help='OCP version to scan')
