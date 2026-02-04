@@ -142,8 +142,7 @@ class Ocp4ScanPipeline:
         if not self.changes:
             return
 
-        jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated image')
+        self.logger.info('Detected source changes')
 
         # Determine major version to call the appropriate job
         major_version = int(self.version.split('.')[0])
@@ -152,31 +151,45 @@ class Ocp4ScanPipeline:
         # Note: OCP5 uses the same ocp4-konflux job as OCP4
         match major_version:
             case 5 | 4:
-                if self.runtime.dry_run:
-                    self.logger.info('Would have triggered a %s ocp4 build', self.version)
-                    if major_version == 4:
-                        self.logger.info('Would have triggered a %s okd4 build', self.version)
-                else:
-                    self.trigger_ocp4()
-                    if major_version == 4:
-                        self.trigger_okd4()
+                self.trigger_ocp4()
+                if major_version == 4:
+                    self.trigger_okd4()
             case _:
                 raise ValueError(f'Unsupported OCP major version: {major_version}')
 
     def trigger_ocp4(self):
-        image_list = self.changes.get('images', [])
-        rpm_list = self.changes.get('rpms', [])
+        changed_rpm = self.changes.get('rpms', [])
 
-        # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} images<br/>')
+        # Filter out okd-only images (mode: disabled, okd.mode: enabled)
+        # These will be built by trigger_okd4() only
+        changed_ocp_images = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and not image.get('okd_only')
+        ]
+
+        if not changed_ocp_images and not changed_rpm:
+            self.logger.info('No OCP images/RPMs to build')
+            return
+
+        # Update Jenkins title and description
+        jenkins.update_title(' [SOURCE CHANGES]')
+        if changed_rpm:
+            jenkins.update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
+        if changed_ocp_images:
+            jenkins.update_description(f'Changed {len(changed_ocp_images)} OCP images<br/>')
+
+        if self.runtime.dry_run:
+            self.logger.info('Would have triggered a %s ocp4 build for %s', self.version, ','.join(changed_ocp_images))
+            return
 
         # Trigger ocp4-konflux
-        self.logger.info('Triggering a %s ocp4-konflux build', self.version)
+        self.logger.info('Triggering a %s ocp4-konflux build with %d images', self.version, len(changed_ocp_images))
         jenkins.start_ocp4_konflux(
             build_version=self.version,
             assembly='stream',
-            image_list=image_list,
-            rpm_list=rpm_list,
+            image_list=changed_ocp_images,
+            rpm_list=changed_rpm,
         )
 
     def trigger_okd4(self):
@@ -198,41 +211,49 @@ class Ocp4ScanPipeline:
             RebuildHintCode.ANCESTOR_CHANGING,
             RebuildHintCode.CONFIG_CHANGE,
             RebuildHintCode.BUILDER_CHANGING,
-            RebuildHintCode.ARCHES_CHANGE,
             RebuildHintCode.DEPENDENCY_NEWER,
         ]
 
         # Filter images to only those with valid rebuild hint codes
-        filtered_images = []
+        changed_okd_images = []
         for image in self.report.get('images', []):
             if not image.get('changed'):
                 continue
             code_str = image.get('code')
             if not code_str:
                 continue
+
             try:
                 # Access enum member by name using bracket notation
                 code = RebuildHintCode[code_str]
                 if code in rebuild_reasons:
-                    filtered_images.append(image['name'])
+                    changed_okd_images.append(image['name'])
+
             except (KeyError, TypeError):
                 # Skip images with invalid or missing codes
                 self.logger.warning(f"Invalid rebuild hint code '{code_str}' for image {image.get('name', 'unknown')}")
                 continue
 
-        if not filtered_images:
+        if not changed_okd_images:
             self.logger.info('No images found with valid rebuild reasons for OKD4')
             return
 
-        # Update build description
-        jenkins.update_description(f'Changed {len(filtered_images)} images for OKD4<br/>')
+        # Update Jenkins title and description
+        jenkins.update_title(' [SOURCE CHANGES]')
+        jenkins.update_description(f'Changed {len(changed_okd_images)} images for OKD4<br/>')
+
+        if self.runtime.dry_run:
+            self.logger.info(
+                'Would have triggered a %s okd4 build with images %s', self.version, ','.join(changed_okd_images)
+            )
+            return
 
         # Trigger okd4 build
-        self.logger.info('Triggering a %s okd4 build with %d images', self.version, len(filtered_images))
+        self.logger.info('Triggering a %s okd4 build with %d images', self.version, len(changed_okd_images))
         jenkins.start_okd4(
             build_version=self.version,
             assembly='stream',
-            image_list=filtered_images,
+            image_list=changed_okd_images,
         )
 
     async def handle_rhcos_changes(self):
@@ -240,10 +261,15 @@ class Ocp4ScanPipeline:
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
             rhcos_changes = True
+            # Update Jenkins title and description
+            jenkins.update_title(' [RHCOS CHANGES]')
+
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+                jenkins.update_description('RHCOS inconsistent<br/>')
             if self.rhcos_outdated:
                 self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
+                jenkins.update_description('RHCOS outdated<br/>')
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s RHCOS build', self.version)
