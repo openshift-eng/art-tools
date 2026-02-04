@@ -502,7 +502,10 @@ class MetadataBase(object):
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            el_target = f'el{el_target}'
+            if self.meta_type == 'image' and is_okd_only:
+                el_target = f'scos{el_target}'
+            else:
+                el_target = f'el{el_target}'
 
         if self.meta_type == 'rpm':
             # For RPMs, if rhel target is not set fetch true latest

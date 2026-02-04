@@ -142,8 +142,7 @@ class Ocp4ScanPipeline:
         if not self.changes:
             return
 
-        jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated image')
+        self.logger.info('Detected source changes')
 
         # Determine major version to call the appropriate job
         major_version = int(self.version.split('.')[0])
@@ -173,7 +172,8 @@ class Ocp4ScanPipeline:
             self.logger.info('No OCP images/RPMs to build')
             return
 
-        # Update build description
+        # Update Jenkins title and description
+        jenkins.update_title(' [SOURCE CHANGES]')
         if changed_rpm:
             jenkins.update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
         if changed_ocp_images:
@@ -211,7 +211,6 @@ class Ocp4ScanPipeline:
             RebuildHintCode.ANCESTOR_CHANGING,
             RebuildHintCode.CONFIG_CHANGE,
             RebuildHintCode.BUILDER_CHANGING,
-            RebuildHintCode.ARCHES_CHANGE,
             RebuildHintCode.DEPENDENCY_NEWER,
         ]
 
@@ -239,11 +238,14 @@ class Ocp4ScanPipeline:
             self.logger.info('No images found with valid rebuild reasons for OKD4')
             return
 
-        # Update build description
+        # Update Jenkins title and description
+        jenkins.update_title(' [SOURCE CHANGES]')
         jenkins.update_description(f'Changed {len(changed_okd_images)} images for OKD4<br/>')
 
         if self.runtime.dry_run:
-            self.logger.info('Would have triggered a %s okd4 build with images %s', self.version, ','.join(changed_okd_images))
+            self.logger.info(
+                'Would have triggered a %s okd4 build with images %s', self.version, ','.join(changed_okd_images)
+            )
             return
 
         # Trigger okd4 build
@@ -259,10 +261,15 @@ class Ocp4ScanPipeline:
 
         if self.rhcos_inconsistent or self.rhcos_outdated:
             rhcos_changes = True
+            # Update Jenkins title and description
+            jenkins.update_title(' [RHCOS CHANGES]')
+
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+                jenkins.update_description('RHCOS inconsistent<br/>')
             if self.rhcos_outdated:
                 self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
+                jenkins.update_description('RHCOS outdated<br/>')
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s RHCOS build', self.version)
