@@ -16,6 +16,7 @@ import httpx
 import truststore
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
+from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -25,6 +26,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Model
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
@@ -681,6 +683,165 @@ class KonfluxFbcRebaser:
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
 
+    def _find_future_release_assembly(
+        self,
+        releases_config,
+        logger: logging.Logger,
+    ) -> Optional[str]:
+        """
+        Find the first release with a future release_date.
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+            logger: Logger instance
+
+        Returns:
+            The assembly name if found, None otherwise
+        """
+        release_names = list(releases_config.releases.keys())
+        if not release_names:
+            logger.debug("No releases found in releases.yml")
+            return None
+
+        for release_name in release_names:
+            group_config = assembly_config_struct(
+                Model(releases_config), release_name, "group", {}
+            )
+            release_date = group_config.get("release_date") if group_config else None
+            if release_date and artlib_util.is_future_release_date(release_date):
+                logger.info(
+                    "Stream build: using future release assembly %s (release_date: %s)",
+                    release_name, release_date
+                )
+                return release_name
+
+        logger.debug("No future release found in releases.yml")
+        return None
+
+    def _get_shipment_url_for_assembly(
+        self,
+        releases_config,
+        assembly: str,
+        logger: logging.Logger,
+    ) -> Optional[str]:
+        """
+        Get the shipment URL for a given assembly from releases.yml.
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+            assembly: The assembly name to look up
+            logger: Logger instance
+
+        Returns:
+            The shipment URL if found, None otherwise
+        """
+        assembly_config = releases_config.releases.get(assembly, {})
+        if not assembly_config:
+            logger.debug("Assembly %s not found in releases.yml", assembly)
+            return None
+
+        shipment_info = assembly_config.get("assembly", {}).get("group", {}).get("shipment", {})
+        shipment_url = shipment_info.get("url")
+
+        if not shipment_url:
+            logger.debug("No shipment URL found for assembly %s", assembly)
+            return None
+
+        return shipment_url
+
+    def _find_component_in_shipment(
+        self,
+        shipment,
+        operator_name: str,
+        logger: logging.Logger,
+    ):
+        """
+        Find a component matching the operator name in a shipment snapshot.
+
+        Args:
+            shipment: The shipment config object
+            operator_name: The operator distgit key to search for
+            logger: Logger instance
+
+        Returns:
+            The matching component if found, None otherwise
+        """
+        if not shipment or not shipment.shipment.snapshot:
+            return None
+
+        for component in shipment.shipment.snapshot.spec.components:
+            if operator_name in component.name:
+                return component
+
+        return None
+
+    async def _extract_csv_info_from_bundle(
+        self,
+        bundle_component,
+        logger: logging.Logger,
+    ) -> Optional[Tuple[str, Optional[str]]]:
+        """
+        Extract CSV name and skipRange from a bundle component's source.
+
+        Args:
+            bundle_component: The bundle component from shipment snapshot
+            logger: Logger instance
+
+        Returns:
+            Tuple of (csv_name, skip_range) if found, None otherwise
+        """
+        git_url = bundle_component.source.git.url
+        revision = bundle_component.source.git.revision
+        logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, revision)
+
+        csv_data = await _fetch_csv_from_git(git_url, revision, self.base_dir, logger)
+        if not csv_data:
+            logger.warning("Could not fetch CSV from bundle source")
+            return None
+
+        csv_name = csv_data.get("metadata", {}).get("name")
+        skip_range = csv_data.get("metadata", {}).get("annotations", {}).get("olm.skipRange")
+
+        if not csv_name:
+            logger.warning("Could not extract CSV name from bundle source")
+            return None
+
+        logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
+        return csv_name, skip_range
+
+    async def _get_bundle_blob_from_fbc(
+        self,
+        fbc_component,
+        csv_name: str,
+        logger: logging.Logger,
+    ) -> Optional[Dict]:
+        """
+        Render an FBC image and extract the olm.bundle blob matching the csv_name.
+
+        Args:
+            fbc_component: The FBC component from shipment snapshot
+            csv_name: The CSV name to match
+            logger: Logger instance
+
+        Returns:
+            The matching olm.bundle blob if found, None otherwise
+        """
+        fbc_pullspec = fbc_component.containerImage
+        logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
+
+        blobs = await opm.render(fbc_pullspec)
+        if not blobs:
+            logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
+            return None
+
+        for blob in blobs:
+            if blob.get("schema") == "olm.bundle" and blob.get("name") == csv_name:
+                logger.info("Found olm.bundle blob for %s", csv_name)
+                return blob
+
+        logger.warning("Could not find olm.bundle blob for %s in FBC image", csv_name)
+        return None
+
     async def _get_assembly_bundle_csv_info(
         self,
         metadata: ImageMetadata,
@@ -690,13 +851,13 @@ class KonfluxFbcRebaser:
         Get bundle CSV info (name and skipRange) from a named assembly's shipment.
 
         This method:
-        1. Looks up the shipment MR for the latest named assembly
+        1. Looks up the shipment MR for the latest named assembly (with future release_date)
         2. Gets the "metadata" shipment to find the bundle component
         3. Clones the bundle source at the specified revision and extracts CSV metadata
         4. Gets the "fbc" shipment to find the FBC component
         5. Renders the FBC image with opm to get the olm.bundle blob
 
-        For stream builds, it finds the latest named assembly from releases.yml.
+        For stream builds, it finds a future release from releases.yml.
         For named assembly builds, it uses the current assembly.
 
         Args:
@@ -710,106 +871,42 @@ class KonfluxFbcRebaser:
             # 1. Determine which assembly to look up
             releases_config = metadata.runtime.get_releases_config()
             if self.assembly == 'stream':
-                # For stream builds, use the first (latest) named assembly
-                release_names = list(releases_config.releases.keys())
-                if not release_names:
-                    logger.debug("No releases found in releases.yml")
+                assembly = self._find_future_release_assembly(releases_config, logger)
+                if not assembly:
                     return None
-                assembly = release_names[0]
-                logger.info("Stream build: using latest named assembly %s", assembly)
             else:
                 assembly = self.assembly
 
             # 2. Get shipment URL from releases.yml
-            assembly_config = releases_config.releases.get(assembly, {})
-            if not assembly_config:
-                logger.debug("Assembly %s not found in releases.yml", assembly)
-                return None
-
-            shipment_info = assembly_config.get("assembly", {}).get("group", {}).get("shipment", {})
-            shipment_url = shipment_info.get("url")
-
+            shipment_url = self._get_shipment_url_for_assembly(releases_config, assembly, logger)
             if not shipment_url:
-                logger.debug("No shipment URL found for assembly %s", assembly)
                 return None
 
-            # 3. Get "metadata" shipment config from MR to find bundle component
+            # 3. Get "metadata" shipment config and find bundle component
             logger.info("Fetching metadata shipment config from %s", shipment_url)
             metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
-            if not metadata_shipment or not metadata_shipment.shipment.snapshot:
-                logger.debug("No metadata shipment or snapshot found for assembly %s", assembly)
-                return None
-
-            # 4. Find matching bundle component by operator name
             operator_name = metadata.distgit_key
-            bundle_component = None
-            for component in metadata_shipment.shipment.snapshot.spec.components:
-                if operator_name in component.name:
-                    bundle_component = component
-                    break
-
+            bundle_component = self._find_component_in_shipment(metadata_shipment, operator_name, logger)
             if not bundle_component:
                 logger.debug("Bundle component for %s not found in assembly %s", operator_name, assembly)
                 return None
 
-            # 5. Clone bundle source and extract CSV name and skipRange
-            git_url = bundle_component.source.git.url
-            revision = bundle_component.source.git.revision
-            logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, revision)
-
-            csv_data = await _fetch_csv_from_git(git_url, revision, self.base_dir, logger)
-            if not csv_data:
-                logger.warning("Could not fetch CSV from bundle source")
+            # 4. Extract CSV name and skipRange from bundle source
+            csv_info = await self._extract_csv_info_from_bundle(bundle_component, logger)
+            if not csv_info:
                 return None
+            csv_name, skip_range = csv_info
 
-            csv_name = csv_data.get("metadata", {}).get("name")
-            skip_range = csv_data.get("metadata", {}).get("annotations", {}).get("olm.skipRange")
-
-            if not csv_name:
-                logger.warning("Could not extract CSV name from bundle source")
-                return None
-
-            logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
-
-            # 6. Get "fbc" shipment config to find FBC component for bundle blob
+            # 5. Get "fbc" shipment config and find FBC component for bundle blob
             logger.info("Fetching FBC shipment config from %s", shipment_url)
             fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
-            if not fbc_shipment or not fbc_shipment.shipment.snapshot:
-                logger.debug("No FBC shipment or snapshot found for assembly %s", assembly)
-                # Return CSV info without bundle blob
-                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
-
-            # 7. Find matching FBC component by operator name
-            fbc_component = None
-            for component in fbc_shipment.shipment.snapshot.spec.components:
-                if operator_name in component.name:
-                    fbc_component = component
-                    break
-
+            fbc_component = self._find_component_in_shipment(fbc_shipment, operator_name, logger)
             if not fbc_component:
                 logger.debug("FBC component for %s not found in assembly %s", operator_name, assembly)
                 return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
 
-            # 8. Render the FBC image to get the olm.bundle blob
-            fbc_pullspec = fbc_component.containerImage
-            logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
-            blobs = await opm.render(fbc_pullspec)
-            if not blobs:
-                logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
-                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
-
-            # 9. Find the olm.bundle blob matching the csv_name
-            bundle_blob = None
-            for blob in blobs:
-                if blob.get("schema") == "olm.bundle" and blob.get("name") == csv_name:
-                    bundle_blob = blob
-                    break
-
-            if bundle_blob:
-                logger.info("Found olm.bundle blob for %s", csv_name)
-            else:
-                logger.warning("Could not find olm.bundle blob for %s in FBC image", csv_name)
-
+            # 6. Render the FBC image and get the olm.bundle blob
+            bundle_blob = await self._get_bundle_blob_from_fbc(fbc_component, csv_name, logger)
             return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=bundle_blob)
 
         except Exception as e:
