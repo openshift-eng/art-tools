@@ -175,17 +175,16 @@ def merge_objects(a, b):
 
 def is_future_release_date(date_str):
     """
-    If the input date is in future then return True elase False
+    If the input date is in future then return True else False
     """
-    try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return False
-    current_date = datetime.now(tz=timezone.utc)
-    if target_date > current_date:
-        return True
-    else:
-        return False
+    formats = ["%Y-%m-%d", "%Y-%b-%d"]
+    for fmt in formats:
+        try:
+            target_date = datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            return target_date > datetime.now(tz=timezone.utc)
+        except ValueError:
+            continue
+    return False
 
 
 def get_assembly_release_date(assembly, group):

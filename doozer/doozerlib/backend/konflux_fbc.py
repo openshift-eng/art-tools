@@ -16,7 +16,6 @@ import httpx
 import truststore
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
-from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -110,15 +109,9 @@ async def _fetch_csv_from_git(
         shutil.rmtree(repo_dir)
 
     try:
-        # Use GITHUB_TOKEN for authentication if available
-        clone_url = git_url
-        github_token = os.environ.get(constants.GITHUB_TOKEN)
-        if github_token and 'github.com' in git_url:
-            # Embed token in URL for authentication
-            clone_url = git_url.replace('https://github.com', f'https://{github_token}@github.com')
-
-        # Clone the repository using git_helper which handles auth environment
-        logger.info("Cloning %s at revision %s", git_url, revision)
+        # Convert HTTPS URL to SSH for authentication via SSH keys
+        clone_url = artlib_util.convert_remote_git_to_ssh(git_url)
+        logger.info("Cloning %s at revision %s", clone_url, revision)
         await git_helper.run_git_async(["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True)
 
         # Fetch the specific revision
@@ -133,10 +126,12 @@ async def _fetch_csv_from_git(
             logger.warning("manifests/ directory not found in %s", git_url)
             return None
 
-        csv_files = list(manifests_dir.glob("*clusterserviceversion.yaml"))
+        csv_files = sorted(manifests_dir.rglob("*clusterserviceversion.yaml"))
         if not csv_files:
             logger.warning("No clusterserviceversion.yaml found in manifests/")
             return None
+        if len(csv_files) > 1:
+            raise IOError(f"Multiple clusterserviceversion.yaml files found under {manifests_dir}")
 
         csv_file = csv_files[0]
         logger.info("Found CSV file: %s", csv_file.name)
@@ -700,22 +695,25 @@ class KonfluxFbcRebaser:
         """
         release_names = list(releases_config.releases.keys())
         if not release_names:
-            logger.debug("No releases found in releases.yml")
+            logger.info("No releases found in releases.yml")
             return None
 
         for release_name in release_names:
-            group_config = assembly_config_struct(
-                Model(releases_config), release_name, "group", {}
+            logger.info(f"checking assembly for {release_name}")
+            release_date = (
+                releases_config.releases.get(release_name, {})
+                .get("assembly", {})
+                .get("group", {})
+                .get("release_date", {})
             )
-            release_date = group_config.get("release_date") if group_config else None
+            logger.info(f"Got release date {release_date}")
             if release_date and artlib_util.is_future_release_date(release_date):
                 logger.info(
-                    "Stream build: using future release assembly %s (release_date: %s)",
-                    release_name, release_date
+                    "Stream build: using future release assembly %s (release_date: %s)", release_name, release_date
                 )
                 return release_name
 
-        logger.debug("No future release found in releases.yml")
+        logger.info("No future release found in releases.yml")
         return None
 
     def _get_shipment_url_for_assembly(
@@ -769,8 +767,10 @@ class KonfluxFbcRebaser:
         if not shipment or not shipment.shipment.snapshot:
             return None
 
+        # Bundle components typically follow pattern: {operator_name}-bundle
+        expected_bundle_suffix = f"{operator_name}-bundle"
         for component in shipment.shipment.snapshot.spec.components:
-            if operator_name in component.name:
+            if component.name.endswith(expected_bundle_suffix) or component.name == expected_bundle_suffix:
                 return component
 
         return None
@@ -1074,6 +1074,7 @@ class KonfluxFbcRebaser:
         # Get assembly bundle info from the latest named assembly's shipment
         assembly_csv_info: Optional[AssemblyBundleCsvInfo] = None
         assembly_csv_info = await self._get_assembly_bundle_csv_info(metadata, logger)
+        logger.info(f"Get assembly csv info: {assembly_csv_info}")
 
         # Update the catalog
         def _update_channel(channel: Dict):
@@ -1096,15 +1097,18 @@ class KonfluxFbcRebaser:
 
             # Add assembly bundle to skips from the latest named assembly's shipment
             if assembly_csv_info:
-                if skips is None:
-                    skips = set()
-                skips.add(assembly_csv_info.csv_name)
-                # Also add assembly entry to channel if not exists
-                if not any(e['name'] == assembly_csv_info.csv_name for e in channel['entries']):
-                    assembly_entry = {"name": assembly_csv_info.csv_name}
-                    if assembly_csv_info.skip_range:
-                        assembly_entry["skipRange"] = assembly_csv_info.skip_range
-                    channel['entries'].append(assembly_entry)
+                if assembly_csv_info.csv_name == olm_bundle_name:
+                    logger.info("Assembly bundle is the same as the current bundle, skipping")
+                else:
+                    if skips is None:
+                        skips = set()
+                    skips.add(assembly_csv_info.csv_name)
+                    # Also add assembly entry to channel if not exists
+                    if not any(e['name'] == assembly_csv_info.csv_name for e in channel['entries']):
+                        assembly_entry = {"name": assembly_csv_info.csv_name}
+                        if assembly_csv_info.skip_range:
+                            assembly_entry["skipRange"] = assembly_csv_info.skip_range
+                        channel['entries'].append(assembly_entry)
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
