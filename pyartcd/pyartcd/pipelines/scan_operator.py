@@ -97,15 +97,13 @@ class ScanOperatorPipeline:
             self.logger.info('No operator builds found')
             return
 
-        # 3. Check each operator in parallel
+        # Check if each operator has an associated bundle and fbc
         results = await asyncio.gather(*[self.check_operator(op) for op in operator_builds], return_exceptions=True)
 
-        # 4. Log any exceptions
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 self.logger.error(f'Failed to process {operator_builds[i].nvr}: {result}')
 
-        # 5. Trigger batched builds
         if self.operators_without_bundles:
             await self.trigger_bundle_builds(self.operators_without_bundles)
 
@@ -182,7 +180,7 @@ class ScanOperatorPipeline:
         )
 
         if bundle:
-            self.logger.info(f'  Bundle exists: {bundle.nvr}')
+            self.logger.info(f'  Bundle for {operator.nvr} exists: {bundle.nvr}')
             return True, bundle
 
         # Check for pending bundle (avoid duplicate triggers)
@@ -195,7 +193,7 @@ class ScanOperatorPipeline:
         )
 
         if pending:
-            self.logger.info(f'  Bundle in progress: {pending.nvr}')
+            self.logger.info(f'  Bundle build for {operator.nvr} in progress: {pending.nvr}')
             return True, None  # Treat pending as if a bundle already exists
 
         self.logger.info(f'  Bundle MISSING for {operator.nvr}')
@@ -223,10 +221,10 @@ class ScanOperatorPipeline:
             order_by='start_time',
             sorting='DESC',
         ):
-            self.logger.info(f'  FBC exists: {fbc.nvr}')
+            self.logger.info(f'  FBC build for {operator.nvr} exists: {fbc.nvr}')
             return True, fbc
 
-        # Check for pending FBC
+        # Check for pending FBC containing this specific bundle
         async for fbc in self.fbc_db.search_builds_by_fields(
             where={
                 'name': fbc_name,
@@ -234,14 +232,15 @@ class ScanOperatorPipeline:
                 'outcome': KonfluxBuildOutcome.PENDING,
                 'assembly': self.assembly,
             },
+            array_contains={'bundle_nvrs': bundle.nvr},
             limit=1,
             order_by='start_time',
             sorting='DESC',
         ):
-            self.logger.info(f'  FBC in progress: {fbc.nvr}')
+            self.logger.info(f'  FBC build for {operator.nvr} in progress: {fbc.nvr}')
             return True, None  # Treat pending as exists
 
-        self.logger.info(f'  FBC MISSING for bundle {bundle.nvr}')
+        self.logger.info(f'  FBC MISSING for operator {operator.nvr}')
         return False, None
 
     async def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
@@ -285,16 +284,12 @@ class ScanOperatorPipeline:
 
     def get_bundle_name(self, operator_name: str) -> str:
         """Get bundle name from operator name.
-
-        Operator names are distgit keys (e.g., 'dpu-operator').
         Bundle names append -bundle suffix (e.g., 'dpu-operator-bundle').
         """
         return f'{operator_name}-bundle'
 
     def get_fbc_name(self, operator_name: str) -> str:
         """Get FBC name from operator name.
-
-        Operator names are distgit keys (e.g., 'dpu-operator').
         FBC names append -fbc suffix (e.g., 'dpu-operator-fbc').
         """
         return f'{operator_name}-fbc'
