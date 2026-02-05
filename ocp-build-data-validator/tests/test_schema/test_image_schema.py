@@ -260,3 +260,108 @@ class TestImageSchema(unittest.TestCase):
             'konflux': {'cachi2': {'artifact_lockfile': {'resources': 'not-an-array'}}},
         }
         self.assertIn("'not-an-array' is not of type 'array'", image_schema.validate('filename', invalid_data))
+
+    def test_validate_enabled_repos_with_new_style_repos(self):
+        """
+        Test validation of enabled_repos with new-style repo definitions (repos/ directory).
+        """
+        images_dir = self.temp_dir
+        ocp_build_data_dir = os.path.dirname(images_dir)
+        repos_dir = os.path.join(ocp_build_data_dir, 'repos')
+        os.makedirs(repos_dir, exist_ok=True)
+
+        # Create valid repo definitions in new style
+        with open(os.path.join(repos_dir, 'rhel-9-appstream-rpms.yml'), 'w') as f:
+            f.write('- name: rhel-9-appstream-rpms\n  conf: {}\n')
+        with open(os.path.join(repos_dir, 'rhel-9-baseos-rpms.yml'), 'w') as f:
+            f.write('- name: rhel-9-baseos-rpms\n  conf: {}\n')
+
+        # Test with valid repo references
+        valid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-9-baseos-rpms'],
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))
+
+        # Test with invalid repo reference
+        invalid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-9-invalid-repo'],
+        }
+        error = image_schema.validate('filename', invalid_data, images_dir=images_dir)
+        self.assertIsNotNone(error)
+        self.assertIn("Repository 'rhel-9-invalid-repo' not found", error)
+
+    def test_validate_enabled_repos_with_old_style_repos(self):
+        """
+        Test validation of enabled_repos with old-style repo definitions (group.yml repos section).
+        """
+        images_dir = self.temp_dir
+        ocp_build_data_dir = os.path.dirname(images_dir)
+
+        # Create group.yml with old-style repos
+        with open(os.path.join(ocp_build_data_dir, 'group.yml'), 'w') as f:
+            f.write(
+                'repos:\n'
+                '  rhel-8-server-rpms:\n'
+                '    conf:\n'
+                '      baseurl: http://example.com\n'
+                '  rhel-8-fast-datapath-rpms:\n'
+                '    conf:\n'
+                '      baseurl: http://example.com\n'
+            )
+
+        # Test with valid repo references
+        valid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'enabled_repos': ['rhel-8-server-rpms', 'rhel-8-fast-datapath-rpms'],
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))
+
+        # Test with invalid repo reference
+        invalid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'enabled_repos': ['rhel-8-server-rpms', 'rhel-8-nonexistent-rpms'],
+        }
+        error = image_schema.validate('filename', invalid_data, images_dir=images_dir)
+        self.assertIsNotNone(error)
+        self.assertIn("Repository 'rhel-8-nonexistent-rpms' not found", error)
+
+    def test_validate_enabled_repos_with_mixed_style_repos(self):
+        """
+        Test validation of enabled_repos with both old and new style repo definitions.
+        """
+        images_dir = self.temp_dir
+        ocp_build_data_dir = os.path.dirname(images_dir)
+        repos_dir = os.path.join(ocp_build_data_dir, 'repos')
+        os.makedirs(repos_dir, exist_ok=True)
+
+        # Create new-style repos
+        with open(os.path.join(repos_dir, 'rhel-9-appstream-rpms.yml'), 'w') as f:
+            f.write('- name: rhel-9-appstream-rpms\n  conf: {}\n')
+
+        # Create old-style repos in group.yml
+        with open(os.path.join(ocp_build_data_dir, 'group.yml'), 'w') as f:
+            f.write('repos:\n  rhel-8-server-rpms:\n    conf:\n      baseurl: http://example.com\n')
+
+        # Test with repos from both sources
+        valid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-8-server-rpms'],
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))

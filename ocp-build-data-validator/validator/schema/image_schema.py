@@ -1,9 +1,55 @@
 import json
 import os
+from pathlib import Path
+from typing import Set
 
 import importlib_resources
 from jsonschema import RefResolver, ValidationError
 from jsonschema.validators import validator_for
+from ruamel.yaml import YAML
+
+
+def _get_valid_repos(ocp_build_data_dir: str) -> Set[str]:
+    """
+    Collects valid repository names from both old and new style repo definitions.
+
+    Arg(s):
+        ocp_build_data_dir (str): Path to the ocp-build-data directory containing group.yml
+
+    Return Value(s):
+        set: Set of valid repository names
+    """
+    valid_repos = set()
+    yaml = YAML(typ='safe')
+
+    # New style: repos/ directory with individual YAML files
+    repos_dir = Path(ocp_build_data_dir) / 'repos'
+    if repos_dir.exists():
+        for repo_file in repos_dir.glob('*.yml'):
+            try:
+                with open(repo_file) as f:
+                    data = yaml.load(f)
+                    # Repo files contain a list with one element
+                    if isinstance(data, list) and len(data) > 0 and 'name' in data[0]:
+                        valid_repos.add(data[0]['name'])
+            except Exception:
+                # Skip files that can't be parsed
+                pass
+
+    # Old style: repos section in group.yml
+    group_yml = Path(ocp_build_data_dir) / 'group.yml'
+    if group_yml.exists():
+        try:
+            with open(group_yml) as f:
+                group_data = yaml.load(f)
+                if group_data and 'repos' in group_data:
+                    # In old style, repo names are the keys in the repos dict
+                    valid_repos.update(group_data['repos'].keys())
+        except Exception:
+            # Skip if group.yml can't be parsed
+            pass
+
+    return valid_repos
 
 
 def validate(file, data, images_dir=None):
@@ -54,5 +100,19 @@ def validate(file, data, images_dir=None):
             for dependent in data["dependents"]:
                 if dependent not in image_files:
                     errors.append(f"dependents: Dependent image '{dependent}' not found in {images_dir}")
+
+        # Validate enabled_repos
+        if "enabled_repos" in data:
+            ocp_build_data_dir = os.path.dirname(images_dir)
+            valid_repos = _get_valid_repos(ocp_build_data_dir)
+
+            if valid_repos:  # Only validate if we found repo definitions
+                for repo in data["enabled_repos"]:
+                    if repo not in valid_repos:
+                        errors.append(
+                            f"enabled_repos: Repository '{repo}' not found in repos/ directory or group.yml. "
+                            f"Valid repositories must be defined in either {ocp_build_data_dir}/repos/*.yml "
+                            f"or in the 'repos' section of {ocp_build_data_dir}/group.yml"
+                        )
 
     return '\n'.join(errors) if errors else None
