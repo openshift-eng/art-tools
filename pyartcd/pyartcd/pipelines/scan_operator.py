@@ -6,7 +6,6 @@ from typing import List, Optional, Set, Tuple
 
 import click
 from artcommonlib import exectools
-from artcommonlib.util import uses_konflux_imagestream_override
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
@@ -16,6 +15,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import LARGE_COLUMNS, KonfluxDb
+from artcommonlib.util import uses_konflux_imagestream_override
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -80,9 +80,7 @@ class ScanOperatorPipeline:
 
         # Check if it's a valid version
         if not uses_konflux_imagestream_override(self.version):
-            self.logger.info(
-                f'Version {self.version} is not a valid version'
-            )
+            self.logger.info(f'Version {self.version} is not a valid version')
             return
 
         self.check_params()
@@ -294,7 +292,6 @@ class ScanOperatorPipeline:
         FBC names append -fbc suffix (e.g., 'dpu-operator-fbc').
         """
         return f'{operator_name}-fbc'
-
 
 
 @cli.command('scan-operator')
