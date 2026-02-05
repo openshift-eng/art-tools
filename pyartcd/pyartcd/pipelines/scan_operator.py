@@ -139,6 +139,7 @@ class ScanOperatorPipeline:
                 group=self.group,
                 assembly=self.assembly,
                 outcome=KonfluxBuildOutcome.SUCCESS,
+                exclude_large_columns=True,
             )
             for operator_name in operator_names
         ]
