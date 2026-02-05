@@ -410,8 +410,10 @@ if [[ -n "$REAL_GO_PATH" ]]; then
     mkdir -p $GOSHIM_DIR
     ln -s $REAL_GO_PATH $GOSHIM_DIR/go.real
     export PATH=$GOSHIM_DIR:$PATH
-    # Use single quotes 'EOF' to avoid variable expansion.
+    # Use single quotes 'EOF' to avoid variable expansion within script content.
 cat > $GOSHIM_DIR/go << 'EOF'
+#!/bin/sh
+export GO_COMPLIANCE_COVER={'1' if rpm.runtime.group_config.build_profiles.enable_go_cover is True else '0'}
 {rpm_builder_go_wrapper_sh}
 EOF
     chmod +x $GOSHIM_DIR/go

@@ -1078,6 +1078,11 @@ class KonfluxRebaser:
             # Allow environment variables to be specified in the ART image metadata
             metadata_envs.update(metadata.config.envs.primitive())
 
+        if self._runtime.group_config.build_profiles.enable_go_cover is True:
+            # This must be implemented by the ART golang wrappers
+            # in order to have any effect.
+            metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+
         df_fileobj = self._update_yum_update_commands(metadata, force_yum_updates, io.StringIO(df_content))
         with Path(dfp.dockerfile_path).open('w', encoding="utf-8") as df:
             shutil.copyfileobj(df_fileobj, df)

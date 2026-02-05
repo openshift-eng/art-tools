@@ -1,4 +1,3 @@
-#!/bin/sh
 export GOEXPERIMENT=strictfipsruntime
 export GOTOOLCHAIN=local
 
@@ -67,6 +66,13 @@ for arg in "$@"; do
       # So, if we see "build" and no "-tags" ahead, then go ahead and force FOD tag.
 
       ARGS+=("${arg}") # Add "build"
+
+      if [[ "${GO_COMPLIANCE_COVER:-}" == "1" ]]; then
+        echoerr "adding -cover for build or install operation"
+        ARGS+=("-cover")
+        ARGS+=("-covermode=atomic")
+      fi
+
       if [[ "${FORCE_FOD_MODE}" == "1" && "${HAS_TAGS}" == "0" ]]; then
         ARGS+=("-tags")
         ARGS+=("strictfipsruntime")
