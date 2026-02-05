@@ -1,20 +1,16 @@
 import asyncio
 import logging
-import os
-from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set
 
 import click
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import (
-    ArtifactType,
-    Engine,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
-from artcommonlib.konflux.konflux_db import LARGE_COLUMNS, KonfluxDb
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import uses_konflux_imagestream_override
 
 from pyartcd import constants, jenkins, locks
@@ -107,14 +103,14 @@ class ScanOperatorPipeline:
 
         if self.operators_without_bundles:
             try:
-                await self.trigger_bundle_builds(self.operators_without_bundles)
+                self.trigger_bundle_builds(self.operators_without_bundles)
             except Exception as e:
                 trigger_errors.append(e)
                 self.logger.error(f'Failed to trigger bundle builds: {e}')
 
         if self.operators_without_fbcs:
             try:
-                await self.trigger_fbc_builds(self.operators_without_fbcs)
+                self.trigger_fbc_builds(self.operators_without_fbcs)
             except Exception as e:
                 trigger_errors.append(e)
                 self.logger.error(f'Failed to trigger FBC builds: {e}')
@@ -166,21 +162,19 @@ class ScanOperatorPipeline:
 
     async def check_operator(self, operator: KonfluxBuildRecord):
         """Check one operator for missing bundle/FBC builds."""
-        # Check bundle
-        bundle_exists, bundle = await self.check_bundle_exists(operator)
-        if not bundle_exists:
+        bundle = await self.check_bundle_exists(operator)
+
+        if bundle is None:
+            # No bundle - trigger build
             self.operators_without_bundles.append(operator)
-
-        # Check FBC (only if bundle completed successfully)
-        # Pending bundles will auto-trigger build-fbc job when their job completes
-        if bundle_exists and bundle:
-            fbc_exists, fbc_record = await self.check_fbc_exists(operator, bundle)
-            if not fbc_exists:
+        elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
+            # Bundle completed - check FBC
+            fbc = await self.check_fbc_exists(operator, bundle)
+            if fbc is None:
                 self.operators_without_fbcs.append(operator)
+        # If bundle.outcome == PENDING, do nothing (auto-triggers when complete)
 
-    async def check_bundle_exists(
-        self, operator: KonfluxBuildRecord
-    ) -> Tuple[bool, Optional[KonfluxBundleBuildRecord]]:
+    async def check_bundle_exists(self, operator: KonfluxBuildRecord) -> Optional[KonfluxBundleBuildRecord]:
         """Check if bundle build exists for operator."""
         bundle_name = self.get_bundle_name(operator.name)
 
@@ -195,7 +189,7 @@ class ScanOperatorPipeline:
 
         if bundle:
             self.logger.info(f'  Bundle for {operator.nvr} exists: {bundle.nvr}')
-            return True, bundle
+            return bundle
 
         # Check for pending bundle (avoid duplicate triggers)
         pending = await self.bundle_db.get_latest_build(
@@ -208,18 +202,15 @@ class ScanOperatorPipeline:
 
         if pending:
             self.logger.info(f'  Bundle build for {operator.nvr} in progress: {pending.nvr}')
-            return True, None  # Treat pending as if a bundle already exists
+            return pending
 
         self.logger.info(f'  Bundle MISSING for {operator.nvr}')
-        return False, None
+        return None
 
     async def check_fbc_exists(
-        self, operator: KonfluxBuildRecord, bundle: Optional[KonfluxBundleBuildRecord]
-    ) -> Tuple[bool, Optional[KonfluxFbcBuildRecord]]:
+        self, operator: KonfluxBuildRecord, bundle: KonfluxBundleBuildRecord
+    ) -> Optional[KonfluxFbcBuildRecord]:
         """Check if FBC build exists containing this operator's bundle."""
-        if not bundle:
-            return False, None  # No bundle yet
-
         fbc_name = self.get_fbc_name(operator.name)
 
         # Query FBC records containing this bundle NVR
@@ -236,7 +227,7 @@ class ScanOperatorPipeline:
             sorting='DESC',
         ):
             self.logger.info(f'  FBC build for {operator.nvr} exists: {fbc.nvr}')
-            return True, fbc
+            return fbc
 
         # Check for pending FBC containing this specific bundle
         async for fbc in self.fbc_db.search_builds_by_fields(
@@ -252,12 +243,12 @@ class ScanOperatorPipeline:
             sorting='DESC',
         ):
             self.logger.info(f'  FBC build for {operator.nvr} in progress: {fbc.nvr}')
-            return True, None  # Treat pending as exists
+            return fbc
 
         self.logger.info(f'  FBC MISSING for operator {operator.nvr}')
-        return False, None
+        return None
 
-    async def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
+    def trigger_bundle_builds(self, operators: List[KonfluxBuildRecord]):
         """Trigger bundle builds for multiple operators in one job."""
         nvrs = [op.nvr for op in operators]
 
@@ -273,7 +264,7 @@ class ScanOperatorPipeline:
             group=self.group,
         )
 
-    async def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
+    def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
         """Trigger FBC builds for multiple operators in one job."""
         nvrs = [op.nvr for op in operators]
 
