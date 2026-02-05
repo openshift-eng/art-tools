@@ -102,11 +102,26 @@ class ScanOperatorPipeline:
             if isinstance(result, Exception):
                 self.logger.error(f'Failed to process {operator_builds[i].nvr}: {result}')
 
+        # Track failures to trigger bundle/fbc jobs
+        trigger_errors = []
+
         if self.operators_without_bundles:
-            await self.trigger_bundle_builds(self.operators_without_bundles)
+            try:
+                await self.trigger_bundle_builds(self.operators_without_bundles)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error(f'Failed to trigger bundle builds: {e}')
 
         if self.operators_without_fbcs:
-            await self.trigger_fbc_builds(self.operators_without_fbcs)
+            try:
+                await self.trigger_fbc_builds(self.operators_without_fbcs)
+            except Exception as e:
+                trigger_errors.append(e)
+                self.logger.error(f'Failed to trigger FBC builds: {e}')
+
+        # Raise at the end to mark job as failed
+        if trigger_errors:
+            raise RuntimeError(f"Failed to trigger bundle and/or FBC builds: {', '.join(map(str, trigger_errors))}")
 
     def check_params(self):
         """Validate pipeline parameters."""
@@ -250,16 +265,13 @@ class ScanOperatorPipeline:
             self.logger.info(f'[DRY-RUN] Would trigger bundle builds for {len(nvrs)} operators: {", ".join(nvrs)}')
             return
 
-        try:
-            self.logger.info(f'Triggering bundle builds for {len(nvrs)} operators')
-            jenkins.start_olm_bundle_konflux(
-                build_version=self.version,
-                assembly=self.assembly,
-                operator_nvrs=nvrs,
-                group=self.group,
-            )
-        except Exception as e:
-            self.logger.error(f'Failed to trigger bundle builds: {e}')
+        self.logger.info(f'Triggering bundle builds for {len(nvrs)} operators')
+        jenkins.start_olm_bundle_konflux(
+            build_version=self.version,
+            assembly=self.assembly,
+            operator_nvrs=nvrs,
+            group=self.group,
+        )
 
     async def trigger_fbc_builds(self, operators: List[KonfluxBuildRecord]):
         """Trigger FBC builds for multiple operators in one job."""
@@ -269,17 +281,14 @@ class ScanOperatorPipeline:
             self.logger.info(f'[DRY-RUN] Would trigger FBC builds for {len(nvrs)} operators: {", ".join(nvrs)}')
             return
 
-        try:
-            self.logger.info(f'Triggering FBC builds for {len(nvrs)} operators')
-            jenkins.start_build_fbc(
-                version=self.version,
-                assembly=self.assembly,
-                operator_nvrs=nvrs,
-                dry_run=False,
-                group=self.group,
-            )
-        except Exception as e:
-            self.logger.error(f'Failed to trigger FBC builds: {e}')
+        self.logger.info(f'Triggering FBC builds for {len(nvrs)} operators')
+        jenkins.start_build_fbc(
+            version=self.version,
+            assembly=self.assembly,
+            operator_nvrs=nvrs,
+            dry_run=False,
+            group=self.group,
+        )
 
     def get_bundle_name(self, operator_name: str) -> str:
         """Get bundle name from operator name.
