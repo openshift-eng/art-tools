@@ -625,9 +625,7 @@ class ReleaseFromFbcPipeline:
                     )
                     fbc_to_doozer_key[fbc_pullspec] = operator_name
                 else:
-                    self.logger.warning(
-                        f"Could not determine operator for {fbc_pullspec}, using 'unknown' as group"
-                    )
+                    self.logger.warning(f"Could not determine operator for {fbc_pullspec}, using 'unknown' as group")
                     fbc_to_doozer_key[fbc_pullspec] = 'unknown'
 
         operator_to_fbcs: Dict[str, List[str]] = defaultdict(list)
