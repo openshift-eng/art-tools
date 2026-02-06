@@ -731,13 +731,16 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
         )
         for image in image_metas
     ]
-    records: list[dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
-    if len(records) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
+    records = await asyncio.gather(*tasks)
+    images_not_found: list[dict] = [image_metas[i].name for i, r in enumerate(records) if r is None]
+    if images_not_found:
+        message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
+        LOGGER.error(message)
+        raise ElliottFatalError(message)
     return records
 
 
-async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
+async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
     and fetch related OLM bundle builds. Respects network mode configuration for each image.
@@ -784,12 +787,12 @@ async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
                 enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
             )
         )
-    results = await asyncio.gather(*[task for task in tasks])
-    records_with_olm = [
-        (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None
-    ]
-    if len(records_with_olm) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records_with_olm)} images")
+    results = await asyncio.gather(*tasks)
+    images_not_found: list[dict] = [image_metas[i][1].name for i, r in enumerate(results) if r is None]
+    if images_not_found:
+        message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
+        LOGGER.error(message)
+        raise ElliottFatalError(message)
 
     # get related bundle records in KonfluxBundleBuildRecord
     LOGGER.info("Fetching bundle NVRs from DB ...")
@@ -797,6 +800,7 @@ async def find_builds_konflux_all_types(runtime) -> dict[str, list]:
 
     operator_builds = []
     olm_tasks = []
+    records_with_olm = [(is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results)]
     for is_olm, is_payload, record in records_with_olm:
         if is_olm:
             operator_builds.append(record)
