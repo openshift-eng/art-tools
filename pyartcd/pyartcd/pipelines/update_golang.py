@@ -268,8 +268,8 @@ class UpdateGolangPipeline:
             if self.build_system in ['both', 'konflux'] and konflux_missing:
                 build_tasks.extend([self._rebase_and_build_konflux(el_v, go_version) for el_v in konflux_missing])
             if build_tasks:
-                await asyncio.gather(*build_tasks, return_exceptions=True)
-            errors = [task for task in build_tasks if isinstance(task, Exception)]
+                results = await asyncio.gather(*build_tasks, return_exceptions=True)
+            errors = [r for r in results if isinstance(r, Exception)]
             if errors:
                 error_msgs = "\n".join([str(e) for e in errors])
                 raise RuntimeError(f"{len(errors)} image build(s) failed:\n{error_msgs}")
