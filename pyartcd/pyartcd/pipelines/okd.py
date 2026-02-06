@@ -604,7 +604,7 @@ class KonfluxOkdPipeline:
             return yaml.safe_load(state_yaml)
 
 
-@cli.command("okd", help="A pipeline to build images with Konflux for OCP")
+@cli.command("okd", help="A pipeline to build images with Konflux for OKD")
 @click.option(
     '--image-build-strategy',
     required=True,
@@ -649,7 +649,7 @@ class KonfluxOkdPipeline:
     '--imagestream-namespace',
     required=False,
     default='origin',
-    help='Namespace for OKD imagestream updates (default: ocp)',
+    help='Namespace for OKD imagestream updates (default: origin)',
 )
 @pass_runtime
 @click_coroutine

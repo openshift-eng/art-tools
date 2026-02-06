@@ -160,7 +160,7 @@ class Ocp4ScanPipeline:
         changed_rpm = self.changes.get('rpms', [])
 
         # Filter out okd-only images (mode: disabled, okd.mode: enabled)
-        # These will be built by trigger_okd4() only
+        # These will be built by trigger_okd() only
         changed_ocp_images = [
             image['name']
             for image in self.report.get('images', [])
@@ -247,7 +247,7 @@ class Ocp4ScanPipeline:
             )
             return
 
-        # Trigger okd4 build
+        # Trigger okd build
         self.logger.info('Triggering a %s okd build with %d images', self.version, len(changed_okd_images))
         jenkins.start_okd(
             build_version=self.version,
