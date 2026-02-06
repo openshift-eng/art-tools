@@ -1197,7 +1197,10 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
 
         result = metadata.get_required_artifacts()
-        expected = ["https://example.com/cert1.pem", "https://example.com/cert2.pem"]
+        expected = [
+            {'url': "https://example.com/cert1.pem", 'filename': None},
+            {'url': "https://example.com/cert2.pem", 'filename': None},
+        ]
         self.assertEqual(result, expected)
 
     def test_get_required_artifacts_missing_resources(self):

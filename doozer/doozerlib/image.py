@@ -1203,12 +1203,28 @@ class ImageMetadata(Metadata):
         return artifact_lockfile_enabled
 
     def get_required_artifacts(self) -> list:
-        """Get list of required artifact URLs from image config."""
+        """
+        Get list of required artifacts from image config.
+
+        Returns:
+            list[dict]: List of dicts with 'url' and 'filename' keys.
+                        Normalizes both string URLs and object formats.
+        """
         if not self.is_artifact_lockfile_enabled():
             return []
 
-        resource_urls = self.config.konflux.cachi2.artifact_lockfile.resources
-        if resource_urls in [Missing, None]:
+        resources = self.config.konflux.cachi2.artifact_lockfile.resources
+        if resources in [Missing, None]:
             return []
 
-        return resource_urls  # Direct URL list
+        # Normalize to list of dicts
+        normalized = []
+        for resource in resources:
+            if isinstance(resource, str):
+                # Simple URL string - filename will be extracted from URL
+                normalized.append({'url': resource, 'filename': None})
+            elif isinstance(resource, dict):
+                # Object format with url and optional filename
+                normalized.append({'url': resource['url'], 'filename': resource.get('filename', None)})
+
+        return normalized
