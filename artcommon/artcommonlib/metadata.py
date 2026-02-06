@@ -480,10 +480,21 @@ class MetadataBase(object):
             )
             extra_patterns["hermetic"] = is_hermetic
 
+        # Determine the correct group and el_target for querying builds
+        # For okd-only images (mode: disabled, okd.mode: enabled), use the okd group variant
+        query_group = self.runtime.group
+        is_okd_only = False
+        if self.mode == 'disabled':
+            if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
+                # This is an okd-only image, use okd group (e.g., okd-4.23 instead of openshift-4.23)
+                is_okd_only = True
+                query_group = self.runtime.group.replace('openshift-', 'okd-')
+                self.logger.debug(f"Using OKD group '{query_group}' for okd-only image {self.distgit_key}")
+
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
             'name': self.distgit_key if self.meta_type == 'image' else self.config.name,
-            'group': self.runtime.group,
+            'group': query_group,
             'outcome': outcome,
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
@@ -491,7 +502,10 @@ class MetadataBase(object):
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            el_target = f'el{el_target}'
+            if self.meta_type == 'image' and is_okd_only:
+                el_target = f'scos{el_target}'
+            else:
+                el_target = f'el{el_target}'
 
         if self.meta_type == 'rpm':
             # For RPMs, if rhel target is not set fetch true latest
@@ -499,7 +513,12 @@ class MetadataBase(object):
                 base_search_params['el_target'] = el_target
         else:
             # For images, if rhel target is not set default to the rhel version in this group
-            base_search_params['el_target'] = el_target if el_target else f'el{self.branch_el_target()}'
+            if el_target:
+                base_search_params['el_target'] = el_target
+            else:
+                # OKD builds use 'scos' prefix instead of 'el' (e.g., scos9 vs el9)
+                el_prefix = 'scos' if is_okd_only else 'el'
+                base_search_params['el_target'] = f'{el_prefix}{self.branch_el_target()}'
 
         assembly = assembly if assembly else self.runtime.assembly
         if not assembly:
@@ -536,7 +555,7 @@ class MetadataBase(object):
             self.logger.warning(
                 'No build found for %s in group and %s assembly %s',
                 self.distgit_key,
-                self.runtime.group,
+                query_group,
                 self.runtime.assembly,
             )
             return default

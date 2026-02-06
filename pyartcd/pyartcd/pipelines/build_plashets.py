@@ -123,7 +123,12 @@ class BuildPlashetsPipeline:
     "Those repos can be signed (release state) or unsigned (pre-release state)",
 )
 @click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.14, openshift-5.0')
-@click.option('--release', required=True, help='e.g. 201901011200.?')
+@click.option(
+    '--release',
+    required=False,
+    default='',
+    help='e.g. 201901011200.p? (auto-generated from current timestamp if not provided)',
+)
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
     '--repos',
@@ -151,6 +156,11 @@ async def build_plashets_cli(
     data_gitref: str,
     copy_links: bool,
 ):
+    # Auto-generate release timestamp if not provided
+    if not release:
+        release = util.default_release_suffix()
+        runtime.logger.info(f'Auto-generated release timestamp: {release}')
+
     pipeline = BuildPlashetsPipeline(
         runtime=runtime,
         group=group,

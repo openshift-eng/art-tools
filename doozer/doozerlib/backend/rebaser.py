@@ -41,6 +41,8 @@ CPE_PRODUCT_NAME_MAPPING = {
     'rhmtc': 'rhmt',
     'oadp': 'openshift_api_data_protection',
     'mta': 'migration_toolkit_applications',
+    'logging': 'logging',
+    'openshift-logging': 'logging',
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -1579,7 +1581,17 @@ class KonfluxRebaser:
         """
         for entry in reversed(dfp.structure):
             if entry['instruction'] == 'RUN':
-                changed, new_value = self._mangle_pkgmgr(entry['value'])
+                if self._runtime.group.startswith('openshift-'):
+                    changed, new_value = self._mangle_pkgmgr(entry['value'])
+                else:
+                    # Only parse if command contains package manager keywords
+                    if not re.search(r'\b(yum|dnf|microdnf|yum-config-manager)\b', entry['value']):
+                        continue
+                    try:
+                        changed, new_value = self._mangle_pkgmgr(entry['value'])
+                    except (IOError, NotImplementedError) as e:
+                        self._logger.warning(f"Cannot parse RUN command, skipping: {str(e)[:100]}")
+                        continue
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
