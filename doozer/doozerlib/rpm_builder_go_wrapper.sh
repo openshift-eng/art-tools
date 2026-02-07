@@ -45,7 +45,9 @@ FORCE_FOD_MODE=1
 FORCE_OPENSSL=1
 FORCE_DYNAMIC=1
 IN_RUN=0
+IN_BUILD=0
 IN_TAGS=0
+COVERAGE_ADDED=0  # Track whether coverage_server.go has been added to the args
 ARGS=()  # We need to rebuild the argument list.
 # Compilation with -extldflags "-static" is problematic with
 # CGO_ENABLED=1 because compilation tries to link against
@@ -65,6 +67,7 @@ for arg in "$@"; do
       # e.g. "build ./cmd/cluster-openshift-apiserver-operator -tags strictfipsruntime" is invalid.
       # So, if we see "build" and no "-tags" ahead, then go ahead and force FOD tag.
 
+      IN_BUILD="1"  # This is a go build invocation
       ARGS+=("${arg}") # Add "build"
 
       if [[ "${GO_COMPLIANCE_COVER:-}" == "1" ]]; then
@@ -140,6 +143,23 @@ for arg in "$@"; do
       fi
     fi
     ARGS+=("${arg}")
+
+    # When coverage is enabled and explicit .go files are being compiled,
+    # ensure coverage_server.go is included if it exists alongside them.
+    # Package-path builds (e.g. ./cmd/...) don't need this since Go
+    # automatically includes all .go files in the package.
+    if [[ "${GO_COMPLIANCE_COVER:-}" == "1" && "${IN_BUILD}" == "1" && "${COVERAGE_ADDED}" == "0" && "${arg}" == *.go ]]; then
+      if [[ "$(basename "${arg}")" == "coverage_server.go" ]]; then
+        COVERAGE_ADDED=1
+      else
+        coverage_path="$(dirname "${arg}")/coverage_server.go"
+        if [[ -f "${coverage_path}" ]]; then
+          echoerr "adding ${coverage_path} to build for coverage instrumentation"
+          ARGS+=("${coverage_path}")
+          COVERAGE_ADDED=1
+        fi
+      fi
+    fi
 done
 
 echo 1>&2

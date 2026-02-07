@@ -825,9 +825,14 @@ def get_konflux_build_priority(metadata, group):
 
     :param metadata: ImageMetadata object containing config and runtime info
     :param group: doozer group, eg: openshift-4.15 / oadp-1.5
-    :return: Priority value as string (1-10)
+    :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
+
+    def higher_by(val: int) -> str:
+        new_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - val))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {new_priority} (phase: {phase})")
+        return new_priority
 
     # 1. Image config priority
     image_config_priority = metadata.config.konflux.get("build_priority")
@@ -841,16 +846,18 @@ def get_konflux_build_priority(metadata, group):
         logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
         return str(group_config_priority)
 
-    # 3. Higher than default priority for main & pre-GA N-1 streams.
+    # 3. Golang builder images are high priority since they block other builds.
+    if 'golang' in group:
+        # Prioritize since golang builds may be part of addressing security issues.
+        return higher_by(3)
+
+    # 4. Higher than default priority for main & pre-GA N-1 streams.
     phase = metadata.runtime.group_config.software_lifecycle.phase
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):
-        pre_release_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - 2))
-        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {pre_release_priority} (phase: {phase})")
-        return pre_release_priority
+        return higher_by(2)
 
     # Default
-    logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
-    return str(constants.KONFLUX_DEFAULT_BUILD_PRIORITY)
+    return higher_by(0)
 
 
 def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:

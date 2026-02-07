@@ -218,6 +218,7 @@ if [[ "${EXEMPT}" != "1" ]]; then
   IN_BUILD=0
   IN_RUN=0
   IN_TAGS=0
+  COVERAGE_ADDED=0  # Track whether coverage_server.go has been added to the args
   ARGS=()  # We need to rebuild the argument list.
   for arg in "$@"; do
 
@@ -322,6 +323,23 @@ if [[ "${EXEMPT}" != "1" ]]; then
       fi
     fi
     ARGS+=("${arg}")
+
+    # When coverage is enabled and explicit .go files are being compiled,
+    # ensure coverage_server.go is included if it exists alongside them.
+    # Package-path builds (e.g. ./cmd/...) don't need this since Go
+    # automatically includes all .go files in the package.
+    if [[ "${GO_COMPLIANCE_COVER}" == "1" && "${IN_BUILD}" == "1" && "${COVERAGE_ADDED}" == "0" && "${arg}" == *.go ]]; then
+      if [[ "$(basename "${arg}")" == "coverage_server.go" ]]; then
+        COVERAGE_ADDED=1
+      else
+        coverage_path="$(dirname "${arg}")/coverage_server.go"
+        if [[ -f "${coverage_path}" ]]; then
+          echoerr "adding ${coverage_path} to build for coverage instrumentation"
+          ARGS+=("${coverage_path}")
+          COVERAGE_ADDED=1
+        fi
+      fi
+    fi
   done
 
   if [[ "${FORCE_CGO_ENABLED}" == "1" && "${IN_BUILD}" == "1" ]]; then
