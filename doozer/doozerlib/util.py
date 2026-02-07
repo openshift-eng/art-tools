@@ -942,3 +942,80 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
     except Exception as e:
         logger.warning(f"Error checking for nightly: {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Go coverage instrumentation helpers
+# ---------------------------------------------------------------------------
+
+# Path to the coverage_server.go resource bundled with doozerlib
+_COVERAGE_SERVER_GO = pathlib.Path(__file__).parent / 'resources' / 'coverage_server.go'
+
+# Compiled regex to detect 'package main' declarations in Go source files
+_PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
+
+# Directories that should be skipped when scanning for main packages
+_SKIP_DIRS = frozenset({'.git', 'vendor', 'node_modules', '.idea', '.vscode', '__pycache__'})
+
+
+def _is_package_main(file_path: pathlib.Path) -> bool:
+    """Return True if *file_path* contains a ``package main`` declaration
+    within the first 50 lines.
+    """
+    try:
+        with file_path.open('rb') as f:
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _PKG_MAIN_PATTERN.match(line):
+                    return True
+    except (OSError, PermissionError):
+        pass
+    return False
+
+
+def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
+    """Return a sorted list of directories under *root_path* that contain a
+    Go ``package main`` source file (excluding ``_test.go`` files).
+    """
+    root = root_path.resolve()
+    main_dirs: set[pathlib.Path] = set()
+
+    for current_root, dirs, files in os.walk(root):
+        # Prune directories in-place to avoid descending into irrelevant trees
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+
+        current_path = pathlib.Path(current_root)
+        for file in files:
+            if not file.endswith('.go') or file.endswith('_test.go'):
+                continue
+            if _is_package_main(current_path / file):
+                main_dirs.add(current_path)
+                break  # No need to check other files in this directory
+
+    return sorted(main_dirs)
+
+
+def inject_coverage_server(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_server.go`` into every Go ``main`` package directory
+    found under *dg_path* so that the coverage HTTP server is compiled into
+    each binary via its ``init()`` function.
+    """
+    import shutil
+
+    if not _COVERAGE_SERVER_GO.is_file():
+        logger_instance.warning('coverage_server.go resource not found at %s; skipping injection', _COVERAGE_SERVER_GO)
+        return
+
+    main_dirs = find_go_main_packages(dg_path)
+    if not main_dirs:
+        logger_instance.debug('No Go main packages found under %s; nothing to inject', dg_path)
+        return
+
+    for pkg_dir in main_dirs:
+        dest = pkg_dir / _COVERAGE_SERVER_GO.name
+        shutil.copy2(str(_COVERAGE_SERVER_GO), str(dest))
+        logger_instance.info('Injected %s into %s', _COVERAGE_SERVER_GO.name, pkg_dir)
+
+    logger_instance.info('Injected coverage server into %d main package(s)', len(main_dirs))

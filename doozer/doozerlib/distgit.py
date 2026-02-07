@@ -2255,6 +2255,9 @@ class ImageDistGitRepo(DistGitRepo):
                 # This must be implemented by the ART golang wrappers
                 # in order to have any effect.
                 metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+                # Inject the coverage HTTP server source into every Go main package
+                # directory so that it is compiled into the binary via its init() function.
+                util.inject_coverage_server(dg_path, self.logger)
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:

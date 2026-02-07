@@ -15,7 +15,7 @@ from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 
-from doozerlib import brew
+from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata
@@ -118,6 +118,11 @@ class RPMBuilder:
             )
 
         rpm.specfile = str(dg_specfile_path)
+
+        if rpm.runtime.group_config.build_profiles.enable_go_cover is True:
+            # Inject the coverage HTTP server source into every Go main package
+            # directory so that it is compiled into the binary via its init() function.
+            util.inject_coverage_server(Path(rpm.source_path), logger)
 
         # create tarball source as Source0
         logger.info("Creating tarball source...")
