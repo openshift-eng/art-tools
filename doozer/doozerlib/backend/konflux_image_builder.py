@@ -18,6 +18,7 @@ from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
@@ -950,13 +951,15 @@ class KonfluxImageBuilder:
             try:
                 # Use oc image info with optional auth file to get image labels
                 # Use --filter-by-os to handle manifest list images
-                auth_arg = f"-a {registry_auth_file}" if registry_auth_file else ""
-                cmd = f"oc image info -o json --filter-by-os=amd64 {auth_arg} {pullspec}"
-                rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
-
-                if rc != 0:
+                try:
+                    stdout = await oc_image_info__cached_async(
+                        pullspec,
+                        '--filter-by-os=amd64',
+                        registry_config=registry_auth_file if registry_auth_file else None,
+                    )
+                except ChildProcessError as e:
                     # Could not access the image - this is unexpected and worth a warning
-                    logger.warning(f"Could not access parent image {pullspec}: {stderr}")
+                    logger.warning(f"Could not access parent image {pullspec}: {e}")
                     parent_image_nvrs.append(pullspec)
                     continue
 

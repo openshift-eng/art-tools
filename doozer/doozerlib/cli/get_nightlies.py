@@ -9,6 +9,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.util import uses_konflux_imagestream_override
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -389,8 +390,9 @@ class Nightly:
     async def retrieve_image_info_async(self, pullspec: str) -> Model:
         """pull/cache/return json info for a container pullspec (enable concurrency)"""
         if pullspec not in image_info_cache:
-            _, image_json_str, _ = await exectools.cmd_gather_async(
-                f"oc image info {pullspec} -o=json --filter-by-os=amd64",
+            image_json_str = await oc_image_info__cached_async(
+                pullspec,
+                '--filter-by-os=amd64',
             )
             image_info_cache[pullspec] = Model(json.loads(image_json_str))
         return image_info_cache[pullspec]

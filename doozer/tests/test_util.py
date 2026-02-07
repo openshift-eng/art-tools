@@ -121,25 +121,25 @@ class TestUtil(unittest.TestCase):
     def test_oc_image_info_show_multiarch(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_show_multiarch('pullspec')
-        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'])
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_show_multiarch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_show_multiarch__caching('pullspec')
-        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'])
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_for_arch(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_for_arch('pullspec')
-        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'])
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_for_arch_with_custom_arch(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_for_arch('pullspec', go_arch='arm64')
-        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=arm64'])
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=arm64', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_for_arch_with_registry_config(self, gather_mock):
@@ -152,9 +152,9 @@ class TestUtil(unittest.TestCase):
                 'info',
                 '-o',
                 'json',
-                'pullspec',
                 '--filter-by-os=amd64',
                 '--registry-config=/path/to/config.json',
+                'pullspec',
             ]
         )
 
@@ -176,7 +176,7 @@ class TestUtil(unittest.TestCase):
     def test_oc_image_info_for_arch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_for_arch__caching('pullspec')
-        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'])
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
 
     @patch("doozerlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, oc_image_info_mock):
