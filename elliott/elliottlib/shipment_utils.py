@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
 import gitlab
+from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 
@@ -107,9 +108,9 @@ def set_bugzilla_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[int | st
 
 def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
     non_jira_issues = (
-        [b for b in release_notes.issues.fixed if b.source != "issues.redhat.com"] if release_notes.issues else []
+        [b for b in release_notes.issues.fixed if b.source != JIRA_DOMAIN_NAME] if release_notes.issues else []
     )
-    fixed = non_jira_issues + [Issue(id=str(issue_id), source="issues.redhat.com") for issue_id in sorted(set(bug_ids))]
+    fixed = non_jira_issues + [Issue(id=str(issue_id), source=JIRA_DOMAIN_NAME) for issue_id in sorted(set(bug_ids))]
     fixed.sort(key=lambda x: x.id)
     if not fixed:
         release_notes.issues = None
