@@ -490,6 +490,8 @@ class KonfluxOkdPipeline:
         Mirrors:
         - origin/scos-{version}:stream-coreos -> origin/scos-{version}-art:stream-coreos
         - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+
+        Special case for OKD 5.0: Uses 4.23 as the source since 5.0 CoreOS tags don't exist yet.
         """
 
         if self.assembly != 'stream':
@@ -498,17 +500,20 @@ class KonfluxOkdPipeline:
 
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
 
+        # For OKD 5.0, use 4.23 as the source since 5.0 CoreOS tags don't exist
+        source_version = '4.23' if self.version == '5.0' else self.version
+
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
-                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{self.version}:{tag}')
+                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{source_version}:{tag}')
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
 
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_tag = f'{self.imagestream_namespace}/scos-{self.version}:{tag}'
+            source_tag = f'{self.imagestream_namespace}/scos-{source_version}:{tag}'
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
             self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_tag, target_tag)
