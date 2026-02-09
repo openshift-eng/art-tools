@@ -993,11 +993,111 @@ class PrepareReleaseKonfluxPipeline:
         stdout = await self.execute_command_with_logging(find_bugs_cmd)
         return json.loads(stdout)
 
+    async def get_reference_release_digests(self) -> Dict[str, str]:
+        """
+        Extract SHA256 digests from reference releases (nightlies) defined in the assembly basis.
+
+        :return: Dict mapping architecture names to their SHA256 digests
+        """
+        from pyartcd.oc import get_release_image_info
+
+        # Get reference releases from assembly basis
+        nightlies = get_assembly_basis(self.releases_config, self.assembly).get("reference_releases", {}).values()
+        candidate_nightlies = nightlies_with_pullspecs(nightlies)
+
+        self.logger.info("Extracting SHA digests from reference releases: %s", candidate_nightlies)
+
+        payload_shas = {}
+        for arch, pullspec in candidate_nightlies.items():
+            try:
+                # Get release image info which includes the digest
+                release_info = await get_release_image_info(pullspec, raise_if_not_found=True)
+
+                # Extract digest from the release info
+                # The digest is in the format sha256:abc123...
+                digest = release_info.get("digest")
+                if not digest:
+                    self.logger.warning(f"No digest found for {arch} release: {pullspec}")
+                    continue
+
+                payload_shas[arch] = digest
+                self.logger.info(f"Extracted digest for {arch}: {digest}")
+
+            except Exception as ex:
+                self.logger.error(f"Failed to extract digest for {arch} from {pullspec}: {ex}")
+                raise
+
+        return payload_shas
+
+    def replace_digest_placeholders(self, shipment: ShipmentConfig, payload_shas: Dict[str, str]):
+        """
+        Replace digest placeholders in shipment's solution field with actual SHA values.
+
+        :param shipment: The shipment config to update
+        :param payload_shas: Dict mapping architecture names to their SHA256 digests
+        """
+        if not hasattr(shipment.shipment.data, 'releaseNotes') or not shipment.shipment.data.releaseNotes:
+            self.logger.warning("No releaseNotes found in shipment, skipping digest replacement")
+            return
+
+        solution = shipment.shipment.data.releaseNotes.solution
+        if not solution:
+            self.logger.warning("No solution field found in releaseNotes, skipping digest replacement")
+            return
+
+        # Build format dictionary for template replacement
+        format_dict = {}
+        for arch, sha in payload_shas.items():
+            # Map architecture names to format variables
+            # Note: x864_DIGEST is used for x86_64 (shorthand/typo in original code)
+            if arch == "x86_64":
+                format_dict["x864_DIGEST"] = sha
+            elif arch == "s390x":
+                format_dict["s390x_DIGEST"] = sha
+            elif arch == "ppc64le":
+                format_dict["ppc64le_DIGEST"] = sha
+            elif arch == "aarch64":
+                format_dict["aarch64_DIGEST"] = sha
+            else:
+                self.logger.warning(f"Unknown architecture {arch}, skipping template replacement")
+                continue
+
+        # Check if any placeholders are present
+        placeholders_found = []
+        for var_name in format_dict.keys():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in solution:
+                placeholders_found.append(placeholder)
+
+        if not placeholders_found:
+            self.logger.info("No digest placeholders found in solution field")
+            return
+
+        self.logger.info(f"Found digest placeholders in solution: {placeholders_found}")
+
+        # Replace template placeholders
+        updated_solution = solution
+        templates_replaced = 0
+        for var_name, replacement_value in format_dict.items():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in updated_solution:
+                updated_solution = updated_solution.replace(placeholder, replacement_value)
+                templates_replaced += 1
+                self.logger.info(f"Replaced {placeholder} with {replacement_value}")
+
+        if templates_replaced > 0:
+            # Update the solution field
+            shipment.shipment.data.releaseNotes.solution = updated_solution
+            self.logger.info(f"Successfully replaced {templates_replaced} digest placeholders in solution field")
+
     async def attach_cve_flaws(self, kind: str, shipment: ShipmentConfig):
         """Attach CVE flaws to the given shipment.
         :param kind: The shipment kind for which to attach CVE flaws
         :param shipment: The shipment to attach CVE flaws to
         """
+
+        # Store the original type before attach-cve-flaws
+        original_type = shipment.shipment.data.releaseNotes.type if shipment.shipment.data.releaseNotes else None
 
         attach_cve_flaws_command = self._elliott_base_command + [
             'attach-cve-flaws',
@@ -1010,6 +1110,79 @@ class PrepareReleaseKonfluxPipeline:
         stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
             shipment.shipment.data.releaseNotes = ReleaseNotes(**Model(yaml.load(stdout)).primitive())
+
+            # Check advisory type changes
+            new_type = shipment.shipment.data.releaseNotes.type
+
+            # Handle RHBA to RHSA conversion
+            if original_type != "RHSA" and new_type == "RHSA":
+                self.logger.info(f"Advisory converted from {original_type} to RHSA for {kind}")
+
+                # For image shipments, replace digest placeholders with actual SHA values
+                if kind == "image":
+                    self.logger.info("Extracting SHA digests from reference releases to populate RHSA solution field")
+                    try:
+                        payload_shas = await self.get_reference_release_digests()
+                        self.replace_digest_placeholders(shipment, payload_shas)
+                        self.logger.info("Successfully populated digest placeholders for RHSA")
+                    except Exception as ex:
+                        self.logger.error(f"Failed to populate digest placeholders: {ex}")
+                        # Don't fail the whole process, just log the error
+                        await self._slack_client.say_in_thread(
+                            f"Warning: Failed to populate SHA digests in RHSA solution field: {ex}"
+                        )
+
+            # Handle RHSA to RHBA reconciliation
+            elif original_type == "RHSA" and new_type == "RHBA":
+                self.logger.warning(
+                    f"Advisory reconciled from RHSA back to RHBA for {kind}. "
+                    "This means CVE flaws were removed or are no longer applicable."
+                )
+
+                # For image shipments, ensure digest placeholders exist after reconciliation
+                if kind == "image":
+                    self.logger.info(
+                        "Checking if digest placeholders need to be restored after RHSA→RHBA reconciliation"
+                    )
+                    solution = (
+                        shipment.shipment.data.releaseNotes.solution if shipment.shipment.data.releaseNotes else None
+                    )
+
+                    if solution:
+                        # Check if solution has digest placeholders or actual SHA values
+                        has_placeholders = any(
+                            placeholder in solution
+                            for placeholder in [
+                                '{x864_DIGEST}',
+                                '{s390x_DIGEST}',
+                                '{ppc64le_DIGEST}',
+                                '{aarch64_DIGEST}',
+                            ]
+                        )
+                        has_sha_values = 'sha256:' in solution
+
+                        if has_sha_values and not has_placeholders:
+                            self.logger.info(
+                                "Solution field still contains SHA values from previous RHSA. "
+                                "These will be kept and can be used if advisory becomes RHSA again."
+                            )
+                        elif has_placeholders:
+                            self.logger.info(
+                                "Solution field has digest placeholders. "
+                                "These will be populated by promote job or if advisory becomes RHSA again."
+                            )
+                        else:
+                            self.logger.warning(
+                                "Solution field has neither placeholders nor SHA values. "
+                                "Consider adding digest placeholders to RHBA template in advisory_templates.yml"
+                            )
+
+            # Log if advisory type stays the same
+            elif original_type == new_type:
+                self.logger.info(f"Advisory type remains {new_type} for {kind}")
+
+            else:
+                self.logger.info(f"Advisory type changed from {original_type} to {new_type} for {kind}")
 
     async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig], env: str) -> str:
         """Create a new shipment MR with the given shipment config files.
