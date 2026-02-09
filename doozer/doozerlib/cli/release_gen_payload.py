@@ -31,7 +31,11 @@ from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import convert_remote_git_to_https, uses_konflux_imagestream_override
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    get_art_prod_image_repo_for_version,
+    uses_konflux_imagestream_override,
+)
 from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -114,15 +118,15 @@ class RepositoryType(Enum):
     "--repository",
     metavar="REPO",
     required=False,
-    default="ocp-v4.0-art-dev",
-    help="Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev",
+    default=None,
+    help="Quay REPOSITORY in ORGANIZATION to mirror into. If not specified, computed from OCP version (e.g., ocp-v5.0-art-dev for OCP 5.x)",
 )
 @click.option(
     "--private-repository",
     metavar="REPO",
     required=False,
-    default="ocp-v4.0-art-dev-priv",
-    help="Private Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev-priv",
+    default=None,
+    help="Private Quay REPOSITORY in ORGANIZATION to mirror into. If not specified, computed from OCP version (e.g., ocp-v5.0-art-dev-priv for OCP 5.x)",
 )
 @click.option(
     "--release-repository",
@@ -266,6 +270,17 @@ read and propagate/expose this annotation in its display of the release image.
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
         runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+
+    # Compute repository names if not specified
+    if repository is None:
+        major_version = int(runtime.group_config.vars['MAJOR'])
+        repository = get_art_prod_image_repo_for_version(major_version, "dev").split("/")[-1]
+        runtime.logger.info(f"Repository not specified, using computed value: {repository}")
+
+    if private_repository is None:
+        major_version = int(runtime.group_config.vars['MAJOR'])
+        private_repository = get_art_prod_image_repo_for_version(major_version, "dev-priv").split("/")[-1]
+        runtime.logger.info(f"Private repository not specified, using computed value: {private_repository}")
 
     await GenPayloadCli(
         runtime,

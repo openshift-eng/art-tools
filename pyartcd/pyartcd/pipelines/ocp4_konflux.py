@@ -69,7 +69,7 @@ class EnumEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-class KonfluxOcp4Pipeline:
+class KonfluxOcpPipeline:
     def __init__(
         self,
         runtime: Runtime = None,
@@ -374,7 +374,7 @@ class KonfluxOcp4Pipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD=False,
+            SKIP_MULTI_ARCH_PAYLOAD="false",
         )
 
     async def mirror_streams_to_ci(self):
@@ -913,7 +913,7 @@ async def ocp4(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = KonfluxOcp4Pipeline(
+    pipeline = KonfluxOcpPipeline(
         runtime=runtime,
         assembly=assembly,
         data_path=data_path,

@@ -81,9 +81,7 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     if not match:
         raise ValueError(f'Invalid OCP version: {ocp_version}')
     major, minor = int(match[1]), int(match[2])
-    if major != 4:
-        raise ValueError(f'Only OCP major version 4 is supported, found: {major}')
-    if minor < 12:
+    if (major, minor) < (4, 12):
         raise ValueError(f'Only OCP 4.12+ is supported, found: {ocp_version}')
 
     # only rhel 8 and 9 are supported 4.12 onwards

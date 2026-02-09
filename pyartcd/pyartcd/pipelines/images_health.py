@@ -15,6 +15,7 @@ from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
 
 OCP4_VERSIONS = [
+    "4.23",
     "4.22",
     "4.21",
     "4.20",
@@ -158,21 +159,36 @@ class ImagesHealthPipeline:
             await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
 
     def get_message_for_release(self, concern: dict):
+        """
+        Format a concern message for the release channel (#art-release-4-X).
+
+        Arg(s):
+            concern (dict): Concern data from doozer images:health
+        Return Value(s):
+            str: Formatted message with links and details
+        """
         code = concern['code']
-        message = f'- `{concern["image_name"]}`: '
+        image_name = concern['image_name']
 
+        # No build history link if never built
         if code == ConcernCode.NEVER_BUILT.value:
-            message += f'\nImage build has never been attempted during last {DELTA_DAYS} days'
-            return message
+            return f'- `{image_name}`: No builds attempted during last {DELTA_DAYS} days'
 
-        message += f'{self.get_last_attempt_tag(concern)} {self.get_art_job_tag(concern)}'
+        # Include search page link for this component
+        search_url = self.get_search_url(concern)
+        message = f'- `{image_name}`: {self.url_text(search_url, "Build history")}'
+
+        # Add logs link for failures
+        if code in [ConcernCode.LATEST_ATTEMPT_FAILED.value, ConcernCode.FAILING_AT_LEAST_FOR.value]:
+            logs_url = self.get_logs_url(concern)
+            message += f' | {self.url_text(logs_url, "Latest failure logs")}'
 
         if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
-            message += f' failed, and has been failing for at least {LIMIT_BUILD_RESULTS} attempts.'
+            message += f' - Failing for at least {LIMIT_BUILD_RESULTS} attempts'
             return message
 
         # ConcernCode.LATEST_ATTEMPT_FAILED
-        message += f' failed. {self.get_latest_success_tag(concern)} was {concern["latest_success_idx"]} attempts ago.'
+        message += f' - Latest attempt failed ({concern["latest_success_idx"]} attempts since last success)'
         return message
 
     def get_message_for_forum(self, concern: dict):
@@ -196,24 +212,34 @@ class ImagesHealthPipeline:
 
     @staticmethod
     def get_logs_url(concern):
+        """
+        Build the ART build history logs URL for a failed build.
+
+        Arg(s):
+            concern (dict): Concern data containing build failure details
+        Return Value(s):
+            str: URL to the build logs
+        """
         dt = datetime.fromisoformat(concern['latest_failed_build_time'])
         formatted = dt.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
         logs_url = f'{ART_BUILD_HISTORY_URL}/logs?nvr={concern["latest_failed_nvr"]}&record_id={concern["latest_failed_build_record_id"]}&after={formatted}'
         return logs_url
 
-    def get_last_attempt_tag(self, concern):
-        try:
-            return f'{self.url_text(concern["latest_attempt_task_url"], "Last attempt")}'
-        except Exception as e:
-            self.runtime.logger.warning('failed to create last attempt tag from concern %s: %s', concern, e)
-            raise
+    @staticmethod
+    def get_search_url(concern):
+        """
+        Build the ART build history search page URL for a component.
 
-    def get_art_job_tag(self, concern):
-        return f'{self.url_text(concern["latest_failed_job_url"], "(Jenkins job)")}'
-
-    def get_latest_success_tag(self, concern):
-        latest_successful_task_url = concern['latest_successful_task_url']
-        return f'{self.url_text(latest_successful_task_url, "Latest successful build")}'
+        Arg(s):
+            concern (dict): Concern data containing image name and group
+        Return Value(s):
+            str: URL to the build history search page
+        """
+        image_name = concern['image_name']
+        group = concern['group']
+        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        return f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}'
 
     @staticmethod
     def get_component_tag(report):

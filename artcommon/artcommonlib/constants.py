@@ -51,6 +51,7 @@ PRODUCT_NAMESPACE_MAP = {
     "mta": "art-mta-tenant",
     "rhmtc": "art-mtc-tenant",
     "logging": "art-logging-tenant",
+    "openshift-logging": "art-logging-tenant",
     "ocp": "ocp-art-tenant",
 }
 
@@ -59,6 +60,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
+    "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "ocp": "KONFLUX_SA_KUBECONFIG",
 }
 
@@ -68,4 +70,4 @@ COREOS_RHEL10_STREAMS = [
     "rhel-coreos-10",
     "rhel-coreos-10-extensions",
 ]
-ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
+# Legacy constant removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead

@@ -184,8 +184,7 @@ class MetadataBase(object):
         el_target: str | int | None = None,
         honor_is: bool = True,
         complete_before_event: int | None = None,
-        exclude_large_columns: bool = False,  # Ignored for Brew builds (Konflux-only parameter)
-        max_window_days: int | None = None,  # Ignored for Brew builds (Konflux-only parameter)
+        **kwargs,
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
@@ -435,6 +434,7 @@ class MetadataBase(object):
         completed_before: datetime.datetime | None = None,
         extra_patterns: dict | None = None,
         exclude_large_columns: bool = False,
+        enforce_network_mode: bool = False,
         **kwargs,
     ) -> KonfluxBuildRecord | None:
         """
@@ -453,10 +453,16 @@ class MetadataBase(object):
         :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
                                       BigQuery queries to reduce query cost and latency.
                                       Default is False (include all columns).
+        :param enforce_network_mode: If True, filters builds by the configured network mode (hermetic vs non-hermetic).
+                                     For hermetic images, only hermetic builds are retrieved.
+                                     For internal-only and open images, only non-hermetic builds are retrieved.
+                                     Default is False (no network mode filtering).
         """
-
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        if extra_patterns is None:
+            extra_patterns = {}
 
         # Is the component pinned in config?
         if honor_is and self.config['is']:
@@ -465,18 +471,41 @@ class MetadataBase(object):
                 return None
             return await self.get_pinned_konflux_build(el_target=el_target)
 
+        # Handle network mode enforcement
+        if enforce_network_mode:
+            configured_network_mode = self.get_konflux_network_mode()
+            is_hermetic = configured_network_mode == "hermetic"
+            self.logger.debug(
+                f"Querying latest build for {self.distgit_key} with network_mode={configured_network_mode} (hermetic={is_hermetic})"
+            )
+            extra_patterns["hermetic"] = is_hermetic
+
+        # Determine the correct group and el_target for querying builds
+        # For okd-only images (mode: disabled, okd.mode: enabled), use the okd group variant
+        query_group = self.runtime.group
+        is_okd_only = False
+        if self.mode == 'disabled':
+            if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
+                # This is an okd-only image, use okd group (e.g., okd-4.23 instead of openshift-4.23)
+                is_okd_only = True
+                query_group = self.runtime.group.replace('openshift-', 'okd-')
+                self.logger.debug(f"Using OKD group '{query_group}' for okd-only image {self.distgit_key}")
+
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
             'name': self.distgit_key if self.meta_type == 'image' else self.config.name,
-            'group': self.runtime.group,
+            'group': query_group,
             'outcome': outcome,
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
-            'extra_patterns': extra_patterns or {},
+            'extra_patterns': extra_patterns,
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            el_target = f'el{el_target}'
+            if self.meta_type == 'image' and is_okd_only:
+                el_target = f'scos{el_target}'
+            else:
+                el_target = f'el{el_target}'
 
         if self.meta_type == 'rpm':
             # For RPMs, if rhel target is not set fetch true latest
@@ -484,7 +513,12 @@ class MetadataBase(object):
                 base_search_params['el_target'] = el_target
         else:
             # For images, if rhel target is not set default to the rhel version in this group
-            base_search_params['el_target'] = el_target if el_target else f'el{self.branch_el_target()}'
+            if el_target:
+                base_search_params['el_target'] = el_target
+            else:
+                # OKD builds use 'scos' prefix instead of 'el' (e.g., scos9 vs el9)
+                el_prefix = 'scos' if is_okd_only else 'el'
+                base_search_params['el_target'] = f'{el_prefix}{self.branch_el_target()}'
 
         assembly = assembly if assembly else self.runtime.assembly
         if not assembly:
@@ -521,7 +555,7 @@ class MetadataBase(object):
             self.logger.warning(
                 'No build found for %s in group and %s assembly %s',
                 self.distgit_key,
-                self.runtime.group,
+                query_group,
                 self.runtime.assembly,
             )
             return default
@@ -571,3 +605,18 @@ class MetadataBase(object):
 
         else:
             raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+
+    def get_konflux_network_mode(self) -> str:
+        runtime_override = getattr(self.runtime, "network_mode_override", None)
+        if runtime_override:
+            return runtime_override
+
+        group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
+        image_config_network_mode = self.config.konflux.get("network_mode")
+
+        network_mode = image_config_network_mode or group_config_network_mode or "open"
+
+        valid_network_modes = ["hermetic", "internal-only", "open"]
+        if network_mode not in valid_network_modes:
+            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
+        return network_mode

@@ -231,20 +231,25 @@ def extract_version_fields(version, at_least=0):
 
 def get_cincinnati_channels(major, minor):
     """
-    :param major: Major for release
-    :param minor: Minor version for release.
-    :return: Returns the Cincinnati graph channels associated with a release
-             in promotion order (e.g. candidate -> stable)
+    Returns Cincinnati graph channels for a release in promotion order.
+
+    :param major: Major version for release
+    :param minor: Minor version for release
+    :return: List of channel names (e.g., ['candidate-4.16', 'fast-4.16', 'stable-4.16'])
+    :raises ValueError: If major version is less than 4 (Cincinnati channels only exist for OCP 4+)
     """
     major = int(major)
     minor = int(minor)
 
-    if major != 4:
-        raise IOError('Unable to derive previous for non v4 major')
+    if major < 4:
+        raise ValueError(f'Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})')
 
-    prefixes = ['candidate', 'fast', 'stable']
+    # Special case: OCP 4.1 used different channel names
     if major == 4 and minor == 1:
         prefixes = ['prerelease', 'stable']
+    else:
+        # Standard channel names for all other versions (4.2+, 5.x+)
+        prefixes = ['candidate', 'fast', 'stable']
 
     return [f'{prefix}-{major}.{minor}' for prefix in prefixes]
 

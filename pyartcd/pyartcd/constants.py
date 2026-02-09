@@ -54,4 +54,4 @@ KONFLUX_BUNDLE_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://api.github.com/repos/{ow
 KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://api.github.com/repos/{owner}/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref={branch_name}"  # Konflux PipelineRun (PLR) template for FBC builds
 
 # OKD build triggering is enabled only for these OCP versions
-OKD_ENABLED_VERSIONS = ['4.21', '4.22']
+OKD_ENABLED_VERSIONS = ['4.21', '4.22', '4.23', '5.0']

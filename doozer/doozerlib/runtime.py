@@ -90,6 +90,7 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.load_wip = False
         self.load_disabled = False
+        self.load_okd_only = False
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -590,10 +591,11 @@ class Runtime(GroupRuntime):
 
             def filter_enabled(n, d):
                 mode = d.get('mode', 'enabled')
-                # Include if generally enabled OR has okd.mode: enabled
+                # Include if generally enabled
                 if mode == 'enabled':
                     return True
-                if mode == 'disabled':
+                # Include if has okd.mode: enabled AND --load-okd-only flag is set
+                if mode == 'disabled' and self.load_okd_only:
                     okd_config = d.get('okd', {})
                     if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
                         return True
@@ -808,8 +810,8 @@ class Runtime(GroupRuntime):
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
         major, minor = self.get_major_minor_fields()
-        if major == 4 and minor < 6:
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for 4.X versions < 4.6")
+        if (major, minor) < (4, 6):
+            raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
         bug_config = Model(self.get_bug_config())
         server = bug_config.jira_config.server or 'https://issues.redhat.com'
 
@@ -1100,11 +1102,11 @@ class Runtime(GroupRuntime):
 
         mode = data_obj.data.get("mode", "enabled")
 
-        # Check if image has OKD mode override that enables it
+        # Check if image has OKD mode override that enables it (only when load_okd_only is set)
         okd_config = data_obj.data.get("okd", {})
-        okd_enabled = okd_config.get("mode") == "enabled"
+        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.load_okd_only
 
-        # Skip loading if disabled (unless okd.mode: enabled or load_disabled is set)
+        # Skip loading if disabled (unless okd.mode: enabled with load_okd_only or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
@@ -1118,7 +1120,12 @@ class Runtime(GroupRuntime):
             self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
             return None
 
-        meta = ImageMetadata(self, data_obj, self.upstream_commitish_overrides.get(data_obj.key))
+        # Only process dependents if this image will be added to image_map.
+        # When add=False, we're just loading the image to query its latest build,
+        # so we should not trigger loading its dependents as a side effect.
+        meta = ImageMetadata(
+            self, data_obj, self.upstream_commitish_overrides.get(data_obj.key), process_dependents=add
+        )
         if add:
             self.image_map[distgit_name] = meta
         self.component_map[meta.get_component_name()] = meta

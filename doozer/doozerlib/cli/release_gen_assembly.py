@@ -10,12 +10,16 @@ import requests
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import ART_PROD_IMAGE_REPO, RHCOS_RELEASES_STREAM_URL
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import get_assembly_release_date, uses_konflux_imagestream_override
+from artcommonlib.util import (
+    get_art_prod_image_repo_for_version,
+    get_assembly_release_date,
+    uses_konflux_imagestream_override,
+)
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -305,19 +309,38 @@ class GenAssemblyCli:
             if major_minor != self.runtime.get_minor_version():
                 self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
-            rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
-            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(
-                self.runtime.group.removeprefix('openshift-')
-            ):
-                release_suffix = f'konflux-release{rc_suffix}'
-            else:
-                release_suffix = f'release{rc_suffix}'
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'
                 )
+
+            # Extract major version to determine imagestream naming
+            major_version = int(major_minor.split('.')[0])
+            arch_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+
+            # Determine version suffix for repo naming
+            # OCP 4.x: no version suffix
+            # OCP 5.x: add version suffix (e.g., '-5')
+            if major_version == 4:
+                version_suffix = ''
+            elif major_version == 5:
+                version_suffix = f'-{major_version}'
+            else:
+                self._exit_with_error(f'Unsupported OCP major version: {major_version}')
+
+            # Determine base repository name based on build system
+            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(major_minor):
+                base_repo = 'konflux-release'
+            else:
+                base_repo = 'release'
+
+            # Construct repository name: base + version_suffix + arch_suffix
+            # e.g., 'release-5-s390x' for OCP 5.x s390x, 'release' for OCP 4.x amd64
+            repo = f'{base_repo}{version_suffix}{arch_suffix}'
+
+            # Construct the full pullspec
+            nightly_pullspec = f'registry.ci.openshift.org/ocp{arch_suffix}/{repo}:{nightly_name}'
             self.release_pullspecs[brew_cpu_arch] = nightly_pullspec
 
         for standard_release_name in self.standards:
@@ -605,13 +628,15 @@ class GenAssemblyCli:
                                 f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
                             )
                         amd64_rhcos_info = util.oc_image_info_for_arch(self.rhcos_by_tag[tag.name]["x86_64"], "amd64")
+                        # NOTE: RHCOS images are currently always in ocp-v4.0-art-dev, even for OCP 5.x.
+                        # When RHCOS 5.x images exist in their own repository, this should be updated to
+                        # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
+                        art_repo = get_art_prod_image_repo_for_version(4, "dev")
                         rhcos_info = util.oc_image_info_for_arch(
-                            f"{ART_PROD_IMAGE_REPO}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
+                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
                         )
-                        self.rhcos_by_tag[tag.name][arch] = (
-                            f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
-                        )
+                        self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
                     else:
                         url_key = (
                             f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor

@@ -6,7 +6,7 @@ from unittest import TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import semver
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from dockerfile_parse import DockerfileParser
 from doozerlib.backend.rebaser import KonfluxRebaser
 
@@ -54,9 +54,13 @@ class TestRebaser(TestCase):
         """
         Test with defalut values, and has non-USER 0 lines
         """
+        from types import SimpleNamespace
+
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "open"
-        metadata.config.konflux.cachito.mode = Missing
+        # Set up konflux config as Model (dict subclass) to support both .get() and attribute access
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
         metadata.config.final_stage_user = Missing
         metadata.is_lockfile_generation_enabled.return_value = False
 
@@ -120,9 +124,13 @@ USER 2000
         """
         Test with default values, but with final_stage_user set
         """
+        from types import SimpleNamespace
+
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "open"
-        metadata.config.konflux.cachito.mode = Missing
+        # Set up konflux config as Model (dict subclass) to support both .get() and attribute access
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
         metadata.config.final_stage_user = "3000"
         metadata.is_lockfile_generation_enabled.return_value = False
 
@@ -186,10 +194,14 @@ USER 3000
         """
         Test with network_mode hermetic but lockfile disabled
         """
+        from types import SimpleNamespace
+
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.is_lockfile_generation_enabled.return_value = False
-        metadata.config.konflux.cachito.mode = Missing
+        # Set up konflux config as Model (dict subclass) to support both .get() and attribute access
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
         metadata.config.final_stage_user = "3000"
 
         dfp = DockerfileParser(path=self.directory.name)
@@ -236,11 +248,15 @@ USER 3000
         """
         Test with network_mode hermetic and lockfile generation enabled
         """
+        from types import SimpleNamespace
+
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.is_lockfile_generation_enabled.return_value = True
         metadata.get_arches.return_value = ["x86_64", "aarch64"]
-        metadata.config.konflux.cachito.mode = Missing
+        # Set up konflux config as Model (dict subclass) to support both .get() and attribute access
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
         metadata.config.final_stage_user = "3000"
         metadata.branch_el_target.return_value = 9
         metadata.get_lockfile_modules_to_install.return_value = set()
@@ -290,9 +306,13 @@ USER 3000
         """
         Test with non-hermetic, but with final_stage_user
         """
+        from types import SimpleNamespace
+
         metadata = MagicMock()
         metadata.get_konflux_network_mode.return_value = "open"
-        metadata.config.konflux.cachito.mode = Missing
+        # Set up konflux config as Model (dict subclass) to support both .get() and attribute access
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
         metadata.config.final_stage_user = "3000"
         metadata.is_lockfile_generation_enabled.return_value = False
 

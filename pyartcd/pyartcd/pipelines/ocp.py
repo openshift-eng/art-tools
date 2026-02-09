@@ -31,7 +31,7 @@ class BuildPlan:
         return json.dumps(self.__dict__, indent=4)
 
 
-class Ocp4Pipeline:
+class OcpPipeline:
     def __init__(
         self,
         runtime: Runtime,
@@ -826,13 +826,13 @@ class Ocp4Pipeline:
 
 
 @cli.command(
-    "ocp4",
-    help="Build OCP 4.y components incrementally. In typical usage, scans for changes that could affect "
+    "ocp",
+    help="Build OCP components incrementally. In typical usage, scans for changes that could affect "
     "package or image builds and rebuilds the affected components. Creates new plashets if the "
     "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
     "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA",
 )
-@click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
+@click.option('--version', required=True, help='OCP version to scan, e.g. 4.14, 5.0')
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
     '--data-path',
@@ -887,7 +887,7 @@ class Ocp4Pipeline:
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
 @pass_runtime
 @click_coroutine
-async def ocp4(
+async def ocp(
     runtime: Runtime,
     version: str,
     assembly: str,
@@ -906,7 +906,7 @@ async def ocp4(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = Ocp4Pipeline(
+    pipeline = OcpPipeline(
         runtime=runtime,
         assembly=assembly,
         version=version,
@@ -932,3 +932,7 @@ async def ocp4(
             lock_name=Lock.BUILD.value.format(version=version),
             lock_id=lock_identifier,
         )
+
+
+# Add ocp4 as an alias for backward compatibility
+cli.add_command(ocp, name='ocp4')

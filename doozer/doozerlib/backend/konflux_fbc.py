@@ -283,6 +283,7 @@ class KonfluxFbcFragmentMerger:
         fbc_git_password: str | None = None,
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
         plr_template: Optional[str] = None,
         major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
@@ -307,6 +308,7 @@ class KonfluxFbcFragmentMerger:
         self.fbc_git_password = fbc_git_password
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
+        self.skip_fips_check = skip_fips_check
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
         self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
@@ -562,6 +564,7 @@ class KonfluxFbcFragmentMerger:
             hermetic=True,  # FBC should be built in hermetic mode
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
+            skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
             build_priority=FBC_BUILD_PRIORITY,
         )
@@ -749,7 +752,7 @@ class KonfluxFbcRebaser:
         else:
             logger.info("Catalog file %s does not exist, bootstrap a new one", catalog_file_path)
             icon = next(iter(csv.get("spec", {}).get("icon", [])), None)
-            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name, icon)
+            catalog_blobs = KonfluxFbcRebaser._bootstrap_catalog(olm_package, default_channel_name, icon)
 
         categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
@@ -811,9 +814,10 @@ class KonfluxFbcRebaser:
             logger.info("Updating channel %s", channel_name)
             channel = categorized_catalog_blobs[olm_package]["olm.channel"].get(channel_name, None)
             if not channel:
-                raise IOError(
-                    f"Channel {channel_name} not found in package {olm_package}. The FBC repo is not properly initialized."
-                )
+                logger.info("Channel %s not found in package %s. Bootstrapping...", channel_name, olm_package)
+                channel = KonfluxFbcRebaser._bootstrap_channel(olm_package, channel_name)
+                categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
+                catalog_blobs.append(channel)
             _update_channel(channel)
 
         # Set default channel
@@ -902,8 +906,9 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
 
+    @staticmethod
     def _bootstrap_catalog(
-        self, package_name: str, default_channel: str, icon: Dict[str, str] | None
+        package_name: str, default_channel: str, icon: Dict[str, str] | None
     ) -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.
         :param package_name: The name of the package to bootstrap.
@@ -928,16 +933,26 @@ class KonfluxFbcRebaser:
             "name": package_name,
             "schema": "olm.package",
         }
-        channel_blob = {
-            "entries": [],
-            "name": default_channel,
-            "package": package_name,
-            "schema": "olm.channel",
-        }
+        channel_blob = KonfluxFbcRebaser._bootstrap_channel(package_name, default_channel)
         return [
             package_blob,
             channel_blob,
         ]
+
+    @staticmethod
+    def _bootstrap_channel(package_name: str, channel_name: str) -> Dict[str, Any]:
+        """Bootstrap a new channel for the given package.
+        :param package_name: The name of the package.
+        :param channel_name: The name of the channel to bootstrap.
+        :return: A dictionary representing the channel blob.
+        """
+        channel_blob = {
+            "entries": [],
+            "name": channel_name,
+            "package": package_name,
+            "schema": "olm.channel",
+        }
+        return channel_blob
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
         dest_repos = {}
