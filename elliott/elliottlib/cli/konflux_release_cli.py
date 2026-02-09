@@ -6,6 +6,7 @@ from typing import Optional
 import click
 from artcommonlib import logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.format_util import green_print, red_print
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -286,6 +287,103 @@ class CreateReleaseCli:
         return annotations
 
 
+async def create_release_from_snapshot(
+    runtime: Runtime,
+    snapshot_name: str,
+    release_plan: str,
+    namespace: str = None,
+    apply: bool = True,
+) -> str:
+    """
+    Create Konflux release from existing snapshot - library function for programmatic use.
+
+    This function creates a Release resource from an existing snapshot using the specified
+    release plan. It's designed to be called programmatically from other components like
+    the BaseImageHandler in doozer.
+
+    Note: This function uses 'apply' parameter instead of 'dry_run' to maintain consistency
+    with snapshot_cli.py conventions and avoid refactoring the entire codebase. We prioritize
+    code sanity by using the same terminology pattern across related functions.
+
+    Args:
+        runtime: Elliott runtime instance
+        snapshot_name: Name of existing snapshot to create release from
+        release_plan: Konflux release plan to use
+        namespace: Kubernetes namespace (auto-detected if None)
+        apply: Whether to actually create the resource (False = preview only)
+
+    Returns:
+        str: Name of the created release
+
+    Raises:
+        RuntimeError: If snapshot or release plan doesn't exist
+        ValueError: If required parameters are missing
+    """
+    if not snapshot_name:
+        raise ValueError("Snapshot name is required")
+
+    if not release_plan:
+        raise ValueError("Release plan name is required")
+
+    if namespace is None:
+        namespace = resolve_konflux_namespace_by_product(runtime.product, None)
+
+    kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, None)
+
+    konflux_client = KonfluxClient.from_kubeconfig(
+        default_namespace=namespace,
+        config_file=kubeconfig,
+        context=None,
+        dry_run=not apply,
+    )
+    konflux_client.verify_connection()
+
+    LOGGER.info(f"Verifying snapshot {snapshot_name} exists...")
+    try:
+        await konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot_name)
+    except exceptions.NotFoundError:
+        raise RuntimeError(f"Snapshot {snapshot_name} not found in namespace {namespace}")
+
+    # Generate application name from group (e.g., openshift-4.22 -> openshift-4-22)
+    application_name = runtime.group_config.name.replace('.', '-')
+
+    release_resource = {
+        "apiVersion": API_VERSION,
+        "kind": KIND_RELEASE,
+        "metadata": {
+            "generateName": "ocp-base-image-release-",
+            "namespace": namespace,
+            "labels": {
+                "appstudio.openshift.io/application": application_name,
+            },
+            "annotations": {
+                "art.redhat.com/kind": "image",
+                "art.redhat.com/group": runtime.group_config.name,
+                "art.redhat.com/assembly": runtime.assembly,
+                "art.redhat.com/env": "base-image-workflow",
+            },
+        },
+        "spec": {"releasePlan": release_plan, "snapshot": snapshot_name},
+    }
+
+    if not apply:
+        LOGGER.info("Apply=False - would create release resource:")
+        LOGGER.info(f"Resource: {release_resource}")
+        return f"preview-release-{snapshot_name}"
+
+    try:
+        created_release = await konflux_client._create(release_resource)
+        release_name = created_release.metadata.name
+
+        LOGGER.info(f"Release URL: {konflux_client.resource_url(created_release)}")
+
+        return release_name
+
+    except Exception as e:
+        LOGGER.error(f"Failed to create release from snapshot: {e}")
+        raise RuntimeError(f"Release creation failed: {e}")
+
+
 @cli.group("release", short_help="Commands for managing Konflux Releases")
 def konflux_release_cli():
     pass
@@ -392,3 +490,58 @@ async def new_release_cli(
     release = await pipeline.run()
     if release:
         yaml.dump(release.to_dict(), sys.stdout)
+
+
+@konflux_release_cli.command("release-from-snapshot", short_help="Create Konflux release from existing snapshot")
+@click.argument("snapshot_name", metavar="SNAPSHOT_NAME")
+@click.option("--release-plan", required=True, help="Konflux release plan name to use")
+@click.option("--apply", is_flag=True, default=False, help="Apply the release resource immediately")
+@click.option(
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group.',
+)
+@click.pass_obj
+@click_coroutine
+async def release_from_snapshot_cli(
+    runtime: Runtime, snapshot_name: str, release_plan: str, apply: bool, konflux_namespace: str
+):
+    """
+    Create a Konflux Release resource from an existing snapshot.
+
+    This command creates a Release resource that references an existing snapshot
+    and uses the specified release plan to orchestrate the release process.
+    The release will generate both quay.io and registry.redhat.io URLs upon completion.
+
+    Examples:
+
+    Create release from snapshot (preview mode):
+    elliott -g openshift-4.22 release release-from-snapshot my-snapshot --release-plan ocp-art-base-images-silent-4-22-rhel9
+
+    Apply the release immediately:
+    elliott -g openshift-4.22 release release-from-snapshot my-snapshot --release-plan ocp-art-base-images-silent-4-22-rhel9 --apply
+    """
+    # Initialize runtime for Konflux operations
+    runtime.initialize(build_system='konflux')
+
+    try:
+        release_name = await create_release_from_snapshot(
+            runtime=runtime,
+            snapshot_name=snapshot_name,
+            release_plan=release_plan,
+            namespace=konflux_namespace,
+            apply=apply,
+        )
+
+        if apply:
+            green_print(f"✓ Successfully created release: {release_name}")
+            LOGGER.info(
+                f"Monitor release progress: kubectl get release {release_name} -n {konflux_namespace or 'ocp-art-tenant'}"
+            )
+        else:
+            LOGGER.info("Preview completed - use --apply to create the release")
+
+    except Exception as e:
+        red_print(f"Failed to create release from snapshot: {e}")
+        LOGGER.error(f"CLI command failed: {e}")
+        exit(1)

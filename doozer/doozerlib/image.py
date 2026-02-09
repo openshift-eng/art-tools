@@ -1202,6 +1202,37 @@ class ImageMetadata(Metadata):
 
         return artifact_lockfile_enabled
 
+    def is_base_image(self) -> bool:
+        """
+        Determines whether this image is configured as a base image.
+
+        Base images are identified by the base_only: true configuration field.
+        These images require special snapshot-to-release workflow processing
+        to generate dual URLs for streams.yml updates.
+
+        Returns:
+            bool: True if this is a base image (base_only: true), False otherwise
+        """
+        base_only_config = getattr(self.config, 'base_only', Missing)
+        if base_only_config not in [Missing, None]:
+            return bool(base_only_config)
+        return False
+
+    def is_snapshot_release_enabled(self) -> bool:
+        """
+        Determines whether snapshot-to-release workflow is enabled for this image.
+
+        The snapshot_release flag controls whether base images should trigger
+        the snapshot-to-release workflow when builds complete.
+
+        Returns:
+            bool: True if snapshot_release: true is configured, False otherwise
+        """
+        snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
+        if snapshot_release_config not in [Missing, None]:
+            return bool(snapshot_release_config)
+        return False
+
     def get_required_artifacts(self) -> list:
         """Get list of required artifact URLs from image config."""
         if not self.is_artifact_lockfile_enabled():

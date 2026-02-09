@@ -687,3 +687,38 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         # assert that release did not get created
         self.assertEqual(self.konflux_client._create.call_count, 0)
+
+
+class TestCreateReleaseFromSnapshot(IsolatedAsyncioTestCase):
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("artcommonlib.util.resolve_konflux_namespace_by_product")
+    @patch("artcommonlib.util.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
+        from elliottlib.cli.konflux_release_cli import create_release_from_snapshot
+        from elliottlib.runtime import Runtime
+
+        runtime = MagicMock(spec=Runtime)
+        runtime.group_config.name = "openshift-4.22"
+        runtime.assembly = "stream"
+        runtime.product = "ocp"
+
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        konflux_client.verify_connection = MagicMock(return_value=True)
+        konflux_client._get.return_value = {"metadata": {"name": "test-snapshot"}}
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release-abc123"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://test-url")
+
+        mock_konflux_client_init.return_value = konflux_client
+
+        result = await create_release_from_snapshot(
+            runtime=runtime, snapshot_name="test-snapshot", release_plan="test-release-plan", apply=True
+        )
+
+        self.assertEqual(result, "test-release-abc123")
+        konflux_client._get.assert_called_once_with(API_VERSION, "Snapshot", "test-snapshot")
+        konflux_client._create.assert_called_once()

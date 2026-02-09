@@ -23,6 +23,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import ContainerInfo, PipelineRunInfo
@@ -259,6 +260,16 @@ class KonfluxImageBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
+
+                    # Check if this is a base image and trigger snapshot-release workflow
+                    LOGGER.info(f"Post-build processing for {metadata.distgit_key}, image_pullspec: {image_pullspec}")
+                    if image_pullspec:
+                        await self._handle_base_image_completion(metadata, image_pullspec)
+                    else:
+                        LOGGER.warning(
+                            f"No image pullspec available for base image workflow, skipping for {metadata.distgit_key}"
+                        )
+
                     break
 
             if not metadata.build_status and error:
@@ -977,3 +988,91 @@ class KonfluxImageBuilder:
                 parent_image_nvrs.append(pullspec)
 
         return parent_image_nvrs
+
+    async def _handle_base_image_completion(self, metadata: ImageMetadata, image_pullspec: str) -> None:
+        """
+        Handle post-build processing for base images.
+
+        Detects if the completed build is a base image and triggers the snapshot-to-release
+        workflow to generate dual URLs for streams.yml updates.
+
+        Args:
+            metadata: Image metadata for the completed build
+            image_pullspec: Pullspec of the built image
+        """
+        try:
+            is_base_image = metadata.is_base_image()
+            is_snapshot_release = metadata.is_snapshot_release_enabled()
+
+            if not is_base_image:
+                LOGGER.info(f"Image {metadata.distgit_key} is not a base image, skipping snapshot-release workflow")
+                return
+
+            if not is_snapshot_release:
+                LOGGER.info(f"Image {metadata.distgit_key} does not have snapshot_release enabled, skipping workflow")
+                return
+
+            nvr = await self._extract_nvr_from_build(metadata, image_pullspec)
+            if not nvr:
+                LOGGER.warning(f"Could not extract NVR for base image {metadata.distgit_key}, skipping workflow")
+                return
+
+            handler = BaseImageHandler(metadata, nvr, image_pullspec, self._config.dry_run)
+            result = await handler.process_base_image_completion()
+
+            if result:
+                release_name, snapshot_name = result
+                LOGGER.info(f"✓ Base image workflow completed successfully for {metadata.distgit_key}")
+                LOGGER.info(f"  Release: {release_name}")
+                LOGGER.info(f"  Snapshot: {snapshot_name}")
+            else:
+                LOGGER.warning(f"Base image workflow failed for {metadata.distgit_key}")
+
+        except Exception as e:
+            LOGGER.error(f"Base image workflow error for {metadata.distgit_key}: {e}")
+            LOGGER.debug(f"Base image workflow traceback: {traceback.format_exc()}")
+
+    async def _extract_nvr_from_build(self, metadata: ImageMetadata, image_pullspec: str) -> Optional[str]:
+        """
+        Extract NVR (Name-Version-Release) from the built image using image inspection.
+
+        Uses the same proven pattern as extract_parent_image_nvrs() to inspect
+        the built image and extract NVR from its labels.
+
+        Args:
+            metadata: Image metadata for the completed build
+            image_pullspec: Pullspec of the built image
+
+        Returns:
+            str: NVR string if available, None otherwise
+        """
+        try:
+            # Use same pattern as extract_parent_image_nvrs()
+            auth_arg = f"-a {self._config.registry_auth_file}" if self._config.registry_auth_file else ""
+            cmd = f"oc image info -o json --filter-by-os=amd64 {auth_arg} {image_pullspec}"
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+
+            if rc != 0:
+                LOGGER.warning(f"Could not access built image {image_pullspec}: {stderr}")
+                return None
+
+            image_info = json.loads(stdout)
+            labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
+
+            name = labels.get('com.redhat.component')
+            version = labels.get('version')
+            release = labels.get('release')
+
+            if name and version and release:
+                nvr = f"{name}-{version}-{release}"
+                LOGGER.info(f"Extracted NVR {nvr} from built image {image_pullspec}")
+                return nvr
+            else:
+                LOGGER.warning(
+                    f"Built image {image_pullspec} missing NVR labels: component={name}, version={version}, release={release}"
+                )
+                return None
+
+        except Exception as e:
+            LOGGER.error(f"Error extracting NVR from built image {image_pullspec}: {e}")
+            return None
