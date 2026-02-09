@@ -13,7 +13,7 @@ from typing import Optional
 import click
 from artcommonlib import exectools
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
-from artcommonlib.jira_config import JIRA_SERVER_URL
+from artcommonlib.jira_config import JIRA_DOMAIN, JIRA_SERVER_URL
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira_client import JIRAClient

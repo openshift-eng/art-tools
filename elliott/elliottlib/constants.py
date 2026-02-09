@@ -4,6 +4,9 @@ This file contains constants that are used to manage OCP Image and RPM builds
 
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB, RHCOS_RELEASES_BASE_URL
 
+# JIRA configuration is now centralized in artcommonlib.jira_config
+from artcommonlib.jira_config import JIRA_API_FIELD, JIRA_SECURITY_ALLOWLIST
+
 CINCINNATI_BASE_URL = "https://api.openshift.com/api/upgrades_info/v1/graph"
 BREW_DOWNLOAD_TEMPLATE = BREW_DOWNLOAD_URL + "/packages/{name}/{version}/{release}/files/{file_path}"
 CGIT_URL = "https://pkgs.devel.redhat.com/cgit"
@@ -126,6 +129,3 @@ errata_get_comments_url = errata_url + "/api/v1/comments"
 errata_get_erratum_url = errata_url + "/api/v1/erratum/{id}"
 errata_post_erratum_url = errata_url + "/api/v1/erratum"
 errata_get_advisories_for_bug_url = errata_url + "/bugs/{id}/advisories.json"
-
-# JIRA configuration is now centralized in artcommonlib.jira_config
-from artcommonlib.jira_config import JIRA_API_FIELD, JIRA_SECURITY_ALLOWLIST
