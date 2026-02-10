@@ -322,25 +322,46 @@ class KonfluxOlmBundleRebaser:
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
         return re.compile(pattern)
 
+    @staticmethod
+    def _get_digest_image_pattern():
+        """Get a compiled regex pattern to match digest-pinned image references.
+
+        Matches images in the format: registry/namespace/image@sha256:digest
+        Examples:
+            - registry.redhat.io/rhel9/postgresql-15@sha256:abc123...
+            - quay.io/openshift/image@sha256:def456...
+        """
+        # Match: registry/path@sha256:hexdigest
+        pattern = r'([a-zA-Z0-9][-a-zA-Z0-9.]*(?::[0-9]+)?/[^@\s]+)@(sha256:[a-fA-F0-9]{64})'
+        return re.compile(pattern)
+
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
         Replace image references in the content by their corresponding SHA.
         Returns the content with the replacements and a map of found images in format of {image_name: (old_pullspec, new_pullspec, nvr)}
+
+        This function handles two types of image references:
+        1. ART-built images matching the registry pattern (e.g., registry.redhat.io/openshift/image:tag)
+           - These are resolved via Konflux/Brew to get the SHA digest
+        2. Digest-pinned images (e.g., registry.redhat.io/rhel9/postgresql-15@sha256:...)
+           - These are already pinned and are included in found_images without modification
         """
         new_content = content
         found_images: Dict[str, Tuple[str, str, str]] = {}
-        # Find all image references in the content
+
+        # Step 1: Find and process ART-built images matching the registry pattern
         pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(old_registry)
         matches = pattern.finditer(content)
-        references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
+        art_references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
         image_info_tasks = []
         for match in matches:
             pullspec = match.group(0)
             namespace, image_short_name = match.group(1).rsplit('/', maxsplit=1)
             image_tag = match.group(2)
-            references[pullspec] = (namespace, image_short_name, image_tag)
-        # Get image infos for all found images
-        for pullspec, (namespace, image_short_name, image_tag) in references.items():
+            art_references[pullspec] = (namespace, image_short_name, image_tag)
+
+        # Get image infos for ART-built images
+        for pullspec, (namespace, image_short_name, image_tag) in art_references.items():
             if engine is Engine.KONFLUX:
                 build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
                 image_info_tasks.append(
@@ -364,15 +385,15 @@ class KonfluxOlmBundleRebaser:
                 )
         image_infos = await asyncio.gather(*image_info_tasks)
 
-        # Replace image references in the content
+        # Replace ART-built image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
-        for pullspec, image_info in zip(references, image_infos):
+        for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']
             image_release = image_labels['release']
             image_component_name = image_labels['com.redhat.component']
             image_nvr = f"{image_component_name}-{image_version}-{image_release}"
-            namespace, image_short_name, image_tag = references[pullspec]
+            namespace, image_short_name, image_tag = art_references[pullspec]
             image_sha = (
                 image_info['contentDigest']
                 if self._group_config.operator_image_ref_mode == 'by-arch'
@@ -389,6 +410,27 @@ class KonfluxOlmBundleRebaser:
             )
             new_content = new_content.replace(pullspec, new_pullspec)
             found_images[image_short_name] = (pullspec, new_pullspec, image_nvr)
+
+        # Step 2: Find digest-pinned images that are already resolved (e.g., external images)
+        # These don't need resolution but should be included in found_images for relatedImages
+        digest_pattern = KonfluxOlmBundleRebaser._get_digest_image_pattern()
+        for match in digest_pattern.finditer(new_content):
+            image_path = match.group(1)  # e.g., registry.redhat.io/rhel9/postgresql-15
+            digest = match.group(2)  # e.g., sha256:abc123...
+            pullspec = f"{image_path}@{digest}"
+
+            # Extract image short name from the path
+            image_short_name = image_path.rsplit('/', 1)[-1]
+
+            # Skip if this image was already processed as an ART-built image
+            if image_short_name in found_images:
+                continue
+
+            # Add to found_images with pullspec as both old and new (no change needed)
+            # Use "external" as NVR since we don't have version info for external images
+            found_images[image_short_name] = (pullspec, pullspec, "external")
+            self._logger.debug(f"Found digest-pinned external image: {pullspec}")
+
         return new_content, found_images
 
     @cached_property
