@@ -26,9 +26,34 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
 
     // Get the pre-validated endpoint
     const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
-    
-    // Create final URL by appending path to secure endpoint
-    const finalUrl = secureEndpoint + remainingPath;
+
+    // Validate remainingPath to prevent URL manipulation
+    // Block any characters that could be used for SSRF attacks
+    const dangerousChars = ['@', '#', '?', '\\', ' '];
+    if (dangerousChars.some(char => remainingPath.includes(char))) {
+        return new Response('Invalid path characters detected', { status: 400 });
+    }
+
+    // Prevent protocol smuggling
+    if (remainingPath.toLowerCase().includes('http://') || remainingPath.toLowerCase().includes('https://')) {
+        return new Response('Protocol specifiers not allowed in path', { status: 400 });
+    }
+
+    // Use URL constructor for safe URL building
+    let finalUrl: URL;
+    try {
+        finalUrl = new URL(secureEndpoint);
+        // Safely append the remaining path
+        finalUrl.pathname = finalUrl.pathname + remainingPath;
+    } catch (e) {
+        return new Response('Invalid URL construction', { status: 400 });
+    }
+
+    // Validate that the final URL's origin matches the expected allowlisted domain
+    const expectedOrigin = new URL(secureEndpoint).origin;
+    if (finalUrl.origin !== expectedOrigin) {
+        return new Response('URL validation failed: origin mismatch', { status: 403 });
+    }
 
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
@@ -40,7 +65,7 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
     });
 
     // Create request to pre-validated secure endpoint
-    const proxyRequest = new Request(finalUrl, {
+    const proxyRequest = new Request(finalUrl.toString(), {
         method: request.method,
         headers: filteredHeaders,
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
