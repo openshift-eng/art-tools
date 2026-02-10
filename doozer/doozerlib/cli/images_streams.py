@@ -1080,7 +1080,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 @prs.command(
     'open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.'
 )
-@click.option('--github-access-token', metavar='TOKEN', required=True, help='Github access token for user.')
+@click.option('--github-access-token', metavar='TOKEN', required=False, help='Github access token for user.')
 @click.option('--bug', metavar='BZ#', required=False, default=None, help='Title with Bug #: prefix')
 @click.option(
     '--interstitial',
@@ -1105,6 +1105,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
     '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
 )
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
+@click.option('--dry-run', default=False, is_flag=True, help='Do everything except any remote writes/pushes')
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
 @click.option(
     '--add-auto-labels',
@@ -1128,12 +1129,13 @@ def images_streams_prs(
     force_merge,
     ignore_missing_images,
     draft_prs,
+    dry_run,
     moist_run,
     add_auto_labels,
     add_label,
 ):
     runtime.initialize(clone_distgits=False, clone_source=False)
-    g = Github(login_or_token=github_access_token)
+    g = Github(login_or_token=(github_access_token or os.getenv(constants.GITHUB_TOKEN)))
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
@@ -1213,14 +1215,24 @@ def images_streams_prs(
         else:
             builders = from_config.builder or []
             for builder in builders:
-                upstream_image = resolve_upstream_from(runtime, builder)
+                try:
+                    upstream_image = resolve_upstream_from(runtime, builder)
+                except Exception as e:
+                    message = f'Error while resolving upstream image for {builder} in {dgk} for {major}.{minor}: {e}'
+                    logger.error(message)
+                    raise IOError(message)
                 if not upstream_image:
                     logger.warning(f'Unable to resolve upstream image for: {builder}')
                     break
                 check_if_upstream_image_exists(upstream_image)
                 desired_parents.append(upstream_image)
 
-            parent_upstream_image = resolve_upstream_from(runtime, from_config)
+            try:
+                parent_upstream_image = resolve_upstream_from(runtime, from_config)
+            except Exception as e:
+                message = f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
+                logger.error(message)
+                raise IOError(message)
             if len(desired_parents) != len(builders) or not parent_upstream_image:
                 logger.warning('Unable to find all ART equivalent upstream images for this image')
                 continue
@@ -1233,7 +1245,12 @@ def images_streams_prs(
         desired_ci_build_root_coordinate = None
         desired_ci_build_root_image = ''
         if streams_pr_config.ci_build_root is not Missing:
-            desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
+            try:
+                desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
+            except Exception as e:
+                message = f'Error while resolving ci_build_root {streams_pr_config.ci_build_root} in {dgk} for {major}.{minor}: {e}'
+                logger.error(message)
+                raise IOError(message)
             check_if_upstream_image_exists(desired_ci_build_root_image)
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
@@ -1303,7 +1320,13 @@ def images_streams_prs(
             fork_repo = g.get_repo(fork_repo_name)
         except UnknownObjectException:
             # Repo doesn't exist; fork it
-            fork_repo = github_user.create_fork(public_source_repo)
+            if dry_run:
+                logger.info(
+                    f'DRY RUN: Would have forked {public_source_repo.full_name} to {fork_repo_name}. Moving to next image since fork is required to continue.'
+                )
+                continue
+            else:
+                fork_repo = github_user.create_fork(public_source_repo)
 
         fork_branch_name = f'art-consistency-{runtime.group_config.name}-{dgk}'
         fork_branch_head = f'{github_user.login}:{fork_branch_name}'
