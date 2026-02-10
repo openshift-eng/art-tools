@@ -398,6 +398,50 @@ class TestFindGoMainPackages(unittest.TestCase):
             result = util.find_go_main_packages(root)
             self.assertEqual(result, sorted([cmd1, cmd2]))
 
+    def test_skips_sub_modules_with_own_go_mod(self):
+        """Directories with their own ``go.mod`` are separate Go modules
+        (e.g. staging/ deps via replace directives) and must be skipped so
+        that ``go mod vendor`` does not copy injected files into vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # Root module
+            self._write(root, 'go.mod', 'module example.com/myproject\n')
+            root_cmd = root / 'cmd' / 'myapp'
+            self._write(root_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Sub-module in staging/ (like operator-framework-olm)
+            staging = root / 'staging' / 'subproject'
+            self._write(staging, 'go.mod', 'module example.com/subproject\n')
+            staging_cmd = staging / 'cmd' / 'subcmd'
+            self._write(staging_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertIn(root_cmd, result)
+            self.assertNotIn(staging_cmd, result)
+
+    def test_operator_framework_olm_scenario(self):
+        """Reproduce the operator-framework-olm failure: staging/ contains
+        separate Go modules referenced via replace directives.  Injecting
+        into them causes ``go mod vendor`` to copy coverage_server.go into
+        vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write(root, 'go.mod', 'module example.com/olm\n')
+            # Root cmd directories
+            cmd_a = root / 'cmd' / 'collect-profiles'
+            self._write(cmd_a, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Staging sub-modules
+            for submod in ['operator-lifecycle-manager', 'operator-registry']:
+                staging_mod = root / 'staging' / submod
+                self._write(staging_mod, 'go.mod', f'module github.com/operator-framework/{submod}\n')
+                for cmd_name in ['catalog', 'opm']:
+                    cmd_dir = staging_mod / 'cmd' / cmd_name
+                    self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [cmd_a])  # Only root cmd, no staging
+
 
 class TestInjectCoverageServer(unittest.TestCase):
     """Tests for ``inject_coverage_server``."""

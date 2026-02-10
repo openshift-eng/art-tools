@@ -1027,6 +1027,12 @@ def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
     ``package main``.  This prevents injecting ``coverage_server.go`` into
     directories that have a mix of package names (e.g. a ``package main``
     example file coexisting with regular library files).
+
+    Sub-modules (directories that contain their own ``go.mod``) are skipped
+    entirely.  These are separate Go modules — typically vendored
+    dependencies referenced via ``replace`` directives — and injecting
+    into them would pollute the vendor directory when ``go mod vendor``
+    copies their contents.
     """
     root = root_path.resolve()
     main_dirs: set[pathlib.Path] = set()
@@ -1036,6 +1042,15 @@ def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
 
         current_path = pathlib.Path(current_root)
+
+        # Skip sub-modules: if a non-root directory has its own go.mod it is
+        # a separate Go module (e.g. a staging/ dependency used via a replace
+        # directive).  Injecting into it would cause files to leak into the
+        # vendor/ tree when ``go mod vendor`` runs.
+        if current_path != root and 'go.mod' in files:
+            dirs.clear()  # Stop descending into this sub-module
+            continue
+
         go_files = [f for f in files if f.endswith('.go') and not f.endswith('_test.go')]
         if not go_files:
             continue
