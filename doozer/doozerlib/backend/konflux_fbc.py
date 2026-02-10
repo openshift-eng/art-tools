@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import logging
 import os
+import re
 import shutil
 import ssl
 from collections import defaultdict
@@ -816,12 +817,36 @@ class KonfluxFbcRebaser:
                 catalog_blobs.append(channel)
             _update_channel(channel)
 
-        # Set default channel
+        # Set default channel with production catalog semver comparison
         if default_channel_name:
+            logger.info(
+                "Processing default channel setting for package %s, configured channel: %s",
+                olm_package,
+                default_channel_name,
+            )
+
+            # Check if we should use a higher semver channel from production (only for non-OpenShift groups)
+            if not self.group.startswith('openshift-'):
+                logger.info("Non-OpenShift group detected, checking production catalog for higher semver channels")
+                final_default_channel = await self._get_highest_semver_channel(
+                    olm_package, default_channel_name, ocp_version, logger
+                )
+            else:
+                logger.info("OpenShift group detected, using configured channel without production check")
+                final_default_channel = default_channel_name
+
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            if package_blob.get("defaultChannel") != default_channel_name:
-                logger.info("Setting default channel to %s", default_channel_name)
-                package_blob["defaultChannel"] = default_channel_name
+            if package_blob.get("defaultChannel") != final_default_channel:
+                if final_default_channel != default_channel_name:
+                    logger.info(
+                        "Final defaultChannel upgraded: %s -> %s (from production catalog)",
+                        default_channel_name,
+                        final_default_channel,
+                    )
+                else:
+                    logger.info("Final defaultChannel: %s (no upgrade needed)", final_default_channel)
+                package_blob["defaultChannel"] = final_default_channel
+                logger.info("defaultChannel updated in package blob: %s", final_default_channel)
 
         # Replace pullspecs to use the prod registry
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
@@ -901,6 +926,223 @@ class KonfluxFbcRebaser:
         nvr = f'{name}-{version}-{release}'
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
+
+    async def _get_highest_semver_channel(
+        self, olm_package: str, configured_channel: str, ocp_version: Tuple[int, int], logger: logging.Logger
+    ) -> str:
+        """Get the highest semver channel from production catalog, or return the configured channel.
+
+        Args:
+            olm_package: OLM package name
+            configured_channel: The originally configured default channel
+            ocp_version: OCP version tuple (major, minor)
+            logger: Logger instance
+
+        Returns:
+            The highest semver channel name, or the configured channel if no higher one exists
+        """
+        try:
+            logger.info("Checking for higher semver channels in production for package %s", olm_package)
+
+            # Extract semver pattern from configured channel (e.g., "stable-6.3" -> "6.3")
+            configured_semver = self._extract_semver_from_channel(configured_channel)
+            logger.debug("Extracted semver '%s' from configured channel '%s'", configured_semver, configured_channel)
+
+            if not configured_semver:
+                logger.info("Configured channel %s doesn't follow semver pattern, using as-is", configured_channel)
+                return configured_channel
+
+            # Get available channels from production catalog
+            logger.info("Fetching available channels from production catalog for package %s", olm_package)
+            production_channels = await self._get_production_channels(olm_package, ocp_version, logger)
+            if not production_channels:
+                logger.info("No production channels found for package %s, using configured channel", olm_package)
+                return configured_channel
+
+            logger.debug("Found %d production channels: %s", len(production_channels), production_channels)
+
+            # Find all semver channels and get the highest one
+            semver_channels = []
+            channel_prefix = configured_channel.replace(configured_semver, "").rstrip("-")
+            logger.debug("Looking for channels with prefix '%s' in production", channel_prefix)
+
+            for channel in production_channels:
+                semver = self._extract_semver_from_channel(channel)
+                if semver and channel.startswith(channel_prefix):
+                    semver_channels.append((channel, semver))
+                    logger.debug("Found matching semver channel: %s (v%s)", channel, semver)
+
+            if not semver_channels:
+                logger.info(
+                    "No semver channels with prefix '%s' found in production, using configured channel", channel_prefix
+                )
+                return configured_channel
+
+            logger.info("Found %d matching semver channels in production", len(semver_channels))
+
+            # Sort by semver and get the highest
+            semver_channels.sort(key=lambda x: self._parse_semver(x[1]), reverse=True)
+            highest_channel, highest_semver = semver_channels[0]
+            logger.debug("Highest production channel: %s (v%s)", highest_channel, highest_semver)
+
+            # Only use higher version than configured
+            comparison = self._compare_semver(highest_semver, configured_semver)
+            logger.debug("Semver comparison result: %s vs %s = %d", highest_semver, configured_semver, comparison)
+
+            if comparison > 0:
+                logger.info(
+                    "Upgrading defaultChannel: %s (v%s) -> %s (v%s) from production catalog",
+                    configured_channel,
+                    configured_semver,
+                    highest_channel,
+                    highest_semver,
+                )
+                return highest_channel
+
+            logger.info(
+                "Production channel %s (v%s) not higher than configured %s (v%s), keeping configured",
+                highest_channel,
+                highest_semver,
+                configured_channel,
+                configured_semver,
+            )
+            return configured_channel
+
+        except Exception as e:
+            logger.warning("Error checking production channels for semver upgrade: %s", e, exc_info=True)
+            logger.info("Falling back to configured channel: %s", configured_channel)
+            return configured_channel
+
+    async def _get_production_channels(
+        self, olm_package: str, ocp_version: Tuple[int, int], logger: logging.Logger
+    ) -> List[str]:
+        """Fetch available channels from production catalog for the given package.
+
+        Args:
+            olm_package: OLM package name
+            ocp_version: OCP version tuple (major, minor)
+            logger: Logger instance
+
+        Returns:
+            List of available channel names in production
+        """
+        try:
+            # Use same production index pattern as existing code
+            production_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=ocp_version[0], minor=ocp_version[1])
+            logger.info("Fetching production channels from index: %s", production_index)
+            logger.debug("Target package: %s", olm_package)
+
+            # Reuse existing rendering infrastructure with caching
+            migrate_level = "none"
+            if ocp_version >= (4, 17):
+                migrate_level = "bundle-object-to-csv-metadata"
+
+            # Render production catalog directly (without caching to avoid method dependency issues)
+            auth = (
+                opm.OpmRegistryAuth(path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"))
+                if os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
+                else None
+            )
+            blobs = await opm.render(production_index, auth=auth, migrate_level=migrate_level)
+            filtered_blobs = self._filter_catalog_blobs_local(blobs, {olm_package})
+
+            if olm_package not in filtered_blobs:
+                logger.info("Package %s not found in production index, may be new package", olm_package)
+                return []
+
+            # Categorize and extract channels
+            categorized = self._catagorize_catalog_blobs(filtered_blobs[olm_package])
+            if olm_package in categorized and "olm.channel" in categorized[olm_package]:
+                channels = list(categorized[olm_package]["olm.channel"].keys())
+                logger.info("Successfully retrieved %d channels from production: %s", len(channels), channels)
+                return channels
+
+            logger.info("No channels found in production catalog for package %s", olm_package)
+            return []
+
+        except Exception as e:
+            logger.warning("Failed to fetch production channels for package %s: %s", olm_package, e, exc_info=True)
+            return []
+
+    def _filter_catalog_blobs_local(self, blobs: List[Dict], allowed_package_names: Set[str]):
+        """Filter catalog blobs by package names (local copy to avoid method dependency).
+
+        :param blobs: List of catalog blobs.
+        :param allowed_package_names: Set of allowed package names.
+        :return: Dict of filtered catalog blobs.
+        """
+        filtered: Dict[str, List[Dict[str, Any]]] = {}  # key is package name, value is blobs
+        for blob in blobs:
+            schema = blob["schema"]
+            package_name = None
+            match schema:
+                case "olm.package":
+                    package_name = blob["name"]
+                case "olm.channel" | "olm.bundle" | "olm.deprecations":
+                    package_name = blob["package"]
+            if not package_name:
+                raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
+            if package_name not in allowed_package_names:
+                continue  # filtered out; skipping
+            if package_name not in filtered:
+                filtered[package_name] = []
+            filtered[package_name].append(blob)
+        return filtered
+
+    @staticmethod
+    def _extract_semver_from_channel(channel_name: str) -> Optional[str]:
+        """Extract semver from channel name.
+
+        Examples:
+            "stable-6.3" -> "6.3"
+            "stable-6.10" -> "6.10"
+            "fast-4.18" -> "4.18"
+            "stable" -> None
+
+        Args:
+            channel_name: Channel name to parse
+
+        Returns:
+            Semver string if found, None otherwise
+        """
+        # Pattern to match semver at the end of channel name
+        # Supports: X.Y, X.Y.Z patterns
+        pattern = r'-?(\d+\.\d+(?:\.\d+)?)$'
+        match = re.search(pattern, channel_name)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _parse_semver(version: str) -> Tuple[int, ...]:
+        """Parse semver string into tuple for comparison.
+
+        Args:
+            version: Version string like "6.3" or "6.10.1"
+
+        Returns:
+            Tuple of integers for comparison
+        """
+        return tuple(int(x) for x in version.split('.'))
+
+    @staticmethod
+    def _compare_semver(version1: str, version2: str) -> int:
+        """Compare two semver strings.
+
+        Args:
+            version1: First version string
+            version2: Second version string
+
+        Returns:
+            1 if version1 > version2, -1 if version1 < version2, 0 if equal
+        """
+        v1 = KonfluxFbcRebaser._parse_semver(version1)
+        v2 = KonfluxFbcRebaser._parse_semver(version2)
+
+        if v1 > v2:
+            return 1
+        elif v1 < v2:
+            return -1
+        else:
+            return 0
 
     @staticmethod
     def _bootstrap_catalog(
