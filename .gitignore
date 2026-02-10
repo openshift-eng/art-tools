@@ -1,3 +1,7 @@
+.claude/
+!.claude/.gitkeep
+
+
 hacks/refine-candidate/rpm-builds
 hacks/refine-candidate/rpm-report
 hacks/refine-candidate/unused-builds

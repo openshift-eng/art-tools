@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+If the file `.claude/CLAUDE.md` exists, read it. If instructions contradict (for example for what to run with test or run commands), `.claude/CLAUDE.md` takes precedence over this file.
+
 ## Overview
 
 This is **art-tools**, a collection of Release tools for managing OpenShift Container Platform (OCP) releases. The repository contains multiple Python packages that work together to automate the OCP release process.
@@ -44,8 +46,8 @@ The `make venv` command:
 **Linting and Formatting:**
 
 ```bash
-make format           # Auto-format code with ruff
-make format-check     # Check formatting without changes
+make format          # Auto-format code with ruff
+make format-check    # Check formatting without changes
 make lint            # Run linting checks (includes format-check)
 make pylint          # Run pylint for errors only
 ```
@@ -83,6 +85,60 @@ uv run pytest --verbose --color=yes doozer/tests/test_<module>.py::test_function
 make gen-shipment-schema
 ```
 
+## Git Conventions
+
+### Branch Workflow
+
+**IMPORTANT: Always work in topic branches. Never commit directly to `main`.**
+
+```bash
+# Create a feature branch for your work
+git checkout -b your-feature-or-bug-name
+
+# Make your changes, commit, and disover rebase errors before pushing:
+git add .
+git commit -m "Your commit message"
+git fetch origin
+git rebase origin/main
+```
+
+### Remote Configuration
+
+**CRITICAL: Never push to the `origin` remote. Always use the `dev` remote.**
+
+```bash
+# Check your current remotes
+git remote -v
+
+# Push to dev remote (NOT origin)
+git push dev your-feature-or-bug-name
+
+# Create a pull request from your feature branch
+gh pr create --base main
+```
+
+### Workflow Summary
+
+1. **Branch Creation**: Always create a topical branch from `main`
+   ```bash
+   git fetch origin
+   git switch -C descriptive-name origin/main
+   ```
+
+2. **Development**: Make changes, commit regularly to your feature branch
+
+3. **Push Changes**: Push to `dev` remote only. Pushing with `--force` is allowed.
+   ```bash
+   git push dev descriptive-name
+   ```
+
+4. **Pull Request**: Create PR against `main` branch
+
+5. **Never**:
+   - Commit directly to `main`
+   - Push to `origin` remote
+   - Force push to shared branches without coordination
+
 ## Architecture
 
 ### Build Data and Metadata System
@@ -92,7 +148,7 @@ All tools depend on **ocp-build-data** (<https://github.com/openshift-eng/ocp-bu
 - Group configurations (e.g., `openshift-4.17`, `openshift-4.18`)
 - Image and RPM metadata YAML files
 - Errata tool configuration
-- Bugzilla query configuration
+- Jira query configuration
 - Streams and assembly definitions
 
 The tools clone and read from this repository at runtime. Set the data path via:
