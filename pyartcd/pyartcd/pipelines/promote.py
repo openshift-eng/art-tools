@@ -2505,7 +2505,9 @@ class PromotePipeline:
             update_mr_description = f"""This MR updates shipment configurations with payload SHAs from the successful promote job.
 
 **Release**: {self.assembly}
+
 **Promote Job**: {os.environ.get('BUILD_URL', 'N/A')}
+
 **Total Templates Replaced**: {templates_replaced_total}
 
 **Updated Files:**
@@ -2536,7 +2538,7 @@ class PromotePipeline:
                 await asyncio.sleep(2)
 
                 # Set auto-merge to merge when pipeline passes
-                update_mr = source_project.mergerequests.get(update_mr.id, lazy=False)
+                update_mr = source_project.mergerequests.get(update_mr.iid, lazy=False)
                 update_mr.merge(merge_when_pipeline_succeeds=True, should_remove_source_branch=True)
                 self._logger.info("Successfully enabled auto-merge for template update MR: %s", update_mr_url)
                 await self._slack_client.say_in_thread(
