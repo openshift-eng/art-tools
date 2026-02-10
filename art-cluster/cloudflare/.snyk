@@ -1,0 +1,11 @@
+# Snyk (https://snyk.io) policy file
+version: v1.0.0
+ignore:
+  'src/index.ts:60':
+    - 'SNYK-JS-*':
+        reason: 'URL validated with HTTPS-only and domain whitelist'
+        expires: '2026-12-31T23:59:59.999Z'
+  'src/index.ts:75':
+    - 'SNYK-JS-*':
+        reason: 'False positive: SSRF prevented by allowlist validation, path sanitization, origin verification, and safe URL construction'
+        expires: '2026-12-31T23:59:59.999Z'
