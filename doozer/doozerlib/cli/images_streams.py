@@ -1105,7 +1105,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
     '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
 )
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
-@click.option('--dry-run', default=False, is_flag=True, help='Do everything except any write operations')
+@click.option('--dry-run', default=False, is_flag=True, help='Do everything except any remote writes/pushes')
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
 @click.option(
     '--add-auto-labels',
@@ -1218,7 +1218,7 @@ def images_streams_prs(
                 try:
                     upstream_image = resolve_upstream_from(runtime, builder)
                 except Exception as e:
-                    message = f'Error while resolving upstream image for {builder} in {dgk}: {e}'
+                    message = f'Error while resolving upstream image for {builder} in {dgk} for {major}.{minor}: {e}'
                     logger.error(message)
                     raise IOError(message)
                 if not upstream_image:
@@ -1230,7 +1230,7 @@ def images_streams_prs(
             try:
                 parent_upstream_image = resolve_upstream_from(runtime, from_config)
             except Exception as e:
-                message = f'Error while resolving upstream image for {from_config} in {dgk}: {e}'
+                message = f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
                 logger.error(message)
                 raise IOError(message)
             if len(desired_parents) != len(builders) or not parent_upstream_image:
@@ -1248,7 +1248,7 @@ def images_streams_prs(
             try:
                 desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
             except Exception as e:
-                message = f'Error while resolving ci_build_root {streams_pr_config.ci_build_root} in {dgk}: {e}'
+                message = f'Error while resolving ci_build_root {streams_pr_config.ci_build_root} in {dgk} for {major}.{minor}: {e}'
                 logger.error(message)
                 raise IOError(message)
             check_if_upstream_image_exists(desired_ci_build_root_image)
