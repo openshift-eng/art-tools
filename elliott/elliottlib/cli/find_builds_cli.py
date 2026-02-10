@@ -732,7 +732,7 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
         for image in image_metas
     ]
     records = await asyncio.gather(*tasks)
-    images_not_found: list[dict] = [image_metas[i].name for i, r in enumerate(records) if r is None]
+    images_not_found: list[str] = [image_metas[i].name for i, r in enumerate(records) if r is None]
     if images_not_found:
         message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
         LOGGER.error(message)
