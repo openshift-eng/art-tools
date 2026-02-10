@@ -1,21 +1,27 @@
 package main
 
 // Source: https://github.com/psturc/go-coverage-http
+//
+// NOTE: This file is injected into arbitrary Go "package main" directories by
+// doozer's coverage instrumentation.  All imports are aliased with a "_cov"
+// prefix and all top-level identifiers use a "_cov" prefix to avoid name
+// collisions with identifiers declared by the host package (e.g. many
+// projects declare ``var log = …`` at the package level).
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"runtime/coverage"
-	"time"
+	_covBytes "bytes"
+	_covBase64 "encoding/base64"
+	_covJSON "encoding/json"
+	_covFmt "fmt"
+	_covLog "log"
+	_covHTTP "net/http"
+	_covOS "os"
+	_covRuntime "runtime/coverage"
+	_covTime "time"
 )
 
-// CoverageResponse represents the JSON response from the coverage endpoint
-type CoverageResponse struct {
+// _covResponse represents the JSON response from the coverage endpoint
+type _covResponse struct {
 	MetaFilename     string `json:"meta_filename"`
 	MetaData         string `json:"meta_data"` // base64 encoded
 	CountersFilename string `json:"counters_filename"`
@@ -25,51 +31,51 @@ type CoverageResponse struct {
 
 func init() {
 	// Start coverage server in a separate goroutine
-	go startCoverageServer()
+	go _covStartServer()
 }
 
-// startCoverageServer starts a dedicated HTTP server for coverage collection
-func startCoverageServer() {
+// _covStartServer starts a dedicated HTTP server for coverage collection
+func _covStartServer() {
 	// Get coverage port from environment variable, default to 9095
-	coveragePort := os.Getenv("COVERAGE_PORT")
+	coveragePort := _covOS.Getenv("COVERAGE_PORT")
 	if coveragePort == "" {
 		coveragePort = "9095"
 	}
 
 	// Create a new ServeMux for the coverage server (isolated from main app)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/coverage", CoverageHandler)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "coverage server healthy")
+	mux := _covHTTP.NewServeMux()
+	mux.HandleFunc("/coverage", _covHandler)
+	mux.HandleFunc("/health", func(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
+		w.WriteHeader(_covHTTP.StatusOK)
+		_covFmt.Fprintf(w, "coverage server healthy")
 	})
 
 	addr := ":" + coveragePort
-	log.Printf("[COVERAGE] Starting coverage server on %s", addr)
-	log.Printf("[COVERAGE] Endpoints: GET %s/coverage, GET %s/health", addr, addr)
+	_covLog.Printf("[COVERAGE] Starting coverage server on %s", addr)
+	_covLog.Printf("[COVERAGE] Endpoints: GET %s/coverage, GET %s/health", addr, addr)
 
 	// Start the server (this will block, but we're in a goroutine)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Printf("[COVERAGE] ERROR: Coverage server failed: %v", err)
+	if err := _covHTTP.ListenAndServe(addr, mux); err != nil {
+		_covLog.Printf("[COVERAGE] ERROR: Coverage server failed: %v", err)
 	}
 }
 
-// CoverageHandler collects coverage data and returns it via HTTP as JSON
-func CoverageHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("[COVERAGE] Collecting coverage data...")
+// _covHandler collects coverage data and returns it via HTTP as JSON
+func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
+	_covLog.Println("[COVERAGE] Collecting coverage data...")
 
 	// Collect metadata
-	var metaBuf bytes.Buffer
-	if err := coverage.WriteMeta(&metaBuf); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to collect metadata: %v", err), http.StatusInternalServerError)
+	var metaBuf _covBytes.Buffer
+	if err := _covRuntime.WriteMeta(&metaBuf); err != nil {
+		_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect metadata: %v", err), _covHTTP.StatusInternalServerError)
 		return
 	}
 	metaData := metaBuf.Bytes()
 
 	// Collect counters
-	var counterBuf bytes.Buffer
-	if err := coverage.WriteCounters(&counterBuf); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to collect counters: %v", err), http.StatusInternalServerError)
+	var counterBuf _covBytes.Buffer
+	if err := _covRuntime.WriteCounters(&counterBuf); err != nil {
+		_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect counters: %v", err), _covHTTP.StatusInternalServerError)
 		return
 	}
 	counterData := counterBuf.Bytes()
@@ -78,34 +84,34 @@ func CoverageHandler(w http.ResponseWriter, r *http.Request) {
 	var hash string
 	if len(metaData) >= 32 {
 		hashBytes := metaData[16:32]
-		hash = fmt.Sprintf("%x", hashBytes)
+		hash = _covFmt.Sprintf("%x", hashBytes)
 	} else {
 		hash = "unknown"
 	}
 
 	// Generate proper filenames
-	timestamp := time.Now().UnixNano()
-	metaFilename := fmt.Sprintf("covmeta.%s", hash)
-	counterFilename := fmt.Sprintf("covcounters.%s.%d.%d", hash, os.Getpid(), timestamp)
+	timestamp := _covTime.Now().UnixNano()
+	metaFilename := _covFmt.Sprintf("covmeta.%s", hash)
+	counterFilename := _covFmt.Sprintf("covcounters.%s.%d.%d", hash, _covOS.Getpid(), timestamp)
 
-	log.Printf("[COVERAGE] Collected %d bytes metadata, %d bytes counters",
+	_covLog.Printf("[COVERAGE] Collected %d bytes metadata, %d bytes counters",
 		len(metaData), len(counterData))
 
 	// Return coverage data as JSON
-	response := CoverageResponse{
+	response := _covResponse{
 		MetaFilename:     metaFilename,
-		MetaData:         base64.StdEncoding.EncodeToString(metaData),
+		MetaData:         _covBase64.StdEncoding.EncodeToString(metaData),
 		CountersFilename: counterFilename,
-		CountersData:     base64.StdEncoding.EncodeToString(counterData),
+		CountersData:     _covBase64.StdEncoding.EncodeToString(counterData),
 		Timestamp:        timestamp,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("[COVERAGE] Error encoding response: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	if err := _covJSON.NewEncoder(w).Encode(response); err != nil {
+		_covLog.Printf("[COVERAGE] Error encoding response: %v", err)
+		_covHTTP.Error(w, "Failed to encode response", _covHTTP.StatusInternalServerError)
 		return
 	}
 
-	log.Println("[COVERAGE] Coverage data sent successfully")
+	_covLog.Println("[COVERAGE] Coverage data sent successfully")
 }

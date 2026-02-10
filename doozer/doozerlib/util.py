@@ -961,30 +961,72 @@ _COVERAGE_SERVER_GO = pathlib.Path(__file__).parent / 'resources' / 'coverage_se
 # Compiled regex to detect 'package main' declarations in Go source files
 _PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
 
+# Compiled regex to detect any 'package <name>' declaration in Go source files
+_PKG_ANY_PATTERN = re.compile(rb'^\s*package\s+(\w+)')
+
+# Compiled regex to detect build-ignore constraints that exclude a file from
+# normal compilation (``//go:build ignore`` or ``// +build ignore``).
+_BUILD_IGNORE_PATTERN = re.compile(rb'^\s*//\s*(\+build\s+ignore|go:build\s+ignore)\b')
+
 # Directories that should be skipped when scanning for main packages
 _SKIP_DIRS = frozenset({'.git', 'vendor', 'node_modules', '.idea', '.vscode', '__pycache__'})
 
 
 def _is_package_main(file_path: pathlib.Path) -> bool:
     """Return True if *file_path* contains a ``package main`` declaration
-    within the first 50 lines.
+    within the first 50 lines **and** is not excluded by a ``//go:build ignore``
+    or ``// +build ignore`` build constraint.
     """
     try:
         with file_path.open('rb') as f:
+            has_ignore = False
             for _ in range(50):
                 line = f.readline()
                 if not line:
                     break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
                 if _PKG_MAIN_PATTERN.match(line):
-                    return True
+                    return not has_ignore
     except (OSError, PermissionError):
         pass
     return False
 
 
+def _get_effective_package(file_path: pathlib.Path) -> Optional[str]:
+    """Return the package name declared in *file_path*, or ``None`` if the
+    file should be skipped (has a ``//go:build ignore`` constraint or could
+    not be read).  Only the first 50 lines are inspected.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                m = _PKG_ANY_PATTERN.match(line)
+                if m:
+                    if has_ignore:
+                        return None  # File is build-ignored; skip it
+                    return m.group(1).decode('utf-8')
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
 def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
     """Return a sorted list of directories under *root_path* that contain a
-    Go ``package main`` source file (excluding ``_test.go`` files).
+    Go ``package main`` source file (excluding ``_test.go`` files and files
+    with ``//go:build ignore`` constraints).
+
+    As a safety net, a directory is only included when **all** of its
+    compilable ``.go`` files (non-test, non-ignored) consistently declare
+    ``package main``.  This prevents injecting ``coverage_server.go`` into
+    directories that have a mix of package names (e.g. a ``package main``
+    example file coexisting with regular library files).
     """
     root = root_path.resolve()
     main_dirs: set[pathlib.Path] = set()
@@ -994,12 +1036,23 @@ def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
 
         current_path = pathlib.Path(current_root)
-        for file in files:
-            if not file.endswith('.go') or file.endswith('_test.go'):
-                continue
-            if _is_package_main(current_path / file):
-                main_dirs.add(current_path)
-                break  # No need to check other files in this directory
+        go_files = [f for f in files if f.endswith('.go') and not f.endswith('_test.go')]
+        if not go_files:
+            continue
+
+        has_main = False
+        has_non_main = False
+        for file in go_files:
+            pkg = _get_effective_package(current_path / file)
+            if pkg is None:
+                continue  # Build-ignored or unreadable
+            if pkg == 'main':
+                has_main = True
+            else:
+                has_non_main = True
+
+        if has_main and not has_non_main:
+            main_dirs.add(current_path)
 
     return sorted(main_dirs)
 
