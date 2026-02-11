@@ -492,17 +492,24 @@ class KonfluxOkdPipeline:
         - origin/scos-{version}:stream-coreos -> origin/scos-{version}-art:stream-coreos
         - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
 
-        Special case for OKD 5.0: Uses 4.23 as the source since 5.0 CoreOS tags don't exist yet.
+        Special cases:
+        - 4.21 and 4.22: Skip mirroring (handled by https://github.com/openshift/release/pull/74529/)
+        - 4.23 and 5.0: Use 4.22 as the source
         """
 
         if self.assembly != 'stream':
             self.logger.info('Assembly is not "stream"; skipping CoreOS imagestream mirroring')
             return
 
+        # Skip mirroring for 4.21 and 4.22 as it's handled by openshift/release PR #74529
+        if self.version in ['4.21', '4.22']:
+            self.logger.info('Version %s: CoreOS mirroring is handled by openshift/release; skipping', self.version)
+            return
+
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
 
-        # For OKD 5.0, use 4.23 as the source since 5.0 CoreOS tags don't exist
-        source_version = '4.23' if self.version == '5.0' else self.version
+        # For OKD 4.23 and 5.0, use 4.22 as the source
+        source_version = '4.22' if self.version in ['4.23', '5.0'] else self.version
 
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
