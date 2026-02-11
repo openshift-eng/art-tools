@@ -408,12 +408,12 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            if group.startswith("openshift-") or group.startswith("golang-"):
+            if group.startswith("openshift-") or "golang-" in group:
                 # For groups like oadp, mta, logging we should always use signed repos
-                # For golang- groups, always exclude gpg check regardless of lifecycle phase
+                # For golang groups (golang-* and rhel-*-golang-*), always exclude gpg check regardless of lifecycle phase
                 should_disable_gpg = False
 
-                if group.startswith("golang-"):
+                if "golang-" in group:
                     should_disable_gpg = True
                 elif group.startswith("openshift-"):
                     phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
