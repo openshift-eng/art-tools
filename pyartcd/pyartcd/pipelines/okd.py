@@ -42,7 +42,7 @@ class BuildPlan:
         return json.dumps(self.__dict__, indent=4, cls=EnumEncoder)
 
 
-class KonfluxOkd4Pipeline:
+class KonfluxOkdPipeline:
     def __init__(
         self,
         runtime: Runtime,
@@ -117,6 +117,7 @@ class KonfluxOkd4Pipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
             load_okd_only=True,
@@ -490,6 +491,8 @@ class KonfluxOkd4Pipeline:
         Mirrors:
         - origin/scos-{version}:stream-coreos -> origin/scos-{version}-art:stream-coreos
         - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+
+        Special case for OKD 5.0: Uses 4.23 as the source since 5.0 CoreOS tags don't exist yet.
         """
 
         if self.assembly != 'stream':
@@ -498,17 +501,20 @@ class KonfluxOkd4Pipeline:
 
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
 
+        # For OKD 5.0, use 4.23 as the source since 5.0 CoreOS tags don't exist
+        source_version = '4.23' if self.version == '5.0' else self.version
+
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
-                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{self.version}:{tag}')
+                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{source_version}:{tag}')
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
 
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_tag = f'{self.imagestream_namespace}/scos-{self.version}:{tag}'
+            source_tag = f'{self.imagestream_namespace}/scos-{source_version}:{tag}'
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
             self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_tag, target_tag)
@@ -604,7 +610,7 @@ class KonfluxOkd4Pipeline:
             return yaml.safe_load(state_yaml)
 
 
-@cli.command("okd4", help="A pipeline to build images with Konflux for OCP 4")
+@cli.command("okd", help="A pipeline to build images with Konflux for OKD")
 @click.option(
     '--image-build-strategy',
     required=True,
@@ -649,11 +655,11 @@ class KonfluxOkd4Pipeline:
     '--imagestream-namespace',
     required=False,
     default='origin',
-    help='Namespace for OKD imagestream updates (default: ocp)',
+    help='Namespace for OKD imagestream updates (default: origin)',
 )
 @pass_runtime
 @click_coroutine
-async def okd4(
+async def okd(
     runtime: Runtime,
     image_build_strategy: str,
     image_list: Optional[str],
@@ -670,7 +676,7 @@ async def okd4(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = KonfluxOkd4Pipeline(
+    pipeline = KonfluxOkdPipeline(
         runtime=runtime,
         image_build_strategy=image_build_strategy,
         image_list=image_list,
@@ -690,7 +696,7 @@ async def okd4(
     else:
         await locks.run_with_lock(
             coro=pipeline.run(),
-            lock=Lock.BUILD_OKD4,
-            lock_name=Lock.BUILD_OKD4.value.format(version=version),
+            lock=Lock.BUILD_OKD,
+            lock_name=Lock.BUILD_OKD.value.format(version=version),
             lock_id=lock_identifier,
         )

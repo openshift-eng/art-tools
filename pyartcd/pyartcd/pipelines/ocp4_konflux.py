@@ -374,7 +374,7 @@ class KonfluxOcpPipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD="false",
+            SKIP_MULTI_ARCH_PAYLOAD="auto",
         )
 
     async def mirror_streams_to_ci(self):
@@ -468,6 +468,7 @@ class KonfluxOcpPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
@@ -477,6 +478,7 @@ class KonfluxOcpPipeline:
         group_rpms = await get_group_rpms(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
