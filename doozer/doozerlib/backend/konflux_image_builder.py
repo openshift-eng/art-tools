@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pprint
+import re
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -408,12 +409,13 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            if group.startswith("openshift-") or "golang-" in group:
+            golang_pattern = re.compile(r'^golang-|^rhel-\d+-golang-\d+\.\d+')
+            if group.startswith("openshift-") or golang_pattern.match(group):
                 # For groups like oadp, mta, logging we should always use signed repos
-                # For golang groups (golang-* and rhel-*-golang-*), always exclude gpg check regardless of lifecycle phase
+                # For golang groups (golang-* and rhel-X-golang-Y.Z), always exclude gpg check regardless of lifecycle phase
                 should_disable_gpg = False
 
-                if "golang-" in group:
+                if golang_pattern.match(group):
                     should_disable_gpg = True
                 elif group.startswith("openshift-"):
                     phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
