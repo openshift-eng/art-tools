@@ -705,6 +705,7 @@ class FbcRebaseAndBuildCli:
             upcycle=runtime.upcycle,
             ocp_version_override=ocp_version if self.major_minor else None,
             record_logger=runtime.record_logger,
+            auth=opm.OpmRegistryAuth(path=self.prod_registry_auth) if self.prod_registry_auth else None,
         )
 
         builder = KonfluxFbcBuilder(
