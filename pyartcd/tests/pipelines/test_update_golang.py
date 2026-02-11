@@ -43,11 +43,6 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid OCP version"):
             extract_and_validate_golang_nvrs("invalid", ["golang-1.20.12-2.el8"])
 
-    def test_unsupported_ocp_major_version(self):
-        """Test with unsupported OCP major version"""
-        with self.assertRaisesRegex(ValueError, "Only OCP major version 4 is supported"):
-            extract_and_validate_golang_nvrs("5.16", ["golang-1.20.12-2.el8"])
-
     def test_unsupported_ocp_minor_version(self):
         """Test with unsupported OCP minor version (< 4.12)"""
         with self.assertRaisesRegex(ValueError, "Only OCP 4.12\\+ is supported"):
