@@ -1009,7 +1009,9 @@ class KonfluxFbcRebaser:
 
             for channel in production_channels:
                 semver = self._extract_semver_from_channel(channel)
-                if semver and channel.startswith(channel_prefix):
+                # Use stricter matching: channel must start with prefix + hyphen + version pattern
+                # This prevents matching channels like "stabletest-6.4" when prefix is "stable"
+                if semver and channel.startswith(f"{channel_prefix}-") and channel == f"{channel_prefix}-{semver}":
                     semver_channels.append((channel, semver))
                     logger.debug("Found matching semver channel: %s (v%s)", channel, semver)
 
@@ -1107,8 +1109,10 @@ class KonfluxFbcRebaser:
             return []
 
         except Exception as e:
-            logger.warning("Failed to fetch production channels for package %s: %s", olm_package, e, exc_info=True)
-            return []
+            logger.exception("Failed to fetch production channels for package %s: %s", olm_package, e)
+            # Re-raise the exception so _get_highest_semver_channel can detect production catalog access failure
+            # and trigger the appropriate fatal error handling for non-OpenShift groups
+            raise RuntimeError(f"Production catalog access failed for package {olm_package}") from e
 
     def _filter_catalog_blobs_local(self, blobs: List[Dict], allowed_package_names: Set[str]):
         """Filter catalog blobs by package names (local copy to avoid method dependency).
