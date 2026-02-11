@@ -6,6 +6,7 @@ from elliottlib import constants
 from elliottlib.bzutil import Bug, BugzillaBug
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.shipment_model import ReleaseNotes
 
 
 class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
@@ -284,6 +285,210 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
                 cast(List[Bug], attached_tracker_bugs),
                 cast(Dict[int, Iterable], tracker_flaws),
             )
+
+    def test_contains_placeholders_with_placeholders(self):
+        """
+        Test that _contains_placeholders returns True when text contains template placeholders.
+        """
+        # Test with IMAGE_ADVISORY placeholder
+        text_with_image_advisory = "This advisory is related to {IMAGE_ADVISORY}"
+        self.assertTrue(AttachCveFlaws._contains_placeholders(text_with_image_advisory))
+
+        # Test with SHA digest placeholders
+        text_with_sha = "The image digest is {x864_DIGEST}"
+        self.assertTrue(AttachCveFlaws._contains_placeholders(text_with_sha))
+
+        # Test with multiple placeholders
+        text_with_multiple = """
+        Related advisories: {IMAGE_ADVISORY}
+        SHA digests: {x864_DIGEST}, {s390x_DIGEST}, {ppc64le_DIGEST}, {aarch64_DIGEST}
+        """
+        self.assertTrue(AttachCveFlaws._contains_placeholders(text_with_multiple))
+
+    def test_contains_placeholders_without_placeholders(self):
+        """
+        Test that _contains_placeholders returns False when text has real values (no placeholders).
+        """
+        # Test with real advisory ID
+        text_with_real_advisory = "This advisory is related to RHSA-2026:2129"
+        self.assertFalse(AttachCveFlaws._contains_placeholders(text_with_real_advisory))
+
+        # Test with real SHA digest
+        text_with_real_sha = (
+            "The image digest is sha256:7ca8870aa5e505f969aa26161594a3f99b65baf7d29bab8adaca0cade51b0bb6"
+        )
+        self.assertFalse(AttachCveFlaws._contains_placeholders(text_with_real_sha))
+
+        # Test with multiple real values
+        text_with_real_values = """
+        Related advisories: RHSA-2026:2129
+        SHA digest: sha256:7ca8870aa5e505f969aa26161594a3f99b65baf7d29bab8adaca0cade51b0bb6
+        """
+        self.assertFalse(AttachCveFlaws._contains_placeholders(text_with_real_values))
+
+        # Test with empty string
+        self.assertFalse(AttachCveFlaws._contains_placeholders(""))
+
+    def test_update_release_notes_preserves_description_with_real_values(self):
+        """
+        Test that update_release_notes preserves description when it contains real values (no placeholders).
+        """
+        boilerplate = {
+            "synopsis": "New synopsis {MAJOR}.{MINOR}",
+            "topic": "New topic with {IMPACT}",
+            "description": "New description with {IMAGE_ADVISORY} and {CVES}",
+            "solution": "New solution with {x864_DIGEST}",
+        }
+
+        # Release notes with real values (no placeholders)
+        original_description = "See the image advisory RHSA-2026:2129 for container images"
+        original_solution = (
+            "The image digest is sha256:7ca8870aa5e505f969aa26161594a3f99b65baf7d29bab8adaca0cade51b0bb6"
+        )
+
+        release_notes = ReleaseNotes(
+            type="RHBA",
+            synopsis="Old synopsis",
+            topic="Old topic",
+            description=original_description,
+            solution=original_solution,
+        )
+
+        flaw_bugs = [
+            Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo', id=123),
+        ]
+
+        with patch('elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate', return_value=boilerplate):
+            with patch('elliottlib.cli.attach_cve_flaws_cli.set_bugzilla_bug_ids'):
+                pipeline = AttachCveFlaws(
+                    self.mock_runtime,
+                    advisory_id=0,
+                    into_default_advisories=False,
+                    default_advisory_type="image",
+                    output="json",
+                    noop=False,
+                )
+
+                pipeline.update_release_notes(
+                    release_notes,
+                    flaw_bugs,
+                    [],
+                    {},
+                    None,
+                )
+
+                # Description and solution should be preserved (no placeholders)
+                self.assertEqual(release_notes.description, original_description)
+                self.assertEqual(release_notes.solution, original_solution)
+
+                # Type should be converted to RHSA
+                self.assertEqual(release_notes.type, "RHSA")
+
+    def test_update_release_notes_regenerates_description_with_placeholders(self):
+        """
+        Test that update_release_notes regenerates description when it contains placeholders.
+        """
+        boilerplate = {
+            'synopsis': 'New synopsis {MAJOR}.{MINOR}',
+            'topic': 'New topic with {IMPACT}',
+            'description': 'New description with {CVES}',
+            'solution': 'New solution',
+        }
+
+        # Release notes with placeholders
+        release_notes = ReleaseNotes(
+            type="RHBA",
+            synopsis="Old synopsis",
+            topic="Old topic",
+            description="See the image advisory {IMAGE_ADVISORY} for container images",
+            solution="The image digest is {x864_DIGEST}",
+        )
+
+        flaw_bugs = [
+            Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo', id=123),
+        ]
+
+        with patch('elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate', return_value=boilerplate):
+            with patch('elliottlib.cli.attach_cve_flaws_cli.set_bugzilla_bug_ids'):
+                pipeline = AttachCveFlaws(
+                    self.mock_runtime,
+                    advisory_id=0,
+                    into_default_advisories=False,
+                    default_advisory_type="image",
+                    output="json",
+                    noop=False,
+                )
+
+                pipeline.update_release_notes(
+                    release_notes,
+                    flaw_bugs,
+                    [],
+                    {},
+                    None,
+                )
+
+                # Description and solution should be regenerated (had placeholders)
+                self.assertNotEqual(
+                    release_notes.description, "See the image advisory {IMAGE_ADVISORY} for container images"
+                )
+                self.assertIn("CVE-2022-123", release_notes.description)
+
+                # Type should be converted to RHSA
+                self.assertEqual(release_notes.type, "RHSA")
+
+    def test_update_release_notes_reconcile_preserves_real_values(self):
+        """
+        Test that reconciliation preserves description/solution when they contain real values.
+        """
+        from elliottlib.shipment_model import ReleaseNotes
+
+        boilerplate = {
+            'synopsis': 'RHBA synopsis {MAJOR}.{MINOR}',
+            'topic': 'RHBA topic',
+            'description': 'RHBA description',
+            'solution': 'RHBA solution',
+        }
+
+        # Release notes with real values (no placeholders)
+        original_description = "See the image advisory RHSA-2026:2129 for container images"
+        original_solution = (
+            "The image digest is sha256:7ca8870aa5e505f969aa26161594a3f99b65baf7d29bab8adaca0cade51b0bb6"
+        )
+
+        release_notes = ReleaseNotes(
+            type="RHSA",
+            synopsis="RHSA synopsis",
+            topic="RHSA topic",
+            description=original_description,
+            solution=original_solution,
+        )
+
+        with patch('elliottlib.cli.attach_cve_flaws_cli.get_advisory_boilerplate', return_value=boilerplate):
+            with patch('elliottlib.cli.attach_cve_flaws_cli.set_bugzilla_bug_ids'):
+                pipeline = AttachCveFlaws(
+                    self.mock_runtime,
+                    advisory_id=0,
+                    into_default_advisories=False,
+                    default_advisory_type="image",
+                    output="json",
+                    noop=False,
+                    reconcile=True,
+                )
+
+                pipeline.update_release_notes(
+                    release_notes,
+                    [],  # No flaw bugs - triggers reconciliation
+                    [],
+                    {},
+                    None,
+                )
+
+                # Description and solution should be preserved during reconciliation
+                self.assertEqual(release_notes.description, original_description)
+                self.assertEqual(release_notes.solution, original_solution)
+
+                # Type should be converted to RHBA
+                self.assertEqual(release_notes.type, "RHBA")
 
 
 if __name__ == '__main__':
