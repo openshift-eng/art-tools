@@ -824,6 +824,7 @@ async def get_group_images(
     group: str,
     assembly: str,
     build_system: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     load_okd_only: bool = False,
@@ -834,41 +835,43 @@ async def get_group_images(
     :param group: The group name (e.g. 'openshift-4.21')
     :param assembly: The assembly name (e.g. 'stream', 'rc.1')
     :param build_system: Build system to use ('brew' or 'konflux'). If empty string, doozer will use its default.
+    :param working_dir: Working directory for doozer
     :param doozer_data_path: Path to ocp-build-data repository
     :param doozer_data_gitref: Git reference to use in ocp-build-data
     :param load_okd_only: Whether to load OKD-only images (mode: disabled, okd.mode: enabled)
     :return: List of image distgit keys
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
+    working_dir.mkdir(parents=True, exist_ok=True)
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+    ]
+    if load_okd_only:
+        command.append('--load-okd-only')
+    if build_system:
+        command.append(f'--build-system={build_system}')
+    command.extend(
+        [
+            group_param,
+            '--assembly',
+            assembly,
+            'images:list',
+            '--json',
         ]
-        if load_okd_only:
-            command.append('--load-okd-only')
-        if build_system:
-            command.append(f'--build-system={build_system}')
-        command.extend(
-            [
-                group_param,
-                '--assembly',
-                assembly,
-                'images:list',
-                '--json',
-            ]
-        )
-        _, out, _ = await exectools.cmd_gather_async(command)
-        return json.loads(out)['images']
+    )
+    _, out, _ = await exectools.cmd_gather_async(command)
+    return json.loads(out)['images']
 
 
 async def get_group_rpms(
     group: str,
     assembly: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
 ) -> List[str]:
@@ -876,23 +879,24 @@ async def get_group_rpms(
     Get the list of RPMs for a given group and assembly.
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
-            group_param,
-            f'--assembly={assembly}',
-            'rpms:print',
-            '--output=rpms.txt',
-        ]
-        await exectools.cmd_assert_async(command)
-        with open('rpms.txt', 'r') as f:
-            out = f.read()
-        return out.splitlines()
+    working_dir.mkdir(parents=True, exist_ok=True)
+    rpms_file = working_dir / 'rpms.txt'
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+        group_param,
+        f'--assembly={assembly}',
+        'rpms:print',
+        f'--output={rpms_file}',
+    ]
+    await exectools.cmd_assert_async(command)
+    with open(rpms_file, 'r') as f:
+        out = f.read()
+    return out.splitlines()
 
 
 async def increment_rebase_fail_counter(image, version, build_system, branch='rebase-failure', job_url=None):
