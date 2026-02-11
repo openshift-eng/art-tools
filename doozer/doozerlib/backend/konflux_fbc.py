@@ -841,7 +841,16 @@ class KonfluxFbcRebaser:
             channel = categorized_catalog_blobs[olm_package]["olm.channel"].get(channel_name, None)
             if not channel:
                 logger.info("Channel %s not found in package %s. Bootstrapping...", channel_name, olm_package)
-                channel = KonfluxFbcRebaser._bootstrap_channel(olm_package, channel_name)
+                # Check if this is a semver-upgraded channel that needs production catalog population
+                is_semver_upgraded_channel = (
+                    not self.group.startswith('openshift-')
+                    and final_default_channel
+                    and channel_name == final_default_channel
+                    and channel_name != default_channel_name
+                )
+                channel = await self._bootstrap_channel_async(
+                    olm_package, channel_name, ocp_version, logger, is_semver_upgraded_channel
+                )
                 categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
                 catalog_blobs.append(channel)
             _update_channel(channel)
@@ -1241,6 +1250,89 @@ class KonfluxFbcRebaser:
             "schema": "olm.channel",
         }
         return channel_blob
+
+    async def _bootstrap_channel_async(
+        self,
+        package_name: str,
+        channel_name: str,
+        ocp_version: Tuple[int, int],
+        logger: logging.Logger,
+        populate_from_production: bool = False,
+    ) -> Dict[str, Any]:
+        """Bootstrap a new channel for the given package, optionally populating from production catalog.
+        :param package_name: The name of the package.
+        :param channel_name: The name of the channel to bootstrap.
+        :param ocp_version: The OCP version tuple.
+        :param logger: Logger instance.
+        :param populate_from_production: If True, populate channel with existing bundles from production.
+        :return: A dictionary representing the channel blob.
+        """
+        channel_blob = {
+            "entries": [],
+            "name": channel_name,
+            "package": package_name,
+            "schema": "olm.channel",
+        }
+
+        if populate_from_production:
+            logger.info("Populating new semver channel %s with existing bundles from production catalog", channel_name)
+            try:
+                # Extract semver from channel name for production catalog filtering
+                channel_semver = self._extract_semver_from_channel(channel_name)
+                if channel_semver:
+                    production_entries = await self._get_production_channel_entries(
+                        package_name, channel_name, ocp_version, logger
+                    )
+                    if production_entries:
+                        channel_blob["entries"] = production_entries
+                        logger.info(
+                            "Added %d existing bundles to channel %s from production catalog",
+                            len(production_entries),
+                            channel_name,
+                        )
+                    else:
+                        logger.info("No existing bundles found in production for channel %s", channel_name)
+                else:
+                    logger.info("Could not extract semver from channel %s, creating empty channel", channel_name)
+            except Exception as e:
+                logger.warning("Failed to populate channel %s from production catalog: %s", channel_name, e)
+                # Continue with empty channel on failure
+
+        return channel_blob
+
+    async def _get_production_channel_entries(
+        self, package_name: str, channel_name: str, ocp_version: Tuple[int, int], logger: logging.Logger
+    ) -> List[Dict[str, Any]]:
+        """Get existing channel entries for a specific channel from production catalog.
+        :param package_name: The package name.
+        :param channel_name: The channel name.
+        :param ocp_version: The OCP version tuple.
+        :param logger: Logger instance.
+        :return: List of channel entries.
+        """
+        try:
+            prod_catalog_url = f"registry.redhat.io/redhat/redhat-operator-index:v{ocp_version[0]}.{ocp_version[1]}"
+            logger.info("Fetching production catalog entries from %s for channel %s", prod_catalog_url, channel_name)
+
+            blobs = await opm.render(prod_catalog_url)
+
+            # Find the specific channel for this package
+            for blob in blobs:
+                if (
+                    blob.get("schema") == "olm.channel"
+                    and blob.get("package") == package_name
+                    and blob.get("name") == channel_name
+                ):
+                    entries = blob.get("entries", [])
+                    logger.info("Found %d entries in production channel %s", len(entries), channel_name)
+                    return entries
+
+            logger.info("Channel %s not found in production catalog for package %s", channel_name, package_name)
+            return []
+
+        except Exception as e:
+            logger.warning("Failed to fetch production channel entries: %s", e)
+            return []
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
         dest_repos = {}
