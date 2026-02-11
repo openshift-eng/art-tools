@@ -62,13 +62,14 @@ for arg in "$@"; do
 
     # prior to detecting 'IN_RUN', grafana failed because it ran
     # 'go run build.go build' which caused the script to exec 'go run build.go build -tags strictfipsruntime'
-    if [[ "${arg}" == "build" && "${IN_RUN}" == "0" ]]; then
+    # 'go install ...' can also trigger builds (e.g. Kubernetes uses `go install` instead of `go build`).
+    if [[ ( "${arg}" == "build" || "${arg}" == "install" ) && "${IN_RUN}" == "0" ]]; then
       # -tags apparently cannot come after a build path
       # e.g. "build ./cmd/cluster-openshift-apiserver-operator -tags strictfipsruntime" is invalid.
       # So, if we see "build" and no "-tags" ahead, then go ahead and force FOD tag.
 
       IN_BUILD="1"  # This is a go build invocation
-      ARGS+=("${arg}") # Add "build"
+      ARGS+=("${arg}") # Add "build" or "install"
 
       if [[ "${GO_COMPLIANCE_COVER:-}" == "1" ]]; then
         echoerr "adding -cover for build or install operation"
@@ -80,7 +81,7 @@ for arg in "$@"; do
         ARGS+=("-tags")
         ARGS+=("strictfipsruntime")
       fi
-      continue  # We've already added 'build', so don't reach the bottom of the loop where it would be added again.
+      continue  # We've already added 'build' or 'install', so don't reach the bottom of the loop where it would be added again.
     fi
 
     if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_FOD_MODE}" == "1" ]]; then

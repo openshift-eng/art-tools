@@ -7,6 +7,16 @@ package main
 // prefix and all top-level identifiers use a "_cov" prefix to avoid name
 // collisions with identifiers declared by the host package (e.g. many
 // projects declare ``var log = …`` at the package level).
+//
+// Multiple containers in a pod may each start a coverage server.  The server
+// tries ports starting at _covDefaultPort (or COVERAGE_PORT) and increments
+// up to _covMaxRetries times until it finds a free port.
+//
+// Clients can identify a coverage server by sending a HEAD request to any
+// endpoint: the response will include the headers:
+//   X-Art-Coverage-Server: 1
+//   X-Art-Coverage-Pid:    <pid>
+//   X-Art-Coverage-Binary: <binary-name>
 
 import (
 	_covBytes "bytes"
@@ -14,10 +24,18 @@ import (
 	_covJSON "encoding/json"
 	_covFmt "fmt"
 	_covLog "log"
+	_covNet "net"
 	_covHTTP "net/http"
 	_covOS "os"
+	_covPath "path/filepath"
 	_covRuntime "runtime/coverage"
+	_covStrconv "strconv"
 	_covTime "time"
+)
+
+const (
+	_covDefaultPort = 53700 // Starting port for the coverage server
+	_covMaxRetries  = 50    // Maximum number of ports to try
 )
 
 // _covResponse represents the JSON response from the coverage endpoint
@@ -34,12 +52,32 @@ func init() {
 	go _covStartServer()
 }
 
-// _covStartServer starts a dedicated HTTP server for coverage collection
+// _covIdentityMiddleware wraps a handler to add identification headers to
+// every response (including HEAD requests) so that clients can confirm they
+// are talking to a coverage server rather than an unrelated process.
+func _covIdentityMiddleware(next _covHTTP.Handler) _covHTTP.Handler {
+	pid := _covStrconv.Itoa(_covOS.Getpid())
+	exe := "unknown"
+	if exePath, err := _covOS.Executable(); err == nil {
+		exe = _covPath.Base(exePath)
+	}
+	return _covHTTP.HandlerFunc(func(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
+		w.Header().Set("X-Art-Coverage-Server", "1")
+		w.Header().Set("X-Art-Coverage-Pid", pid)
+		w.Header().Set("X-Art-Coverage-Binary", exe)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// _covStartServer starts a dedicated HTTP server for coverage collection.
+// It tries successive ports starting from COVERAGE_PORT (default 53700)
+// until one is available or _covMaxRetries attempts are exhausted.
 func _covStartServer() {
-	// Get coverage port from environment variable, default to 9095
-	coveragePort := _covOS.Getenv("COVERAGE_PORT")
-	if coveragePort == "" {
-		coveragePort = "9095"
+	startPort := _covDefaultPort
+	if envPort := _covOS.Getenv("COVERAGE_PORT"); envPort != "" {
+		if p, err := _covStrconv.Atoi(envPort); err == nil && p > 0 {
+			startPort = p
+		}
 	}
 
 	// Create a new ServeMux for the coverage server (isolated from main app)
@@ -50,14 +88,32 @@ func _covStartServer() {
 		_covFmt.Fprintf(w, "coverage server healthy")
 	})
 
-	addr := ":" + coveragePort
-	_covLog.Printf("[COVERAGE] Starting coverage server on %s", addr)
-	_covLog.Printf("[COVERAGE] Endpoints: GET %s/coverage, GET %s/health", addr, addr)
+	// Wrap with identity middleware so HEAD requests get recognition headers
+	handler := _covIdentityMiddleware(mux)
 
-	// Start the server (this will block, but we're in a goroutine)
-	if err := _covHTTP.ListenAndServe(addr, mux); err != nil {
-		_covLog.Printf("[COVERAGE] ERROR: Coverage server failed: %v", err)
+	for attempt := 0; attempt < _covMaxRetries; attempt++ {
+		port := startPort + attempt
+		addr := _covFmt.Sprintf(":%d", port)
+
+		// Try to bind the port before committing to ListenAndServe so we
+		// can detect "address already in use" and try the next port.
+		ln, err := _covNet.Listen("tcp", addr)
+		if err != nil {
+			_covLog.Printf("[COVERAGE] Port %d unavailable: %v; trying next", port, err)
+			continue
+		}
+
+		_covLog.Printf("[COVERAGE] Starting coverage server on port %d (pid %d)", port, _covOS.Getpid())
+		_covLog.Printf("[COVERAGE] Endpoints: GET %s/coverage, GET %s/health, HEAD %s/*", addr, addr, addr)
+
+		// Serve on the already-bound listener (this blocks)
+		if err := _covHTTP.Serve(ln, handler); err != nil {
+			_covLog.Printf("[COVERAGE] ERROR: Coverage server on port %d failed: %v", port, err)
+		}
+		return
 	}
+
+	_covLog.Printf("[COVERAGE] ERROR: Could not bind any port in range %d–%d", startPort, startPort+_covMaxRetries-1)
 }
 
 // _covHandler collects coverage data and returns it via HTTP as JSON
