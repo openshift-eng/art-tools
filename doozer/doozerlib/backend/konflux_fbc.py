@@ -807,17 +807,8 @@ class KonfluxFbcRebaser:
             if replaces:
                 entry["replaces"] = replaces
 
-        for channel_name in channel_names:
-            logger.info("Updating channel %s", channel_name)
-            channel = categorized_catalog_blobs[olm_package]["olm.channel"].get(channel_name, None)
-            if not channel:
-                logger.info("Channel %s not found in package %s. Bootstrapping...", channel_name, olm_package)
-                channel = KonfluxFbcRebaser._bootstrap_channel(olm_package, channel_name)
-                categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
-                catalog_blobs.append(channel)
-            _update_channel(channel)
-
-        # Set default channel with production catalog semver comparison
+        # Set default channel with production catalog semver comparison first
+        final_default_channel = default_channel_name
         if default_channel_name:
             logger.info(
                 "Processing default channel setting for package %s, configured channel: %s",
@@ -835,18 +826,40 @@ class KonfluxFbcRebaser:
                 logger.info("OpenShift group detected, using configured channel without production check")
                 final_default_channel = default_channel_name
 
+        # Update channels from bundle labels and include the final default channel if upgraded
+        channels_to_update = set(channel_names)
+        if final_default_channel and final_default_channel not in channels_to_update:
+            logger.info(
+                "Adding bundle to upgraded default channel %s (in addition to original channels %s)",
+                final_default_channel,
+                channel_names,
+            )
+            channels_to_update.add(final_default_channel)
+
+        for channel_name in channels_to_update:
+            logger.info("Updating channel %s", channel_name)
+            channel = categorized_catalog_blobs[olm_package]["olm.channel"].get(channel_name, None)
+            if not channel:
+                logger.info("Channel %s not found in package %s. Bootstrapping...", channel_name, olm_package)
+                channel = KonfluxFbcRebaser._bootstrap_channel(olm_package, channel_name)
+                categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
+                catalog_blobs.append(channel)
+            _update_channel(channel)
+
+        # Update package blob with final default channel
+        if final_default_channel:
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            
+
             # Verify that final_default_channel exists in the current package channels
             available_channels = set(categorized_catalog_blobs[olm_package].get("olm.channel", {}).keys())
-            
+
             if final_default_channel not in available_channels:
                 logger.warning(
                     "Channel %s not found in current catalog channels %s. "
                     "Falling back to configured channel %s to prevent validation errors.",
                     final_default_channel,
                     sorted(available_channels),
-                    default_channel_name
+                    default_channel_name,
                 )
                 # Fall back to original configured channel if it exists, otherwise use a bootstrap choice
                 if default_channel_name in available_channels:
@@ -857,13 +870,13 @@ class KonfluxFbcRebaser:
                     logger.warning(
                         "Even configured channel %s not found. Using fallback channel: %s",
                         default_channel_name,
-                        fallback_channel
+                        fallback_channel,
                     )
                     final_default_channel = fallback_channel
                 else:
                     logger.error("No channels available in catalog. Cannot set defaultChannel.")
                     raise ValueError(f"No channels found for package {olm_package} in catalog")
-            
+
             if package_blob.get("defaultChannel") != final_default_channel:
                 if final_default_channel != default_channel_name:
                     logger.info(
