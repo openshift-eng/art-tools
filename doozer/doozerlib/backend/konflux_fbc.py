@@ -836,6 +836,34 @@ class KonfluxFbcRebaser:
                 final_default_channel = default_channel_name
 
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
+            
+            # Verify that final_default_channel exists in the current package channels
+            available_channels = set(categorized_catalog_blobs[olm_package].get("olm.channel", {}).keys())
+            
+            if final_default_channel not in available_channels:
+                logger.warning(
+                    "Channel %s not found in current catalog channels %s. "
+                    "Falling back to configured channel %s to prevent validation errors.",
+                    final_default_channel,
+                    sorted(available_channels),
+                    default_channel_name
+                )
+                # Fall back to original configured channel if it exists, otherwise use a bootstrap choice
+                if default_channel_name in available_channels:
+                    final_default_channel = default_channel_name
+                elif available_channels:
+                    # Use the first available channel as a safe bootstrap choice
+                    fallback_channel = sorted(available_channels)[0]
+                    logger.warning(
+                        "Even configured channel %s not found. Using fallback channel: %s",
+                        default_channel_name,
+                        fallback_channel
+                    )
+                    final_default_channel = fallback_channel
+                else:
+                    logger.error("No channels available in catalog. Cannot set defaultChannel.")
+                    raise ValueError(f"No channels found for package {olm_package} in catalog")
+            
             if package_blob.get("defaultChannel") != final_default_channel:
                 if final_default_channel != default_channel_name:
                     logger.info(
@@ -1009,9 +1037,14 @@ class KonfluxFbcRebaser:
             return configured_channel
 
         except Exception as e:
-            logger.warning("Error checking production channels for semver upgrade: %s", e, exc_info=True)
-            logger.info("Falling back to configured channel: %s", configured_channel)
-            return configured_channel
+            logger.error("Failed to check production channels for semver upgrade: %s", e, exc_info=True)
+            # For non-OpenShift groups, production catalog access failure should be fatal
+            # to prevent masking infrastructure issues like disk space problems
+            raise RuntimeError(
+                f"Production catalog access failed for package {olm_package}. "
+                f"This prevents semver channel upgrades from working correctly. "
+                f"Original error: {e}"
+            ) from e
 
     async def _get_production_channels(
         self, olm_package: str, ocp_version: Tuple[int, int], logger: logging.Logger
