@@ -231,6 +231,7 @@ class BuildMicroShiftBootcPipeline:
 
             if self.shipment_mr_url and not self.runtime.dry_run:
                 await self._set_shipment_mr_ready()
+                await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -708,13 +709,16 @@ class BuildMicroShiftBootcPipeline:
             self._logger.info("Waiting for 30 seconds to ensure MR is updated...")
             await asyncio.sleep(30)
 
-            pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
-            if pipeline_url:
-                await self.slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
-            else:
-                await self.slack_client.say_in_thread(f"Failed to trigger CI pipeline for MR branch {mr.source_branch}")
-
-        await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
+            try:
+                pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+                if pipeline_url:
+                    await self.slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
+                else:
+                    await self.slack_client.say_in_thread(
+                        f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
+                    )
+            except Exception as e:
+                self._logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
     async def _setup_shipment_environment(self):
         """Setup environment variables and tokens required for shipment operations"""

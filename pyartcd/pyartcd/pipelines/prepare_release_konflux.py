@@ -1134,13 +1134,16 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
             await asyncio.sleep(30)
 
-            pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
-            if pipeline_url:
-                await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
-            else:
-                await self._slack_client.say_in_thread(
-                    f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
-                )
+            try:
+                pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+                if pipeline_url:
+                    await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
+                else:
+                    await self._slack_client.say_in_thread(
+                        f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
+                    )
+            except Exception as e:
+                self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str

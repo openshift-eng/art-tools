@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
 

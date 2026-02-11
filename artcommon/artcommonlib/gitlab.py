@@ -3,7 +3,6 @@ GitLab client for ART tools.
 """
 
 from logging import getLogger
-from typing import Optional
 from urllib.parse import urlparse
 
 import gitlab
@@ -69,8 +68,8 @@ class GitLabClient:
             return None
 
         parsed_url = urlparse(mr_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
+        mr_id = parsed_url.path.split("/")[-1]
 
         project = self._client.projects.get(target_project_path)
         return project.mergerequests.get(mr_id)
@@ -117,19 +116,14 @@ class GitLabClient:
         Return Value(s):
             Pipeline URL if successfully triggered, None otherwise
         """
-        try:
-            logger.info(f"Triggering CI pipeline for MR {mr.iid} on branch {mr.source_branch}")
+        logger.info(f"Triggering CI pipeline for MR {mr.iid} on branch {mr.source_branch}")
 
-            if self.dry_run:
-                logger.info(f"[DRY-RUN] Would have triggered MR pipeline for MR !{mr.iid} (branch: {mr.source_branch})")
-                return None
-
-            pipeline = mr.pipelines.create({'ref': mr.source_branch})
-
-            pipeline_url = pipeline.web_url
-            logger.info(f"CI MR pipeline triggered successfully: {pipeline_url}")
-            return pipeline_url
-
-        except Exception as e:
-            logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would have triggered MR pipeline for MR !{mr.iid} (branch: {mr.source_branch})")
             return None
+
+        pipeline = mr.pipelines.create({"ref": mr.source_branch})
+
+        pipeline_url = pipeline.web_url
+        logger.info(f"CI MR pipeline triggered successfully: {pipeline_url}")
+        return pipeline_url
