@@ -22,6 +22,9 @@ promote_image_list_recipients = ["openshift-ccs@redhat.com"]
 promote_complete_recipients = ['aos-cicd@redhat.com', 'aos-qe@redhat.com', 'aos-art-automation+new-release@redhat.com']
 
 [jira]
+# JIRA server URL - can also be set via JIRA_SERVER_URL environment variable
+# Note: The codebase uses centralized JIRA configuration from artcommonlib.jira_config
+# When migrating JIRA instances, update artcommonlib/jira_config.py or set JIRA_SERVER_URL env var
 url = "https://issues.redhat.com"
 [jira.templates]
 ocp4 = "OCPPLAN-4756"

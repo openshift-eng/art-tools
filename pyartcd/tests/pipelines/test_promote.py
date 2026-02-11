@@ -6,6 +6,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
+from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.model import Model
 from pyartcd.pipelines.promote import PromotePipeline
 from ruamel.yaml import YAML
@@ -126,7 +127,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -157,7 +158,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -190,7 +191,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -258,7 +259,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -330,7 +331,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -370,7 +371,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -412,7 +413,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -462,7 +463,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -568,7 +569,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -727,7 +728,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -841,7 +842,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -950,7 +951,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime = MagicMock(
             config={
                 "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
-                "jira": {"url": "https://issues.redhat.com/"},
+                "jira": {"url": JIRA_SERVER_URL},
             },
             working_dir=Path("/path/to/working"),
             dry_run=False,
@@ -1081,7 +1082,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1379,7 +1380,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1605,7 +1606,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1654,7 +1655,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1708,7 +1709,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1768,7 +1769,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1836,7 +1837,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),
@@ -1912,7 +1913,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     "ocp_build_data_url": "https://example.com/ocp-build-data.git",
                 },
                 "jira": {
-                    "url": "https://issues.redhat.com/",
+                    "url": JIRA_SERVER_URL,
                 },
             },
             working_dir=Path("/path/to/working"),

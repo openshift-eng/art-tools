@@ -13,6 +13,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
@@ -883,7 +884,7 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
             if issue in comment.body:
                 return  # an exist comment already have the issue
         pr.create_issue_comment(
-            f"ART wants to connect issue [{issue}](https://issues.redhat.com/browse/{issue}) to this PR, \
+            f"ART wants to connect issue [{issue}]({get_jira_browse_url(issue)}) to this PR, \
                                 but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do."
         )
     else:  # update pr title

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh
 from elliottlib.errata_async import AsyncErrataAPI
@@ -842,10 +843,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_shipment_extras_update = copy.deepcopy(mock_shipment_extras_create)
         mock_shipment_metadata_update = copy.deepcopy(mock_shipment_metadata_create)
         mock_shipment_image_update.shipment.data.releaseNotes.issues = Issues(
-            fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]
+            fixed=[Issue(id="IMAGEBUG", source=JIRA_DOMAIN_NAME)]
         )
         mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
-            fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]
+            fixed=[Issue(id="EXTRASBUG", source=JIRA_DOMAIN_NAME)]
         )
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)

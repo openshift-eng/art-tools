@@ -809,11 +809,13 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
+        from artcommonlib.jira_config import JIRA_SERVER_URL
+
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
             raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
         bug_config = Model(self.get_bug_config())
-        server = bug_config.jira_config.server or 'https://issues.redhat.com'
+        server = bug_config.jira_config.server or JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
