@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
-from doozerlib.image import ImageMetadata
+from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
@@ -728,8 +728,13 @@ RUN echo "test"
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
-    def test_determine_upstream_rhel_version_ubi_pattern(self, mock_joinpath, mock_open, mock_source_resolver):
+    @patch('doozerlib.image.util.oc_image_info_for_arch__caching', return_value={'config': {'config': {'Labels': {}}}})
+    def test_determine_upstream_rhel_version_ubi_pattern(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
         """Test RHEL version detection from ubi-based images"""
+        # Clear lru_cache to avoid interference from other tests or cached real calls
+        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/test_ubi')
 
         # Mock config
