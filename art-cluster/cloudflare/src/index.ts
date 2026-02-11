@@ -72,6 +72,7 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
     });
 
     // Fetch from secure pre-validated endpoint
+    // SSRF: validated by allowlist + origin + path-prefix checks above
     const response = await fetch(proxyRequest);
 
     // Return the response to the client
