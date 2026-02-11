@@ -468,6 +468,7 @@ class KonfluxOcpPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
@@ -477,6 +478,7 @@ class KonfluxOcpPipeline:
         group_rpms = await get_group_rpms(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )

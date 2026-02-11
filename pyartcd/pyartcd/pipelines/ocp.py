@@ -2,6 +2,7 @@ import asyncio
 import json
 import os.path
 import shutil
+from pathlib import Path
 
 import click
 import yaml
@@ -118,6 +119,7 @@ class OcpPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='brew',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
