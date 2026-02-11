@@ -26,9 +26,20 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
 
     // Get the pre-validated endpoint
     const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
-    
-    // Create final URL by appending path to secure endpoint
+
+    // Sanitize remainingPath to prevent SSRF via path traversal or authority injection
+    // Reject paths containing '..' segments, authority markers, or control characters
+    if (/(\.\.|@|\\|%2e%2e|%2f|%5c)/i.test(remainingPath)) {
+        return new Response('Invalid path', { status: 400 });
+    }
+
+    // Construct the final URL and verify the host was not altered
     const finalUrl = secureEndpoint + remainingPath;
+    const parsedFinal = new URL(finalUrl);
+    const parsedBase = new URL(secureEndpoint);
+    if (parsedFinal.hostname !== parsedBase.hostname || parsedFinal.protocol !== parsedBase.protocol) {
+        return new Response('Invalid proxy target', { status: 400 });
+    }
 
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
