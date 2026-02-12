@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 import os
 import shutil
 import tempfile
+from collections import defaultdict
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -31,6 +33,7 @@ from elliottlib.shipment_model import (
     SnapshotSpec,
 )
 from elliottlib.util import extract_nvrs_from_fbc
+from tenacity import retry, stop_after_attempt
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
@@ -223,22 +226,73 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
+    async def extract_fbc_labels(self, fbc_pullspec: str) -> Dict[str, Optional[str]]:
+        """
+        Extract key labels from the FBC image using oc image info.
+
+        Retries up to 3 times on transient errors (e.g., 502 Bad Gateway).
+
+        Returns a dict with:
+            - 'nvr': The com.redhat.art.nvr label (NVR of the FBC build)
+            - 'doozer_key': The __doozer_key label (operator identifier)
+        """
+        self.logger.info(f"Extracting labels from FBC pullspec: {fbc_pullspec}")
+
+        labels_result: Dict[str, Optional[str]] = {'nvr': None, 'doozer_key': None}
+
+        @retry(reraise=True, stop=stop_after_attempt(3))
+        async def _get_image_info():
+            oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
+            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            if konflux_art_images_auth_file:
+                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+
+            rc, stdout, stderr = await exectools.cmd_gather_async(oc_cmd, check=False)
+            if rc != 0:
+                raise RuntimeError(f"oc image info failed: rc={rc}, stderr={stderr}")
+            return json.loads(stdout)
+
+        try:
+            image_info = await _get_image_info()
+
+            # Extract labels
+            labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
+            labels_result['nvr'] = labels.get('com.redhat.art.nvr')
+            labels_result['doozer_key'] = labels.get('__doozer_key')
+
+            if labels_result['nvr']:
+                self.logger.info(f"✓ Extracted NVR: {labels_result['nvr']}")
+            if labels_result['doozer_key']:
+                self.logger.info(f"✓ Extracted doozer_key: {labels_result['doozer_key']}")
+
+        except Exception as e:
+            self.logger.exception(f"✗ Failed to get image info for FBC {fbc_pullspec}: {e}")
+
+        return labels_result
+
     def extract_fbc_nvr(self, fbc_pullspec: str) -> Optional[str]:
         """
         Extract the NVR from the FBC image itself using oc image info and com.redhat.art.nvr label.
+
+        Retries up to 3 times on transient errors (e.g., 502 Bad Gateway).
         """
         self.logger.info(f"Extracting FBC NVR from FBC pullspec: {fbc_pullspec}")
 
-        try:
+        @retry(reraise=True, stop=stop_after_attempt(3))
+        def _get_image_info():
             oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
-
             # Add registry config for authentication if available
             konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
             if konflux_art_images_auth_file:
                 oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
 
-            image_info_output, _ = exectools.cmd_assert(oc_cmd)
-            image_info = json.loads(image_info_output)
+            rc, stdout, stderr = exectools.cmd_gather(oc_cmd)
+            if rc != 0:
+                raise RuntimeError(f"oc image info failed: rc={rc}, stderr={stderr}")
+            return json.loads(stdout)
+
+        try:
+            image_info = _get_image_info()
 
             # Extract labels
             labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
@@ -255,13 +309,51 @@ class ReleaseFromFbcPipeline:
             self.logger.exception(f"✗ Failed to get image info for FBC {fbc_pullspec}: {e}")
             return None
 
+    def is_nvr_from_current_group(self, nvr: str) -> bool:
+        """
+        Check if an NVR belongs to the current group based on version pattern.
+
+        External dependencies (e.g., kube-rbac-proxy from openshift-4.x in a logging-6.x FBC)
+        have versions that don't match the current assembly pattern and should be filtered out.
+
+        Examples:
+        - Assembly "6.3.3" matches NVR version "6.3.3-202602032201..."
+        - Assembly "6.3.3" does NOT match NVR version "v4.20.0-202512150315..." (external)
+        - Assembly "1.5.4" matches NVR version "1.5.4-202601170852..."
+        """
+        nvr_dict = parse_nvr(nvr)
+        nvr_version = nvr_dict.get('version', '')
+
+        # Extract major.minor.patch from assembly (e.g., "6.3.3" -> "6.3")
+        # to allow matching point releases
+        assembly_parts = self.assembly.split('.')
+        if len(assembly_parts) >= 2:
+            assembly_prefix = f"{assembly_parts[0]}.{assembly_parts[1]}"
+        else:
+            assembly_prefix = self.assembly
+
+        # Check if NVR version starts with the assembly prefix
+        # This handles cases like "6.3.3-..." matching assembly "6.3.3"
+        # and "6.3.3.202602032201..." (metadata containers) matching assembly "6.3.3"
+        if nvr_version.startswith(assembly_prefix):
+            return True
+
+        # Also check if NVR version starts with full assembly (for exact matches)
+        if nvr_version.startswith(self.assembly):
+            return True
+
+        return False
+
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
         Categorize NVRs into image builds and FBC builds.
+
+        External dependencies (images from other groups like openshift-4.x) are filtered out
+        since they are already released through their own group's release process.
         """
         self.logger.info(f"Categorizing {len(nvrs)} extracted NVRs...")
 
-        categorized = {"image": [], "fbc": []}
+        categorized = {"image": [], "fbc": [], "external": []}
 
         for nvr in nvrs:
             nvr_dict = parse_nvr(nvr)
@@ -269,13 +361,20 @@ class ReleaseFromFbcPipeline:
 
             if component_name.endswith('-fbc'):
                 categorized["fbc"].append(nvr)
-            else:
-                # All other builds are considered image builds for simplicity
+            elif self.is_nvr_from_current_group(nvr):
                 categorized["image"].append(nvr)
+            else:
+                # External dependency - not from current group
+                categorized["external"].append(nvr)
 
         self.logger.info("Categorization results:")
         self.logger.info(f"  • Image builds: {len(categorized['image'])}")
         self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
+
+        if categorized['external']:
+            self.logger.info(f"  • External dependencies (filtered out): {len(categorized['external'])}")
+            for ext_nvr in categorized['external']:
+                self.logger.info(f"    - {ext_nvr}")
 
         return categorized
 
@@ -495,50 +594,113 @@ class ReleaseFromFbcPipeline:
 
     async def validate_fbc_related_images(self, fbc_pullspecs: List[str]) -> List[str]:
         """
-        Validate that all FBC pullspecs have the same related images.
-        Returns the common related images if validation passes.
-        """
-        self.logger.info(f"Validating that all {len(fbc_pullspecs)} FBC builds have the same related images...")
+        Validate that FBC pullspecs for the same operator have matching related images.
 
-        # Extract related images from each FBC sequentially to avoid temp directory conflicts
-        fbc_related_images = {}
+        When multiple operators are present (e.g., cluster-logging-operator and loki-operator),
+        FBCs are grouped by their __doozer_key label, and validation is performed within each group.
+        Different operators are expected to have different related images.
+
+        Returns a combined list of all unique related images across all operators.
+        """
+        self.logger.info(f"Validating related images for {len(fbc_pullspecs)} FBC builds...")
+
+        self.logger.info("Extracting operator identifiers (__doozer_key) from FBC images...")
+        label_tasks = [self.extract_fbc_labels(fbc_pullspec) for fbc_pullspec in fbc_pullspecs]
+        label_results = await asyncio.gather(*label_tasks)
+
+        # Map FBC pullspecs to their doozer_key
+        fbc_to_doozer_key: Dict[str, str] = {}
+        for fbc_pullspec, labels in zip(fbc_pullspecs, label_results):
+            doozer_key = labels.get('doozer_key')
+            if doozer_key:
+                fbc_to_doozer_key[fbc_pullspec] = doozer_key
+            else:
+                # Fall back to extracting operator name from pullspec tag if doozer_key is not available
+                # e.g., "cluster-logging-operator-fbc-6.3.3-20260205151748" -> "cluster-logging-operator"
+                tag_part = fbc_pullspec.split(':')[-1] if ':' in fbc_pullspec else ''
+                if '-fbc-' in tag_part:
+                    operator_name = tag_part.split('-fbc-')[0]
+                    self.logger.warning(
+                        f"__doozer_key not found for {fbc_pullspec}, using fallback from tag: {operator_name}"
+                    )
+                    fbc_to_doozer_key[fbc_pullspec] = operator_name
+                else:
+                    self.logger.warning(f"Could not determine operator for {fbc_pullspec}, using 'unknown' as group")
+                    fbc_to_doozer_key[fbc_pullspec] = 'unknown'
+
+        operator_to_fbcs: Dict[str, List[str]] = defaultdict(list)
+        for fbc_pullspec in fbc_pullspecs:
+            doozer_key = fbc_to_doozer_key[fbc_pullspec]
+            operator_to_fbcs[doozer_key].append(fbc_pullspec)
+
+        operators = list(operator_to_fbcs.keys())
+        self.logger.info(f"Found {len(operators)} distinct operator(s): {operators}")
+
+        fbc_related_images: Dict[str, List[str]] = {}
         for fbc_pullspec in fbc_pullspecs:
             related_nvrs = await extract_nvrs_from_fbc(fbc_pullspec, self.product)
             fbc_related_images[fbc_pullspec] = sorted(related_nvrs)
 
-        # Compare related images across all FBCs
-        reference_fbc = fbc_pullspecs[0]
-        reference_images = fbc_related_images[reference_fbc]
+        all_mismatches: List[Dict] = []
+        all_unique_related_images: set = set()
 
-        mismatches = []
-        for fbc_pullspec in fbc_pullspecs[1:]:
-            current_images = fbc_related_images[fbc_pullspec]
-            if current_images != reference_images:
-                # Find specific differences
-                only_in_reference = set(reference_images) - set(current_images)
-                only_in_current = set(current_images) - set(reference_images)
-                mismatches.append(
-                    {
-                        'fbc': fbc_pullspec,
-                        'only_in_reference': sorted(only_in_reference),
-                        'only_in_current': sorted(only_in_current),
-                    }
+        for operator, operator_fbcs in operator_to_fbcs.items():
+            self.logger.info(f"Validating {len(operator_fbcs)} FBC(s) for operator '{operator}'...")
+
+            if len(operator_fbcs) == 1:
+                # Only one FBC for this operator, no comparison needed
+                self.logger.info(f"  ✓ Single FBC for '{operator}', no mismatch validation needed")
+                all_unique_related_images.update(fbc_related_images[operator_fbcs[0]])
+                continue
+
+            # Compare related images within this operator group
+            reference_fbc = operator_fbcs[0]
+            reference_images = fbc_related_images[reference_fbc]
+            all_unique_related_images.update(reference_images)
+
+            for fbc_pullspec in operator_fbcs[1:]:
+                current_images = fbc_related_images[fbc_pullspec]
+                all_unique_related_images.update(current_images)
+
+                if current_images != reference_images:
+                    # Find specific differences
+                    only_in_reference = set(reference_images) - set(current_images)
+                    only_in_current = set(current_images) - set(reference_images)
+                    all_mismatches.append(
+                        {
+                            'operator': operator,
+                            'reference_fbc': reference_fbc,
+                            'fbc': fbc_pullspec,
+                            'only_in_reference': sorted(only_in_reference),
+                            'only_in_current': sorted(only_in_current),
+                        }
+                    )
+
+            if not any(m['operator'] == operator for m in all_mismatches):
+                self.logger.info(
+                    f"  ✓ All {len(operator_fbcs)} FBCs for '{operator}' have matching related images "
+                    f"({len(reference_images)} images)"
                 )
 
-        if mismatches:
-            error_msg = f"FBC builds do not have matching related images.\nReference FBC: {reference_fbc}\n"
-            for mismatch in mismatches:
-                error_msg += f"\nMismatch with: {mismatch['fbc']}\n"
+        if all_mismatches:
+            error_msg = "FBC builds within the same operator do not have matching related images:\n"
+            for mismatch in all_mismatches:
+                error_msg += f"\nOperator: {mismatch['operator']}\n"
+                error_msg += f"  Reference FBC: {mismatch['reference_fbc']}\n"
+                error_msg += f"  Mismatch with: {mismatch['fbc']}\n"
                 if mismatch['only_in_reference']:
-                    error_msg += f"  Only in reference: {mismatch['only_in_reference']}\n"
+                    error_msg += f"    Only in reference: {mismatch['only_in_reference']}\n"
                 if mismatch['only_in_current']:
-                    error_msg += f"  Only in current: {mismatch['only_in_current']}\n"
+                    error_msg += f"    Only in current: {mismatch['only_in_current']}\n"
 
             self.logger.error(error_msg)
             raise RuntimeError(error_msg)
 
-        self.logger.info(f"✓ All FBC builds have matching related images ({len(reference_images)} images)")
-        return reference_images
+        self.logger.info(
+            f"✓ Validation passed: {len(operators)} operator(s) with {len(all_unique_related_images)} "
+            f"total unique related images"
+        )
+        return sorted(all_unique_related_images)
 
     async def run(self) -> None:
         """
