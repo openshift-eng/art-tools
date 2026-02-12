@@ -2269,11 +2269,9 @@ class PromotePipeline:
             else:
                 self._logger.info("No template replacements needed for %s shipment", shipment_kind)
 
-        # Create a single MR with all the file updates
+        # Commit doc updates directly to the shipment MR branch
         if files_to_update:
-            await self._create_consolidated_shipment_update_mr(
-                mr, source_project, files_to_update, templates_replaced_total
-            )
+            await self._update_shipment_mr_with_docs(mr, source_project, files_to_update, templates_replaced_total)
         else:
             self._logger.info("No template replacements needed for any shipment files")
 
@@ -2433,126 +2431,48 @@ class PromotePipeline:
             self._logger.info("No template placeholders found in %s shipment file", shipment_kind)
             return None, None, 0
 
-    async def _create_consolidated_shipment_update_mr(
+    async def _update_shipment_mr_with_docs(
         self, mr, source_project, files_to_update: Dict[str, str], templates_replaced_total: int
     ):
-        """Create a new MR to update all shipments with template replacements"""
+        """
+        Update shipment files with template replacements by committing directly
+        to the shipment MR's source branch.
+        """
         try:
             if self.runtime.dry_run:
                 self._logger.info(
-                    "[DRY RUN] Would have created MR to update shipment files with template replacements: %s",
+                    "[DRY RUN] Would have committed doc updates to shipment MR branch %s: %s",
+                    mr.source_branch,
                     list(files_to_update.keys()),
                 )
                 return None
 
-            # Check if an MR with template updates already exists (reentrant check)
-            sha_mr_title_pattern = f"Update {self.assembly} Docs release notes"
-            existing_mrs = source_project.mergerequests.list(
-                target_branch=mr.source_branch, state='opened', search=sha_mr_title_pattern
-            )
-
-            for existing_mr in existing_mrs:
-                if existing_mr.title == sha_mr_title_pattern:
-                    self._logger.info(
-                        "Payload SHA update MR already exists: %s. Skipping creation.", existing_mr.web_url
-                    )
-                    await self._slack_client.say_in_thread(
-                        f"Payload SHA update MR already exists: {existing_mr.web_url}"
-                    )
-
-                    # Check if comment about this MR already exists on main shipment MR
-                    main_mr_comment = (
-                        f"Docs team, please review the existing MR to update release notes: {existing_mr.web_url}"
-                    )
-                    existing_notes = mr.notes.list(all=True)
-                    comment_exists = any(note.body == main_mr_comment for note in existing_notes)
-
-                    if not comment_exists:
-                        try:
-                            mr.notes.create({'body': main_mr_comment})
-                            self._logger.info("Added comment to main shipment MR")
-                        except Exception as comment_ex:
-                            self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
-                    else:
-                        self._logger.info("Comment about payload SHA update MR already exists on main shipment MR")
-
-                    return None
-
-            # Create a new branch for the template updates
-            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-            update_branch = f"update-shas-{self.assembly}-{timestamp}"
-
-            # Create branch from the shipment MR's source branch
-            source_project.branches.create({'branch': update_branch, 'ref': mr.source_branch})
-            self._logger.info("Created template update branch: %s", update_branch)
-
-            # Update all files in the new branch
+            source_branch = mr.source_branch
+            # Update all files directly on the shipment MR's source branch
             for file_path, updated_content in files_to_update.items():
-                file_to_update = source_project.files.get(file_path, update_branch)
+                file_to_update = source_project.files.get(file_path, source_branch)
                 file_to_update.content = updated_content
                 file_to_update.save(
-                    branch=update_branch,
+                    branch=source_branch,
                     commit_message=f"Update {file_path.split('/')[-1]} with payload SHAs for {self.assembly}",
                 )
-                self._logger.info("Updated file %s in branch %s", file_path, update_branch)
+                self._logger.info("Updated file %s in branch %s", file_path, source_branch)
 
-            # Create MR to merge template updates into the shipment MR branch
-            update_mr_title = f"Update {self.assembly} Docs release notes"
-
-            shipment_files = [f"- {file_path.split('/')[-1]}" for file_path in files_to_update.keys()]
-            shipment_files_str = "\n".join(shipment_files)
-
-            update_mr_description = f"""This MR updates shipment configurations with payload SHAs from the successful promote job.
-
-**Release**: {self.assembly}
-
-**Promote Job**: {os.environ.get('BUILD_URL', 'N/A')}
-
-**Total Templates Replaced**: {templates_replaced_total}
-
-**Updated Files:**
-{shipment_files_str}
-
-**Updated Templates:**
-- Replaced SHA digest placeholders
-- Updated advisory references
-
-"""
-
-            update_mr = source_project.mergerequests.create(
-                {
-                    'source_branch': update_branch,
-                    'target_branch': mr.source_branch,
-                    'title': update_mr_title,
-                    'description': update_mr_description,
-                    'remove_source_branch': True,
-                }
+            self._logger.info(
+                "Committed doc updates to shipment MR branch %s (%d templates replaced)",
+                source_branch,
+                templates_replaced_total,
+            )
+            await self._slack_client.say_in_thread(
+                f"Updated shipment MR with payload SHAs and advisories: {mr.web_url}"
             )
 
-            update_mr_url = update_mr.web_url
-            self._logger.info("Created consolidated template update MR: %s", update_mr_url)
-
-            # Auto-merge Docs rel notes updates since the Docs team will review and approve the main Shipment MR
-            try:
-                # Wait a moment for GitLab to process the MR
-                await asyncio.sleep(2)
-
-                # Set auto-merge to merge when pipeline passes
-                update_mr = source_project.mergerequests.get(update_mr.iid, lazy=False)
-                update_mr.merge(merge_when_pipeline_succeeds=True, should_remove_source_branch=True)
-                self._logger.info("Successfully enabled auto-merge for template update MR: %s", update_mr_url)
-                await self._slack_client.say_in_thread(
-                    f"Enabled auto-merge for MR with payload SHAs (will merge when pipeline passes): {update_mr_url}"
-                )
-            except Exception as merge_ex:
-                self._logger.warning("Failed to enable auto-merge for template update MR: %s", merge_ex)
-                await self._slack_client.say_in_thread(
-                    f"Created MR to update shipment with payload SHAs (auto-merge setup failed): {update_mr_url}"
-                )
-
-            # Comment on the main shipment MR to notify about the template update MR
-            # Since pipeline may take time, always notify docs team about the auto-merge MR
-            main_mr_comment = f"@hybrid-platforms/art/team-docs: Please review the MR to update release notes after it merges (it is set to automerge) and approve the Shipment MR: {update_mr_url}"
+            # Comment on the shipment MR to notify docs team about the updates
+            main_mr_comment = (
+                f"@hybrid-platforms/art/team-docs: Shipment files have been updated with"
+                f" payload SHAs and advisory references ({templates_replaced_total} templates replaced)."
+                f" Please review the updated release notes and approve this Shipment MR."
+            )
 
             # Check if comment already exists to avoid duplicates
             existing_notes = mr.notes.list(all=True)
@@ -2561,14 +2481,14 @@ class PromotePipeline:
             if not comment_exists:
                 try:
                     mr.notes.create({'body': main_mr_comment})
-                    self._logger.info("Added comment to main shipment MR")
+                    self._logger.info("Added comment to shipment MR notifying docs team")
                 except Exception as comment_ex:
-                    self._logger.warning("Failed to comment on main shipment MR: %s", comment_ex)
+                    self._logger.warning("Failed to comment on shipment MR: %s", comment_ex)
             else:
                 self._logger.info("Comment about template update MR already exists on main shipment MR")
 
         except Exception as ex:
-            self._logger.error("Failed to create consolidated template update MR: %s", ex)
+            self._logger.error("Failed to update shipment MR with doc updates: %s", ex)
             raise
 
     async def _get_rpm_advisory_id(self) -> Optional[str]:
