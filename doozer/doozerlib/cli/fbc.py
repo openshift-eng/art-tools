@@ -84,7 +84,7 @@ class FbcImportCli:
 
         # Initialize runtime
         runtime = self.runtime
-        runtime.initialize(mode="images", clone_distgits=False)
+        runtime.initialize(mode="images", clone_distgits=False, prevent_cloning=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if not runtime.assembly:
             raise ValueError("Assemblies feature is disabled for this group. This is no longer supported.")
@@ -505,14 +505,14 @@ class FbcRebaseAndBuildCli:
                 dgk_records[record.name] = record
             # Load image metas for the given operators
             self.runtime.images = list(dgk_records.keys())
-            self.runtime.initialize(mode='images', clone_distgits=False)
+            self.runtime.initialize(mode='images', clone_distgits=False, prevent_cloning=True)
             for dgk in dgk_records.keys():
                 metadata = self.runtime.image_map[dgk]
                 if not metadata.is_olm_operator:
                     raise IOError(f"Operator {dgk} does not have 'update-csv' config")
         else:
             # Get latest build records for all specified operators
-            self.runtime.initialize(mode='images', clone_distgits=False)
+            self.runtime.initialize(mode='images', clone_distgits=False, prevent_cloning=True)
             LOGGER.info("Fetching latest operator builds from Konflux DB...")
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in self.runtime.ordered_image_metas() if operator_meta.is_olm_operator

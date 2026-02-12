@@ -441,7 +441,7 @@ def config_gencsv(runtime, keys, as_type, output):
 )
 @pass_runtime
 def config_rhcos_src(runtime: Runtime, version, output, brew_root, arch):
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     package_build_objects: Dict[str, Dict] = dict()
     if arch:
