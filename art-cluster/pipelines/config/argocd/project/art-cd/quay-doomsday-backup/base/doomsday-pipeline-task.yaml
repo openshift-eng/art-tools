@@ -26,12 +26,9 @@ spec:
         #!/usr/bin/env bash
 
         set -e
-        
-        pip install stomp.py==8.1.0
-        pip install setuptools==70.0.0
-        
-        touch artcd.toml	
-        artcd -vv --config artcd.toml quay-doomsday-backup --version $(params.version)
+
+        touch artcd.toml
+        uv run artcd -vv --config artcd.toml quay-doomsday-backup --version $(params.version)
       securityContext:
         runAsGroup: 0
         runAsUser: 0

@@ -11,7 +11,10 @@ WORKDIR /home/dev
 
 # Copy art-tools and run the install script
 COPY . .
-RUN pip3 install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
+RUN ./install.sh
+
+# Create uv cache
+RUN mkdir -p /home/dev/.cache/uv && chown -R 1000:1000 /home/dev/.cache
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 # They update the tool often, so lets keep in update for now
