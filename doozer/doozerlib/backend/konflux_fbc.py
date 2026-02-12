@@ -772,16 +772,39 @@ class KonfluxFbcRebaser:
                 (it for it in channel['entries'] if it.get('skips')), None
             )  # Find which bundle has the skips field
             if bundle_with_skips is not None:
+                # the channel already has skips like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # - name: clusterresourceoverride-operator.v4.21.0-202602091142
+                #   skipRange: '>=4.3.0 <4.21.0-202602091142'
+                #   skips:
+                #   - clusterresourceoverride-operator.v4.21.0-202601292040
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
                 # Then we move the skips field to the new bundle
                 # and add the bundle name of bundle_with_skips to the skips field
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
             elif len(channel['entries']) == 1:
+                # The channel only has one entry like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
                 # In case the channel only contain one single entry, that bundle should
                 # become the only member of new-entry's `skip`.
                 only_entry_name = channel['entries'][0]['name']
                 if only_entry_name != olm_bundle_name:
                     # Only if the new bundle build don't have the same name as the only_entry_name one
+                    # if the new build have the same name like 202601292040 we should do nothing(no skips)
                     skips = {only_entry_name}
 
             # For an operator bundle that uses replaces -- such as OADP
