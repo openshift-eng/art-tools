@@ -283,6 +283,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             push=self.push,
             fbc_repo=self.fbc_repo,
             upcycle=self.upcycle,
+            auth=None,
         )
 
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._rebase_dir")

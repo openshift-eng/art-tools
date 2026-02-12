@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import logging
 import os
+import re
 import shutil
 import ssl
 from collections import defaultdict
@@ -11,6 +12,8 @@ from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from packaging import version
 
 import httpx
 import truststore
@@ -586,6 +589,7 @@ class KonfluxFbcRebaser:
         ocp_version_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
+        auth: Optional[opm.OpmRegistryAuth] = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.group = group
@@ -599,6 +603,142 @@ class KonfluxFbcRebaser:
         self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        self.auth = auth
+
+    @alru_cache
+    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
+        blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
+            index_image,
+            auth=self.auth,
+            migrate_level=migrate_level,
+        )
+        return blobs
+
+    def _filter_catalog_blobs(self, blobs: List[Dict], allowed_package_names: Set[str]):
+        """Filter catalog blobs by package names.
+
+        :param blobs: List of catalog blobs.
+        :param allowed_package_names: Set of allowed package names.
+        :return: Dict of filtered catalog blobs.
+        """
+        filtered: Dict[str, List[Dict[str, Any]]] = {}  # key is package name, value is blobs
+        for blob in blobs:
+            schema = blob["schema"]
+            package_name = None
+            match schema:
+                case "olm.package":
+                    package_name = blob["name"]
+                case "olm.channel" | "olm.bundle" | "olm.deprecations":
+                    package_name = blob["package"]
+            if not package_name:
+                raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
+            if package_name not in allowed_package_names:
+                continue  # filtered out; skipping
+            if package_name not in filtered:
+                filtered[package_name] = []
+            filtered[package_name].append(blob)
+        return filtered
+
+    async def _get_catalog_blobs_from_index_image(
+        self, index_image: str, package_name: str, migrate_level: str = "none"
+    ):
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
+        filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
+        if package_name not in filtered_blobs:
+            return
+        return filtered_blobs[package_name]
+
+    async def _query_production_index(self, package_name: str, ocp_version: Tuple[int, int]) -> Dict:
+        """Query production index to get package channels.
+        
+        Raises:
+            RuntimeError: If production index query fails
+        """
+        try:
+            prod_index = PRODUCTION_INDEX_PULLSPEC_FORMAT.format(major=ocp_version[0], minor=ocp_version[1])
+            logger = self._logger.getChild("prod-query")
+            logger.info("Querying production index %s for package %s", prod_index, package_name)
+            
+            # Use existing method with migration level for consistency
+            migrate_level = "bundle-object-to-csv-metadata" if ocp_version >= (4, 17) else "none"
+            prod_blobs = await self._render_index_image(prod_index, migrate_level=migrate_level)
+            
+            # Filter to just this package's channels
+            package_channels = []
+            for blob in prod_blobs:
+                if (blob.get("schema") == "olm.channel" and 
+                    blob.get("package") == package_name):
+                    package_channels.append(blob["name"])
+            
+            logger.info("Found %d channels in production for package %s: %s", 
+                       len(package_channels), package_name, package_channels)
+            return {"channels": package_channels}
+            
+        except Exception as e:
+            logger = self._logger.getChild("prod-query")
+            logger.error("Failed to query production index for package %s: %s", package_name, e)
+            raise RuntimeError(f"Production index query failed for package {package_name}: {e}") from e
+
+    def _extract_semver_from_channel(self, channel_name: str) -> Optional[version.Version]:
+        """Extract semantic version from channel name like 'stable-6.3'."""
+        match = re.match(r'^(.+)-(\d+\.\d+(?:\.\d+)?)$', channel_name)
+        if match:
+            try:
+                return version.parse(match.group(2))
+            except version.InvalidVersion:
+                pass
+        return None
+
+    def _get_highest_semver_channel(self, channels: Sequence[str], prefix: str = None) -> Optional[str]:
+        """Find highest semver channel with optional prefix filter."""
+        highest_version = None
+        highest_channel = None
+        
+        for channel_name in channels:
+            if prefix and not channel_name.startswith(f"{prefix}-"):
+                continue
+                
+            semver = self._extract_semver_from_channel(channel_name)
+            if semver and (highest_version is None or semver > highest_version):
+                highest_version = semver
+                highest_channel = channel_name
+        
+        return highest_channel
+
+    async def _determine_production_default_channel(self, package_name: str, bundle_default: str, ocp_version: Tuple[int, int]) -> str:
+        """Determine default channel based on production index + semver logic.
+        
+        Raises:
+            RuntimeError: If production index query fails
+        """
+        logger = self._logger.getChild("prod-default")
+        
+        # Query production for available channels - this will raise RuntimeError if it fails
+        prod_info = await self._query_production_index(package_name, ocp_version)
+        
+        if not prod_info.get("channels"):
+            logger.warning("No production channels found for %s, using bundle default: %s", 
+                          package_name, bundle_default)
+            return bundle_default
+        
+        # Extract prefix from bundle default for filtering
+        channel_prefix = None
+        if bundle_default:
+            match = re.match(r'^(.+)-\d+\.\d+', bundle_default)
+            if match:
+                channel_prefix = match.group(1)
+        
+        # Find highest semver channel in production
+        highest_channel = self._get_highest_semver_channel(prod_info["channels"], channel_prefix)
+        
+        if highest_channel:
+            logger.info("Using highest production semver channel: %s (bundle suggested: %s)",
+                       highest_channel, bundle_default)
+            return highest_channel
+        
+        logger.warning("No valid semver channels in production for %s, using bundle default: %s",
+                      package_name, bundle_default)
+        return bundle_default
 
     @staticmethod
     def get_fbc_name(image_name: str):
@@ -717,6 +857,21 @@ class KonfluxFbcRebaser:
             raise IOError("Channel name not found in bundle image")
         channel_names = channel_names.split(",")
         default_channel_name = labels.get("operators.operatorframework.io.bundle.channel.default.v1")
+        
+        # Get package name for early production query
+        package_name = labels.get("operators.operatorframework.io.bundle.package.v1")
+        if not package_name:
+            raise IOError("Package name not found in bundle image labels")
+        # Determine the production-based default channel early so we can add bundles to it
+        production_default = await self._determine_production_default_channel(
+            package_name, default_channel_name, ocp_version
+        )
+        
+        
+        # Keep original bundle channels - don't add bundle to production default channel
+        # The production default channel should use existing production content
+        logger.info("Bundle will be added to its designated channels: %s, default will be set to: %s", 
+                   channel_names, production_default)
 
         olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(
             bundle_build, migrate_level=migrate_level
@@ -815,26 +970,34 @@ class KonfluxFbcRebaser:
                 bundle_with_replaces = [it for it in channel['entries']]
                 replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
                 current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
-                if current_head:
-                    # The new bundle should replace the current head
+                if current_head and current_head['name'] != olm_bundle_name:
+                    # The new bundle should replace the current head (only if it's not the same bundle)
                     replaces = current_head['name']
 
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
-            if not entry:
-                logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
-                entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
-            else:
+            existing_replaces = None
+            if entry:
+                # Preserve existing replaces relationship if we're not setting a new one
+                existing_replaces = entry.get('replaces')
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 entry.clear()
                 entry["name"] = olm_bundle_name
+            else:
+                logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
+                entry = {"name": olm_bundle_name}
+                channel['entries'].append(entry)
+            
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
+            
+            # Set replaces: use new value if provided, otherwise preserve existing
             if replaces:
                 entry["replaces"] = replaces
+            elif existing_replaces:
+                entry["replaces"] = existing_replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
@@ -846,12 +1009,15 @@ class KonfluxFbcRebaser:
                 catalog_blobs.append(channel)
             _update_channel(channel)
 
-        # Set default channel
-        if default_channel_name:
-            package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            if package_blob.get("defaultChannel") != default_channel_name:
-                logger.info("Setting default channel to %s", default_channel_name)
-                package_blob["defaultChannel"] = default_channel_name
+        # Set default channel - using production-determined value computed earlier
+        package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
+        
+        if package_blob.get("defaultChannel") != production_default:
+            logger.info("Setting default channel to %s (bundle suggested: %s)", 
+                       production_default, default_channel_name)
+            package_blob["defaultChannel"] = production_default
+        else:
+            logger.info("Default channel already set to %s", production_default)
 
         # Replace pullspecs to use the prod registry
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
