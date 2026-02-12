@@ -42,7 +42,7 @@ def images_clone(runtime, clone_upstreams):
 @click.option("--json", "is_json", is_flag=True, default=False, help="Output the list in JSON format.")
 @pass_runtime
 def images_list(runtime, is_json):
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     if is_json:
         click.echo(json.dumps({"images": [image.distgit_key for image in runtime.image_metas()]}))
         return
@@ -1064,7 +1064,7 @@ def images_show_tree(runtime, imagename, yml):
     Displays the parent/child relationship of all images or just those given.
     This can be helpful to determine build order and dependencies.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     images = list(runtime.image_metas())
 
@@ -1109,7 +1109,7 @@ def images_show_ancestors(runtime, image_names):
     """
     Displays the ancestors of a given image or images.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     all_ancestors = set()
     image_name_list = [name.strip() for name in image_names.split(',')]
@@ -1214,7 +1214,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
     "build" will be treated as "{build}"
     """
 
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
@@ -1445,7 +1445,7 @@ def query_rpm_version(runtime, repo_type):
     repository. This is the version number that will be applied to new images
     created from this build.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     version = runtime.auto_version(repo_type)
     click.echo("version: {}".format(version))

@@ -42,7 +42,7 @@ def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
     """
     if as_yaml and as_json:
         raise click.BadParameter("Must use one of --yaml or --json.")
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     embargoed_builds = detect_embargoes_in_nvrs(runtime, nvrs)
     print_result_and_exit(embargoed_builds, None, None, as_yaml, as_json)
 
@@ -85,7 +85,7 @@ def detect_in_tag(runtime: Runtime, kind, tags, excluded_tags, event_id, as_yaml
     """
     if as_yaml and as_json:
         raise click.BadParameter("Must use one of --yaml or --json.")
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     embargoed_builds = detect_embargoes_in_tags(runtime, kind, tags, excluded_tags, event_id)
     print_result_and_exit(embargoed_builds, None, None, as_yaml, as_json)
 
@@ -110,7 +110,7 @@ def detect_in_pullspec(runtime, pullspecs, as_yaml, as_json):
     """
     if as_yaml and as_json:
         raise click.BadParameter("Must use one of --yaml or --json.")
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     embargoed_pullspecs, embargoed_builds = detect_embargoes_in_pullspecs(runtime, pullspecs)
     print_result_and_exit(embargoed_builds, embargoed_pullspecs, None, as_yaml, as_json)
 
@@ -132,7 +132,7 @@ def detect_in_release(runtime, pullspecs, as_yaml, as_json):
     """
     if as_yaml and as_json:
         raise click.BadParameter("Must use one of --yaml or --json.")
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     embargoed_releases, embargoed_pullspecs, embargoed_builds = detect_embargoes_in_releases(runtime, pullspecs)
     print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_releases, as_yaml, as_json)
 

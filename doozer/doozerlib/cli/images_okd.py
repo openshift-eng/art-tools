@@ -679,7 +679,7 @@ def extract_stage_names(dfp: DockerfileParser) -> List[str]:
 @images_okd.command('check', short_help='Check whether images in OKD are SCOS based on app.ci.')
 @pass_runtime
 def images_okg_check(runtime):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
     okd_version = f'{major}.{minor}'
@@ -780,7 +780,7 @@ async def images_okd_prs(
 ):
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
-    runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True, disabled=True)
     g = Github(login_or_token=github_access_token)
     github_user = g.get_user()
 
