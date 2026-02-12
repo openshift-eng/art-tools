@@ -21,7 +21,6 @@ from pyartcd.runtime import Runtime
 
 JIRA_PROJECT = "OCPBUGS"
 
-INITIAL_SLACK_MSG = ":warning: FIPS scan has failed for some builds. Please verify (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
 FAILING_BUILDS_MSG_HEADER = "The listed versions of the following packages did not pass the FIPS scan:"
 PACKAGES_WITHOUT_TICKET_MSG_HEADER = "Report of missing/incomplete Jira tickets:"
 
@@ -32,6 +31,8 @@ class ScanFips:
         self.data_path = data_path
         self.nvrs = nvrs
         self.all_images = all_images
+        self.taskrun_name = os.environ.get("TASKRUN_NAME")
+        self.taskrun_namespace = os.environ.get("TASKRUN_NAMESPACE")
 
         #  Call JIRAClient.from_url() directly because Runtime.new_jira_client() does not work currently
         self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, token_auth=os.environ["JIRA_TOKEN"])
@@ -39,6 +40,48 @@ class ScanFips:
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel("#art-release")
+
+    async def get_pipelinerun_name(self) -> Optional[str]:
+        """
+        Returns the name of the currently running fips-pipeline PipelineRun
+        """
+        if self.taskrun_namespace is None or self.taskrun_name is None:
+            return None
+
+        cmd = [
+            "oc",
+            "get",
+            "-n",
+            self.taskrun_namespace,
+            "taskrun",
+            self.taskrun_name,
+            "-o",
+            "jsonpath={.metadata.labels.tekton\.dev/pipelineRun}",
+        ]
+
+        rc, result, _ = await exectools.cmd_gather_async(cmd, check=False)
+
+        return result if rc == 0 else None
+
+    async def construct_opening_slack_msg(self, failing_packages: dict[str, set[str]]) -> str:
+        """
+        Construct the opening message for the FIPS report thread on Slack
+        Includes number of failed builds, affected versions and link to the PipelineRun
+        """
+        failed_builds_count = sum(len(versions) for versions in failing_packages.values())
+        affected_versions = set()
+        for versions in failing_packages.values():
+            affected_versions.update(versions)
+
+        pipelinerun_name = await self.get_pipelinerun_name()
+        if pipelinerun_name is None:
+            self.runtime.logger.warning("Could not get the name of the currently running PipelineRun")
+            scan_reference = "FIPS Scan"
+        else:
+            pipelinerun_url = f"https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/{self.taskrun_namespace}/tekton.dev~v1~PipelineRun/{pipelinerun_name}"
+            scan_reference = f"<{pipelinerun_url}|FIPS Scan>"
+
+        return f":warning: {scan_reference} has failed for {failed_builds_count} build(s) in the following version(s): {', '.join(affected_versions)}. Please verify (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
 
     @staticmethod
     def extract_package_name(nvr: str) -> Optional[str]:
@@ -126,6 +169,8 @@ class ScanFips:
         that are currently failing the FIPS scan, and a report of packages which don't have
         a jira ticket raised (or their ticket doesn't list all the versions currently failing)
         """
+        opening_slack_msg = await self.construct_opening_slack_msg(failing_packages)
+
         package_ticket_details = self.get_package_ticket_details(failing_packages)
 
         failing_packages_report_msg = self.construct_failing_packages_report(failing_packages, package_ticket_details)
@@ -133,7 +178,7 @@ class ScanFips:
             failing_packages, package_ticket_details
         )
 
-        await self.slack_client.say_in_thread(message=INITIAL_SLACK_MSG)
+        await self.slack_client.say_in_thread(message=opening_slack_msg)
         await self.slack_client.say_in_thread(message=failing_packages_report_msg)
         if packages_without_ticket_report_msg:
             await self.slack_client.say_in_thread(message=packages_without_ticket_report_msg)
