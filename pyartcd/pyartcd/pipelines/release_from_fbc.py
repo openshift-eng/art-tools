@@ -4,16 +4,17 @@ import os
 import shutil
 import tempfile
 from datetime import datetime, timezone
+from functools import cached_property
 from io import StringIO
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import click
-import gitlab
 import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
@@ -143,14 +144,12 @@ class ReleaseFromFbcPipeline:
         # Use oauth2 as placeholder username and token as password
         return f'{scheme}://oauth2:{token}@{netloc}{rest_of_url}'
 
-    @property
-    def _gitlab(self) -> gitlab.Gitlab:
+    @cached_property
+    def _gitlab(self) -> GitLabClient:
         """
         Get authenticated GitLab instance.
         """
-        gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
-        gl.auth()
-        return gl
+        return GitLabClient(self.gitlab_url, self.gitlab_token, self.dry_run)
 
     def _get_gitlab_project(self, url: str):
         """
@@ -158,7 +157,7 @@ class ReleaseFromFbcPipeline:
         """
         parsed_url = urlparse(url)
         project_path = parsed_url.path.strip('/').removesuffix('.git')
-        return self._gitlab.projects.get(project_path)
+        return self._gitlab.get_project(project_path)
 
     def check_env_vars(self):
         """

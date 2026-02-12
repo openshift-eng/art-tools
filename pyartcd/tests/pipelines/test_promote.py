@@ -1949,7 +1949,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.get_shipment_configs_from_mr")
-    @patch("pyartcd.pipelines.promote.gitlab.Gitlab")
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
     @patch("os.getenv")
     async def test_update_shipment_with_payload_shas_no_image_shipment(
         self, mock_getenv: Mock, mock_gitlab_class: Mock, mock_get_shipment_configs: Mock, _

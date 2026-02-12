@@ -19,7 +19,6 @@ from urllib.parse import quote, urlparse
 
 import aiohttp
 import click
-import gitlab
 import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import (
@@ -31,6 +30,7 @@ from artcommonlib.arch_util import (
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group, new_roundtrip_yaml_handler
 from elliottlib.errata import get_errata_live_id
@@ -2233,13 +2233,12 @@ class PromotePipeline:
         gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
         # Connect to GitLab
-        gl = gitlab.Gitlab(gitlab_url, private_token=gitlab_token)
-        gl.auth()
+        gl = GitLabClient(gitlab_url, gitlab_token, self.runtime.dry_run)
 
         # Load the existing MR
-        project = gl.projects.get(target_project_path)
+        project = gl.get_project(target_project_path)
         mr = project.mergerequests.get(mr_id)
-        source_project = gl.projects.get(mr.source_project_id)
+        source_project = gl.get_project(mr.source_project_id)
 
         # Load shipment configs from MR
         shipments_by_kind = get_shipment_configs_from_mr(shipment_url)

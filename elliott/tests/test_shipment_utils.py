@@ -67,7 +67,7 @@ shipment:
         self.mock_diff = Mock()
         self.mock_file_content = Mock()
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_multiple_kinds(self, mock_gitlab_class):
         """Test retrieval of multiple shipment configs by different kinds"""
@@ -100,7 +100,7 @@ shipment:
         self.assertIn('rpm', result)
         self.assertIn('image', result)
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_no_matching_files(self, mock_gitlab_class):
         """Test when no files match the requested kinds"""
@@ -126,7 +126,7 @@ shipment:
         # Assertions
         self.assertEqual(result, {})
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_duplicate_kind(self, mock_gitlab_class):
         """Test error handling when multiple configs found for same kind"""
@@ -180,7 +180,7 @@ shipment:
 
     def test_default_kinds_parameter(self):
         """Test that default kinds parameter works correctly"""
-        with patch('elliottlib.shipment_utils.gitlab.Gitlab') as mock_gitlab_class:
+        with patch('artcommonlib.gitlab.gitlab.Gitlab') as mock_gitlab_class:
             os.environ['GITLAB_TOKEN'] = self.mock_gitlab_token
             mock_gitlab = mock_gitlab_class.return_value
             mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
@@ -201,7 +201,7 @@ shipment:
             # Should not raise an error and return empty dict since no files match
             self.assertEqual(result, {})
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_invalid_yaml(self, mock_gitlab_class):
         """Test error handling when YAML content is invalid"""
@@ -228,7 +228,7 @@ shipment:
         with self.assertRaises(Exception):
             shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_non_yaml_files(self, mock_gitlab_class):
         """Test that non-YAML files are properly ignored"""
@@ -256,7 +256,7 @@ shipment:
         # Assertions - should return empty dict since no YAML files
         self.assertEqual(result, {})
 
-    @patch('elliottlib.shipment_utils.gitlab.Gitlab')
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_all_default_kinds(self, mock_gitlab_class):
         """Test with files matching all default kinds"""
