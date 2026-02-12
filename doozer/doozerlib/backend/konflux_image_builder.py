@@ -578,6 +578,8 @@ class KonfluxImageBuilder:
             sast=sast,
             annotations=annotations,
             build_priority=build_priority,
+            group=metadata.runtime.group,
+            is_image_build=True,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun_info.to_dict())}")
