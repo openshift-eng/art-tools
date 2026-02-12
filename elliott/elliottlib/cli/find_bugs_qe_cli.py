@@ -19,12 +19,14 @@ class FindBugsQE(FindBugsMode):
         )
 
 
-@cli.command("find-bugs:qe", short_help="Change MODIFIED bugs to ON_QA")
+@cli.command("find-bugs:qe", short_help="Change MODIFIED bugs to ON_QA and close reconciliation bugs")
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 def find_bugs_qe_cli(runtime: Runtime, noop):
     """Find MODIFIED bugs for the target-releases, and set them to ON_QA.
-        with a release comment on each bug
+        with a release comment on each bug.
+
+        Also finds and closes VERIFIED bugs with art:reconciliation label.
 
     \b
         $ elliott -g openshift-4.6 find-bugs:qe
@@ -33,14 +35,68 @@ def find_bugs_qe_cli(runtime: Runtime, noop):
     runtime.initialize()
     find_bugs_obj = FindBugsQE()
     exit_code = 0
-    for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-        try:
-            find_bugs_qe(runtime, find_bugs_obj, noop, b)
-        except Exception as e:
-            LOGGER.error(traceback.format_exc())
-            LOGGER.error(f'exception with {b.type} bug tracker: {e}')
-            exit_code = 1
+    bug_tracker = runtime.get_bug_tracker('jira')
+
+    # First, handle MODIFIED bugs -> ON_QA
+    try:
+        find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker)
+    except Exception as e:
+        LOGGER.error(traceback.format_exc())
+        LOGGER.error(f'exception with JIRA bug tracker (find_bugs_qe): {e}')
+        exit_code = 1
+
+    # Second, close VERIFIED bugs with art:reconciliation label
+    try:
+        close_reconciliation_bugs(runtime, noop, bug_tracker)
+    except Exception as e:
+        LOGGER.error(traceback.format_exc())
+        LOGGER.error(f'exception with JIRA bug tracker (close_reconciliation_bugs): {e}')
+        exit_code = 1
+
     sys.exit(exit_code)
+
+
+def close_reconciliation_bugs(runtime, noop, bug_tracker):
+    """Find and close VERIFIED bugs with art:reconciliation label.
+
+    These bugs have no customer value and will be closed without shipping.
+    """
+    major_version, minor_version = runtime.get_major_minor()
+    tr = bug_tracker.target_release()
+    LOGGER.info(
+        f"Searching {bug_tracker.type} for VERIFIED bugs with art:reconciliation label and target releases: {tr}"
+    )
+
+    # Query for VERIFIED bugs with art:reconciliation label
+    query = bug_tracker._query(
+        status=['Verified'],
+        include_labels=['art:reconciliation'],
+    )
+    bugs = bug_tracker._search(query, verbose=runtime.debug)
+    LOGGER.info(f"Found {len(bugs)} bugs to close: {', '.join(sorted(str(b.id) for b in bugs))}")
+
+    close_comment = (
+        "This bug has been identified as having no customer value and will be closed without shipping. "
+        "It was part of an ART reconciliation process and does not require further action."
+    )
+
+    for bug in bugs:
+        LOGGER.info(f"Closing bug {bug.id} with resolution Done")
+        if noop:
+            LOGGER.info(f"Would have closed {bug.id} from {bug.status} to Closed with resolution Done")
+            LOGGER.info(f"Would have added comment to {bug.id}: {close_comment}")
+        else:
+            try:
+                # Transition to Closed with resolution Done
+                # JIRA requires both transition and resolution to be set
+                bug_tracker._client.transition_issue(bug.id, 'Closed', fields={'resolution': {'name': 'Done'}})
+                LOGGER.info(f"Closed {bug.id} with resolution Done")
+
+                # Add comment explaining the closure
+                bug_tracker.add_comment(bug.id, close_comment, private=False, noop=False)
+                LOGGER.info(f"Added closure comment to {bug.id}")
+            except Exception as e:
+                LOGGER.error(f"Failed to close bug {bug.id}: {e}")
 
 
 def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
