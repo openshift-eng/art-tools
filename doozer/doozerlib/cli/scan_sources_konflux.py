@@ -712,7 +712,10 @@ class ConfigScanSources:
                     if rc != 0:
                         raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
 
-                if 'scan-sources-konflux:noop' in commit_message.lower():
+                if (
+                    'scan-sources:noop' in commit_message.lower()
+                    or 'scan-sources-konflux:noop' in commit_message.lower()
+                ):
                     self.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
                     self.logger.warning(
