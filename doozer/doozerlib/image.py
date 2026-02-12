@@ -127,20 +127,22 @@ class ImageMetadata(Metadata):
         # This must happen early so config is correct for all subsequent operations
         if self.canonical_builders_enabled:
             if prevent_cloning:
-                raise IOError(
-                    f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
-                    'Cannot determine upstream RHEL version without cloning source.'
-                )
-            if not clone_source:
                 self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
-                    'Source will be cloned anyway to determine upstream RHEL version.',
+                    '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
+                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
                     self.distgit_key,
                 )
-            # When canonical_builders_from_upstream is enabled, we need to determine
-            # the upstream RHEL version and merge alternative_upstream config if needed.
-            # This will clone source as part of the process.
-            self._apply_alternative_upstream_config()
+            else:
+                if not clone_source:
+                    self.logger.warning(
+                        '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
+                        'Source will be cloned anyway to determine upstream RHEL version.',
+                        self.distgit_key,
+                    )
+                # When canonical_builders_from_upstream is enabled, we need to determine
+                # the upstream RHEL version and merge alternative_upstream config if needed.
+                # This will clone source as part of the process.
+                self._apply_alternative_upstream_config()
         elif clone_source:
             # Normal case: clone source if requested (and canonical builders not enabled)
             runtime.source_resolver.resolve_source(self)
