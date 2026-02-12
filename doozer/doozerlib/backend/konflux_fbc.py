@@ -782,7 +782,7 @@ class KonfluxFbcRebaser:
                 only_entry_name = channel['entries'][0]['name']
                 if only_entry_name != olm_bundle_name:
                     # Only if the new bundle build don't have the same name as the only_entry_name one
-                    skips = {channel['entries'][0]['name']}
+                    skips = {only_entry_name}
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
