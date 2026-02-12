@@ -10,6 +10,7 @@ from artcommonlib.assembly import (
     assembly_rhcos_config,
     assembly_type,
 )
+from artcommonlib.config.rpm_delivery import RPMDeliveries, RPMDelivery
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
@@ -19,7 +20,6 @@ from doozerlib import Runtime, brew, util
 from doozerlib.build_info import BuildRecordInspector
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
-from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.source_resolver import SourceResolver
 
