@@ -1216,3 +1216,35 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         result = metadata.get_required_artifacts()
         self.assertEqual(result, [])
+
+    def test_is_base_image(self):
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertTrue(base_metadata.is_base_image())
+
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.is_base_image())
+
+    def test_is_snapshot_release_enabled(self):
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+
+        enabled_image = Model({'name': 'test-snapshot', 'snapshot_release': True})
+        enabled_data = Model({'key': 'test-snapshot', 'data': enabled_image, 'filename': 'test-snapshot.yaml'})
+        enabled_metadata = ImageMetadata(runtime, enabled_data)
+        self.assertTrue(enabled_metadata.is_snapshot_release_enabled())
+
+        disabled_image = Model({'name': 'test-regular'})
+        disabled_data = Model({'key': 'test-regular', 'data': disabled_image, 'filename': 'test-regular.yaml'})
+        disabled_metadata = ImageMetadata(runtime, disabled_data)
+        self.assertFalse(disabled_metadata.is_snapshot_release_enabled())

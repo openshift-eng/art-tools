@@ -102,6 +102,7 @@ class CreateSnapshotCli:
         builds: list,
         dry_run: bool,
         job_url: str = None,
+        custom_name: str = None,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
@@ -110,6 +111,7 @@ class CreateSnapshotCli:
         self.builds = builds
         self.dry_run = dry_run
         self.job_url = job_url
+        self.custom_name = custom_name
         self.image_repo_pull_secret = image_repo_pull_secret
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.konflux_config['namespace'],
@@ -198,13 +200,15 @@ class CreateSnapshotCli:
         return image_infos
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
-        # Normalize group name to comply with Kubernetes DNS label rules
-        group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
-        if not group_name_safe:
-            raise ValueError(
-                f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
-            )
-        snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
+        if self.custom_name:
+            snapshot_name = self.custom_name
+        else:
+            group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
+            if not group_name_safe:
+                raise ValueError(
+                    f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes snapshot"
+                )
+            snapshot_name = f"{group_name_safe}-{get_utc_now_formatted_str()}"
 
         async def _comp(record: KonfluxRecord) -> tuple[list[dict], str]:
             # get application name and make sure it exists in cluster (skip in dry-run mode)
@@ -287,7 +291,7 @@ class CreateSnapshotCli:
 
             # Prepare metadata with labels and optional annotations
             metadata = {
-                "name": f"{snapshot_name}-{index}",
+                "name": snapshot_name if self.custom_name else f"{snapshot_name}-{index}",
                 "namespace": self.konflux_config['namespace'],
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",
@@ -371,6 +375,11 @@ def snapshot_cli():
     metavar='URL',
     help='The URL of the job that created this snapshot. This will be added as an annotation to the snapshot.',
 )
+@click.option(
+    '--name',
+    metavar='NAME',
+    help='Custom name for the snapshot. If not provided, auto-generated from group and timestamp.',
+)
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(
@@ -383,6 +392,7 @@ async def new_snapshot_cli(
     builds,
     apply,
     job_url,
+    name,
 ):
     """
     Create new Konflux Snapshot(s) in the given namespace for the given builds
@@ -423,6 +433,7 @@ async def new_snapshot_cli(
         builds=builds,
         dry_run=not apply,
         job_url=job_url,
+        custom_name=name,
     )
     snapshots = await pipeline.run()
     # Handle both dict objects (dry-run) and ResourceInstance objects (actual creation)
