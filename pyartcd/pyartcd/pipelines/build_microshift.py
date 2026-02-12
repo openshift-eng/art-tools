@@ -322,8 +322,17 @@ class BuildMicroShiftPipeline:
 
         major, minor = self._ocp_version
         version = f'{major}.{minor}'
+
+        # Don't create shipment MR for ECs and RCs
+        prepare_shipment = self.assembly_type not in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]
+
         try:
-            jenkins.start_build_microshift_bootc(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
+            jenkins.start_build_microshift_bootc(
+                version=version,
+                assembly=self.assembly,
+                dry_run=self.runtime.dry_run,
+                prepare_shipment=prepare_shipment,
+            )
             message = (
                 f"build_microshift_bootc for version {version} and assembly {self.assembly} has been triggered\n"
                 f"This will build microshift-bootc and publish it's pullspec to mirror"
