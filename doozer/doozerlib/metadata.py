@@ -310,17 +310,19 @@ class Metadata(MetadataBase):
 
     def get_latest_build_info(self, default=-1, **kwargs):
         """
-        Queries brew to determine the most recently built release of the component
+        Queries Brew or Konflux DB (controlled by --build-system) to determine the most recently built release of the component
         associated with this image. This method does not rely on the "release"
         label needing to be present in the Dockerfile. kwargs will be passed on
         to get_latest_build.
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
         :return: A tuple: (component name, version, release); e.g. ("registry-console-docker", "v3.6.173.0.75", "1")
         """
-        build = self.get_latest_brew_build(default=default, **kwargs)
+        build = self.get_latest_build_sync(default=default, **kwargs)
         if default != -1 and build == default:
             return default
-        return build['name'], build['version'], build['release']
+        if self.runtime.build_system == "brew":
+            build = Model(build)
+        return build.name, build.version, build.release
 
     def has_source(self):
         """
