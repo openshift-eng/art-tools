@@ -165,6 +165,9 @@ class PrepareReleasePipeline:
         release_config = releases_config.get("releases", {}).get(self.assembly, {})
         self.release_name = get_release_name_for_assembly(self.group_name, releases_config, self.assembly)
         self.release_version = semver.VersionInfo.parse(self.release_name).to_tuple()
+        # Convert string to an integer if necessary (like 4.20.0-0 will result in
+        # release_versions = (4, 20, 0, '0', None) )
+        self.release_version = tuple(int(i) if isinstance(i, str) and i.isdigit() else i for i in self.release_version)
         if not release_config:
             raise ValueError(
                 f"Assembly {self.assembly} is not explicitly defined in releases.yml for group {self.group_name}."
@@ -246,11 +249,21 @@ class PrepareReleasePipeline:
 
         jira_issue_key = group_config.get("release_jira")
         jira_issue = None
+
+        # Initialize x, y, z
+        x = self.release_version[0]
+        y = self.release_version[1]
+        z = self.release_version[2]
+
+        # Apply conditional logic if the new_version scheme is applied (like 4.20.0-0)
+        if self.release_version[3] is not None:
+            z = f"{self.release_version[2]}-{self.release_version[3]}"
+
         jira_template_vars = {
             "release_name": self.release_name,
-            "x": self.release_version[0],
-            "y": self.release_version[1],
-            "z": self.release_version[2],
+            "x": x,
+            "y": y,
+            "z": z,
             "release_date": self.release_date,
             "advisories": advisories,
             "candidate_nightlies": self.candidate_nightlies,
