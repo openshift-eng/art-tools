@@ -445,6 +445,8 @@ def extract_group_from_nvr(nvr: str) -> Optional[str]:
         major, minor = match.groups()
         if GOLANG_BUILDER_IMAGE_NAME in nvr:
             el_v = isolate_el_version_in_release(nvr)
+            if el_v is None:
+                return None
             return f"rhel-{el_v}-golang-{major}.{minor}"
         return f"openshift-{major}.{minor}"
     return None
