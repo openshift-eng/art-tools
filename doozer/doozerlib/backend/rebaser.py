@@ -1033,7 +1033,7 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if metadata.canonical_builders_enabled and self.variant is not BuildVariant.OKD:
+        if metadata.canonical_builders_enabled:
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
