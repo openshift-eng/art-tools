@@ -75,15 +75,15 @@ class OcpPipeline:
         # If BUILD_URL env var is not set, the lock identifier will be None, and we'll get an auto-generated value
         self.lock_identifier = lock_identifier
 
-        group_param = f'--group=openshift-{version}'
+        group_param = f"--group=openshift-{version}"
         if data_gitref:
-            group_param += f'@{data_gitref}'
+            group_param += f"@{data_gitref}"
 
         self._doozer_base_command = [
-            'doozer',
-            f'--assembly={assembly}',
-            f'--working-dir={self.runtime.doozer_working}',
-            f'--data-path={data_path}',
+            "doozer",
+            f"--assembly={assembly}",
+            f"--working-dir={self.runtime.doozer_working}",
+            f"--data-path={data_path}",
             group_param,
         ]
         self._slack_client = runtime.new_slack_client()
@@ -96,12 +96,12 @@ class OcpPipeline:
 
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         cmd = self._doozer_base_command.copy()
-        cmd.extend(['config:read-group', '--default=False', 'assemblies.enabled'])
+        cmd.extend(["config:read-group", "--default=False", "assemblies.enabled"])
         _, out, err = await exectools.cmd_gather_async(cmd)
-        assemblies_enabled = out.strip() == 'True'
-        self.runtime.logger.info('Assemblies %s enabled for %s', 'NOT' if not assemblies_enabled else '', self.version)
+        assemblies_enabled = out.strip() == "True"
+        self.runtime.logger.info("Assemblies %s enabled for %s", "NOT" if not assemblies_enabled else "", self.version)
 
-        if self.assembly != 'stream' and not assemblies_enabled:
+        if self.assembly != "stream" and not assemblies_enabled:
             raise RuntimeError(
                 f"ASSEMBLY cannot be set to '{self.assembly}' because assemblies are not enabled in ocp-build-data."
             )
@@ -116,9 +116,9 @@ class OcpPipeline:
 
         # build_plan.active_image_count
         self.group_images = await get_group_images(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
-            build_system='brew',
+            build_system="brew",
             working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
@@ -131,44 +131,44 @@ class OcpPipeline:
         # build_plan.build_rpms, build_plan.rpms_included, build_plan.rpms_excluded
         self.build_plan.build_rpms = True
 
-        if self.build_rpms.lower() == 'none':
+        if self.build_rpms.lower() == "none":
             self.build_plan.build_rpms = False
 
-        elif self.build_rpms.lower() == 'all':
+        elif self.build_rpms.lower() == "all":
             assert not self.rpm_list, (
-                'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
+                "Aborting because a list of RPMs was specified; you probably want to specify only/except."
             )
 
-        elif self.build_rpms.lower() == 'only':
+        elif self.build_rpms.lower() == "only":
             assert self.rpm_list, 'A list of RPMs must be specified when "only" is selected'
-            self.build_plan.rpms_included = [rpm.strip() for rpm in self.rpm_list.split(',')]
+            self.build_plan.rpms_included = [rpm.strip() for rpm in self.rpm_list.split(",")]
 
-        elif self.build_rpms.lower() == 'except':
+        elif self.build_rpms.lower() == "except":
             assert self.rpm_list, 'A list of RPMs must be specified when "except" is selected'
-            self.build_plan.rpms_excluded = [rpm.strip() for rpm in self.rpm_list.split(',')]
+            self.build_plan.rpms_excluded = [rpm.strip() for rpm in self.rpm_list.split(",")]
 
         # build_plan.build_images, build_plan.images_included, build_plan.images_excluded
         self.build_plan.build_images = True
 
-        if self.build_images.lower() == 'none':
+        if self.build_images.lower() == "none":
             self.build_plan.build_images = False
 
-        elif self.build_images.lower() == 'all':
+        elif self.build_images.lower() == "all":
             assert not self.image_list, (
-                'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
+                "Aborting because a list of RPMs was specified; you probably want to specify only/except."
             )
 
-        elif self.build_images.lower() == 'only':
+        elif self.build_images.lower() == "only":
             assert self.image_list, 'A list of images must be specified when "only" is selected'
-            self.build_plan.images_included = [image.strip() for image in self.image_list.split(',')]
+            self.build_plan.images_included = [image.strip() for image in self.image_list.split(",")]
 
-        elif self.build_images.lower() == 'except':
+        elif self.build_images.lower() == "except":
             assert self.image_list, 'A list of images must be specified when "except" is selected'
-            self.build_plan.images_excluded = [image.strip() for image in self.image_list.split(',')]
+            self.build_plan.images_excluded = [image.strip() for image in self.image_list.split(",")]
 
         self.check_mass_rebuild()
 
-        self.runtime.logger.info('Initial build plan:\n%s', self.build_plan)
+        self.runtime.logger.info("Initial build plan:\n%s", self.build_plan)
 
     def check_mass_rebuild(self):
         # Account for mass rebuilds:
@@ -183,8 +183,8 @@ class OcpPipeline:
 
     async def _is_build_permitted(self):
         # For assembly != 'stream' always permit ocp4 builds
-        if self.assembly != 'stream':
-            self.runtime.logger.info('Permitting build for assembly %s', self.assembly)
+        if self.assembly != "stream":
+            self.runtime.logger.info("Permitting build for assembly %s", self.assembly)
             return True
 
         # For assembly = 'stream', we need to check automation freeze state
@@ -196,14 +196,14 @@ class OcpPipeline:
         )
 
     async def _initialize(self):
-        self.runtime.logger.info('Initializing build:\n%s', str(self.version))
+        self.runtime.logger.info("Initializing build:\n%s", str(self.version))
 
         jenkins.init_jenkins()
 
         if not await self._is_build_permitted():
-            jenkins.update_description('Builds not permitted', append=False)
+            jenkins.update_description("Builds not permitted", append=False)
             raise RuntimeError(
-                'This build is being terminated because it is not permitted according to current group.yml'
+                "This build is being terminated because it is not permitted according to current group.yml"
             )
 
         await self._check_assembly()
@@ -216,15 +216,15 @@ class OcpPipeline:
         """
 
         title_update = " [dry-run]" if self.runtime.dry_run else ""
-        title_update += f' - {self.version}-{self.release} '
+        title_update += f" - {self.version}-{self.release} "
         jenkins.update_title(title_update)
 
-        jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
-        self.runtime.logger.info('Pinned builds (whether source changed or not)')
+        jenkins.update_description("Pinned builds (whether source changed or not).<br/>")
+        self.runtime.logger.info("Pinned builds (whether source changed or not)")
 
         if uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
-                'Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux', {self.version}
+                "Skipping RPM rebase and build for %s since it is being handled by ocp4-konflux", {self.version}
             )
             self.build_plan.build_rpms = None
             self.build_plan.rpms_included = []
@@ -232,74 +232,74 @@ class OcpPipeline:
 
         # Update description with building RPMs
         if not self.build_plan.build_rpms:
-            jenkins.update_description('RPMs: not building.<br/>')
+            jenkins.update_description("RPMs: not building.<br/>")
 
         elif self.build_plan.rpms_included:
-            jenkins.update_description(f'RPMs: building {self.build_plan.rpms_included}.<br/>')
+            jenkins.update_description(f"RPMs: building {self.build_plan.rpms_included}.<br/>")
 
         elif self.build_plan.rpms_excluded:
-            jenkins.update_description(f'RPMs: building all except {self.build_plan.rpms_excluded}.<br/>')
+            jenkins.update_description(f"RPMs: building all except {self.build_plan.rpms_excluded}.<br/>")
 
         else:
-            jenkins.update_description('RPMs: building all.<br/>')
+            jenkins.update_description("RPMs: building all.<br/>")
 
         # Update title with building RPMs
         if self.build_plan.rpms_included:
-            jenkins.update_title(self._display_tag_for(self.build_plan.rpms_included, 'RPM'))
+            jenkins.update_title(self._display_tag_for(self.build_plan.rpms_included, "RPM"))
 
         elif self.build_plan.rpms_excluded:
-            jenkins.update_title(self._display_tag_for(self.build_plan.rpms_excluded, 'RPM', is_excluded=True))
+            jenkins.update_title(self._display_tag_for(self.build_plan.rpms_excluded, "RPM", is_excluded=True))
 
         elif self.build_plan.build_rpms:
-            jenkins.update_title(' [all RPMs]')
+            jenkins.update_title(" [all RPMs]")
 
         else:
-            jenkins.update_title(' [no RPMs]')
+            jenkins.update_title(" [no RPMs]")
 
         # Update description with building images
         if not self.build_plan.build_images:
-            jenkins.update_description('Images: not building.<br/>')
+            jenkins.update_description("Images: not building.<br/>")
 
         elif self.mass_rebuild:
-            jenkins.update_title(' [mass rebuild]')
-            jenkins.update_description('Mass image rebuild (more than half) - invoking serializing semaphore<br/>')
+            jenkins.update_title(" [mass rebuild]")
+            jenkins.update_description("Mass image rebuild (more than half) - invoking serializing semaphore<br/>")
 
         elif self.build_plan.images_included:
             images_to_build = len(self.build_plan.images_included)
             if images_to_build <= 10:
-                jenkins.update_description(f'Images: building {self.build_plan.images_included}.<br/>')
+                jenkins.update_description(f"Images: building {self.build_plan.images_included}.<br/>")
             else:
-                jenkins.update_description(f'Images: building {images_to_build} images.<br/>')
+                jenkins.update_description(f"Images: building {images_to_build} images.<br/>")
 
         elif self.build_plan.images_excluded:
-            jenkins.update_description(f'Images: building all except {self.build_plan.images_excluded}.<br/>')
+            jenkins.update_description(f"Images: building all except {self.build_plan.images_excluded}.<br/>")
 
         else:
-            jenkins.update_description('Images: building all.<br/>')
+            jenkins.update_description("Images: building all.<br/>")
 
         # Update title with building images
         if self.build_plan.images_included:
-            jenkins.update_title(self._display_tag_for(self.build_plan.images_included, 'image'))
+            jenkins.update_title(self._display_tag_for(self.build_plan.images_included, "image"))
 
         elif self.build_plan.images_excluded:
-            jenkins.update_title(self._display_tag_for(self.build_plan.images_excluded, 'image', is_excluded=True))
+            jenkins.update_title(self._display_tag_for(self.build_plan.images_excluded, "image", is_excluded=True))
 
         elif self.build_plan.build_images:
-            jenkins.update_title(' [all images]')
+            jenkins.update_title(" [all images]")
 
         else:
-            jenkins.update_title(' [no images]')
+            jenkins.update_title(" [no images]")
 
         # Update description with plashets info
         if not self.skip_plashets:
-            jenkins.update_description('Will create RPM compose.<br/>')
+            jenkins.update_description("Will create RPM compose.<br/>")
 
     def _report(self, msg: str):
         """
         Logs the message and appends it to current job description
         """
         self.runtime.logger.info(msg)
-        jenkins.update_description(f'{msg}<br/>')
+        jenkins.update_description(f"{msg}<br/>")
 
     @staticmethod
     def _include_exclude(kind: str, includes: list, excludes: list) -> list:
@@ -308,54 +308,54 @@ class OcpPipeline:
         --latest-parent-version only applies for images but won't hurt for RPMs
         """
 
-        if kind not in ['rpms', 'images']:
+        if kind not in ["rpms", "images"]:
             raise ValueError('Kind must be one in ["rpms", "images"]')
 
         if includes:
-            return ['--latest-parent-version', f'--{kind}', ','.join(includes)]
+            return ["--latest-parent-version", f"--{kind}", ",".join(includes)]
 
         if excludes:
-            return ['--latest-parent-version', f"--{kind}=", '--exclude', ','.join(excludes)]
+            return ["--latest-parent-version", f"--{kind}=", "--exclude", ",".join(excludes)]
 
-        return [f'--{kind}=']
+        return [f"--{kind}="]
 
     @staticmethod
     def _display_tag_for(items: list, kind: str, is_excluded: bool = False):
         desc = items[0] if len(items) == 1 else len(items)
-        plurality = kind if len(items) == 1 else f'{kind}s'
+        plurality = kind if len(items) == 1 else f"{kind}s"
 
         if is_excluded:
-            return f' [{kind}s except {desc}]'
-        return f' [{desc} {plurality}]'
+            return f" [{kind}s except {desc}]"
+        return f" [{desc} {plurality}]"
 
     async def _rebase_and_build_rpms(self):
         if not self.build_plan.build_rpms:
-            self.runtime.logger.info('Not building RPMs.')
+            self.runtime.logger.info("Not building RPMs.")
             return
 
         cmd = self._doozer_base_command.copy()
-        cmd.extend(self._include_exclude('rpms', self.build_plan.rpms_included, self.build_plan.rpms_excluded))
+        cmd.extend(self._include_exclude("rpms", self.build_plan.rpms_included, self.build_plan.rpms_excluded))
         cmd.extend(
             [
-                'rpms:rebase-and-build',
-                f'--version={self.version}',
-                f'--release={self.release}',
+                "rpms:rebase-and-build",
+                f"--version={self.version}",
+                f"--release={self.release}",
             ]
         )
 
         if self.runtime.dry_run:
-            self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
+            self.runtime.logger.info("Would have run: %s", " ".join(cmd))
             return
 
         # Build RPMs
-        self.runtime.logger.info('Building RPMs')
+        self.runtime.logger.info("Building RPMs")
         try:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError:
             self._handle_rpm_build_failures()
 
         try:
-            with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+            with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
                 record_log: dict = record_util.parse_record_log(file)
 
             success_map = record_util.get_successful_rpms(record_log, full_record=True)
@@ -370,7 +370,7 @@ class OcpPipeline:
             self.runtime.logger.error(f"Failed to get successfully build RPM NVRs: {e}")
 
     def _handle_rpm_build_failures(self):
-        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+        with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
             record_log: dict = record_util.parse_record_log(file)
 
         failed_map = record_util.get_failed_rpms(record_log)
@@ -378,9 +378,9 @@ class OcpPipeline:
             # failed so badly we don't know what failed; give up
             raise
         failed_rpms = list(failed_map.keys())
-        jenkins.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
+        jenkins.update_description(f"Failed rpms: {', '.join(failed_rpms)}<br/>")
 
-        self.runtime.logger.warning('Failed rpms: %s', ', '.join(failed_rpms))
+        self.runtime.logger.warning("Failed rpms: %s", ", ".join(failed_rpms))
 
     async def _is_compose_build_permitted(self) -> bool:
         """
@@ -391,19 +391,19 @@ class OcpPipeline:
 
         # get_freeze_automation now accepts the full group name
         automation_state: str = await util.get_freeze_automation(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
         )
-        self.runtime.logger.info('Automation freeze for %s: %s', self.version, automation_state)
+        self.runtime.logger.info("Automation freeze for %s: %s", self.version, automation_state)
 
-        if automation_state not in ['scheduled', 'yes', 'True']:
+        if automation_state not in ["scheduled", "yes", "True"]:
             return True
 
-        if automation_state == 'scheduled' and self.build_plan.build_rpms and util.is_manual_build():
+        if automation_state == "scheduled" and self.build_plan.build_rpms and util.is_manual_build():
             # Send a Slack notification since we're running compose build during automation freeze
-            self._slack_client.bind_channel(f'openshift-{self.version}')
+            self._slack_client.bind_channel(f"openshift-{self.version}")
             await self._slack_client.say(
                 "*:alert: ocp4 build compose running during automation freeze*\n"
                 "There were RPMs in the build plan that forced build compose during automation freeze.",
@@ -414,23 +414,23 @@ class OcpPipeline:
         return False
 
     async def _rebase_images(self):
-        self.runtime.logger.info('Rebasing images')
+        self.runtime.logger.info("Rebasing images")
 
         cmd = self._doozer_base_command.copy()
-        cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
+        cmd.extend(self._include_exclude("images", self.build_plan.images_included, self.build_plan.images_excluded))
         cmd.extend(
             [
-                'images:rebase',
-                f'--version=v{self.version}',
-                f'--release={self.release}',
+                "images:rebase",
+                f"--version=v{self.version}",
+                f"--release={self.release}",
                 f"--message='Updating Dockerfile version and release v{self.version}-{self.release}'",
-                '--push',
+                "--push",
                 f"--message='{os.environ['BUILD_URL']}'",
             ]
         )
 
         if self.runtime.dry_run:
-            self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
+            self.runtime.logger.info("Would have run: %s", " ".join(cmd))
             return
 
         try:
@@ -439,11 +439,11 @@ class OcpPipeline:
 
         except ChildProcessError:
             # Get a list of images that failed to rebase
-            with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
+            with open(f"{self.runtime.doozer_working}/state.yaml") as state_yaml:
                 state = yaml.safe_load(state_yaml)
             failed_images = list(
                 dict(
-                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
+                    filter(lambda item: item[1] is not True, state["images:rebase"]["images"].items()),
                 ).keys(),
             )
 
@@ -452,7 +452,7 @@ class OcpPipeline:
 
             # Some images failed to rebase: log them, and track them in Redis
             self.runtime.logger.warning(
-                'Following images failed to rebase and won\'t be built: %s', ', '.join(failed_images)
+                "Following images failed to rebase and won't be built: %s", ", ".join(failed_images)
             )
             await self.update_rebase_fail_counters(failed_images)
 
@@ -479,29 +479,29 @@ class OcpPipeline:
         Update rebase fail counters for images that failed to rebase.
         """
 
-        if self.assembly == 'test':
+        if self.assembly == "test":
             # Ignore for test assembly
             return
 
         # Reset fail counters for images that were rebased successfully
         successful_images = []
-        if self.build_images.lower() == 'all':
+        if self.build_images.lower() == "all":
             successful_images = [image for image in self.group_images if image not in failed_images]
-        elif self.build_images.lower() == 'except':
+        elif self.build_images.lower() == "except":
             successful_images = [
                 image
                 for image in self.group_images
                 if image not in self.build_plan.images_excluded and image not in failed_images
             ]
-        elif self.build_images.lower() == 'only':
+        elif self.build_images.lower() == "only":
             successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
-        await asyncio.gather(*[reset_rebase_fail_counter(image, self.version, 'brew') for image in successful_images])
+        await asyncio.gather(*[reset_rebase_fail_counter(image, self.version, "brew") for image in successful_images])
 
         # Increment fail counters for failing images.
-        await asyncio.gather(*[increment_rebase_fail_counter(image, self.version, 'brew') for image in failed_images])
+        await asyncio.gather(*[increment_rebase_fail_counter(image, self.version, "brew") for image in failed_images])
 
     def _handle_image_build_failures(self):
-        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+        with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
             record_log: dict = record_util.parse_record_log(file)
 
         failed_map = record_util.get_failed_builds(record_log, full_record=True)
@@ -511,26 +511,26 @@ class OcpPipeline:
         failed_images = list(failed_map.keys())
 
         if len(failed_images) <= 10:
-            jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
+            jenkins.update_description(f"Failed images: {', '.join(failed_images)}<br/>")
         elif len(failed_images) > 10:
-            jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
+            jenkins.update_description(f"{len(failed_images)} images failed. Check record.log for details<br/>")
 
-        self.runtime.logger.warning('Failed images: %s', ', '.join(failed_images))
+        self.runtime.logger.warning("Failed images: %s", ", ".join(failed_images))
 
         ratio = record_util.determine_build_failure_ratio(record_log)
-        if ratio['failed'] == ratio['total']:
+        if ratio["failed"] == ratio["total"]:
             self.all_image_build_failed = True
-            failed_messages = ''
+            failed_messages = ""
             for i in range(len(failed_images)):
                 failed_messages += f"{failed_images[i]}:{failed_map[failed_images[i]]['task_url']}\n"
 
-        if (ratio['total'] > 10 and ratio['ratio'] > 0.25) or (
-            ratio['ratio'] > 1 and ratio['failed'] == ratio['total']
+        if (ratio["total"] > 10 and ratio["ratio"] > 0.25) or (
+            ratio["ratio"] > 1 and ratio["failed"] == ratio["total"]
         ):
             self.runtime.logger.warning(
                 "%s of %s image builds failed; probably not the owners' fault, will not spam",
-                {ratio['failed']},
-                {ratio['total']},
+                {ratio["failed"]},
+                {ratio["total"]},
             )
 
         else:
@@ -544,14 +544,14 @@ class OcpPipeline:
     async def _build_images(self):
         # Even if the computed build plan included images, some may have been removed because they failed to rebase.
         # Check once again if the current build plan includes any image, return otherwise
-        if not self.build_plan.build_images and self.build_images.lower() != 'all':
-            self.runtime.logger.warning('No images to build according to current build plan')
+        if not self.build_plan.build_images and self.build_images.lower() != "all":
+            self.runtime.logger.warning("No images to build according to current build plan")
             return
 
-        self.runtime.logger.info('Building images')
+        self.runtime.logger.info("Building images")
 
         signing_mode = await util.get_signing_mode(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
@@ -559,14 +559,14 @@ class OcpPipeline:
 
         # Doozer command
         cmd = self._doozer_base_command.copy()
-        cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
-        cmd.extend(['images:build', '--repo-type', signing_mode])
+        cmd.extend(self._include_exclude("images", self.build_plan.images_included, self.build_plan.images_excluded))
+        cmd.extend(["images:build", "--repo-type", signing_mode])
 
         if self.comment_on_pr:
-            cmd.extend(['--comment-on-pr'])
+            cmd.extend(["--comment-on-pr"])
 
         if self.runtime.dry_run:
-            self.runtime.logger.info('Would have executed: %s', ' '.join(cmd))
+            self.runtime.logger.info("Would have executed: %s", " ".join(cmd))
             return
 
         # Build images. If more than one version is undergoing mass rebuilds,
@@ -581,12 +581,12 @@ class OcpPipeline:
         # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
         # bellweather to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
         # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
-        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+        with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
             record_log: dict = record_util.parse_record_log(file)
 
         success_map = record_util.get_successful_builds(record_log, full_record=True)
-        if success_map.get('ose-openshift-apiserver', None):
-            self.runtime.logger.warning('apiserver rebuilt: mirroring streams to CI...')
+        if success_map.get("ose-openshift-apiserver", None):
+            self.runtime.logger.warning("apiserver rebuilt: mirroring streams to CI...")
 
             # Make sure our api.ci token is fresh
             await oc.registry_login()
@@ -596,7 +596,7 @@ class OcpPipeline:
 
             # Mirror out ART equivalent images to CI
             cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror'])
+            cmd.extend(["images:streams", "mirror"])
             await exectools.cmd_assert_async(cmd)
 
         # Kick off SAST scans for builds that succeeded using the NVR
@@ -612,7 +612,7 @@ class OcpPipeline:
 
         if self.mass_rebuild:
             await self._slack_client.say(
-                f':construction: Starting image builds for {self.version} mass rebuild :construction:'
+                f":construction: Starting image builds for {self.version} mass rebuild :construction:"
             )
 
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
@@ -622,7 +622,7 @@ class OcpPipeline:
         await self._build_images()
 
         if self.mass_rebuild:
-            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
+            await self._slack_client.say(f"::done_it_is: Mass rebuild for {self.version} complete :done_it_is:")
 
     async def _sync_images(self):
         """
@@ -632,32 +632,32 @@ class OcpPipeline:
         If operator_nvrs is given, will only build manifests for specified operator NVRs.
         """
         if not self.build_plan.build_images:
-            self.runtime.logger.info('No built images to sync.')
+            self.runtime.logger.info("No built images to sync.")
             return
 
-        self.runtime.logger.info('Syncing built images')
+        self.runtime.logger.info("Syncing built images")
 
-        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+        with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
             record_log: dict = record_util.parse_record_log(file)
 
-        records = record_log.get('build', [])
+        records = record_log.get("build", [])
         operator_nvrs = []
 
         for record in records:
-            if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
-                operator_nvrs.append(record['nvrs'].split(',')[0])
+            if record["has_olm_bundle"] == "1" and record["status"] == "0" and record.get("nvrs", None):
+                operator_nvrs.append(record["nvrs"].split(",")[0])
 
         if self.runtime.dry_run:
-            self.runtime.logger.info('Skipping build-sync and olm-bundle for dry run mode')
+            self.runtime.logger.info("Skipping build-sync and olm-bundle for dry run mode")
             return
 
-        if self.assembly == 'test':
-            self.runtime.logger.warning('Skipping build-sync job for test assembly')
+        if self.assembly == "test":
+            self.runtime.logger.warning("Skipping build-sync job for test assembly")
 
         else:
             # Trigger ocp4 build sync only for streams that are not being updated with konflux builds
             if uses_konflux_imagestream_override(self.version):
-                self.runtime.logger.info('Skipping build-sync job for streams updated by Konflux builds')
+                self.runtime.logger.info("Skipping build-sync job for streams updated by Konflux builds")
             else:
                 jenkins.start_build_sync(
                     build_version=self.version,
@@ -678,32 +678,32 @@ class OcpPipeline:
     async def _sweep(self):
         if not uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
-                'Skipping bug sweep for %s since it is being handled by ocp4-konflux', {self.version}
+                "Skipping bug sweep for %s since it is being handled by ocp4-konflux", {self.version}
             )
             return
 
         if self.all_image_build_failed:
-            self.runtime.logger.warning('All image builds failed: skipping sweep')
+            self.runtime.logger.warning("All image builds failed: skipping sweep")
             return
-        if self.assembly != 'stream':
-            self.runtime.logger.info('Not setting bugs to ON_QA since assembly is not stream')
+        if self.assembly != "stream":
+            self.runtime.logger.info("Not setting bugs to ON_QA since assembly is not stream")
             return
 
         cmd = [
-            'elliott',
-            f'--group=openshift-{self.version}',
+            "elliott",
+            f"--group=openshift-{self.version}",
             "find-bugs:qe",
         ]
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         try:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
-            self._slack_client.bind_channel(f'openshift-{self.version}')
-            await self._slack_client.say(f'Bug sweep failed for {self.version}. Please investigate')
+            self._slack_client.bind_channel(f"openshift-{self.version}")
+            await self._slack_client.say(f"Bug sweep failed for {self.version}. Please investigate")
 
         await self._golang_bug_sweep()
 
@@ -711,50 +711,50 @@ class OcpPipeline:
         # find-bugs:golang only modifies bug state after verifying
         # that the bug is fixed in the builds found in latest nightly / rpms in candidate tag
         # therefore we do not need to check which builds are successful to run this
-        if self.assembly != 'stream':
-            self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
+        if self.assembly != "stream":
+            self.runtime.logger.info("Not setting golang bugs to ON_QA since assembly is not stream")
             return
 
         cmd = [
-            'elliott',
-            '--assembly',
-            'stream',
-            f'--group=openshift-{self.version}',
+            "elliott",
+            "--assembly",
+            "stream",
+            f"--group=openshift-{self.version}",
             "find-bugs:golang",
             "--analyze",
             "--update-tracker",
         ]
 
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         try:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
-            self._slack_client.bind_channel(f'openshift-{self.version}')
-            await self._slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
+            self._slack_client.bind_channel(f"openshift-{self.version}")
+            await self._slack_client.say(f"Golang bug sweep failed for {self.version}. Please investigate")
 
     def _report_success(self):
         # Update description with build metrics
         if self.runtime.dry_run or (not self.build_plan.build_rpms and not self.build_plan.build_images):
             record_log = {}  # Nothing was actually built
         else:
-            with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
+            with open(f"{self.runtime.doozer_working}/record.log", "r") as file:
                 record_log: dict = record_util.parse_record_log(file)
-        metrics = record_log.get('image_build_metrics', {})
+        metrics = record_log.get("image_build_metrics", {})
 
         if not metrics:
-            timing_report = 'No images actually built.'
+            timing_report = "No images actually built."
         else:
             timing_report = (
-                f'Images built: {metrics[0]["task_count"]}\n'
-                f'Elapsed image build time: {metrics[0]["elapsed_total_minutes"]} minutes\n'
-                f'Time spent waiting for OSBS capacity: {metrics[0]["elapsed_wait_minutes"]} minutes'
+                f"Images built: {metrics[0]['task_count']}\n"
+                f"Elapsed image build time: {metrics[0]['elapsed_total_minutes']} minutes\n"
+                f"Time spent waiting for OSBS capacity: {metrics[0]['elapsed_wait_minutes']} minutes"
             )
 
-        jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
+        jenkins.update_description(f"<hr />Build results:<br/><br/>{timing_report}<br/>")
 
     async def _request_mass_rebuild(self):
         queue = locks.Keys.BREW_MASS_REBUILD_QUEUE.value
@@ -765,8 +765,8 @@ class OcpPipeline:
         # nx=True to only create new elements and not to update scores for elements that already exist.
         # This is so that release-artists can manually add versions with scores to set mass rebuild order
         # and they will not be overwritten
-        await redis.call('zadd', queue, mapping, nx=True)
-        self.runtime.logger.info('Queued in for mass rebuild lock')
+        await redis.call("zadd", queue, mapping, nx=True)
+        self.runtime.logger.info("Queued in for mass rebuild lock")
 
         # if we reach timeout, quit but don't remove yourself from the queue
         # it will prevent other versions from acquiring the lock, until you get back in the queue
@@ -800,19 +800,19 @@ class OcpPipeline:
             )
 
         else:
-            self.runtime.logger.warning('Skipping plashets creation')
+            self.runtime.logger.warning("Skipping plashets creation")
 
         # Rebase and build images
         if self.build_plan.build_images:
             if self.mass_rebuild:
                 await self._slack_client.say(
-                    f':loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:'
+                    f":loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:"
                 )
                 await self._request_mass_rebuild()
             else:
                 await self._rebase_and_build_images()
         else:
-            self.runtime.logger.info('Not building images.')
+            self.runtime.logger.info("Not building images.")
 
         # Sync images
         await self._sync_images()
@@ -824,7 +824,7 @@ class OcpPipeline:
 
         # All good
         self._report_success()
-        await self.runtime.cleanup_sources('sources')
+        await self.runtime.cleanup_sources("sources")
 
 
 @cli.command(
@@ -834,59 +834,59 @@ class OcpPipeline:
     "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
     "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA",
 )
-@click.option('--version', required=True, help='OCP version to scan, e.g. 4.14, 5.0')
-@click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
+@click.option("--version", required=True, help="OCP version to scan, e.g. 4.14, 5.0")
+@click.option("--assembly", required=True, help="The name of an assembly to rebase & build for")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option("--data-gitref", required=False, default="", help="Doozer data path git [branch / tag / sha] to use")
 @click.option(
-    '--build-rpms',
+    "--build-rpms",
     required=True,
-    type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
+    type=click.Choice(["all", "only", "except", "none"], case_sensitive=False),
     help='Which RPMs are candidates for building? "only/except" refer to --rpm-list param',
 )
 @click.option(
-    '--rpm-list',
+    "--rpm-list",
     required=False,
-    default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS (e.g. openshift,openshift-kuryr)',
+    default="",
+    help="(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS (e.g. openshift,openshift-kuryr)",
 )
 @click.option(
-    '--build-images',
+    "--build-images",
     required=True,
-    type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
+    type=click.Choice(["all", "only", "except", "none"], case_sensitive=False),
     help='Which images are candidates for building? "only/except" refer to --image-list param',
 )
 @click.option(
-    '--image-list',
+    "--image-list",
     required=False,
-    default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES '
-    '(e.g. logging-kibana5,openshift-jenkins-2)',
+    default="",
+    help="(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES "
+    "(e.g. logging-kibana5,openshift-jenkins-2)",
 )
 @click.option(
-    '--skip-plashets',
+    "--skip-plashets",
     is_flag=True,
     default=False,
-    help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
+    help="Do not build plashets (for example to save time when running multiple builds against test assembly)",
 )
 @click.option(
-    '--mail-list-failure',
+    "--mail-list-failure",
     required=False,
-    default='aos-art-automation+failed-ocp4-build@redhat.com',
-    help='Failure Mailing List',
+    default="aos-art-automation+failed-ocp4-build@redhat.com",
+    help="Failure Mailing List",
 )
 @click.option(
-    '--ignore-locks',
+    "--ignore-locks",
     is_flag=True,
     default=False,
-    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+    help="Do not wait for other builds in this version to complete (use only if you know they will not conflict)",
 )
-@click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
+@click.option("--comment-on-pr", is_flag=True, default=False, help="Comment on source PR after successful build")
 @pass_runtime
 @click_coroutine
 async def ocp(
@@ -906,7 +906,7 @@ async def ocp(
 ):
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+        runtime.logger.warning("Env var BUILD_URL has not been defined: a random identifier will be used for the locks")
 
     pipeline = OcpPipeline(
         runtime=runtime,
@@ -937,4 +937,4 @@ async def ocp(
 
 
 # Add ocp4 as an alias for backward compatibility
-cli.add_command(ocp, name='ocp4')
+cli.add_command(ocp, name="ocp4")

@@ -22,7 +22,7 @@ LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {
     "repo": "http://linux.duke.edu/metadata/repo",
     "rpm": "http://linux.duke.edu/metadata/rpm",
-    'common': 'http://linux.duke.edu/metadata/common',
+    "common": "http://linux.duke.edu/metadata/common",
 }
 
 
@@ -101,7 +101,7 @@ class Rpm:
             raise ValueError("version is not set")
         checksum = metadata.find("common:checksum", NAMESPACES)
         if checksum is None or not checksum.text:
-            raise ValueError('checksum is not set')
+            raise ValueError("checksum is not set")
         size = metadata.find("common:size", NAMESPACES)
         if size is None:
             raise ValueError("size is not set")
@@ -113,7 +113,7 @@ class Rpm:
             raise ValueError("arch is not set")
 
         format_elem = metadata.find("common:format", NAMESPACES)
-        sourcerpm = ''
+        sourcerpm = ""
         if format_elem is not None:
             sourcerpm_elem = format_elem.find("rpm:sourcerpm", NAMESPACES)
             if sourcerpm_elem is not None and sourcerpm_elem.text:
@@ -123,7 +123,7 @@ class Rpm:
             name=name.text,
             epoch=int(version.attrib["epoch"]),
             version=version.attrib["ver"],
-            checksum=f'{checksum.attrib["type"]}:{checksum.text}',
+            checksum=f"{checksum.attrib['type']}:{checksum.text}",
             size=int(size.attrib["package"]),
             location=location.attrib["href"],
             sourcerpm=sourcerpm,
@@ -206,7 +206,7 @@ class Repodata:
             is_nvr, rpm_name = self._detect_nvr_vs_name(item)
 
             matching_rpms = [
-                rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == 'noarch')
+                rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == "noarch")
             ]
 
             if not matching_rpms:
@@ -240,16 +240,16 @@ class Repodata:
         """
         try:
             parsed = parse_nvr(item)
-            extracted_name = parsed.get('name')
-            version = parsed.get('version')
-            release = parsed.get('release')
+            extracted_name = parsed.get("name")
+            version = parsed.get("version")
+            release = parsed.get("release")
 
             # Basic parsing succeeded, now validate components
             if extracted_name and version and release:
                 # Validate version: should contain digits or dots (typical version patterns)
-                if re.search(r'[\d.]', version):
+                if re.search(r"[\d.]", version):
                     # Validate release: should contain at least one digit (typical RPM release)
-                    if re.search(r'\d', release):
+                    if re.search(r"\d", release):
                         return True, extracted_name
         except Exception:
             # If parsing fails, treat as package name
@@ -302,8 +302,8 @@ class Repodata:
         """
         try:
             parsed_original = parse_nvr(original_nvr)
-            target_version = parsed_original.get('version')
-            target_release = parsed_original.get('release')
+            target_version = parsed_original.get("version")
+            target_release = parsed_original.get("release")
 
             if not target_version or not target_release:
                 return None
@@ -357,7 +357,7 @@ class Repodata:
         primary_rpms = [
             Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
         ]
-        modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata['document'] == 'modulemd']
+        modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata["document"] == "modulemd"]
         repodata = Repodata(
             name=name,
             primary_rpms=primary_rpms,
@@ -373,21 +373,21 @@ class RepodataLoader:
     @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
-            return b''
+            return b""
         data = io.BytesIO()
         async with session.get(url) as resp:
             resp.raise_for_status()
             data = io.BytesIO(await resp.read())
         data.seek(0)
 
-        if url.endswith('.gz'):
+        if url.endswith(".gz"):
             with gzip.GzipFile(fileobj=data) as uncompressed:
                 return uncompressed.read()
-        elif url.endswith('.xz'):
+        elif url.endswith(".xz"):
             with lzma.open(data) as uncompressed:
                 return uncompressed.read()
         else:
-            raise IOError(f'Unknown compression for: {url}')
+            raise IOError(f"Unknown compression for: {url}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def load(self, repo_name: str, repo_url: str):
@@ -404,35 +404,35 @@ class RepodataLoader:
                     resp.raise_for_status()
                     repomd_xml = ET.fromstring(await resp.text())
             except Exception as e:
-                LOGGER.warning('Failed fetching %s: %s', repomd_url, e)
-                curl_cmd = ['curl', '-v', repomd_url]
+                LOGGER.warning("Failed fetching %s: %s", repomd_url, e)
+                curl_cmd = ["curl", "-v", repomd_url]
                 _, _, err = await cmd_gather_async(curl_cmd)
-                LOGGER.info('curl command stderr: %s', err)
+                LOGGER.info("curl command stderr: %s", err)
                 raise
 
             primary_data_element = repomd_xml.find('repo:data[@type="primary"]', NAMESPACES)
             if primary_data_element is None:
                 raise ValueError("Couldn't find primary data in repodata")
-            primary_location = primary_data_element.find('repo:location', NAMESPACES)
+            primary_location = primary_data_element.find("repo:location", NAMESPACES)
             if primary_location is None:
                 raise ValueError("Couldn't find primary location in repodata")
-            primary_url = parse.urljoin(repo_url, primary_location.attrib['href'])
+            primary_url = parse.urljoin(repo_url, primary_location.attrib["href"])
 
             modules_url = None
             modules_checksum = None
             modules_size = None
             modules_data_element = repomd_xml.find('repo:data[@type="modules"]', NAMESPACES)
             if modules_data_element is not None:
-                modules_location = modules_data_element.find('repo:location', NAMESPACES)
+                modules_location = modules_data_element.find("repo:location", NAMESPACES)
                 if modules_location is None:
                     raise ValueError("Couldn't find modules location in repodata")
-                modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
+                modules_url = parse.urljoin(repo_url, modules_location.attrib["href"])
 
-                modules_checksum_element = modules_data_element.find('repo:checksum', NAMESPACES)
+                modules_checksum_element = modules_data_element.find("repo:checksum", NAMESPACES)
                 if modules_checksum_element is not None:
                     modules_checksum = f"{modules_checksum_element.attrib['type']}:{modules_checksum_element.text}"
 
-                modules_size_element = modules_data_element.find('repo:size', NAMESPACES)
+                modules_size_element = modules_data_element.find("repo:size", NAMESPACES)
                 if modules_size_element is not None:
                     modules_size = int(modules_size_element.text)
 
@@ -460,7 +460,7 @@ class RepodataLoader:
                 fetch_remote_compressed(modules_url),
             )
 
-        yaml = YAML(typ='safe')
+        yaml = YAML(typ="safe")
         repodata = Repodata.from_metadatas(
             repo_name,
             ET.fromstring(primary_bytes),
@@ -532,7 +532,7 @@ class OutdatedRPMFinder:
         logger = logger or logutil.get_logger(__name__)
 
         # archive_rpms holds all rpms to examine
-        archive_rpms = {rpm['name']: rpm for rpm in rpms_to_check}  # rpm_name => rpm dict
+        archive_rpms = {rpm["name"]: rpm for rpm in rpms_to_check}  # rpm_name => rpm dict
 
         # To correctly detect outdated rpms coming from modular repos, we need to know which modules are enabled during image build.
         # However, this is no Brew API or any other easy way to know that.

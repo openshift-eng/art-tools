@@ -85,7 +85,7 @@ class OSBS2Builder:
                 if error:
                     # Error in task does not necessarily mean error in build. Look if the build is successful
                     build_info = koji_api.getBuild(nvr)
-                    if build_info and build_info.get('state') == 1:  # State 1 means complete.
+                    if build_info and build_info.get("state") == 1:  # State 1 means complete.
                         build_url = f"{BREWWEB_URL}/buildinfo?buildID={build_info['id']}"
                         logger.info(
                             "Image %s already built against this dist-git commit (or version-release tag): %s",
@@ -151,8 +151,8 @@ class OSBS2Builder:
         if not self.scratch and self._runtime.hotfix:
             # Tag the image so it won't get garbage collected.
             logger.info(
-                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}'
-                f' to prevent garbage collection'
+                f"Tagging {image.get_component_name()} build {build_info['nvr']} into {image.hotfix_brew_tag()}"
+                f" to prevent garbage collection"
             )
             if self.dry_run:
                 logger.warning(
@@ -185,10 +185,10 @@ class OSBS2Builder:
             repo_list = [repo_url]
 
         opts = {
-            'scratch': self.scratch,
-            'signing_intent': signing_intent,
-            'yum_repourls': repo_list,
-            'git_branch': dg.branch,
+            "scratch": self.scratch,
+            "signing_intent": signing_intent,
+            "yum_repourls": repo_list,
+            "git_branch": dg.branch,
         }
 
         task_id = 0

@@ -58,9 +58,9 @@ class CreateReleaseCli:
         self.dry_run = dry_run
         self.job_url = job_url
         self.konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=self.konflux_config['namespace'],
-            config_file=self.konflux_config['kubeconfig'],
-            context=self.konflux_config['context'],
+            default_namespace=self.konflux_config["namespace"],
+            config_file=self.konflux_config["kubeconfig"],
+            context=self.konflux_config["context"],
             dry_run=self.dry_run,
         )
         self.konflux_client.verify_connection()
@@ -74,11 +74,11 @@ class CreateReleaseCli:
         if not group.startswith("openshift-"):
             return
 
-        if not (release_notes and hasattr(release_notes, '__dict__')):
+        if not (release_notes and hasattr(release_notes, "__dict__")):
             return
 
-        required_fields = ['synopsis', 'topic', 'description', 'solution']
-        empty_fields = [field for field in required_fields if not (getattr(release_notes, field, None) or '').strip()]
+        required_fields = ["synopsis", "topic", "description", "solution"]
+        empty_fields = [field for field in required_fields if not (getattr(release_notes, field, None) or "").strip()]
 
         if empty_fields:
             raise ValueError(
@@ -87,8 +87,8 @@ class CreateReleaseCli:
 
     async def run(self) -> Optional[ResourceInstance]:
         # Initialize runtime if not already initialized (for direct class usage in tests)
-        if not getattr(self.runtime, 'initialized', False):
-            self.runtime.initialize(build_system='konflux', with_shipment=True)
+        if not getattr(self.runtime, "initialized", False):
+            self.runtime.initialize(build_system="konflux", with_shipment=True)
 
         LOGGER.info(f"Loading {self.config_path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
@@ -190,7 +190,7 @@ class CreateReleaseCli:
         # Prepare metadata with labels and optional annotations
         metadata = {
             "name": snapshot_name,
-            "namespace": self.konflux_config['namespace'],
+            "namespace": self.konflux_config["namespace"],
             "labels": {
                 "test.appstudio.openshift.io/type": "override",
                 "appstudio.openshift.io/application": shipment.metadata.application,
@@ -252,7 +252,7 @@ class CreateReleaseCli:
         # Prepare metadata with labels and optional annotations
         metadata = {
             "name": release_config.release_name,
-            "namespace": self.konflux_config['namespace'],
+            "namespace": self.konflux_config["namespace"],
             "labels": {"appstudio.openshift.io/application": release_config.application},
         }
 
@@ -292,51 +292,51 @@ def konflux_release_cli():
     "new", short_help="Create a new Konflux Release in the given namespace for the given shipment-data configuration"
 )
 @click.option(
-    '--konflux-kubeconfig',
-    metavar='KUBECONF_PATH',
-    help='Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).',
+    "--konflux-kubeconfig",
+    metavar="KUBECONF_PATH",
+    help="Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).",
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
-    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
+    help="The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).",
 )
 @click.option(
-    '--pull-secret',
-    metavar='PATH',
-    help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.',
+    "--pull-secret",
+    metavar="PATH",
+    help="Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.",
 )
 @click.option(
-    '--config',
-    metavar='CONFIG_PATH',
+    "--config",
+    metavar="CONFIG_PATH",
     required=True,
-    help='Path of the shipment config file to use for creating release. The path should be from the root of the  '
-    'given shipment-data repo.',
+    help="Path of the shipment config file to use for creating release. The path should be from the root of the  "
+    "given shipment-data repo.",
 )
 @click.option(
-    '--env',
-    metavar='RELEASE_ENV',
+    "--env",
+    metavar="RELEASE_ENV",
     required=True,
     type=click.Choice(["stage", "prod"]),
-    help='Release environment to create the release for',
+    help="Release environment to create the release for",
 )
-@click.option('--apply', is_flag=True, default=False, help='Create the release in cluster (False by default)')
+@click.option("--apply", is_flag=True, default=False, help="Create the release in cluster (False by default)")
 @click.option(
-    '--job-url',
-    metavar='URL',
-    help='The URL of the job that created this release. This will be added as an annotation to both the snapshot and release objects.',
-)
-@click.option(
-    '--force', is_flag=True, default=False, help='Force the creation of the release even if it already exists'
+    "--job-url",
+    metavar="URL",
+    help="The URL of the job that created this release. This will be added as an annotation to both the snapshot and release objects.",
 )
 @click.option(
-    '--kind',
-    metavar='KIND',
+    "--force", is_flag=True, default=False, help="Force the creation of the release even if it already exists"
+)
+@click.option(
+    "--kind",
+    metavar="KIND",
     required=True,
     help='The kind of release being created (e.g. "image", "metadata", "fbc" etc)',
 )
@@ -363,16 +363,16 @@ async def new_release_cli(
     release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux', with_shipment=True)
+    runtime.initialize(build_system="konflux", with_shipment=True)
 
     # Resolve kubeconfig and namespace using utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
     resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
-        'kubeconfig': resolved_kubeconfig,
-        'namespace': resolved_namespace,
-        'context': konflux_context,
+        "kubeconfig": resolved_kubeconfig,
+        "namespace": resolved_namespace,
+        "context": konflux_context,
     }
 
     pipeline = CreateReleaseCli(

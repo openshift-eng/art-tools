@@ -10,8 +10,8 @@ from . import (
 )
 
 __all__ = [
-    'schedule_oadp_scan',
-    'schedule_ocp4_scan',
-    'schedule_ocp4_scan_konflux',
-    'schedule_scan_plashet_rpms',
+    "schedule_oadp_scan",
+    "schedule_ocp4_scan",
+    "schedule_ocp4_scan_konflux",
+    "schedule_scan_plashet_rpms",
 ]

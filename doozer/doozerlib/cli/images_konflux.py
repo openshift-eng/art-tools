@@ -58,7 +58,7 @@ class KonfluxRebaseCli:
         self.release = release
         self.embargoed = embargoed
         self.force_yum_updates = force_yum_updates
-        if repo_type not in ['signed', 'unsigned']:
+        if repo_type not in ["signed", "unsigned"]:
             raise click.BadParameter(f"repo_type must be one of 'signed' or 'unsigned'. Got: {repo_type}")
         self.repo_type = repo_type
         self.image_repo = image_repo
@@ -69,7 +69,7 @@ class KonfluxRebaseCli:
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+        runtime.initialize(mode="images", clone_distgits=False, build_system="konflux")
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
         metas = runtime.ordered_image_metas()
 
@@ -112,9 +112,9 @@ class KonfluxRebaseCli:
                 failed_images.append(image_name)
                 LOGGER.error(f"Failed to rebase {image_name}: {result}")
                 LOGGER.error(f"Stack trace for {image_name}:")
-                LOGGER.error(''.join(traceback.format_exception(type(result), result, result.__traceback__)))
+                LOGGER.error("".join(traceback.format_exception(type(result), result, result.__traceback__)))
         if failed_images:
-            runtime.state['images:konflux:rebase'] = {'failed-images': failed_images}
+            runtime.state["images:konflux:rebase"] = {"failed-images": failed_images}
             raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
         LOGGER.info("Rebase complete")
 
@@ -122,12 +122,12 @@ class KonfluxRebaseCli:
 @cli.command("beta:images:konflux:rebase", short_help="Refresh a group's konflux source content from source content.")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     required=True,
     callback=validate_semver_major_minor_patch,
     help="Version string to populate in Dockerfiles.",
 )
-@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@click.option("--release", metavar="RELEASE", required=True, help="Release string to populate in Dockerfiles.")
 @click.option(
     "--embargoed",
     is_flag=True,
@@ -137,7 +137,7 @@ class KonfluxRebaseCli:
     "--force-yum-updates",
     is_flag=True,
     default=False,
-    help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.",
+    help='Inject "yum update -y" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.',
 )
 @click.option(
     "--repo-type",
@@ -146,11 +146,11 @@ class KonfluxRebaseCli:
     default="unsigned",
     help="Repo group type to use (e.g. signed, unsigned).",
 )
-@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option("--image-repo", default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help="Image repo for base images")
 @click.option(
-    '--network-mode',
-    type=click.Choice(['hermetic', 'internal-only', 'open']),
-    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+    "--network-mode",
+    type=click.Choice(["hermetic", "internal-only", "open"]),
+    help="Override network mode for Konflux builds. Takes precedence over image and group config settings.",
 )
 @option_commit_message
 @option_push
@@ -220,13 +220,13 @@ class KonfluxBuildCli:
     @start_as_current_span_async(TRACER, "images:konflux:build")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False)
+        runtime.initialize(mode="images", clone_distgits=False)
 
         if self.variant is BuildVariant.OKD:
             group_config = self.runtime.group_config.copy()
-            if group_config.get('okd'):
-                LOGGER.info('Build images using OKD group configuration')
-                group_config = deep_merge(group_config, group_config['okd'])
+            if group_config.get("okd"):
+                LOGGER.info("Build images using OKD group configuration")
+                group_config = deep_merge(group_config, group_config["okd"])
                 runtime.group_config = Model(group_config)
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
@@ -240,7 +240,7 @@ class KonfluxBuildCli:
 
         if self.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
-            group = f'okd-{major}.{minor}'
+            group = f"okd-{major}.{minor}"
         else:
             group = runtime.group
 
@@ -267,7 +267,7 @@ class KonfluxBuildCli:
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                stack_trace = "".join(traceback.TracebackException.from_exception(result).format())
                 LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
@@ -276,46 +276,46 @@ class KonfluxBuildCli:
 
 @cli.command("beta:images:konflux:build", short_help="Build images for the group.")
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+    "--konflux-kubeconfig", metavar="PATH", help="Path to the kubeconfig file to use for Konflux cluster connections."
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
     default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help="The namespace to use for Konflux cluster connections.",
 )
-@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
-@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--image-repo", default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help="Push images to the specified repo.")
+@click.option("--skip-checks", default=False, is_flag=True, help="Skip all post build checks")
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
     default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
-    help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
+    help="Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template",
 )
 @click.option(
-    '--build-priority',
+    "--build-priority",
     type=str,
-    metavar='PRIORITY',
-    default='auto',
+    metavar="PRIORITY",
+    default="auto",
     required=True,
     help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
 )
 @click.option(
-    '--network-mode',
-    type=click.Choice(['hermetic', 'internal-only', 'open']),
-    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+    "--network-mode",
+    type=click.Choice(["hermetic", "internal-only", "open"]),
+    help="Override network mode for Konflux builds. Takes precedence over image and group config settings.",
 )
 @click.option(
-    '--variant',
+    "--variant",
     type=click.Choice([v.value for v in BuildVariant]),
     default=BuildVariant.OCP.value,
-    help='Build variant.',
+    help="Build variant.",
 )
 @pass_runtime
 @click_coroutine
@@ -400,14 +400,14 @@ class KonfluxBundleCli:
                 dgk_records[record.name] = record
             # Load image metas for the given operators
             runtime.images = list(dgk_records.keys())
-            runtime.initialize(mode='images', clone_distgits=False)
+            runtime.initialize(mode="images", clone_distgits=False)
             for dgk in dgk_records.keys():
                 metadata = runtime.image_map[dgk]
                 if not metadata.is_olm_operator:
                     raise DoozerFatalError(f"Operator {dgk} does not have 'update-csv' config")
         else:
             # Get latest build records for all specified operators
-            runtime.initialize(mode='images', clone_distgits=False)
+            runtime.initialize(mode="images", clone_distgits=False)
             LOGGER.info("Fetching latest operator builds from Konflux DB...")
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
@@ -538,17 +538,17 @@ class KonfluxBundleCli:
         for dgk, result in zip(dgk_records, results):
             if isinstance(result, Exception):
                 failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                stack_trace = "".join(traceback.TracebackException.from_exception(result).format())
                 LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
         if failed_tasks:
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
-        if self.output == 'json':
+        if self.output == "json":
             click.echo(json.dumps({"nvrs": results}, indent=4))
         LOGGER.info("Build complete")
 
 
 @cli.command("beta:images:konflux:bundle", short_help="Rebase and build an OLM bundle for an operator with Konflux.")
-@click.argument('operator_nvrs', nargs=-1, required=False)
+@click.argument("operator_nvrs", nargs=-1, required=False)
 @click.option(
     "-f",
     "--force",
@@ -557,40 +557,40 @@ class KonfluxBundleCli:
     help="Perform a build even if previous bundles for given NVRs already exist",
 )
 @click.option(
-    '--dry-run',
+    "--dry-run",
     default=False,
     is_flag=True,
-    help='Do not push to build repo or build anything, but print what would be done.',
+    help="Do not push to build repo or build anything, but print what would be done.",
 )
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+    "--konflux-kubeconfig", metavar="PATH", help="Path to the kubeconfig file to use for Konflux cluster connections."
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
     default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help="The namespace to use for Konflux cluster connections.",
 )
-@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
-@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
-@click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")
+@click.option("--image-repo", default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help="Push images to the specified repo.")
+@click.option("--skip-checks", default=False, is_flag=True, help="Skip all post build checks")
+@click.option("--release", metavar="RELEASE", help="Release string to populate in bundle's Dockerfiles.")
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
     default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
-    help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
+    help="Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template",
 )
 @click.option(
-    '--output',
-    '-o',
-    type=click.Choice(['json'], case_sensitive=False),
-    default='json',
-    help='Output format for the build records.',
+    "--output",
+    "-o",
+    type=click.Choice(["json"], case_sensitive=False),
+    default="json",
+    help="Output format for the build records.",
 )
 @pass_runtime
 @click_coroutine

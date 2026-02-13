@@ -293,7 +293,7 @@ class KonfluxWatcher:
             return
 
         # Get creation timestamp from the PLR metadata
-        creation_timestamp_str = pipelinerun_dict.get('metadata', {}).get('creationTimestamp')
+        creation_timestamp_str = pipelinerun_dict.get("metadata", {}).get("creationTimestamp")
         if creation_timestamp_str:
             # Parse the timestamp (it's in ISO format)
             try:
@@ -304,8 +304,8 @@ class KonfluxWatcher:
 
                 # Check for custom timeout annotation
                 overall_timeout = self.DEFAULT_OVERALL_TIMEOUT
-                annotations = pipelinerun_dict.get('metadata', {}).get('annotations', {})
-                timeout_minutes_str = annotations.get('art-overall-timeout-minutes')
+                annotations = pipelinerun_dict.get("metadata", {}).get("annotations", {})
+                timeout_minutes_str = annotations.get("art-overall-timeout-minutes")
                 if timeout_minutes_str:
                     try:
                         timeout_minutes = int(timeout_minutes_str)

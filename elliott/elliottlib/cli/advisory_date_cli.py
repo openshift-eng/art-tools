@@ -15,8 +15,8 @@ LOGGER = logutil.get_logger(__name__)
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=False)
 @click.option("--new", help="New publish date to update advisories with.")
 @click.option(
-    '--yes',
-    '-y',
+    "--yes",
+    "-y",
     is_flag=True,
     default=False,
     type=bool,
@@ -60,12 +60,12 @@ def advisory_date_cli(runtime, default_advisory_type, advisories, new, yes):
     for advisory_id in advisories:
         try:
             click.echo(f"Fetching {advisory_id} ... ")
-            erratum = get_raw_erratum(advisory_id)['errata']
+            erratum = get_raw_erratum(advisory_id)["errata"]
             advisory_type_key = list(erratum.keys())[0]
             advisory = erratum[advisory_type_key]
 
             # Format the publish date as 'YYYY-Mon-DD', e.g., '2025-Oct-21'
-            current = advisory['publish_date']
+            current = advisory["publish_date"]
             dt = datetime.strptime(current, "%Y-%m-%dT%H:%M:%S%z")
             current = dt.strftime("%Y-%b-%d")
             click.echo(f"publish_date = {current}")
@@ -76,12 +76,12 @@ def advisory_date_cli(runtime, default_advisory_type, advisories, new, yes):
                 else:
                     click.echo(f"Preparing update to publish_date: {current} ➔ {new}")
                     if not noop:
-                        advisory = update_erratum(advisory_id, {'advisory': {'publish_date_override': new}})
+                        advisory = update_erratum(advisory_id, {"advisory": {"publish_date_override": new}})
                         click.echo("Committed change")
                     else:
                         click.echo("Would have committed change")
         except ErrataException as ex:
-            click.echo(f'Error fetching/changing {advisory_id}: {ex}')
+            click.echo(f"Error fetching/changing {advisory_id}: {ex}")
             errors.append(ex)
     if errors:
         raise Exception(errors)

@@ -432,7 +432,7 @@ class PromotePipeline:
                     "If you need to build, first define microshift advisory in assembly config"
                 )
 
-            release_jira = group_config.get("release_jira", '')
+            release_jira = group_config.get("release_jira", "")
 
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
@@ -513,7 +513,7 @@ class PromotePipeline:
                 # extract client binaries
                 client_type = "ocp"
                 if (
-                    assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')
+                    assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith("rc.")
                 ) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
                     client_type = "ocp-dev-preview"
                 message_digests = []
@@ -525,7 +525,7 @@ class PromotePipeline:
                         lock_identifier = jenkins.get_build_path()
                         if not lock_identifier:
                             self._logger.warning(
-                                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+                                "Env var BUILD_URL has not been defined: a random identifier will be used for the locks"
                             )
 
                         await locks.run_with_lock(
@@ -577,7 +577,7 @@ class PromotePipeline:
                 "pullspec": release_info["image"],
                 "digest": release_info["digest"],
                 "metadata": {
-                    k: release_info["metadata"][k] for k in release_info["metadata"].keys() & {'version', 'previous'}
+                    k: release_info["metadata"][k] for k in release_info["metadata"].keys() & {"version", "previous"}
                 },
             }
             # if this payload is a manifest list, iterate through each manifest
@@ -644,14 +644,14 @@ class PromotePipeline:
     def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
         return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'4-stable{go_arch_suffix}'
+            f"4-dev-preview{go_arch_suffix}" if assembly_type == AssemblyTypes.PREVIEW else f"4-stable{go_arch_suffix}"
         )
 
     @staticmethod
     def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
         return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
+            f"4-dev-preview{go_arch_suffix}" if assembly_type == AssemblyTypes.PREVIEW else f"release{go_arch_suffix}"
         )
 
     def send_promote_complete_email(self, name, release_infos):
@@ -722,7 +722,7 @@ class PromotePipeline:
         cert_file = os.environ["SIGNING_CERT"]
         key_file = os.environ["SIGNING_KEY"]
         uri = constants.UMB_BROKERS[self.signing_env]
-        sig_keyname = "redhatrelease2" if client_type == 'ocp' else "beta2"
+        sig_keyname = "redhatrelease2" if client_type == "ocp" else "beta2"
         self._logger.info("About to sign artifacts with key %s", sig_keyname)
         json_digest_sig_dir = self._working_dir / "json_digests"
         message_digest_sig_dir = self._working_dir / "message_digests"
@@ -882,7 +882,7 @@ class PromotePipeline:
         for root, dirs, files in os.walk(directory_path):
             for file in files:
                 # Skip sha256sum.txt itself and any GPG signature files
-                if file in ['sha256sum.txt', 'sha256sum.txt.gpg']:
+                if file in ["sha256sum.txt", "sha256sum.txt.gpg"]:
                     continue
 
                 file_path = os.path.join(root, file)
@@ -900,7 +900,7 @@ class PromotePipeline:
 
                     # Only process if target exists and is a regular file
                     if os.path.exists(target_path) and os.path.isfile(target_path):
-                        with open(target_path, 'rb') as f:
+                        with open(target_path, "rb") as f:
                             shasum = hashlib.sha256(f.read()).hexdigest()
                         sha_entries.append((shasum, relative_path))
                     else:
@@ -909,7 +909,7 @@ class PromotePipeline:
                         )
                 else:
                     # Regular file - compute its SHA256
-                    with open(file_path, 'rb') as f:
+                    with open(file_path, "rb") as f:
                         shasum = hashlib.sha256(f.read()).hexdigest()
                     sha_entries.append((shasum, relative_path))
 
@@ -917,7 +917,7 @@ class PromotePipeline:
         sha_entries.sort(key=lambda x: x[1])
 
         # Write the sha256sum.txt file
-        with open(sha256sum_file_path, 'w') as f:
+        with open(sha256sum_file_path, "w") as f:
             for shasum, filename in sha_entries:
                 f.write(f"{shasum}  {filename}\n")
 
@@ -959,7 +959,7 @@ class PromotePipeline:
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
         major, minor = isolate_major_minor_in_group(self.group)
-        if (major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64'):
+        if (major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == "x86_64"):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
@@ -971,13 +971,13 @@ class PromotePipeline:
                 )  # will exit with 0 even if no files are exacted
 
                 # if oc-mirror.rhel8 exists, rename it to oc-mirror
-                if Path(client_mirror_dir, 'oc-mirror.rhel8').exists():
-                    Path(client_mirror_dir, 'oc-mirror.rhel8').replace(f'{client_mirror_dir}/oc-mirror')
+                if Path(client_mirror_dir, "oc-mirror.rhel8").exists():
+                    Path(client_mirror_dir, "oc-mirror.rhel8").replace(f"{client_mirror_dir}/oc-mirror")
 
                 files_extracted = 0
-                for file in Path(client_mirror_dir).glob('oc-mirror*'):
+                for file in Path(client_mirror_dir).glob("oc-mirror*"):
                     # archive file
-                    tarball = Path(f'{file}.tar.gz')
+                    tarball = Path(f"{file}.tar.gz")
                     with tarfile.open(tarball, "w:gz") as tar:
                         tar.add(f"{file}", arcname="oc-mirror")
                     # remove extracted file
@@ -1038,7 +1038,7 @@ class PromotePipeline:
             dry_run=self.runtime.dry_run,
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
             # Allow AWS_KEY_ID to be a comma delimited list
-            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
+            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(","),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
         )
@@ -1103,52 +1103,52 @@ class PromotePipeline:
             raise IOError(f"Component image signing failed: {errors}")
 
     def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
-        _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')
-        self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
+        _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, "baremetal-installer")
+        self._logger.info("baremetal-installer pullspec: %s", baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
         major, minor = isolate_major_minor_in_group(self.group)
         if (major, minor) < (4, 16):
-            rhel_version = 'rhel8'
-            binary_name = 'openshift-baremetal-install'
+            rhel_version = "rhel8"
+            binary_name = "openshift-baremetal-install"
         else:
-            rhel_version = 'rhel9'
-            binary_name = 'openshift-install-fips'
+            rhel_version = "rhel9"
+            binary_name = "openshift-install-fips"
 
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
-        self._logger.info('Extracting baremetal-install')
+        self._logger.info("Extracting baremetal-install")
         go_arch = go_arch_for_brew_arch(build_arch)
         extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch, binary_name)
 
         # Create tarball
-        archive_name = f'openshift-install-{rhel_version}-{go_arch}.tar.gz'
-        with tarfile.open(f'{client_mirror_dir}/{archive_name}', 'w:gz') as tar:
-            tar.add(f'{client_mirror_dir}/{binary_name}', f'{binary_name}')
-        self._logger.info('Created tarball %s at %s', archive_name, client_mirror_dir)
+        archive_name = f"openshift-install-{rhel_version}-{go_arch}.tar.gz"
+        with tarfile.open(f"{client_mirror_dir}/{archive_name}", "w:gz") as tar:
+            tar.add(f"{client_mirror_dir}/{binary_name}", f"{binary_name}")
+        self._logger.info("Created tarball %s at %s", archive_name, client_mirror_dir)
 
         # Remove baremetal-installer binary
-        os.remove(f'{client_mirror_dir}/{binary_name}')
+        os.remove(f"{client_mirror_dir}/{binary_name}")
 
     def extract_opm(self, client_mirror_dir, release_name, release_pullspec, arch):
         major, minor = isolate_major_minor_in_group(self.group)
         path_args = []
         if (major, minor) >= (4, 16):
             # from 4.16 opm has multi rhel binaries, will use operator-framework-tools
-            base_path = '/tools/'
+            base_path = "/tools/"
             _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-framework-tools")
-            binaries = ['opm-rhel8', 'opm-rhel9']
-            platforms = ['linux', 'linux-rhel9']
+            binaries = ["opm-rhel8", "opm-rhel9"]
+            platforms = ["linux", "linux-rhel9"]
         else:
-            base_path = '/usr/bin/registry/'
+            base_path = "/usr/bin/registry/"
             _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-registry")
-            binaries = ['opm']
-            platforms = ['linux']
+            binaries = ["opm"]
+            platforms = ["linux"]
         # For x86_64, we have binaries for macOS and Windows
-        if arch == 'x86_64':
-            binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
-            platforms += ['mac', 'windows']
+        if arch == "x86_64":
+            binaries += ["darwin-amd64-opm", "windows-amd64-opm"]
+            platforms += ["mac", "windows"]
         for binary in binaries:
-            path_args.append(f'--path={base_path}{binary}:{client_mirror_dir}')
+            path_args.append(f"--path={base_path}{binary}:{client_mirror_dir}")
         extract_release_binary(operator_pullspec, path_args)
         # Compress binaries into tar.gz files and calculate sha256 digests
         for idx, binary in enumerate(binaries):
@@ -1202,7 +1202,7 @@ class PromotePipeline:
         master_sha_entries.sort(key=lambda x: x[1])
 
         # Write the master sha256sum.txt
-        with open(f"{release_mirror_dir}/sha256sum.txt", 'w') as f:
+        with open(f"{release_mirror_dir}/sha256sum.txt", "w") as f:
             for shasum, filename in master_sha_entries:
                 f.write(f"{shasum}  {filename}\n")
 
@@ -1221,7 +1221,7 @@ class PromotePipeline:
         # So whatever we extract, remove the version specific info and make a symlink with that name.
         # path_to_dir is relative path artcd_working/to_mirror/openshift-v4/aarch64/clients/ocp/4.13.0-rc.6
         for f in os.listdir(path_to_dir):
-            if f.endswith(('.tar.gz', '.bz', '.zip', '.tgz')):
+            if f.endswith((".tar.gz", ".bz", ".zip", ".tgz")):
                 # Is this already a link?
                 if os.path.islink(f"{path_to_dir}/{f}"):
                     continue
@@ -1234,9 +1234,9 @@ class PromotePipeline:
                 #  ...
                 # So, match, and store in a group, any character up to the point we find -DIGIT. Ignore everything else
                 # until we match (and store in a group) one of the valid file extensions.
-                match = re.match(r'^([^-]+)((-[^0-9][^-]+)+)-[0-9].*(tar.gz|tgz|bz|zip)$', f)
+                match = re.match(r"^([^-]+)((-[^0-9][^-]+)+)-[0-9].*(tar.gz|tgz|bz|zip)$", f)
                 if match:
-                    new_name = match.group(1) + match.group(2) + '.' + match.group(4)
+                    new_name = match.group(1) + match.group(2) + "." + match.group(4)
                     # Create a symlink like openshift-client-linux.tgz => openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz
                     os.symlink(f, f"{path_to_dir}/{new_name}")
 
@@ -1308,7 +1308,7 @@ class PromotePipeline:
             self._logger.info("Skip microshift build for version < 4.14")
             return
 
-        jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
+        jenkins.start_build_microshift(f"{major}.{minor}", self.assembly, self.runtime.dry_run)
 
     @staticmethod
     def get_full_advisory_id_from_errata_advisory(advisory_info: Dict):
@@ -1644,9 +1644,9 @@ class PromotePipeline:
             multi_ist = multi_is["spec"]["tags"][0]
             source_manifest_list = await self.get_image_info(multi_ist["from"]["name"], raise_if_not_found=True)
             if source_manifest_list["mediaType"] != "application/vnd.docker.distribution.manifest.list.v2+json":
-                raise ValueError(f'Pullspec {multi_ist["from"]["name"]} doesn\'t point to a valid manifest list.')
+                raise ValueError(f"Pullspec {multi_ist['from']['name']} doesn't point to a valid manifest list.")
             source_repo = (
-                multi_ist["from"]["name"].rsplit(':', 1)[0].rsplit('@', 1)[0]
+                multi_ist["from"]["name"].rsplit(":", 1)[0].rsplit("@", 1)[0]
             )  # quay.io/openshift-release-dev/ocp-release@sha256:deadbeef -> quay.io/openshift-release-dev/ocp-release
             # dest_manifest_list is the final top-level manifest-list
             dest_manifest_list = {
@@ -1666,16 +1666,16 @@ class PromotePipeline:
                 # Add an entry to the top-level manifest list
                 dest_manifest_list["manifests"].append(
                     {
-                        'image': arch_payload_dest,
-                        'platform': {
-                            'os': 'linux',
-                            'architecture': arch,
+                        "image": arch_payload_dest,
+                        "platform": {
+                            "os": "linux",
+                            "architecture": arch,
                         },
                     }
                 )
                 # Add task to build arch-specific heterogeneous payload
                 metadata = metadata.copy() if metadata else {}
-                metadata['release.openshift.io/architecture'] = 'multi'
+                metadata["release.openshift.io/architecture"] = "multi"
                 build_tasks.append(
                     self.build_release_image(
                         release_name,
@@ -1852,7 +1852,7 @@ class PromotePipeline:
     @staticmethod
     async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
         # Get image manifest/manifest-list.
-        cmd = f'oc image info --show-multiarch -o json {pullspec}'
+        cmd = f"oc image info --show-multiarch -o json {pullspec}"
         env = os.environ.copy()
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
         if rc != 0:
@@ -1868,18 +1868,18 @@ class PromotePipeline:
         if not isinstance(info, list):
             raise ValueError(f"Invalid image info: {info}")
 
-        media_types = set([manifest['mediaType'] for manifest in info])
+        media_types = set([manifest["mediaType"] for manifest in info])
         if len(media_types) > 1:
-            raise ValueError(f'Inconsistent media types across manifests: {media_types}')
+            raise ValueError(f"Inconsistent media types across manifests: {media_types}")
 
         manifests = {
-            'mediaType': "application/vnd.docker.distribution.manifest.list.v2+json",
-            'manifests': [
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "manifests": [
                 {
-                    'digest': manifest['digest'],
-                    'platform': {
-                        'architecture': manifest['config']['architecture'],
-                        'os': manifest['config']['os'],
+                    "digest": manifest["digest"],
+                    "platform": {
+                        "architecture": manifest["config"]["architecture"],
+                        "os": manifest["config"]["os"],
                     },
                 }
                 for manifest in info
@@ -1891,7 +1891,7 @@ class PromotePipeline:
     @staticmethod
     async def get_multi_image_digest(pullspec: str, raise_if_not_found: bool = False):
         # Get image digest
-        cmd = f'oc image info {pullspec} --filter-by-os linux/amd64 -o json'
+        cmd = f"oc image info {pullspec} --filter-by-os linux/amd64 -o json"
         env = os.environ.copy()
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
 
@@ -1903,7 +1903,7 @@ class PromotePipeline:
                 return None
             raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
 
-        return json.loads(stdout)['listDigest']
+        return json.loads(stdout)["listDigest"]
 
     @staticmethod
     async def get_image_stream_tag(namespace: str, image_stream_tag: str):
@@ -1963,7 +1963,7 @@ class PromotePipeline:
             if retry_state.outcome.failed:
                 err = retry_state.outcome.exception()
                 self._logger.warning(
-                    'Error communicating with %s release controller. Will check again in %s seconds. %s: %s',
+                    "Error communicating with %s release controller. Will check again in %s seconds. %s: %s",
                     arch,
                     retry_state.next_action.sleep,
                     type(err).__name__,
@@ -2057,11 +2057,11 @@ class PromotePipeline:
         try:
             release_content = upstream_repo.get_contents(file_path, ref="z-stream")
             file_content = yaml.load(release_content.decoded_content)
-            file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+            file_content["releases"][release_name] = {"advisories": advisories, "release_jira": release_jira}
         except (ParserError, TypeError):
             self._logger.warning("release file not in valid yaml format, overwrite with new value")
-            file_content = {'releases': {}}
-            file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+            file_content = {"releases": {}}
+            file_content["releases"][release_name] = {"advisories": advisories, "release_jira": release_jira}
         except GithubException:
             self._logger.warning("release file not found in upstream repo, skip update qe repo")
             return
@@ -2088,7 +2088,7 @@ class PromotePipeline:
         content = f"This is the current set of advisories for {release_name}:\n"
         for impetus, advisory in advisories.items():
             content += f"- {impetus}: https://errata.devel.redhat.com/advisory/{advisory}\n"
-        if 'microshift' in advisories.keys():
+        if "microshift" in advisories.keys():
             content += (
                 "\n Note: Microshift advisory gets populated with build and bugs after the release payload has "
                 "been promoted on Release Controller. It will take a few hours for it to be ready and on QE."
@@ -2225,8 +2225,8 @@ class PromotePipeline:
 
         # Parse the shipment URL to extract project and MR details
         parsed_url = urlparse(shipment_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
+        mr_id = parsed_url.path.split("/")[-1]
         gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
         # Connect to GitLab
@@ -2305,8 +2305,8 @@ class PromotePipeline:
 
             if (
                 image_shipment
-                and hasattr(image_shipment.shipment.data.releaseNotes, 'type')
-                and hasattr(image_shipment.shipment.data.releaseNotes, 'live_id')
+                and hasattr(image_shipment.shipment.data.releaseNotes, "type")
+                and hasattr(image_shipment.shipment.data.releaseNotes, "live_id")
                 and image_shipment.shipment.data.releaseNotes.type
                 and image_shipment.shipment.data.releaseNotes.live_id
             ):
@@ -2342,8 +2342,8 @@ class PromotePipeline:
         diff = mr.diffs.get(diff_info.id)
         shipment_file_path = None
         for file_diff in diff.diffs:
-            file_path = file_diff.get('new_path') or file_diff.get('old_path')
-            if file_path and file_path.endswith(('.yaml', '.yml')) and shipment_kind in file_path:
+            file_path = file_diff.get("new_path") or file_diff.get("old_path")
+            if file_path and file_path.endswith((".yaml", ".yml")) and shipment_kind in file_path:
                 shipment_file_path = file_path
                 break
 
@@ -2353,7 +2353,7 @@ class PromotePipeline:
 
         # Get original file content to check for placeholders
         original_file = source_project.files.get(shipment_file_path, mr.source_branch)
-        original_content = original_file.decode().decode('utf-8')
+        original_content = original_file.decode().decode("utf-8")
 
         # Check if any of our placeholders are actually present in the file
         placeholders_found = []
@@ -2371,24 +2371,24 @@ class PromotePipeline:
         # Validate template placeholders in both description and solution fields (for image shipments)
         if shipment_kind == "image":
             # Check solution field for SHA digest placeholders
-            if hasattr(shipment_config.shipment.data.releaseNotes, 'solution'):
+            if hasattr(shipment_config.shipment.data.releaseNotes, "solution"):
                 solution_text = shipment_config.shipment.data.releaseNotes.solution
                 if solution_text:
                     # Check for SHA digest placeholders that have no corresponding replacement
-                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholder_pattern = r"\{([^}]+)\}"
                     placeholders = re.findall(placeholder_pattern, solution_text)
                     for placeholder in placeholders:
-                        if placeholder.endswith('_DIGEST') and placeholder not in format_dict:
+                        if placeholder.endswith("_DIGEST") and placeholder not in format_dict:
                             raise ValueError(
                                 f"Solution contains placeholder {{{placeholder}}} but no corresponding value was found"
                             )
 
             # Check description field for advisory placeholders
-            if hasattr(shipment_config.shipment.data.releaseNotes, 'description'):
+            if hasattr(shipment_config.shipment.data.releaseNotes, "description"):
                 description_text = shipment_config.shipment.data.releaseNotes.description
                 if description_text:
                     # Check for advisory placeholders that have no corresponding replacement
-                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholder_pattern = r"\{([^}]+)\}"
                     placeholders = re.findall(placeholder_pattern, description_text)
                     for placeholder in placeholders:
                         if placeholder in ["IMAGE_ADVISORY", "RPM_ADVISORY"] and placeholder not in format_dict:
@@ -2407,7 +2407,7 @@ class PromotePipeline:
             placeholder = f"{{{var_name}}}"
             if placeholder in updated_content:
                 # Log appropriate context based on placeholder type
-                if var_name.endswith('_DIGEST'):
+                if var_name.endswith("_DIGEST"):
                     context = "solution"
                 elif var_name in ["IMAGE_ADVISORY", "RPM_ADVISORY"]:
                     context = "description"
@@ -2476,7 +2476,7 @@ class PromotePipeline:
 
             if not comment_exists:
                 try:
-                    mr.notes.create({'body': main_mr_comment})
+                    mr.notes.create({"body": main_mr_comment})
                     self._logger.info("Added comment to shipment MR notifying docs team")
                 except Exception as comment_ex:
                     self._logger.warning("Failed to comment on shipment MR: %s", comment_ex)
@@ -2532,7 +2532,7 @@ class PromotePipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

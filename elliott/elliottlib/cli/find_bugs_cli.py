@@ -35,10 +35,10 @@ type_bug_set = Set[Bug]
     help="Ignore bugs that are determined to be invalid and continue",
 )
 @click.option(
-    '--output',
-    '-o',
-    type=click.Choice(['json', 'text']),
-    help='Output in the specified format',
+    "--output",
+    "-o",
+    type=click.Choice(["json", "text"]),
+    help="Output in the specified format",
 )
 @click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
 @click.pass_obj
@@ -100,12 +100,12 @@ class FindBugsCli:
 
     async def run(self):
         self.runtime.initialize(mode="both")
-        self.bug_tracker = self.runtime.get_bug_tracker('jira')
+        self.bug_tracker = self.runtime.get_bug_tracker("jira")
 
         bugs_by_kind: type_bug_list = await self.find_bugs()
         bugs_by_kind_formatted = {kind: sorted([b.id for b in bugs]) for kind, bugs in bugs_by_kind.items()}
 
-        if self.output == 'json':
+        if self.output == "json":
             click.echo(json.dumps(bugs_by_kind_formatted, indent=4))
         else:
             for kind, bugs in bugs_by_kind_formatted.items():
@@ -138,6 +138,6 @@ class FindBugsCli:
             exclude_trackers=self.exclude_trackers,
         )
         for kind, kind_bugs in bugs_by_type.items():
-            LOGGER.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
+            LOGGER.info(f"{kind} bugs: {[b.id for b in kind_bugs]}")
 
         return bugs_by_type

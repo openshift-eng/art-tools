@@ -34,7 +34,7 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         builder = builder.issuer_name(
             x509.Name(
                 [
-                    x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
+                    x509.NameAttribute(NameOID.COMMON_NAME, "cryptography.io"),
                 ]
             )
         )
@@ -218,17 +218,17 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
                 },
                 "signing_status": "success",
                 "errors": [],
-                "signed_artifact": base64.b64encode(b'fake-signature').decode(),
+                "signed_artifact": base64.b64encode(b"fake-signature").decode(),
             },
         }
-        expected_requested_id = 'openshift-message-digest-20230102123040-fake-uuid'
+        expected_requested_id = "openshift-message-digest-20230102123040-fake-uuid"
         asyncio.get_event_loop().call_soon(
             lambda: signatory._requests[expected_requested_id].set_result((response_headers, response_body))
         )
 
         await signatory._sign_artifact("message-digest", "openshift", "4.0.1", "sha256sum.txt.gpg", artifact, sig_file)
         umb.send.assert_awaited_once_with(signatory.SEND_DESTINATION, ANY)
-        self.assertEqual(sig_file.getvalue(), b'fake-signature')
+        self.assertEqual(sig_file.getvalue(), b"fake-signature")
 
     @patch("pyartcd.signatory.AsyncSignatory._sign_artifact")
     @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
@@ -250,14 +250,14 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
 
         await signatory.sign_message_digest("openshift", "4.0.1", artifact, sig_file)
         _sign_artifact.assert_awaited_once_with(
-            typ='message-digest',
-            product='openshift',
-            release_name='4.0.1',
-            name='sha256sum.txt.gpg',
+            typ="message-digest",
+            product="openshift",
+            release_name="4.0.1",
+            name="sha256sum.txt.gpg",
             artifact=artifact,
             sig_file=sig_file,
         )
-        self.assertEqual(sig_file.getvalue(), b'fake-signature')
+        self.assertEqual(sig_file.getvalue(), b"fake-signature")
 
     @patch("pyartcd.signatory.AsyncSignatory._sign_artifact")
     @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
@@ -279,14 +279,14 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
 
         await signatory.sign_json_digest("openshift", "4.0.1", pullspec, "sha256:dead-beef", sig_file)
         _sign_artifact.assert_awaited_once_with(
-            typ='json-digest',
-            product='openshift',
-            release_name='4.0.1',
-            name='sha256=dead-beef',
+            typ="json-digest",
+            product="openshift",
+            release_name="4.0.1",
+            name="sha256=dead-beef",
             artifact=ANY,
             sig_file=sig_file,
         )
-        self.assertEqual(sig_file.getvalue(), b'fake-signature')
+        self.assertEqual(sig_file.getvalue(), b"fake-signature")
 
 
 class TestSigstoreSignatory(IsolatedAsyncioTestCase):

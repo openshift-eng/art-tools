@@ -22,10 +22,10 @@ LOGGER = logutil.get_logger(__name__)
 @cli.command("create", short_help="Create a new advisory")
 @click.option(
     "--type",
-    '-t',
-    'errata_type',
+    "-t",
+    "errata_type",
     required=True,
-    type=click.Choice(['RHBA', 'RHEA']),
+    type=click.Choice(["RHBA", "RHEA"]),
     help="Type of Advisory to create.",
 )
 @click.option(
@@ -38,7 +38,7 @@ LOGGER = logutil.get_logger(__name__)
     help="Release date for the advisory, only needed if --batch-id is not used. Format: YYYY-Mon-DD.",
 )
 @click.option(
-    '--assigned-to',
+    "--assigned-to",
     metavar="EMAIL_ADDR",
     required=True,
     envvar="ELLIOTT_ASSIGNED_TO_EMAIL",
@@ -46,7 +46,7 @@ LOGGER = logutil.get_logger(__name__)
     help="The email address group to review and approve the advisory.",
 )
 @click.option(
-    '--manager',
+    "--manager",
     metavar="EMAIL_ADDR",
     required=True,
     envvar="ELLIOTT_MANAGER_EMAIL",
@@ -54,7 +54,7 @@ LOGGER = logutil.get_logger(__name__)
     help="The email address of the manager monitoring the advisory status.",
 )
 @click.option(
-    '--package-owner',
+    "--package-owner",
     metavar="EMAIL_ADDR",
     required=True,
     envvar="ELLIOTT_PACKAGE_OWNER_EMAIL",
@@ -62,23 +62,23 @@ LOGGER = logutil.get_logger(__name__)
     help="The email address of the person responsible managing the advisory.",
 )
 @click.option(
-    '--with-placeholder',
+    "--with-placeholder",
     is_flag=True,
     default=False,
     type=bool,
     help="Create a placeholder bug and attach it to the advisory. Only valid if also using --yes.",
 )
 @click.option(
-    '--with-liveid/--no-liveid',
+    "--with-liveid/--no-liveid",
     is_flag=True,
     default=True,
     type=bool,
     help="Request a Live ID for the advisory. Only valid if also using --yes.",
 )
-@click.option('--batch-id', metavar="BATCH_ID", type=int, help="Batch ID to use for the advisory.")
+@click.option("--batch-id", metavar="BATCH_ID", type=int, help="Batch ID to use for the advisory.")
 @click.option(
-    '--yes',
-    '-y',
+    "--yes",
+    "-y",
     is_flag=True,
     default=False,
     type=bool,
@@ -147,22 +147,22 @@ async def create_cli(
     formatter = SafeFormatter()
 
     # Format the advisory boilerplate
-    synopsis = formatter.format(advisory_boilerplate['synopsis'], **replace_vars)
-    advisory_topic = formatter.format(advisory_boilerplate['topic'], **replace_vars)
-    advisory_description = formatter.format(advisory_boilerplate['description'], **replace_vars)
-    advisory_solution = formatter.format(advisory_boilerplate['solution'], **replace_vars)
+    synopsis = formatter.format(advisory_boilerplate["synopsis"], **replace_vars)
+    advisory_topic = formatter.format(advisory_boilerplate["topic"], **replace_vars)
+    advisory_description = formatter.format(advisory_boilerplate["description"], **replace_vars)
+    advisory_solution = formatter.format(advisory_boilerplate["solution"], **replace_vars)
 
     try:
         if yes:
             created_advisory = await errata_api.create_advisory(
-                product=et_data['product'],
-                release=advisory_boilerplate.get('release', et_data['release']),
+                product=et_data["product"],
+                release=advisory_boilerplate.get("release", et_data["release"]),
                 errata_type=errata_type,
                 advisory_synopsis=synopsis,
                 advisory_topic=advisory_topic,
                 advisory_description=advisory_description,
                 advisory_solution=advisory_solution,
-                advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
+                advisory_quality_responsibility_name=et_data["quality_responsibility_name"],
                 advisory_package_owner_email=package_owner,
                 advisory_manager_email=manager,
                 advisory_assigned_to_email=assigned_to,
@@ -179,7 +179,7 @@ async def create_cli(
                 synopsis,
                 package_owner,
                 assigned_to,
-                et_data['quality_responsibility_name'],
+                et_data["quality_responsibility_name"],
                 date,
                 batch_id,
             )
@@ -216,7 +216,7 @@ async def create_cli(
                 synopsis,
                 package_owner,
                 assigned_to,
-                et_data['quality_responsibility_name'],
+                et_data["quality_responsibility_name"],
                 date,
                 batch_id,
             )

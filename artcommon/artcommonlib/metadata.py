@@ -13,9 +13,9 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
 
 CONFIG_MODES = [
-    'enabled',  # business as usual
-    'disabled',  # manually disabled from automatically building
-    'wip',  # Work in Progress, do not build
+    "enabled",  # business as usual
+    "disabled",  # manually disabled from automatically building
+    "wip",  # Work in Progress, do not build
 ]
 
 CONFIG_MODE_DEFAULT = CONFIG_MODES[0]
@@ -36,7 +36,7 @@ class MetadataBase(object):
         #      name (repo name)=openshift-enterprise-mediawiki
 
         self.distgit_key = data_obj.key
-        self.name = self.distgit_key.split('.')[0]  # Split off any '.apb' style differentiator (if present)
+        self.name = self.distgit_key.split(".")[0]  # Split off any '.apb' style differentiator (if present)
 
         self.runtime.logger.debug("Loading metadata from {}".format(self.full_config_path))
 
@@ -47,9 +47,9 @@ class MetadataBase(object):
             runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config
         )
         self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config)
-        self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
+        self.mode = self.config.get("mode", CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
-            raise ValueError('Invalid mode for {}'.format(self.config_filename))
+            raise ValueError("Invalid mode for {}".format(self.config_filename))
 
         self.enabled = self.mode == CONFIG_MODE_DEFAULT
 
@@ -57,12 +57,12 @@ class MetadataBase(object):
         self.qualified_key = "%s/%s" % (self.namespace, self.distgit_key)
 
         # Includes information to identify the metadata being used with each log message
-        self.logger = logutil.EntityLoggingAdapter(logger=self.runtime.logger, extra={'entity': self.qualified_key})
+        self.logger = logutil.EntityLoggingAdapter(logger=self.runtime.logger, extra={"entity": self.qualified_key})
 
         self._distgit_repo = None
 
     def __repr__(self):
-        return f'<{self.__class__.__name__} - {self.distgit_key}>'
+        return f"<{self.__class__.__name__} - {self.distgit_key}>"
 
     def save(self):
         self.data_obj.data = self.config.primitive()
@@ -77,7 +77,7 @@ class MetadataBase(object):
         """
         :return: Extracts and returns '{major}.{minor}' from the distgit branch.
         """
-        split = self.branch().split('-')  # e.g. ['rhaos', '4.8', 'rhel', '8']
+        split = self.branch().split("-")  # e.g. ['rhaos', '4.8', 'rhel', '8']
         return split[1]
 
     def _default_brew_target(self):
@@ -103,11 +103,11 @@ class MetadataBase(object):
         """
         :return: Determines what rhel-# version the distgit branch is associated with and returns the RHEL version as an int
         """
-        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
+        target_match = re.match(r".*-rhel-(\d+)(?:-|$)", str(self.branch()))
         if target_match:
             return int(target_match.group(1))
         else:
-            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+            raise IOError(f"Unable to determine rhel version from branch: {self.branch()}")
 
     def determine_rhel_targets(self) -> list[int]:
         """
@@ -118,7 +118,7 @@ class MetadataBase(object):
         for target in self.determine_targets():
             el_ver = isolate_el_version_in_brew_tag(target)
             if not el_ver:
-                raise IOError(f'Unable to determine RHEL version from build target {target} in {self.distgit_key}')
+                raise IOError(f"Unable to determine RHEL version from build target {target} in {self.distgit_key}")
             el_targets.append(el_ver)
         return el_targets
 
@@ -178,7 +178,7 @@ class MetadataBase(object):
         self,
         default: Any = -1,
         assembly: str | None = None,
-        extra_pattern: str = '*',
+        extra_pattern: str = "*",
         build_state: BuildStates = BuildStates.COMPLETE,
         component_name: str | None = None,
         el_target: str | int | None = None,
@@ -219,9 +219,9 @@ class MetadataBase(object):
                 component_name
             )  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
             if not package_info:
-                raise IOError(f'No brew package is defined for {component_name}')
+                raise IOError(f"No brew package is defined for {component_name}")
             package_id = package_info[
-                'id'
+                "id"
             ]  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
             # listBuilds returns all builds for the package; We need to limit the query to the builds
             # relevant for our major/minor.
@@ -235,17 +235,17 @@ class MetadataBase(object):
                 else:
                     el_ver = isolate_el_version_in_brew_tag(el_target)
                 if not el_ver:
-                    raise ValueError(f'Unable to determine rhel version from specified el_target: {el_target}')
-            elif self.meta_type == 'image':
+                    raise ValueError(f"Unable to determine rhel version from specified el_target: {el_target}")
+            elif self.meta_type == "image":
                 el_ver = self.branch_el_target()
 
-            if self.meta_type == 'image':
-                ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
+            if self.meta_type == "image":
+                ver_prefix = "v"  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
             else:
                 # RPMs do not have a 'v' in front of their version; images do.
-                ver_prefix = ''  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
+                ver_prefix = ""  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
 
-            pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
+            pattern_prefix = f"{component_name}-{ver_prefix}{self.branch_major_minor()}."
 
             if assembly is None:
                 assembly = self.runtime.assembly
@@ -254,11 +254,11 @@ class MetadataBase(object):
             if complete_before_event is not None:
                 if complete_before_event < 0:
                     # By setting the parameter to None, it tells the koji wrapper to not bound the brew event.
-                    list_builds_kwargs['completeBefore'] = None
+                    list_builds_kwargs["completeBefore"] = None
                 else:
                     # listBuilds accepts timestamps, not brew events, so convert brew event into seconds since the epoch
-                    complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
-                    list_builds_kwargs['completeBefore'] = complete_before_ts
+                    complete_before_ts = koji_api.getEvent(complete_before_event)["ts"]
+                    list_builds_kwargs["completeBefore"] = complete_before_ts
 
             def default_return():
                 msg = (
@@ -273,7 +273,7 @@ class MetadataBase(object):
             def latest_build_list(assembly_suffix):
                 # we always add el_suffix to a nvr when we trigger a build
                 # if el_ver is None, we will try and match any el version
-                el_suffix = f'.el{el_ver if el_ver else "*"}'
+                el_suffix = f".el{el_ver if el_ver else '*'}"
 
                 # we will not tolerate new naming components in pattern by default
                 # so this pattern will need update as new nvr naming components are added
@@ -283,14 +283,14 @@ class MetadataBase(object):
                     packageID=package_id,
                     state=None if build_state is None else build_state.value,
                     pattern=pattern,
-                    queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                    queryOpts={"limit": 1, "order": "-creation_event_id"},
                     **list_builds_kwargs,
                 )
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
-                refined = [b for b in builds if b['nvr'].endswith(assembly_suffix) or f'{assembly_suffix}.' in b['nvr']]
+                refined = [b for b in builds if b["nvr"].endswith(assembly_suffix) or f"{assembly_suffix}." in b["nvr"]]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we
@@ -298,12 +298,12 @@ class MetadataBase(object):
                     # is no standard practice at present in which they should (they should just trigger
                     # a rebuild). If we find the latest build is not tagged appropriately, blow up
                     # and let a human figure out what happened.
-                    check_nvr = refined[0]['nvr']
+                    check_nvr = refined[0]["nvr"]
                     tags = set()
                     for i in range(2):
-                        tags = {tag['name'] for tag in koji_api.listTags(build=check_nvr)}
+                        tags = {tag["name"] for tag in koji_api.listTags(build=check_nvr)}
                         if tags:
-                            refined[0]['_tags'] = tags  # save tag names to dict for future use
+                            refined[0]["_tags"] = tags  # save tag names to dict for future use
                             break
                         # Observed that a complete build needs some time before it gets tagged. Give it some
                         # time if not immediately available.
@@ -311,28 +311,28 @@ class MetadataBase(object):
 
                     # RPMS have multiple targets, so our self.branch() isn't perfect.
                     # We should permit rhel-8/rhel-7/etc.
-                    tag_prefix = self.branch().rsplit('-', 1)[0] + '-'  # String off the rhel version.
+                    tag_prefix = self.branch().rsplit("-", 1)[0] + "-"  # String off the rhel version.
                     accepted_tags = [name for name in tags if name.startswith(tag_prefix)]
                     if not accepted_tags:
                         self.logger.warning(
-                            f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way'
+                            f"Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way"
                         )
 
                 return refined
 
-            if honor_is and self.config['is']:
+            if honor_is and self.config["is"]:
                 if build_state != BuildStates.COMPLETE:
                     # If this component is defined by 'is', history failures, etc, do not matter.
                     return default_return()
 
                 # under 'is' for RPMs, we expect 'el7' and/or 'el8', etc. For images, just 'nvr'.
-                isd = self.config['is']
-                if self.meta_type == 'rpm':
+                isd = self.config["is"]
+                if self.meta_type == "rpm":
                     if el_ver is None:
                         raise ValueError(
-                            f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}'
+                            f"Expected el_target to be set when querying a pinned RPM component {self.distgit_key}"
                         )
-                    is_nvr = isd[f'el{el_ver}']
+                    is_nvr = isd[f"el{el_ver}"]
                     if not is_nvr:
                         msg = f"No pinned builds found in assembly {assembly} under 'is' for {self.distgit_key}: el_ver: '{el_ver}'"
                         if default != -1:
@@ -348,38 +348,38 @@ class MetadataBase(object):
                     # Pinning also informs gen-payload when attempting to assemble a release.
                     is_nvr = isd.nvr
                     if not is_nvr:
-                        raise ValueError(f'Did not find nvr field in pinned Image component {self.distgit_key}')
+                        raise ValueError(f"Did not find nvr field in pinned Image component {self.distgit_key}")
 
                 # strict means raise an exception if not found.
                 found_build = koji_api.getBuild(is_nvr, strict=True)
                 # Different brew apis return different keys here; normalize to make the rest of doozer not need to change.
-                found_build['id'] = found_build['build_id']
+                found_build["id"] = found_build["build_id"]
                 return found_build
 
             if not assembly:
                 # if assembly is '' (by parameter) or still None after runtime.assembly,
                 # we are returning true latest.
-                builds = latest_build_list('')
+                builds = latest_build_list("")
             else:
                 basis_event = assembly_basis_event(
-                    self.runtime.get_releases_config(), assembly=assembly, build_system='brew'
+                    self.runtime.get_releases_config(), assembly=assembly, build_system="brew"
                 )
                 if basis_event:
                     # If an assembly has a basis event, its latest images can only be sourced from
                     # "is:" or the stream assembly. We've already checked for "is" above.
-                    assembly = 'stream'
+                    assembly = "stream"
 
                 # Assemblies without a basis will return assembly qualified builds for their
                 # latest images. This includes "stream" and "test", but could also include
                 # an assembly that is customer specific  with its own branch.
-                builds = latest_build_list(f'.assembly.{assembly}')
+                builds = latest_build_list(f".assembly.{assembly}")
                 if not builds:
-                    if assembly != 'stream':
-                        builds = latest_build_list('.assembly.stream')
+                    if assembly != "stream":
+                        builds = latest_build_list(".assembly.stream")
                     if not builds:
                         # Fall back to true latest
-                        builds = latest_build_list('')
-                        if builds and '.assembly.' in builds[0]['release']:
+                        builds = latest_build_list("")
+                        if builds and ".assembly." in builds[0]["release"]:
                             # True latest belongs to another assembly. In this case, just return
                             # that they are no builds for this assembly.
                             builds = []
@@ -389,7 +389,7 @@ class MetadataBase(object):
 
             found_build = builds[0]
             # Different brew apis return different keys here; normalize to make the rest of doozer not need to change.
-            found_build['id'] = found_build['build_id']
+            found_build["id"] = found_build["build_id"]
             return found_build
 
     async def get_pinned_konflux_build(self, el_target: int):
@@ -398,16 +398,16 @@ class MetadataBase(object):
         Under 'is' for RPMs, we expect 'el7' and/or 'el8', etc. For images, just 'nvr'.
         """
 
-        is_config = self.config['is']
+        is_config = self.config["is"]
 
-        if self.meta_type == 'rpm':
+        if self.meta_type == "rpm":
             if el_target is None:
                 raise ValueError(
-                    f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}'
+                    f"Expected el_target to be set when querying a pinned RPM component {self.distgit_key}"
                 )
-            is_nvr = is_config[f'el{el_target}']
+            is_nvr = is_config[f"el{el_target}"]
             if not is_nvr:
-                self.logger.warning('No pinned NVR found for RPM %s and target %s', self.config.name, el_target)
+                self.logger.warning("No pinned NVR found for RPM %s and target %s", self.config.name, el_target)
                 return None
 
         else:
@@ -419,7 +419,7 @@ class MetadataBase(object):
             # Pinning also informs gen-payload when attempting to assemble a release.
             is_nvr = is_config.nvr
             if not is_nvr:
-                raise ValueError(f'Did not find nvr field in pinned Image component {self.distgit_key}')
+                raise ValueError(f"Did not find nvr field in pinned Image component {self.distgit_key}")
 
         # strict means raise an exception if not found.
         return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True, exclude_large_columns=False)
@@ -458,14 +458,14 @@ class MetadataBase(object):
                                      For internal-only and open images, only non-hermetic builds are retrieved.
                                      Default is False (no network mode filtering).
         """
-        assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
+        assert self.runtime.konflux_db is not None, "Konflux DB must be initialized with GCP credentials"
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         if extra_patterns is None:
             extra_patterns = {}
 
         # Is the component pinned in config?
-        if honor_is and self.config['is']:
+        if honor_is and self.config["is"]:
             if outcome != KonfluxBuildOutcome.SUCCESS:
                 # If this component is defined by 'is', history failures, etc, do not matter.
                 return None
@@ -484,41 +484,41 @@ class MetadataBase(object):
         # For okd-only images (mode: disabled, okd.mode: enabled), use the okd group variant
         query_group = self.runtime.group
         is_okd_only = False
-        if self.mode == 'disabled':
-            if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
+        if self.mode == "disabled":
+            if self.config.okd is not Missing and self.config.okd.mode == "enabled":
                 # This is an okd-only image, use okd group (e.g., okd-4.23 instead of openshift-4.23)
                 is_okd_only = True
-                query_group = self.runtime.group.replace('openshift-', 'okd-')
+                query_group = self.runtime.group.replace("openshift-", "okd-")
                 self.logger.debug(f"Using OKD group '{query_group}' for okd-only image {self.distgit_key}")
 
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
-            'name': self.distgit_key if self.meta_type == 'image' else self.config.name,
-            'group': query_group,
-            'outcome': outcome,
-            'completed_before': completed_before,
-            'engine': self.runtime.build_system,
-            'extra_patterns': extra_patterns,
+            "name": self.distgit_key if self.meta_type == "image" else self.config.name,
+            "group": query_group,
+            "outcome": outcome,
+            "completed_before": completed_before,
+            "engine": self.runtime.build_system,
+            "extra_patterns": extra_patterns,
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            if self.meta_type == 'image' and is_okd_only:
-                el_target = f'scos{el_target}'
+            if self.meta_type == "image" and is_okd_only:
+                el_target = f"scos{el_target}"
             else:
-                el_target = f'el{el_target}'
+                el_target = f"el{el_target}"
 
-        if self.meta_type == 'rpm':
+        if self.meta_type == "rpm":
             # For RPMs, if rhel target is not set fetch true latest
             if el_target:
-                base_search_params['el_target'] = el_target
+                base_search_params["el_target"] = el_target
         else:
             # For images, if rhel target is not set default to the rhel version in this group
             if el_target:
-                base_search_params['el_target'] = el_target
+                base_search_params["el_target"] = el_target
             else:
                 # OKD builds use 'scos' prefix instead of 'el' (e.g., scos9 vs el9)
-                el_prefix = 'scos' if is_okd_only else 'el'
-                base_search_params['el_target'] = f'{el_prefix}{self.branch_el_target()}'
+                el_prefix = "scos" if is_okd_only else "el"
+                base_search_params["el_target"] = f"{el_prefix}{self.branch_el_target()}"
 
         assembly = assembly if assembly else self.runtime.assembly
         if not assembly:
@@ -529,12 +529,12 @@ class MetadataBase(object):
 
         else:
             basis_event = assembly_basis_event(
-                self.runtime.get_releases_config(), assembly=assembly, build_system='konflux'
+                self.runtime.get_releases_config(), assembly=assembly, build_system="konflux"
             )
             if basis_event:
                 # If an assembly has a basis event, its latest images can only be sourced from
                 # "is:" or the stream assembly. We've already checked for "is" above.
-                assembly = 'stream'
+                assembly = "stream"
 
             # Search by matching the assembly as well
             build_record = await self.runtime.konflux_db.get_latest_build(
@@ -544,10 +544,10 @@ class MetadataBase(object):
             )
 
             # If not builds were found and assembly != stream, look for 'stream' builds
-            if build_record is None and assembly != 'stream':
+            if build_record is None and assembly != "stream":
                 build_record = await self.runtime.konflux_db.get_latest_build(
                     **base_search_params,
-                    assembly='stream',
+                    assembly="stream",
                     exclude_large_columns=exclude_large_columns,
                 )
 
@@ -567,26 +567,26 @@ class MetadataBase(object):
         Find the latest build for the component depending on which build system we're interested in.
         The switch is controller by the doozer --build-system option
         """
-        if self.runtime.build_system == 'brew':
+        if self.runtime.build_system == "brew":
             return await self.get_latest_brew_build_async(**kwargs)
 
-        elif self.runtime.build_system == 'konflux':
+        elif self.runtime.build_system == "konflux":
             basis_event = self.runtime.assembly_basis_event
             if basis_event:
-                kwargs['completed_before'] = basis_event
+                kwargs["completed_before"] = basis_event
             return await self.get_latest_konflux_build(**kwargs)
 
         else:
-            raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+            raise ValueError(f"Invalid value for --build-system: {self.runtime.build_system}")
 
     def get_latest_build_sync(self, **kwargs):
-        if self.runtime.build_system == 'brew':
+        if self.runtime.build_system == "brew":
             return self.get_latest_brew_build(**kwargs)
 
-        elif self.runtime.build_system == 'konflux':
+        elif self.runtime.build_system == "konflux":
             basis_event = self.runtime.assembly_basis_event
             if basis_event:
-                kwargs['completed_before'] = basis_event
+                kwargs["completed_before"] = basis_event
 
             try:
                 asyncio.get_running_loop()
@@ -602,7 +602,7 @@ class MetadataBase(object):
                     return future.result()
 
         else:
-            raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+            raise ValueError(f"Invalid value for --build-system: {self.runtime.build_system}")
 
     def get_konflux_network_mode(self) -> str:
         runtime_override = getattr(self.runtime, "network_mode_override", None)

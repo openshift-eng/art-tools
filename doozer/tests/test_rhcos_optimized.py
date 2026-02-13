@@ -14,10 +14,10 @@ class TestRhcosOptimized(unittest.TestCase):
         self.runtime.group_config = Model({})
         self.runtime.logger = self.logger
 
-    @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    @patch('doozerlib.rhcos.OutdatedRPMFinder')
+    @patch("doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta")
+    @patch("doozerlib.rhcos.OutdatedRPMFinder")
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @patch('doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list')
+    @patch("doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list")
     def test_find_non_latest_rpms_split(
         self,
         get_os_metadata_rpm_list: Mock,
@@ -36,8 +36,8 @@ class TestRhcosOptimized(unittest.TestCase):
             self.runtime.repos = {"rhel-9-baseos": repo9, "rhel-10-baseos": repo10}
 
             # Mock repodata
-            repodata9 = Repodata(name='rhel-9-baseos', primary_rpms=[])
-            repodata10 = Repodata(name='rhel-10-baseos', primary_rpms=[])
+            repodata9 = Repodata(name="rhel-9-baseos", primary_rpms=[])
+            repodata10 = Repodata(name="rhel-10-baseos", primary_rpms=[])
 
             f9 = asyncio.Future()
             f9.set_result(repodata9)
@@ -50,8 +50,8 @@ class TestRhcosOptimized(unittest.TestCase):
             # Mock installed RPMs
             # Format: name, epoch, version, release, arch, repo_name
             get_os_metadata_rpm_list.return_value = [
-                ['rpm9', '0', '1.0', '1.el9', 'x86_64', 'rhel-coreos'],
-                ['rpm10', '0', '1.0', '1.el10', 'x86_64', 'rhel-coreos-10'],
+                ["rpm9", "0", "1.0", "1.el9", "x86_64", "rhel-coreos"],
+                ["rpm10", "0", "1.0", "1.el10", "x86_64", "rhel-coreos-10"],
             ]
 
             # Mock OutdatedRPMFinder
@@ -61,7 +61,7 @@ class TestRhcosOptimized(unittest.TestCase):
             # Execute
             # We need to mock get_build_id_from_rhcos_pullspec if we pass pullspecs
             # But we can pass empty pullspecs and build_id
-            rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, {}, 'x86_64', build_id="4.12.0")
+            rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, {}, "x86_64", build_id="4.12.0")
 
             await rhcos_build.find_non_latest_rpms()
 
@@ -79,9 +79,9 @@ class TestRhcosOptimized(unittest.TestCase):
             repodatas_passed9 = args9[1]
 
             self.assertEqual(len(rpms_checked9), 1)
-            self.assertEqual(rpms_checked9[0]['name'], 'rpm9')
+            self.assertEqual(rpms_checked9[0]["name"], "rpm9")
             self.assertEqual(len(repodatas_passed9), 1)
-            self.assertEqual(repodatas_passed9[0].name, 'rhel-9-baseos')
+            self.assertEqual(repodatas_passed9[0].name, "rhel-9-baseos")
 
             # Check second call (RHEL 10)
             args10, _ = finder_instance.find_non_latest_rpms.call_args_list[1]
@@ -89,12 +89,12 @@ class TestRhcosOptimized(unittest.TestCase):
             repodatas_passed10 = args10[1]
 
             self.assertEqual(len(rpms_checked10), 1)
-            self.assertEqual(rpms_checked10[0]['name'], 'rpm10')
+            self.assertEqual(rpms_checked10[0]["name"], "rpm10")
             self.assertEqual(len(repodatas_passed10), 1)
-            self.assertEqual(repodatas_passed10[0].name, 'rhel-10-baseos')
+            self.assertEqual(repodatas_passed10[0].name, "rhel-10-baseos")
 
         asyncio.run(_run_test())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

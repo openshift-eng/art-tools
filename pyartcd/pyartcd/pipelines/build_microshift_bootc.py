@@ -104,7 +104,7 @@ class BuildMicroShiftBootcPipeline:
 
         # Shipment infrastructure setup
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
-        self.product = 'ocp'  # assume that product is ocp for now
+        self.product = "ocp"  # assume that product is ocp for now
         self._shipment_data_repo_dir = self._working_dir / "shipment-data-push"
 
         # Setup shipment data repo URLs
@@ -135,14 +135,14 @@ class BuildMicroShiftBootcPipeline:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
         # Setup Elliott base command for shipment operations
-        group_param = f'--group={group}'
+        group_param = f"--group={group}"
         self._elliott_base_command = [
-            'elliott',
+            "elliott",
             group_param,
-            f'--assembly={self.assembly}',
-            '--build-system=konflux',
-            f'--working-dir={self._working_dir / "elliott-working"}',
-            f'--data-path={data_path or constants.OCP_BUILD_DATA_URL}',
+            f"--assembly={self.assembly}",
+            "--build-system=konflux",
+            f"--working-dir={self._working_dir / 'elliott-working'}",
+            f"--data-path={data_path or constants.OCP_BUILD_DATA_URL}",
         ]
 
     async def run(self):
@@ -166,16 +166,16 @@ class BuildMicroShiftBootcPipeline:
 
         # Login to Konflux registry
         cmd = [
-            'oc',
-            'registry',
-            'login',
-            '--registry',
-            'quay.io/redhat-user-workloads',
+            "oc",
+            "registry",
+            "login",
+            "--registry",
+            "quay.io/redhat-user-workloads",
         ]
 
         konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         if konflux_registry_auth_file:
-            cmd += [f'--registry-config={konflux_registry_auth_file}']
+            cmd += [f"--registry-config={konflux_registry_auth_file}"]
         await exectools.cmd_assert_async(cmd)
 
         # get image digests from manifest list for all arches
@@ -187,7 +187,7 @@ class BuildMicroShiftBootcPipeline:
         ]
 
         if konflux_registry_auth_file:
-            cmd += [f'--authfile={konflux_registry_auth_file}']
+            cmd += [f"--authfile={konflux_registry_auth_file}"]
 
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
@@ -219,7 +219,7 @@ class BuildMicroShiftBootcPipeline:
         # Pin the image to the assembly if not STREAM
         if self.assembly_type != AssemblyTypes.STREAM:
             # Check if we need to create a PR to pin the build
-            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
+            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, "microshift-bootc")
             if bootc_build.nvr != pinned_nvr:
                 self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
                 await self._create_or_update_pull_request_for_image(bootc_build.nvr)
@@ -241,7 +241,7 @@ class BuildMicroShiftBootcPipeline:
         # The paths should be the same in both of these places
         release_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/{release_name}/{el_target}"
         latest_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/latest-{major}.{minor}/{el_target}"
-        cloudflare_endpoint_url = os.environ['CLOUDFLARE_ENDPOINT']
+        cloudflare_endpoint_url = os.environ["CLOUDFLARE_ENDPOINT"]
 
         async def _run_for(local_path, s3_path):
             cmd = [
@@ -293,7 +293,7 @@ class BuildMicroShiftBootcPipeline:
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
-            self._logger.info('Konflux DB initialized')
+            self._logger.info("Konflux DB initialized")
 
         build = await self.konflux_db.get_latest_build(
             name=bootc_image_name,
@@ -302,7 +302,7 @@ class BuildMicroShiftBootcPipeline:
             outcome=KonfluxBuildOutcome.SUCCESS,
             engine=Engine.KONFLUX,
             artifact_type=ArtifactType.IMAGE,
-            el_target='el9',
+            el_target="el9",
             exclude_large_columns=True,
         )
         return cast(Optional[KonfluxBuildRecord], build)
@@ -318,12 +318,12 @@ class BuildMicroShiftBootcPipeline:
             # and each repo has its own config file.
             # Those repo definitions are stored in the "all_repos" key of the group config.
             self._logger.info("Using new-style plashet configs from build data")
-            all_repos = self.group_config['all_repos']
+            all_repos = self.group_config["all_repos"]
             plashet_config = next(
                 (
                     repo
                     for repo in RepoList.model_validate(all_repos).root
-                    if not repo.disabled and repo.type == 'plashet' and repo.name == microshift_plashet_name
+                    if not repo.disabled and repo.type == "plashet" and repo.name == microshift_plashet_name
                 ),
                 None,
             )
@@ -417,7 +417,7 @@ class BuildMicroShiftBootcPipeline:
                 if not self.konflux_db:
                     self.konflux_db = KonfluxDb()
                     self.konflux_db.bind(KonfluxBuildRecord)
-                    self._logger.info('Konflux DB initialized for pinned build lookup')
+                    self._logger.info("Konflux DB initialized for pinned build lookup")
 
                 build = await self.konflux_db.get_build_record_by_nvr(
                     pinned_nvr, strict=True, exclude_large_columns=True
@@ -439,7 +439,7 @@ class BuildMicroShiftBootcPipeline:
         else:
             self._logger.info("Force flag is set. Forcing bootc image build")
 
-        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
         if not kubeconfig:
             raise ValueError(
                 f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image"
@@ -733,7 +733,7 @@ class BuildMicroShiftBootcPipeline:
         branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
 
         if branch_exists:
-            self._logger.info('Branch %s exists, checking for existing shipment config...', source_branch)
+            self._logger.info("Branch %s exists, checking for existing shipment config...", source_branch)
             await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
 
             # Try to find existing shipment YAML file
@@ -744,7 +744,7 @@ class BuildMicroShiftBootcPipeline:
             else:
                 self._logger.info("No existing shipment configuration found in branch, will initialize new one")
         else:
-            self._logger.info('Branch %s does not exist, will create new branch and shipment config', source_branch)
+            self._logger.info("Branch %s does not exist, will create new branch and shipment config", source_branch)
 
         # Initialize new shipment configuration if not found
         return await self._init_shipment_config()
@@ -755,7 +755,7 @@ class BuildMicroShiftBootcPipeline:
             # Look for shipment files in the expected directory structure
             # Pattern: shipment/{product}/{group}/{application}/prod/{assembly}.microshift-bootc.*.yaml
             application = KonfluxImageBuilder.get_application_name(self.group)
-            env = 'prod'
+            env = "prod"
 
             shipment_dir = (
                 self.shipment_data_repo._directory / "shipment" / self.product / self.group / application / env
@@ -782,7 +782,7 @@ class BuildMicroShiftBootcPipeline:
             timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
             self.existing_shipment_timestamp = timestamp_part
 
-            with open(latest_file, 'r') as f:
+            with open(latest_file, "r") as f:
                 shipment_data = yaml.load(f.read())
 
             # Convert to ShipmentConfig object
@@ -798,7 +798,7 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info("Initializing shipment configuration for microshift-bootc...")
 
         create_cmd = self._elliott_base_command + [
-            f'--shipment-path={self.shipment_data_repo_pull_url}',
+            f"--shipment-path={self.shipment_data_repo_pull_url}",
             "shipment",
             "init",
             "microshift-bootc",  # Using microshift-bootc as the shipment kind
@@ -873,7 +873,7 @@ class BuildMicroShiftBootcPipeline:
         source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
         target_branch = "main"
         # Use existing timestamp if available (updating existing MR), otherwise create new one
-        timestamp = self.existing_shipment_timestamp or datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        timestamp = self.existing_shipment_timestamp or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
         # Check if branch exists and switch to it, or create it
         branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
@@ -892,14 +892,14 @@ class BuildMicroShiftBootcPipeline:
 
         def _get_project(url):
             parsed_url = urlparse(url)
-            project_path = parsed_url.path.strip('/').removesuffix('.git')
+            project_path = parsed_url.path.strip("/").removesuffix(".git")
             return self._gitlab.get_project(project_path)
 
         source_project = _get_project(self.shipment_data_repo_push_url)
         target_project = _get_project(self.shipment_data_repo_pull_url)
 
         mr_title = f"Draft: Microshift-bootc shipment for {release_name}"
-        job_url = os.getenv('BUILD_URL', 'N/A')
+        job_url = os.getenv("BUILD_URL", "N/A")
         mr_description = f"Created by job: {job_url}\n\n{commit_message}"
 
         if self.runtime.dry_run:
@@ -909,7 +909,7 @@ class BuildMicroShiftBootcPipeline:
         else:
             # Check if MR already exists for this branch
             existing_mrs = source_project.mergerequests.list(
-                source_branch=source_branch, target_branch=target_branch, state='opened'
+                source_branch=source_branch, target_branch=target_branch, state="opened"
             )
 
             if existing_mrs:
@@ -923,12 +923,12 @@ class BuildMicroShiftBootcPipeline:
                 # Create new MR
                 mr = source_project.mergerequests.create(
                     {
-                        'source_branch': source_branch,
-                        'target_project_id': target_project.id,
-                        'target_branch': target_branch,
-                        'title': mr_title,
-                        'description': mr_description,
-                        'remove_source_branch': True,
+                        "source_branch": source_branch,
+                        "target_project_id": target_project.id,
+                        "target_branch": target_branch,
+                        "title": mr_title,
+                        "description": mr_description,
+                        "remove_source_branch": True,
                     }
                 )
                 mr_url = mr.web_url
@@ -960,7 +960,7 @@ class BuildMicroShiftBootcPipeline:
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
 
-        job_url = os.getenv('BUILD_URL')
+        job_url = os.getenv("BUILD_URL")
         if job_url and job_url not in commit_message:
             commit_message += f"\n{job_url}"
 
@@ -982,7 +982,7 @@ class BuildMicroShiftBootcPipeline:
         # the assumption here is that username can be anything
         # so we use oauth2 as a placeholder username
         # and the token as the password
-        return f'https://oauth2:{token}@{rest_of_the_url}'
+        return f"https://oauth2:{token}@{rest_of_the_url}"
 
     async def _execute_command_with_logging(self, cmd: list[str]) -> str:
         """Execute a command asynchronously and log its output"""
@@ -995,14 +995,14 @@ class BuildMicroShiftBootcPipeline:
 @cli.command("build-microshift-bootc")
 @click.option(
     "--data-path",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

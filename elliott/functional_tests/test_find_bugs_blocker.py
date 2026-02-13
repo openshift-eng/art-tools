@@ -12,12 +12,12 @@ class FindBugsBlockerTestCase(unittest.TestCase):
                 "--assembly=stream",
                 "--group=openshift-4.6",
                 "find-bugs:blocker",
-                '--exclude-status=ON_QA',
+                "--exclude-status=ON_QA",
             ],
         )
         result = out.decode("utf-8")
         self.assertRegex(result, "Found \\d+ bugs")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

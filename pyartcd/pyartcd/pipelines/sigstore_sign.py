@@ -58,7 +58,7 @@ class SigstorePipeline:
             dry_run=self.runtime.dry_run,
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
             # Allow AWS_KEY_ID to be a comma delimited list
-            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
+            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(","),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
         )
@@ -80,7 +80,7 @@ class SigstorePipeline:
             # the environment rather than included in the command line where they would be logged.
             # better would be to have jenkins write a credentials file (and do the same in `promote`).
             cmd = 'podman login -u "$QUAY_USERNAME" -p "$QUAY_PASSWORD" quay.io'
-            await exectools.cmd_assert_async(['bash', '-c', cmd], env=os.environ.copy(), stdout=sys.stderr)
+            await exectools.cmd_assert_async(["bash", "-c", cmd], env=os.environ.copy(), stdout=sys.stderr)
         else:
             self._logger.info("quay login credentials not given in environment; using existing container auth")
 
@@ -200,7 +200,7 @@ class SigstorePipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.15",
 )
@@ -225,7 +225,7 @@ class SigstorePipeline:
     default=False,
     help="Verify that release images have a legacy signature before re-signing.",
 )
-@click.argument('pullspecs', nargs=-1, required=False)
+@click.argument("pullspecs", nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
 async def sigstore_sign_container(

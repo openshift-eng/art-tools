@@ -113,13 +113,13 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_stream()
         else:
             # Check if microshift advisory is defined in assembly
-            if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
+            if ("microshift" not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
                 self.advisory_num = await self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
             if not self.skip_prepare_advisory:
-                await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
+                await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories["microshift"])
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
         return yaml.load(self.get_file_from_branch(group, "erratatool.yml", data_path))
@@ -162,10 +162,10 @@ class BuildMicroShiftPipeline:
         # Format the advisory boilerplate
         formatter = SafeFormatter()
         replace_vars = {"MAJOR": release_version.major, "MINOR": release_version.minor, "PATCH": release_version.patch}
-        synopsis = formatter.format(boilerplate['synopsis'], **replace_vars)
-        advisory_topic = formatter.format(boilerplate['topic'], **replace_vars)
-        advisory_description = formatter.format(boilerplate['description'], **replace_vars)
-        advisory_solution = formatter.format(boilerplate['solution'], **replace_vars)
+        synopsis = formatter.format(boilerplate["synopsis"], **replace_vars)
+        advisory_topic = formatter.format(boilerplate["topic"], **replace_vars)
+        advisory_description = formatter.format(boilerplate["description"], **replace_vars)
+        advisory_solution = formatter.format(boilerplate["solution"], **replace_vars)
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
@@ -177,17 +177,17 @@ class BuildMicroShiftPipeline:
             return 0
         try:
             created_advisory = await errata_api.create_advisory(
-                product=et_data['product'],
-                release=boilerplate.get('release', et_data['release']),
+                product=et_data["product"],
+                release=boilerplate.get("release", et_data["release"]),
                 errata_type=advisory_type,
                 advisory_synopsis=synopsis,
                 advisory_topic=advisory_topic,
                 advisory_description=advisory_description,
                 advisory_solution=advisory_solution,
-                advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
-                advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
-                advisory_manager_email=self.runtime.config['advisory']['manager'],
-                advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
+                advisory_quality_responsibility_name=et_data["quality_responsibility_name"],
+                advisory_package_owner_email=self.runtime.config["advisory"]["package_owner"],
+                advisory_manager_email=self.runtime.config["advisory"]["manager"],
+                advisory_assigned_to_email=self.runtime.config["advisory"]["assigned_to"],
                 advisory_publish_date_override=release_date,
                 batch_id=0,
             )
@@ -259,7 +259,7 @@ class BuildMicroShiftPipeline:
         )
 
         if not self.force:
-            pinned_nvrs = util.get_rpm_if_pinned_directly(self.releases_config, self.assembly, 'microshift')
+            pinned_nvrs = util.get_rpm_if_pinned_directly(self.releases_config, self.assembly, "microshift")
             if pinned_nvrs:
                 message = (
                     f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to rebuild."
@@ -292,7 +292,7 @@ class BuildMicroShiftPipeline:
             return
 
         major, minor = self._ocp_version
-        version = f'{major}.{minor}'
+        version = f"{major}.{minor}"
         try:
             jenkins.start_microshift_sync(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
             message = (
@@ -317,7 +317,7 @@ class BuildMicroShiftPipeline:
             return
 
         major, minor = self._ocp_version
-        version = f'{major}.{minor}'
+        version = f"{major}.{minor}"
         try:
             jenkins.start_build_microshift_bootc(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
             message = (
@@ -610,14 +610,14 @@ class BuildMicroShiftPipeline:
 @cli.command("build-microshift")
 @click.option(
     "--data-path",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

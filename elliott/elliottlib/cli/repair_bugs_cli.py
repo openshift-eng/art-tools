@@ -11,14 +11,14 @@ from elliottlib.util import pbar_header, progress_func
 
 
 @cli.command("repair-bugs", short_help="Move bugs attached to ADVISORY from one state to another")
-@click.option("--advisory", "-a", 'advisory_id', type=int, metavar='ADVISORY', help="Repair bugs attached to ADVISORY.")
+@click.option("--advisory", "-a", "advisory_id", type=int, metavar="ADVISORY", help="Repair bugs attached to ADVISORY.")
 @click.option(
     "--auto", required=False, default=False, is_flag=True, help="AUTO mode, check all bugs attached to ADVISORY"
 )
 @click.option(
     "--id",
     default=None,
-    metavar='BUGID',
+    metavar="BUGID",
     multiple=True,
     required=False,
     help="Bug IDs to modify, conflicts with --auto [MULTIPLE]",
@@ -27,14 +27,14 @@ from elliottlib.util import pbar_header, progress_func
     "--from",
     "original_state",
     multiple=True,
-    default=['MODIFIED'],
+    default=["MODIFIED"],
     type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
     help="Current state of the bugs (default: MODIFIED)",
 )
 @click.option(
     "--to",
     "new_state",
-    default='ON_QA',
+    default="ON_QA",
     type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
     help="Final state of the bugs (default: ON_QA)",
 )
@@ -130,11 +130,11 @@ def repair_bugs_cli(
 
     if jira_ids:
         repair_bugs(
-            jira_ids, original_state, new_state, comment, close_placeholder, noop, runtime.get_bug_tracker('jira')
+            jira_ids, original_state, new_state, comment, close_placeholder, noop, runtime.get_bug_tracker("jira")
         )
     if bz_ids:
         repair_bugs(
-            bz_ids, original_state, new_state, comment, close_placeholder, noop, runtime.get_bug_tracker('bugzilla')
+            bz_ids, original_state, new_state, comment, close_placeholder, noop, runtime.get_bug_tracker("bugzilla")
         )
 
 
@@ -149,11 +149,11 @@ def repair_bugs(bug_ids, original_state, new_state, comment, close_placeholder, 
     pool = ThreadPool(cpu_count())
     click.secho("[", nl=False)
 
-    attached_bugs = pool.map(lambda bug_id: progress_func(lambda: bug_tracker.get_bug(bug_id), '*'), bug_ids)
+    attached_bugs = pool.map(lambda bug_id: progress_func(lambda: bug_tracker.get_bug(bug_id), "*"), bug_ids)
     # Wait for results
     pool.close()
     pool.join()
-    click.echo(']')
+    click.echo("]")
 
     for bug in attached_bugs:
         if close_placeholder and "Placeholder" in bug.summary:

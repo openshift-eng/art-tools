@@ -43,7 +43,7 @@ class InitShipmentCli:
         self.kind = kind
 
     async def run(self):
-        self.runtime.initialize(build_system='konflux', with_shipment=True)
+        self.runtime.initialize(build_system="konflux", with_shipment=True)
 
         if self.kind == "fbc":
             application = KonfluxFbcBuilder.get_application_name(self.runtime.group)
@@ -52,7 +52,7 @@ class InitShipmentCli:
 
         # load stage/prod rpa from shipment repo config
         # where defaults are set per application
-        shipment_config = self.runtime.shipment_gitdata.load_yaml_file('config.yaml', strict=False) or {}
+        shipment_config = self.runtime.shipment_gitdata.load_yaml_file("config.yaml", strict=False) or {}
         app_env_config = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
         stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
         prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
@@ -66,10 +66,10 @@ class InitShipmentCli:
             )
             replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
             formatter = SafeFormatter()
-            synopsis = formatter.format(advisory_boilerplate['synopsis'], **replace_vars)
-            advisory_topic = formatter.format(advisory_boilerplate['topic'], **replace_vars)
-            advisory_description = formatter.format(advisory_boilerplate['description'], **replace_vars)
-            advisory_solution = formatter.format(advisory_boilerplate['solution'], **replace_vars)
+            synopsis = formatter.format(advisory_boilerplate["synopsis"], **replace_vars)
+            advisory_topic = formatter.format(advisory_boilerplate["topic"], **replace_vars)
+            advisory_description = formatter.format(advisory_boilerplate["description"], **replace_vars)
+            advisory_solution = formatter.format(advisory_boilerplate["solution"], **replace_vars)
 
             data = Data(
                 releaseNotes=ReleaseNotes(

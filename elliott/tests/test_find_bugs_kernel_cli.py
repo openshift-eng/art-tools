@@ -116,7 +116,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
             "components": [{"name": "Target Component"}],
-            "security": {'name': 'Red Hat Employee'},
+            "security": {"name": "Red Hat Employee"},
             "priority": {"name": "Major"},
             "summary": "kernel[-rt]: fake summary 1 [rhocp-4.14.z]",
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
@@ -172,7 +172,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
             "components": [{"name": "Target Component"}],
-            "security": {'name': 'Red Hat Employee'},
+            "security": {"name": "Red Hat Employee"},
             "priority": {"name": "Major"},
             "summary": "kernel[-rt]: fake summary 1 [rhocp-4.14.z]",
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
@@ -252,7 +252,7 @@ TRACKER-1	2	N/A	Verified	test bug 2
         # Test 2: new jira fields for a private bug
         bug.groups = ["private"]
         actual = FindBugsKernelCli._new_jira_fields_from_bug(bug, "4.12.z", tracker.key, conf)
-        self.assertEqual(actual["security"], {'name': 'Red Hat Employee'})
+        self.assertEqual(actual["security"], {"name": "Red Hat Employee"})
 
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._print_report")
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._clone_bugs")

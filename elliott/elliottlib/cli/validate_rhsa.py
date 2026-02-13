@@ -11,7 +11,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
 
 
 @cli.command("validate-rhsa", short_help="Validate RHSA with Product Security checks")
-@click.argument('advisory', type=int)
+@click.argument("advisory", type=int)
 @pass_runtime
 def validate_rhsa_cli(runtime, advisory):
     """
@@ -22,7 +22,7 @@ def validate_rhsa_cli(runtime, advisory):
         $ elliott validate-rhsa ID
     """
 
-    if Erratum(errata_id=advisory).errata_type != 'RHSA':
+    if Erratum(errata_id=advisory).errata_type != "RHSA":
         print(f"Advisory {advisory} is not an RHSA. Nothing to check.")
         exit(0)
 
@@ -42,16 +42,16 @@ def validate_rhsa_cli(runtime, advisory):
     alerts = resp.json()
 
     ignores = [
-        'ErratumValidator.check_spelling',
-        'ErratumValidator.check_multiple_builds',
-        'ErratumValidator.check_ps_review_presence',
+        "ErratumValidator.check_spelling",
+        "ErratumValidator.check_multiple_builds",
+        "ErratumValidator.check_ps_review_presence",
     ]
     actionable_alerts = []
     for alert in alerts:
-        if alert.get('rule_name') in ignores:
+        if alert.get("rule_name") in ignores:
             continue
-        if alert.get('rule_name') == 'ErratumValidator.check_erratum_text_fields' and alert.get('text', '').startswith(
-            'Typo: '
+        if alert.get("rule_name") == "ErratumValidator.check_erratum_text_fields" and alert.get("text", "").startswith(
+            "Typo: "
         ):
             continue
         actionable_alerts.append(alert)

@@ -367,7 +367,7 @@ AWS_EC2_REGION_IP_RANGES = {
     ],
 }
 
-S3_BUCKET_NAME = 'art-rhcos-ci'
+S3_BUCKET_NAME = "art-rhcos-ci"
 
 
 # bisect does not support key= until 3.10. Eliminate this when
@@ -403,30 +403,30 @@ def find_region(ip) -> Optional[str]:
 
 
 def lambda_handler(event: Dict, context: Dict):
-    request = event['Records'][0]['cf']['request']
+    request = event["Records"][0]["cf"]["request"]
 
-    prefix = '/art/storage/'
+    prefix = "/art/storage/"
 
     # Alter the incoming request URI and make it appropriate for the art-rhcos-ci S3 bucket (which does not have /art/storage/ prefix in the path)
-    uri: str = request['uri']
+    uri: str = request["uri"]
     if not uri.startswith(prefix):
         return {
-            'status': '404',
-            'statusDescription': 'Not Found',
+            "status": "404",
+            "statusDescription": "Not Found",
         }
     uri = f"/{uri[len(prefix) :]}"  # strip /art/storage/ prefix
 
-    request_ip = request['clientIp']
+    request_ip = request["clientIp"]
     if find_region(request_ip):
         # Redirect the request to S3 bucket for cost management
         response = {
-            'status': '307',
-            'statusDescription': 'CostManagementRedirect',
-            'headers': {
-                'location': [
+            "status": "307",
+            "statusDescription": "CostManagementRedirect",
+            "headers": {
+                "location": [
                     {
-                        'key': 'Location',
-                        'value': f'https://{S3_BUCKET_NAME}.s3.amazonaws.com{uri}',
+                        "key": "Location",
+                        "value": f"https://{S3_BUCKET_NAME}.s3.amazonaws.com{uri}",
                     }
                 ],
             },
@@ -434,5 +434,5 @@ def lambda_handler(event: Dict, context: Dict):
         return response
 
     # Serve the request with CloudFront
-    request['uri'] = uri
+    request["uri"] = uri
     return request

@@ -80,14 +80,14 @@ class RPMBuilder:
             else:
                 visibility = BuildVisibility.PUBLIC
 
-            pval = f'.{get_visibility_suffix(self._runtime.build_system, visibility)}'
+            pval = f".{get_visibility_suffix(self._runtime.build_system, visibility)}"
             release = release[:-3] + pval
 
         # include commit hash in release field
         release += ".g" + rpm.pre_init_sha[:7]
 
         if self._runtime.assembly:
-            release += f'.assembly.{self._runtime.assembly}'
+            release += f".assembly.{self._runtime.assembly}"
 
         rpm.set_nvr(version, release)
 
@@ -103,7 +103,7 @@ class RPMBuilder:
         # generate new specfile
         tarball_name = f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"
         logger.info("Creating rpm spec file...")
-        source_commit_url = '{}/commit/{}'.format(rpm.public_upstream_url, rpm.pre_init_sha)
+        source_commit_url = "{}/commit/{}".format(rpm.public_upstream_url, rpm.pre_init_sha)
         go_compliance_shim = self._runtime.group_config.compliance.rpm_shim.enabled  # Missing is Falsey
         specfile = await self._populate_specfile_async(
             rpm, tarball_name, source_commit_url, go_compliance_shim=go_compliance_shim
@@ -114,7 +114,7 @@ class RPMBuilder:
 
         if rpm.get_package_name_from_spec() != rpm.get_package_name():
             raise IOError(
-                f'RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}'
+                f"RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}"
             )
 
         rpm.specfile = str(dg_specfile_path)
@@ -191,10 +191,10 @@ class RPMBuilder:
             dg.commit,
             f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
             commit_attributes={
-                'version': rpm.version,
-                'release': rpm.release,
-                'io.openshift.build.commit.id': rpm.pre_init_sha,
-                'io.openshift.build.source-location': rpm.public_upstream_url,
+                "version": rpm.version,
+                "release": rpm.release,
+                "io.openshift.build.commit.id": rpm.pre_init_sha,
+                "io.openshift.build.source-location": rpm.public_upstream_url,
             },
         )
 
@@ -281,7 +281,7 @@ class RPMBuilder:
                         # Tag rpms so they don't get garbage collected.
                         hotfix_tags = rpm.hotfix_brew_tags()
                         self._runtime.logger.info(
-                            f'Tagging build(s) {nvrs} info {hotfix_tags} to prevent garbage collection'
+                            f"Tagging build(s) {nvrs} info {hotfix_tags} to prevent garbage collection"
                         )
                         with koji_api.multicall(strict=True) as m:
                             for nvr, hotfix_tag in zip(nvrs, hotfix_tags):
@@ -325,7 +325,7 @@ class RPMBuilder:
         if not rpm.source_path:
             raise ValueError("Source is not cloned.")
         project, component = await exectools.to_thread(rpm.get_jira_info)
-        maintainer_string = f'[Maintainer] project: {project}, component: {component}'
+        maintainer_string = f"[Maintainer] project: {project}, component: {component}"
 
         # otherwise, make changes similar to tito tagging
         rpm_spec_tags = {
@@ -347,7 +347,7 @@ class RPMBuilder:
         else:
             full = f"{major}.{minor}.{patch}-{rpm.release}-{commit_sha[0:7]}"
 
-        current_time = time.strftime('%a %b %d %Y', time.localtime(time.time()))
+        current_time = time.strftime("%a %b %d %Y", time.localtime(time.time()))
         changelog_title = (
             f"* {current_time} AOS Automation Release Team <noreply@redhat.com> - {rpm.version}-{rpm.release}"
         )
@@ -383,27 +383,27 @@ class RPMBuilder:
                 original_line = lines[i].strip()
 
                 # Replace -n option with our value, or add it if not present
-                if re.search(r'-n\s+\S+', original_line):
+                if re.search(r"-n\s+\S+", original_line):
                     # Replace existing -n option
-                    new_line = re.sub(r'-n\s+\S+', f'-n {rpm.config.name}-{rpm.version}', original_line)
+                    new_line = re.sub(r"-n\s+\S+", f"-n {rpm.config.name}-{rpm.version}", original_line)
                 else:
                     # Add -n option after %autosetup
-                    new_line = original_line.replace('%autosetup', f'%autosetup -n {rpm.config.name}-{rpm.version}', 1)
+                    new_line = original_line.replace("%autosetup", f"%autosetup -n {rpm.config.name}-{rpm.version}", 1)
 
                 # Add -p1 if no -p option is present
-                if not re.search(r'-p\d*', new_line):
-                    new_line = new_line + ' -p1'
+                if not re.search(r"-p\d*", new_line):
+                    new_line = new_line + " -p1"
 
-                lines[i] = new_line + '\n'
+                lines[i] = new_line + "\n"
             elif line.startswith("%changelog"):
                 changelog_added = True
                 lines[i] = f"{lines[i].strip()}\n{changelog_title}\n- Update to source commit {source_commit_url}\n"
             elif line.startswith("%build"):
                 if go_compliance_shim:
                     rpm_builder_go_wrapper_sh = pathlib.Path(
-                        pathlib.Path(__file__).parent, 'rpm_builder_go_wrapper.sh'
+                        pathlib.Path(__file__).parent, "rpm_builder_go_wrapper.sh"
                     ).read_text()
-                    lines[i] = f'''{line}
+                    lines[i] = f"""{line}
 export REAL_GO_PATH=$(which go || true)
 if [[ -n "$REAL_GO_PATH" ]]; then
     GOSHIM_DIR=/tmp/goshim
@@ -416,7 +416,7 @@ cat > $GOSHIM_DIR/go << 'EOF'
 EOF
     chmod +x $GOSHIM_DIR/go
 fi
-\n'''
+\n"""
                 else:
                     # If we are not enforcing compliance, do nothing to the line.
                     pass

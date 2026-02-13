@@ -61,7 +61,7 @@ def _link_tracker_advisories(
 ) -> List[str]:
     tracker_messages = []
     links = set(
-        link.raw['object']['url'] for link in jira_client.remote_links(tracker)
+        link.raw["object"]["url"] for link in jira_client.remote_links(tracker)
     )  # check if we already linked advisories
     for advisory in advisories:
         if advisory.url() in links:

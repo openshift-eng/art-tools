@@ -11,14 +11,14 @@ _LOGGER = logutil.get_logger(__name__)
 
 @cli.command("go", short_help="Get version of Go for advisory builds")
 @click.option("--release", "-r", help="Release/nightly pullspec to inspect builds for")
-@click.option('--advisory', '-a', 'advisory_id', type=int, help="The advisory ID to fetch builds from")
+@click.option("--advisory", "-a", "advisory_id", type=int, help="The advisory ID to fetch builds from")
 @use_default_advisory_option
-@click.option('--nvrs', '-n', help="Brew nvrs to show go version for. Comma separated")
+@click.option("--nvrs", "-n", help="Brew nvrs to show go version for. Comma separated")
 @click.option(
-    '--components', '-c', help="Only show go versions for these components (rpms/images) in advisory. Comma separated"
+    "--components", "-c", help="Only show go versions for these components (rpms/images) in advisory. Comma separated"
 )
-@click.option('-o', '--output', type=click.Choice(['json', 'text']), default='text', help='Output format')
-@click.option('--report', '-R', 'report', is_flag=True, default=False)
+@click.option("-o", "--output", type=click.Choice(["json", "text"]), default="text", help="Output format")
+@click.option("--report", "-R", "report", is_flag=True, default=False)
 @click.pass_obj
 @click_coroutine
 async def get_golang_versions_cli(
@@ -64,32 +64,32 @@ async def get_golang_versions_cli(
         if default_advisory_type:
             advisory_id = find_default_advisory(runtime, default_advisory_type)
         elif release:
-            rhcos_images = {c['name'] for c in rhcos.get_container_configs(runtime)}
+            rhcos_images = {c["name"] for c in rhcos.get_container_configs(runtime)}
     else:
         runtime.initialize(no_group=True)
 
     if components:
-        components = [c.strip() for c in components.split(',')]
-        if release and not all(c.endswith('-container') for c in components):
-            raise click.BadParameter('components for payload should end with -container')
+        components = [c.strip() for c in components.split(",")]
+        if release and not all(c.endswith("-container") for c in components):
+            raise click.BadParameter("components for payload should end with -container")
 
     if release:
         return await print_release_golang(release, rhcos_images, components, output, report)
     elif advisory_id:
         return print_advisory_golang(advisory_id, components, output, report)
     elif nvrs:
-        nvrs = [n.strip() for n in nvrs.split(',')]
+        nvrs = [n.strip() for n in nvrs.split(",")]
         return print_nvrs_golang(nvrs, output, report)
     else:
-        format_util.red_print('The input value is not valid.')
+        format_util.red_print("The input value is not valid.")
 
 
 def print_nvrs_golang(nvrs, output, report):
     container_nvrs, rpm_nvrs = [], []
     for n in nvrs:
         parsed_nvr = parse_nvr(n)
-        nvr_tuple = (parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])
-        if 'container' in parsed_nvr['name']:
+        nvr_tuple = (parsed_nvr["name"], parsed_nvr["version"], parsed_nvr["release"])
+        if "container" in parsed_nvr["name"]:
             container_nvrs.append(nvr_tuple)
         else:
             rpm_nvrs.append(nvr_tuple)
@@ -101,52 +101,52 @@ def print_nvrs_golang(nvrs, output, report):
         go_nvr_map.update(util.get_golang_container_nvrs(container_nvrs, _LOGGER))
 
     if not go_nvr_map:
-        green_print('No golang builds detected')
+        green_print("No golang builds detected")
 
-    if output == 'json':
+    if output == "json":
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
-    elif output == 'text':
+    elif output == "text":
         util.pretty_print_nvrs_go(go_nvr_map, report)
 
 
 def print_advisory_golang(advisory_id, components, output, report):
     nvrs = errata.get_all_advisory_nvrs(advisory_id)
-    _LOGGER.debug(f'{len(nvrs)} builds found in advisory')
+    _LOGGER.debug(f"{len(nvrs)} builds found in advisory")
     if not nvrs:
-        _LOGGER.debug('No golang builds found. exiting')
-        green_print(f'No golang builds found in advisory {advisory_id}')
+        _LOGGER.debug("No golang builds found. exiting")
+        green_print(f"No golang builds found in advisory {advisory_id}")
         return
     if components:
-        if 'openshift' in components:
-            components.remove('openshift')
-            components.append('openshift-hyperkube')
+        if "openshift" in components:
+            components.remove("openshift")
+            components.append("openshift-hyperkube")
         nvrs = [p for p in nvrs if p[0] in components]
 
     content_type = errata.get_erratum_content_type(advisory_id)
-    if content_type == 'docker':
+    if content_type == "docker":
         go_nvr_map = util.get_golang_container_nvrs(nvrs, _LOGGER)
     else:
         go_nvr_map = util.get_golang_rpm_nvrs(nvrs, _LOGGER)
 
-    if output == 'json':
+    if output == "json":
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
-    elif output == 'text':
+    elif output == "text":
         util.pretty_print_nvrs_go(go_nvr_map, report)
 
 
 async def print_release_golang(pullspec, rhcos_images, components, output, report):
     nvr_map = await util.get_nvrs_from_release(pullspec, rhcos_images, _LOGGER)
     nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
-    _LOGGER.debug(f'{len(nvrs)} builds found in {pullspec}')
+    _LOGGER.debug(f"{len(nvrs)} builds found in {pullspec}")
     if not nvrs:
-        _LOGGER.debug('No golang builds found. exiting')
-        green_print(f'No golang builds found in release {pullspec}')
+        _LOGGER.debug("No golang builds found. exiting")
+        green_print(f"No golang builds found in release {pullspec}")
         return
     if components:
         nvrs = [p for p in nvrs if p[0] in components]
 
     go_nvr_map = util.get_golang_container_nvrs(nvrs, _LOGGER)
-    if output == 'json':
+    if output == "json":
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
-    elif output == 'text':
+    elif output == "text":
         util.pretty_print_nvrs_go(go_nvr_map, report)

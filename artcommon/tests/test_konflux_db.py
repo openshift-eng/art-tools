@@ -16,8 +16,8 @@ from google.cloud.bigquery import SchemaField
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):
-    @patch('os.environ', {'GOOGLE_APPLICATION_CREDENTIALS': ''})
-    @patch('artcommonlib.bigquery.bigquery.Client')
+    @patch("os.environ", {"GOOGLE_APPLICATION_CREDENTIALS": ""})
+    @patch("artcommonlib.bigquery.bigquery.Client")
     def setUp(self, _):
         # Clear the shared cache before each test to ensure test isolation
         KonfluxDb.clear_shared_cache()
@@ -30,7 +30,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         # Clear the shared cache after each test to ensure test isolation
         KonfluxDb.clear_shared_cache()
 
-    @patch('artcommonlib.bigquery.BigQueryClient.query')
+    @patch("artcommonlib.bigquery.BigQueryClient.query")
     def test_add_builds(self, query_mock):
         build = KonfluxBuildRecord()
 
@@ -55,17 +55,17 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Test 1: All builds from same group - should succeed
         builds_same_group = [
-            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.18'),
-            KonfluxBuildRecord(name='build2', version='2.0', release='2.el8', group='openshift-4.18'),
-            KonfluxBuildRecord(name='build3', version='3.0', release='3.el8', group='openshift-4.18'),
+            KonfluxBuildRecord(name="build1", version="1.0", release="1.el8", group="openshift-4.18"),
+            KonfluxBuildRecord(name="build2", version="2.0", release="2.el8", group="openshift-4.18"),
+            KonfluxBuildRecord(name="build3", version="3.0", release="3.el8", group="openshift-4.18"),
         ]
         cache.add_builds(builds_same_group)  # Should not raise
 
         # Test 2: Builds from different groups - should raise ValueError
         builds_mixed_groups = [
-            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.18'),
-            KonfluxBuildRecord(name='build2', version='2.0', release='2.el8', group='openshift-4.17'),
-            KonfluxBuildRecord(name='build3', version='3.0', release='3.el8', group='openshift-4.18'),
+            KonfluxBuildRecord(name="build1", version="1.0", release="1.el8", group="openshift-4.18"),
+            KonfluxBuildRecord(name="build2", version="2.0", release="2.el8", group="openshift-4.17"),
+            KonfluxBuildRecord(name="build3", version="3.0", release="3.el8", group="openshift-4.18"),
         ]
         with self.assertRaises(ValueError) as ctx:
             cache.add_builds(builds_mixed_groups)
@@ -74,7 +74,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Test 3: No group provided and first build has no group - should raise ValueError
         builds_no_group = [
-            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group=None),
+            KonfluxBuildRecord(name="build1", version="1.0", release="1.el8", group=None),
         ]
         with self.assertRaises(ValueError) as ctx:
             cache.add_builds(builds_no_group)
@@ -82,14 +82,14 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Test 4: Explicit group parameter overrides build.group - validates against explicit group
         builds_with_explicit_group = [
-            KonfluxBuildRecord(name='build1', version='1.0', release='1.el8', group='openshift-4.17'),
+            KonfluxBuildRecord(name="build1", version="1.0", release="1.el8", group="openshift-4.17"),
         ]
         with self.assertRaises(ValueError) as ctx:
-            cache.add_builds(builds_with_explicit_group, group='openshift-4.18')
+            cache.add_builds(builds_with_explicit_group, group="openshift-4.18")
         self.assertIn("All builds must be from group 'openshift-4.18'", str(ctx.exception))
 
-    @patch('artcommonlib.konflux.konflux_db.datetime')
-    @patch('artcommonlib.bigquery.BigQueryClient.query_async')
+    @patch("artcommonlib.konflux.konflux_db.datetime")
+    @patch("artcommonlib.bigquery.BigQueryClient.query_async")
     async def test_search_builds_by_fields(self, query_mock, datetime_mock):
         datetime_mock.now.return_value = datetime(2024, 9, 30, 9, 0, 0, tzinfo=timezone.utc)
         start_search = datetime(2024, 9, 23, 9, 0, 0, 0, tzinfo=timezone.utc)
@@ -121,7 +121,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-                start_search=start_search, where={'name': 'ironic', 'group': 'openshift-4.18'}
+                start_search=start_search, where={"name": "ironic", "group": "openshift-4.18"}
             ),
             None,
         )
@@ -133,7 +133,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         )
 
         query_mock.reset_mock()
-        await anext(self.db.search_builds_by_fields(start_search=start_search, where={'name': None}), None)
+        await anext(self.db.search_builds_by_fields(start_search=start_search, where={"name": None}), None)
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
             f"name IS NULL AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
@@ -142,7 +142,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         query_mock.reset_mock()
         await anext(
-            self.db.search_builds_by_fields(start_search=start_search, where={'name': None, 'group': None}), None
+            self.db.search_builds_by_fields(start_search=start_search, where={"name": None, "group": None}), None
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -154,7 +154,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-                start_search=start_search, where={'name': 'ironic', 'group': 'openshift-4.18'}, order_by='start_time'
+                start_search=start_search, where={"name": "ironic", "group": "openshift-4.18"}, order_by="start_time"
             ),
             None,
         )
@@ -169,9 +169,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                where={'name': 'ironic', 'group': 'openshift-4.18'},
-                order_by='start_time',
-                sorting='ASC',
+                where={"name": "ironic", "group": "openshift-4.18"},
+                order_by="start_time",
+                sorting="ASC",
             ),
             None,
         )
@@ -186,9 +186,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                where={'name': 'ironic', 'group': 'openshift-4.18'},
-                order_by='start_time',
-                sorting='ASC',
+                where={"name": "ironic", "group": "openshift-4.18"},
+                order_by="start_time",
+                sorting="ASC",
                 limit=0,
             ),
             None,
@@ -204,9 +204,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                where={'name': 'ironic', 'group': 'openshift-4.18'},
-                order_by='start_time',
-                sorting='ASC',
+                where={"name": "ironic", "group": "openshift-4.18"},
+                order_by="start_time",
+                sorting="ASC",
                 limit=10,
             ),
             None,
@@ -223,9 +223,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             await anext(
                 self.db.search_builds_by_fields(
                     start_search=start_search,
-                    where={'name': 'ironic', 'group': 'openshift-4.18'},
-                    order_by='start_time',
-                    sorting='ASC',
+                    where={"name": "ironic", "group": "openshift-4.18"},
+                    order_by="start_time",
+                    sorting="ASC",
                     limit=-1,
                 ),
                 None,
@@ -235,9 +235,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                extra_patterns={'name': 'installer'},
-                order_by='start_time',
-                sorting='ASC',
+                extra_patterns={"name": "installer"},
+                order_by="start_time",
+                sorting="ASC",
                 limit=10,
             ),
             None,
@@ -253,9 +253,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                extra_patterns={'name': '^ose-installer$'},
-                order_by='start_time',
-                sorting='ASC',
+                extra_patterns={"name": "^ose-installer$"},
+                order_by="start_time",
+                sorting="ASC",
                 limit=10,
             ),
             None,
@@ -271,9 +271,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                extra_patterns={'name': 'installer', 'group': 'openshift'},
-                order_by='start_time',
-                sorting='ASC',
+                extra_patterns={"name": "installer", "group": "openshift"},
+                order_by="start_time",
+                sorting="ASC",
                 limit=10,
             ),
             None,
@@ -290,11 +290,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             self.db.search_builds_by_fields(
                 start_search=start_search,
                 where={
-                    'engine': [Engine.BREW, Engine.KONFLUX],
-                    'name': ['ironic', 'ose-installer'],
+                    "engine": [Engine.BREW, Engine.KONFLUX],
+                    "name": ["ironic", "ose-installer"],
                 },
-                order_by='start_time',
-                sorting='ASC',
+                order_by="start_time",
+                sorting="ASC",
                 limit=10,
             ),
             None,
@@ -310,10 +310,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await anext(
             self.db.search_builds_by_fields(
                 start_search=start_search,
-                where={'name': 'test-operator-fbc', 'group': 'openshift-4.18'},
-                array_contains={'bundle_nvrs': 'test-operator-bundle-container-v4.18.0-123'},
-                order_by='start_time',
-                sorting='DESC',
+                where={"name": "test-operator-fbc", "group": "openshift-4.18"},
+                array_contains={"bundle_nvrs": "test-operator-bundle-container-v4.18.0-123"},
+                order_by="start_time",
+                sorting="DESC",
                 limit=1,
             ),
             None,
@@ -326,8 +326,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             "ORDER BY `start_time` DESC LIMIT 1"
         )
 
-    @patch('artcommonlib.konflux.konflux_db.datetime')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.datetime")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_search_builds_by_fields_windowed(self, select_mock, datetime_mock):
         """
         Test exponential window search behavior.
@@ -346,18 +346,18 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         select_mock.return_value = mock_response
 
         # Mock from_result_row to return a build
-        mock_build = KonfluxBuildRecord(name='test-build', version='1.0.0', release='1.el8', group='openshift-4.18')
-        with patch.object(self.db, 'from_result_row', return_value=mock_build):
+        mock_build = KonfluxBuildRecord(name="test-build", version="1.0.0", release="1.el8", group="openshift-4.18")
+        with patch.object(self.db, "from_result_row", return_value=mock_build):
             # Test 1: Results found in first window (7 days)
             results = [
                 build
                 async for build in self.db.search_builds_by_fields(
-                    where={'name': 'test-build', 'group': 'openshift-4.18'}, limit=1
+                    where={"name": "test-build", "group": "openshift-4.18"}, limit=1
                 )
             ]
 
             self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].name, 'test-build')
+            self.assertEqual(results[0].name, "test-build")
             # Should only query once (first 7-day window)
             self.assertEqual(select_mock.call_count, 1)
 
@@ -376,11 +376,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         select_mock.side_effect = [empty_response, empty_response, found_response]
 
-        with patch.object(self.db, 'from_result_row', return_value=mock_build):
+        with patch.object(self.db, "from_result_row", return_value=mock_build):
             results = [
                 build
                 async for build in self.db.search_builds_by_fields(
-                    where={'name': 'old-build', 'group': 'openshift-4.18'}, limit=1
+                    where={"name": "old-build", "group": "openshift-4.18"}, limit=1
                 )
             ]
 
@@ -396,11 +396,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         # Set start_search to only allow searching back 10 days
         start_search = now - timedelta(days=10)
 
-        with patch.object(self.db, 'from_result_row', return_value=mock_build):
+        with patch.object(self.db, "from_result_row", return_value=mock_build):
             results = [
                 build
                 async for build in self.db.search_builds_by_fields(
-                    start_search=start_search, where={'name': 'bounded-build'}, limit=1
+                    start_search=start_search, where={"name": "bounded-build"}, limit=1
                 )
             ]
 
@@ -409,20 +409,20 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             self.assertGreaterEqual(select_mock.call_count, 1)
             self.assertLessEqual(select_mock.call_count, 2)
 
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb.from_result_row')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached")
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb.from_result_row")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_get_latest_build(self, select_mock, from_row_mock, ensure_cached_mock):
         # Mock lazy loading to do nothing
         ensure_cached_mock.return_value = None
 
         # Mock the BigQuery response
         expected_build = KonfluxBundleBuildRecord(
-            name='ironic',
-            version='1.2.3',
-            release='4.el8',
-            group='openshift-4.18',
-            outcome='success',
+            name="ironic",
+            version="1.2.3",
+            release="4.el8",
+            group="openshift-4.18",
+            outcome="success",
             start_time=datetime.now(tz=timezone.utc),
             end_time=datetime.now(tz=timezone.utc),
         )
@@ -438,13 +438,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Test basic call
         result = await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18', outcome=KonfluxBuildOutcome.SUCCESS
+            name="ironic", group="openshift-4.18", outcome=KonfluxBuildOutcome.SUCCESS
         )
 
-        self.assertEqual(result.nvr, 'ironic-1.2.3-4.el8')
-        self.assertEqual(result.name, 'ironic')
+        self.assertEqual(result.nvr, "ironic-1.2.3-4.el8")
+        self.assertEqual(result.name, "ironic")
         # Verify cache was loaded with correct cache_type (ALL_COLUMNS by default since exclude_large_columns=None)
-        ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.ALL_COLUMNS)
+        ensure_cached_mock.assert_called_once_with("openshift-4.18", cache_type=CacheRecordsType.ALL_COLUMNS)
         select_mock.assert_called_once()
 
         # Test with assembly parameter
@@ -456,11 +456,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         select_mock.return_value = mock_response
 
         result = await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18', outcome=KonfluxBuildOutcome.SUCCESS, assembly='stream'
+            name="ironic", group="openshift-4.18", outcome=KonfluxBuildOutcome.SUCCESS, assembly="stream"
         )
 
-        self.assertEqual(result.nvr, 'ironic-1.2.3-4.el8')
-        ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.ALL_COLUMNS)
+        self.assertEqual(result.nvr, "ironic-1.2.3-4.el8")
+        ensure_cached_mock.assert_called_once_with("openshift-4.18", cache_type=CacheRecordsType.ALL_COLUMNS)
         select_mock.assert_called_once()
 
         # Test cache disabled
@@ -472,16 +472,16 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         select_mock.return_value = mock_response
 
         result = await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18', outcome=KonfluxBuildOutcome.SUCCESS, use_cache=False
+            name="ironic", group="openshift-4.18", outcome=KonfluxBuildOutcome.SUCCESS, use_cache=False
         )
 
-        self.assertEqual(result.nvr, 'ironic-1.2.3-4.el8')
+        self.assertEqual(result.nvr, "ironic-1.2.3-4.el8")
         # When use_cache=False, _ensure_group_cached should not be called
         ensure_cached_mock.assert_not_called()
         select_mock.assert_called_once()
 
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_get_latest_build_hermetic_filtering(self, select_mock, ensure_cached_mock):
         test_cases = [
             (True, "true"),
@@ -502,8 +502,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                 select_mock.return_value = empty_response
 
                 await self.db.get_latest_build(
-                    name='test-build',
-                    group='openshift-4.22',
+                    name="test-build",
+                    group="openshift-4.22",
                     extra_patterns={"hermetic": hermetic_value},
                 )
 
@@ -520,9 +520,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
                 self.assertTrue(hermetic_clause_found)
 
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb.from_result_row')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached")
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb.from_result_row")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_get_latest_builds(self, select_mock, from_row_mock, ensure_cached_mock):
         # Mock lazy loading to do nothing
         ensure_cached_mock.return_value = None
@@ -530,18 +530,18 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         # Mock the BigQuery response
         now = datetime.now(tz=timezone.utc)
         build1 = KonfluxBundleBuildRecord(
-            name='ironic',
-            version='1.2.3',
-            release='4.el8',
-            group='openshift-4.18',
+            name="ironic",
+            version="1.2.3",
+            release="4.el8",
+            group="openshift-4.18",
             start_time=now,
             end_time=now,
         )
         build2 = KonfluxBundleBuildRecord(
-            name='ose-installer-artifacts',
-            version='1.0.0',
-            release='1.el8',
-            group='openshift-4.18',
+            name="ose-installer-artifacts",
+            version="1.0.0",
+            release="1.el8",
+            group="openshift-4.18",
             start_time=now,
             end_time=now,
         )
@@ -556,18 +556,18 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         select_mock.return_value = mock_response
 
         results = await self.db.get_latest_builds(
-            names=['ironic', 'ose-installer-artifacts'], group='openshift-4.18', outcome=KonfluxBuildOutcome.SUCCESS
+            names=["ironic", "ose-installer-artifacts"], group="openshift-4.18", outcome=KonfluxBuildOutcome.SUCCESS
         )
 
         self.assertEqual(len(results), 2)
-        self.assertIn('ironic', [r.name for r in results if r])
-        self.assertIn('ose-installer-artifacts', [r.name for r in results if r])
+        self.assertIn("ironic", [r.name for r in results if r])
+        self.assertIn("ose-installer-artifacts", [r.name for r in results if r])
         # _ensure_group_cached should be called once per component
         self.assertEqual(ensure_cached_mock.call_count, 2)
 
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
-    @patch('artcommonlib.konflux.konflux_db.datetime')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached")
+    @patch("artcommonlib.konflux.konflux_db.datetime")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_get_latest_build_windowed(self, select_mock, datetime_mock, ensure_cached_mock):
         """
         Test that get_latest_build uses exponential window search on cache miss.
@@ -586,11 +586,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Mock BigQuery response - build found in second window (14 days)
         expected_build = KonfluxBuildRecord(
-            name='old-build',
-            version='2.0.0',
-            release='5.el8',
-            group='openshift-4.18',
-            outcome='success',
+            name="old-build",
+            version="2.0.0",
+            release="5.el8",
+            group="openshift-4.18",
+            outcome="success",
             start_time=now - timedelta(days=12),  # 12 days old
         )
 
@@ -607,98 +607,98 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         select_mock.side_effect = [empty_response, found_response]
 
-        with patch.object(self.db, 'from_result_row', return_value=expected_build):
+        with patch.object(self.db, "from_result_row", return_value=expected_build):
             result = await self.db.get_latest_build(
-                name='old-build', group='openshift-4.18', outcome=KonfluxBuildOutcome.SUCCESS
+                name="old-build", group="openshift-4.18", outcome=KonfluxBuildOutcome.SUCCESS
             )
 
             self.assertIsNotNone(result)
-            self.assertEqual(result.name, 'old-build')
-            self.assertEqual(result.nvr, 'old-build-2.0.0-5.el8')
+            self.assertEqual(result.name, "old-build")
+            self.assertEqual(result.nvr, "old-build-2.0.0-5.el8")
 
             # Cache should be checked/loaded (ALL_COLUMNS by default since exclude_large_columns=None)
-            ensure_cached_mock.assert_called_once_with('openshift-4.18', cache_type=CacheRecordsType.ALL_COLUMNS)
+            ensure_cached_mock.assert_called_once_with("openshift-4.18", cache_type=CacheRecordsType.ALL_COLUMNS)
 
             # Should have queried 2 windows (7 days empty, then 14 days with result)
             self.assertEqual(select_mock.call_count, 2)
 
     def test_generate_builds_schema(self):
         expected_fields = [
-            SchemaField('name', 'STRING', 'REQUIRED'),
-            SchemaField('group', 'STRING', 'REQUIRED'),
-            SchemaField('version', 'STRING', 'REQUIRED'),
-            SchemaField('release', 'STRING', 'REQUIRED'),
-            SchemaField('assembly', 'STRING', 'REQUIRED'),
-            SchemaField('el_target', 'STRING', 'REQUIRED'),
-            SchemaField('arches', 'STRING', 'REPEATED'),
-            SchemaField('installed_packages', 'STRING', 'REPEATED'),
-            SchemaField('installed_rpms', 'STRING', 'REPEATED'),
-            SchemaField('parent_images', 'STRING', 'REPEATED'),
-            SchemaField('source_repo', 'STRING', 'REQUIRED'),
-            SchemaField('commitish', 'STRING', 'REQUIRED'),
-            SchemaField('rebase_repo_url', 'STRING', 'REQUIRED'),
-            SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
-            SchemaField('embargoed', 'BOOLEAN', 'REQUIRED'),
-            SchemaField('hermetic', 'BOOLEAN', 'REQUIRED'),
-            SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('artifact_type', 'STRING', 'REQUIRED'),
-            SchemaField('engine', 'STRING', 'REQUIRED'),
-            SchemaField('image_pullspec', 'STRING', 'REQUIRED'),
-            SchemaField('image_tag', 'STRING', 'REQUIRED'),
-            SchemaField('outcome', 'STRING', 'REQUIRED'),
-            SchemaField('art_job_url', 'STRING', 'REQUIRED'),
-            SchemaField('build_pipeline_url', 'STRING', 'REQUIRED'),
-            SchemaField('pipeline_commit', 'STRING', 'REQUIRED'),
-            SchemaField('schema_level', 'INTEGER', 'REQUIRED'),
-            SchemaField('ingestion_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('record_id', 'STRING', 'REQUIRED'),
-            SchemaField('build_id', 'STRING', 'REQUIRED'),
-            SchemaField('nvr', 'STRING', 'REQUIRED'),
-            SchemaField('build_component', 'STRING', 'REQUIRED'),
-            SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
+            SchemaField("name", "STRING", "REQUIRED"),
+            SchemaField("group", "STRING", "REQUIRED"),
+            SchemaField("version", "STRING", "REQUIRED"),
+            SchemaField("release", "STRING", "REQUIRED"),
+            SchemaField("assembly", "STRING", "REQUIRED"),
+            SchemaField("el_target", "STRING", "REQUIRED"),
+            SchemaField("arches", "STRING", "REPEATED"),
+            SchemaField("installed_packages", "STRING", "REPEATED"),
+            SchemaField("installed_rpms", "STRING", "REPEATED"),
+            SchemaField("parent_images", "STRING", "REPEATED"),
+            SchemaField("source_repo", "STRING", "REQUIRED"),
+            SchemaField("commitish", "STRING", "REQUIRED"),
+            SchemaField("rebase_repo_url", "STRING", "REQUIRED"),
+            SchemaField("rebase_commitish", "STRING", "REQUIRED"),
+            SchemaField("embargoed", "BOOLEAN", "REQUIRED"),
+            SchemaField("hermetic", "BOOLEAN", "REQUIRED"),
+            SchemaField("start_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("end_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("artifact_type", "STRING", "REQUIRED"),
+            SchemaField("engine", "STRING", "REQUIRED"),
+            SchemaField("image_pullspec", "STRING", "REQUIRED"),
+            SchemaField("image_tag", "STRING", "REQUIRED"),
+            SchemaField("outcome", "STRING", "REQUIRED"),
+            SchemaField("art_job_url", "STRING", "REQUIRED"),
+            SchemaField("build_pipeline_url", "STRING", "REQUIRED"),
+            SchemaField("pipeline_commit", "STRING", "REQUIRED"),
+            SchemaField("schema_level", "INTEGER", "REQUIRED"),
+            SchemaField("ingestion_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("record_id", "STRING", "REQUIRED"),
+            SchemaField("build_id", "STRING", "REQUIRED"),
+            SchemaField("nvr", "STRING", "REQUIRED"),
+            SchemaField("build_component", "STRING", "REQUIRED"),
+            SchemaField("build_priority", "INTEGER", "REQUIRED"),
         ]
         self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
 
     def test_generate_bundle_builds_schema(self):
         expected_fields = [
-            SchemaField('name', 'STRING', 'REQUIRED'),
-            SchemaField('group', 'STRING', 'REQUIRED'),
-            SchemaField('version', 'STRING', 'REQUIRED'),
-            SchemaField('release', 'STRING', 'REQUIRED'),
-            SchemaField('assembly', 'STRING', 'REQUIRED'),
-            SchemaField('source_repo', 'STRING', 'REQUIRED'),
-            SchemaField('commitish', 'STRING', 'REQUIRED'),
-            SchemaField('rebase_repo_url', 'STRING', 'REQUIRED'),
-            SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
-            SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('engine', 'STRING', 'REQUIRED'),
-            SchemaField('image_pullspec', 'STRING', 'REQUIRED'),
-            SchemaField('image_tag', 'STRING', 'REQUIRED'),
-            SchemaField('outcome', 'STRING', 'REQUIRED'),
-            SchemaField('art_job_url', 'STRING', 'REQUIRED'),
-            SchemaField('build_pipeline_url', 'STRING', 'REQUIRED'),
-            SchemaField('pipeline_commit', 'STRING', 'REQUIRED'),
-            SchemaField('schema_level', 'INTEGER', 'REQUIRED'),
-            SchemaField('ingestion_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('operand_nvrs', 'STRING', 'REPEATED', None, None, (), None),
-            SchemaField('operator_nvr', 'STRING', 'REQUIRED', None, None, (), None),
-            SchemaField('bundle_package_name', 'STRING', 'REQUIRED'),
-            SchemaField('bundle_csv_name', 'STRING', 'REQUIRED'),
-            SchemaField('record_id', 'STRING', 'REQUIRED'),
-            SchemaField('build_id', 'STRING', 'REQUIRED'),
-            SchemaField('nvr', 'STRING', 'REQUIRED'),
-            SchemaField('build_component', 'STRING', 'REQUIRED'),
-            SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
+            SchemaField("name", "STRING", "REQUIRED"),
+            SchemaField("group", "STRING", "REQUIRED"),
+            SchemaField("version", "STRING", "REQUIRED"),
+            SchemaField("release", "STRING", "REQUIRED"),
+            SchemaField("assembly", "STRING", "REQUIRED"),
+            SchemaField("source_repo", "STRING", "REQUIRED"),
+            SchemaField("commitish", "STRING", "REQUIRED"),
+            SchemaField("rebase_repo_url", "STRING", "REQUIRED"),
+            SchemaField("rebase_commitish", "STRING", "REQUIRED"),
+            SchemaField("start_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("end_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("engine", "STRING", "REQUIRED"),
+            SchemaField("image_pullspec", "STRING", "REQUIRED"),
+            SchemaField("image_tag", "STRING", "REQUIRED"),
+            SchemaField("outcome", "STRING", "REQUIRED"),
+            SchemaField("art_job_url", "STRING", "REQUIRED"),
+            SchemaField("build_pipeline_url", "STRING", "REQUIRED"),
+            SchemaField("pipeline_commit", "STRING", "REQUIRED"),
+            SchemaField("schema_level", "INTEGER", "REQUIRED"),
+            SchemaField("ingestion_time", "TIMESTAMP", "REQUIRED"),
+            SchemaField("operand_nvrs", "STRING", "REPEATED", None, None, (), None),
+            SchemaField("operator_nvr", "STRING", "REQUIRED", None, None, (), None),
+            SchemaField("bundle_package_name", "STRING", "REQUIRED"),
+            SchemaField("bundle_csv_name", "STRING", "REQUIRED"),
+            SchemaField("record_id", "STRING", "REQUIRED"),
+            SchemaField("build_id", "STRING", "REQUIRED"),
+            SchemaField("nvr", "STRING", "REQUIRED"),
+            SchemaField("build_component", "STRING", "REQUIRED"),
+            SchemaField("build_priority", "INTEGER", "REQUIRED"),
         ]
         self.db.bind(KonfluxBundleBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
 
     @patch("artcommonlib.konflux.konflux_db.KonfluxDb.get_latest_build")
     async def test_get_build_record_by_nvr(self, get_latest_build_mock: MagicMock):
-        nvr = 'ironic-1.2.3-4.el8'
+        nvr = "ironic-1.2.3-4.el8"
         expected_build = KonfluxBundleBuildRecord(nvr=nvr)
         get_latest_build_mock.return_value = expected_build
 
@@ -717,12 +717,12 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Verify string-to-enum conversion works correctly
         test_cases = [
-            ('success', KonfluxBuildOutcome.SUCCESS),
-            ('failure', KonfluxBuildOutcome.FAILURE),
-            ('konflux', Engine.KONFLUX),
-            ('brew', Engine.BREW),
-            ('image', ArtifactType.IMAGE),
-            ('rpm', ArtifactType.RPM),
+            ("success", KonfluxBuildOutcome.SUCCESS),
+            ("failure", KonfluxBuildOutcome.FAILURE),
+            ("konflux", Engine.KONFLUX),
+            ("brew", Engine.BREW),
+            ("image", ArtifactType.IMAGE),
+            ("rpm", ArtifactType.RPM),
         ]
 
         for string_val, expected_enum in test_cases:
@@ -741,14 +741,14 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
     def test_cache_prioritizes_successful_builds(self):
         """Test that cache prioritizes successful builds over failed builds for the same NVR"""
         cache = self.db.cache
-        group = 'openshift-4.18'
-        nvr = 'test-build-1.0.0-1.el8'
+        group = "openshift-4.18"
+        nvr = "test-build-1.0.0-1.el8"
 
         # Create two builds with same NVR but different outcomes
         failed_build = KonfluxBuildRecord(
-            name='test-build',
-            version='1.0.0',
-            release='1.el8',
+            name="test-build",
+            version="1.0.0",
+            release="1.el8",
             group=group,
             nvr=nvr,
             outcome=KonfluxBuildOutcome.FAILURE,
@@ -756,9 +756,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         )
 
         successful_build = KonfluxBuildRecord(
-            name='test-build',
-            version='1.0.0',
-            release='1.el8',
+            name="test-build",
+            version="1.0.0",
+            release="1.el8",
             group=group,
             nvr=nvr,
             outcome=KonfluxBuildOutcome.SUCCESS,
@@ -782,20 +782,20 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             cached.outcome, KonfluxBuildOutcome.SUCCESS, "Should keep successful build even when failed comes after"
         )
 
-    @patch('artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached')
-    @patch('artcommonlib.bigquery.BigQueryClient.select')
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb._ensure_group_cached")
+    @patch("artcommonlib.bigquery.BigQueryClient.select")
     async def test_get_latest_build_checks_outcome_from_cache(self, select_mock, ensure_cached_mock):
         """Test that get_latest_build verifies outcome when returning from cache"""
         ensure_cached_mock.return_value = None
 
-        group = 'openshift-4.18'
-        nvr = 'test-build-1.0.0-1.el8'
+        group = "openshift-4.18"
+        nvr = "test-build-1.0.0-1.el8"
 
         # Manually populate cache with a failed build
         failed_build = KonfluxBuildRecord(
-            name='test-build',
-            version='1.0.0',
-            release='1.el8',
+            name="test-build",
+            version="1.0.0",
+            release="1.el8",
             group=group,
             nvr=nvr,
             outcome=KonfluxBuildOutcome.FAILURE,
@@ -805,9 +805,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         # Mock BigQuery to return a successful build
         successful_build = KonfluxBuildRecord(
-            name='test-build',
-            version='1.0.0',
-            release='1.el8',
+            name="test-build",
+            version="1.0.0",
+            release="1.el8",
             group=group,
             nvr=nvr,
             outcome=KonfluxBuildOutcome.SUCCESS,
@@ -820,7 +820,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         mock_response.__iter__ = MagicMock(return_value=iter([mock_row]))
         select_mock.return_value = mock_response
 
-        with patch.object(self.db, 'from_result_row', return_value=successful_build):
+        with patch.object(self.db, "from_result_row", return_value=successful_build):
             # Request successful build - cache has failed, should fall through to BigQuery
             result = await self.db.get_latest_build(nvr=nvr, group=group, outcome=KonfluxBuildOutcome.SUCCESS)
 

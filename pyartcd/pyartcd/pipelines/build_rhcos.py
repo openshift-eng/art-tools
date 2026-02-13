@@ -57,7 +57,7 @@ class BuildRhcosPipeline:
         self.request_session.headers.update({"Authorization": f"Bearer {self.retrieve_auth_token()}"})
         current = self.query_existing_builds()
         if self.dry_run:
-            print('DRY RUN - Exiting', file=sys.stderr)
+            print("DRY RUN - Exiting", file=sys.stderr)
         else:
             print(
                 json.dumps(
@@ -71,14 +71,14 @@ class BuildRhcosPipeline:
         """Retrieve the auth token from the Jenkins service account to use with Jenkins API"""
         # https://github.com/coreos/fedora-coreos-pipeline/blob/main/HACKING.md#triggering-builds-remotely
         secret = None
-        jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
-        for s in oc.selector('secrets'):
+        jenkins_uid = oc.selector("sa/jenkins").objects()[0].model.metadata.uid
+        for s in oc.selector("secrets"):
             if (
                 s.model.type == "kubernetes.io/service-account-token"
                 and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins"
                 and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid
             ):
-                secret_maybe = base64.b64decode(s.model.data.token).decode('utf-8')
+                secret_maybe = base64.b64decode(s.model.data.token).decode("utf-8")
                 r = self.request_session.get(
                     f"{JENKINS_BASE_URL}/me/api/json",
                     headers={"Authorization": f"Bearer {secret_maybe}"},
@@ -115,9 +115,9 @@ class BuildRhcosPipeline:
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
         group_file = asyncio.run(load_group_config(group=f"openshift-{self.version}", assembly="stream"))
-        if "layered_rhcos" in group_file['rhcos'].keys():  # for layered rhcos job
-            if self.job == 'build-node-image':  # for build node job release value is 4.x-9.x
-                rhel_versions = [tag['rhel_version'] for tag in group_file['rhcos']['payload_tags']]
+        if "layered_rhcos" in group_file["rhcos"].keys():  # for layered rhcos job
+            if self.job == "build-node-image":  # for build node job release value is 4.x-9.x
+                rhel_versions = [tag["rhel_version"] for tag in group_file["rhcos"]["payload_tags"]]
                 if len(set(rhel_versions)) > 1:
                     self.multi_rhel = list(set(rhel_versions))
                 return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
@@ -126,13 +126,13 @@ class BuildRhcosPipeline:
         else:
             return (
                 f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}"
-                if group_file['vars']['MINOR'] > 12 and group_file['vars']['MAJOR'] == 4
+                if group_file["vars"]["MINOR"] > 12 and group_file["vars"]["MAJOR"] == 4
                 else self.version
             )
 
     def start_build(self):
         """Start a new build for the given version"""
-        if self.job == 'build-node-image':
+        if self.job == "build-node-image":
             if self.multi_rhel:
                 result = []
                 for rhel_version in self.multi_rhel:
@@ -150,19 +150,19 @@ class BuildRhcosPipeline:
         job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
         build_number = self.trigger_build(job_url, params)
         build = self.request_session.get(f"{JENKINS_BASE_URL}/job/{self.job}/{build_number}/api/json").json()
-        return dict(url=build['url'], result=build['result'], description=build['description'])
+        return dict(url=build["url"], result=build["result"], description=build["description"])
 
     def trigger_build(self, job_url, params):
         """trigger build and return build bumber"""
         response = self.request_session.post(job_url, data=params)
         if response.status_code not in (201, 200):
             raise Exception(f"Failed to trigger rhcos build: {response}")
-        queue_url = response.headers.get('Location')
+        queue_url = response.headers.get("Location")
         start_time = time.time()
         while time.time() - start_time < 300:
             response = self.request_session.get(f"{queue_url}/api/json").json()
-            if 'executable' in response:
-                return response['executable']['number']
+            if "executable" in response:
+                return response["executable"]["number"]
             time.sleep(5)
         raise Exception("Build didn't start within 300 seconds")
 
@@ -186,7 +186,7 @@ class BuildRhcosPipeline:
 @click.option(
     "--job",
     required=False,
-    type=click.Choice(['build', 'build-node-image']),
+    type=click.Choice(["build", "build-node-image"]),
     default="build",
     help="RHCOS pipeline job name",
 )

@@ -40,12 +40,12 @@ logger = logging.getLogger(__name__)
 
 def dict_get(dct, path, default=DICT_EMPTY):
     dct = copy.deepcopy(dct)  # copy to not modify original
-    for key in path.split('.'):
+    for key in path.split("."):
         try:
             dct = dct[key]
         except KeyError:
             if default is DICT_EMPTY:
-                raise Exception('Unable to follow key path {}'.format(path))
+                raise Exception("Unable to follow key path {}".format(path))
             return default
     return dct
 
@@ -127,7 +127,7 @@ def mkdirs(path, mode=0o755):
 
 
 def analyze_debug_timing(file):
-    peal = re.compile(r'^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),\d\d\d \w+ [(](\d+)[)] (.*)')
+    peal = re.compile(r"^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),\d\d\d \w+ [(](\d+)[)] (.*)")
 
     thread_names = {}
     event_timings = {}  # maps internal to { <thread_name> => [event list] }
@@ -136,7 +136,7 @@ def analyze_debug_timing(file):
     def get_thread_name(thread):
         if thread in thread_names:
             return thread_names[thread]
-        c = f'T{len(thread_names)}'
+        c = f"T{len(thread_names)}"
         thread_names[thread] = c
         return c
 
@@ -163,25 +163,25 @@ def analyze_debug_timing(file):
     def add_thread_event(interval, thread, event):
         get_thread_event_list(int(interval), thread).append(event)
 
-    with open(file, 'r') as f:
+    with open(file, "r") as f:
         for line in f:
             m = peal.match(line.strip())
             if m:
                 thread = m.group(2)  # thread id (e.g. 139770552305472)
                 datestr = m.group(1)  # 2020-04-09 10:17:03,092
                 event = m.group(3)
-                date_time_obj = datetime.strptime(datestr, '%Y-%m-%d %H:%M:%S')
+                date_time_obj = datetime.strptime(datestr, "%Y-%m-%d %H:%M:%S")
                 minute_mark = int(int(date_time_obj.strftime("%s")) / 10)  # ten second intervals
                 add_thread_event(minute_mark, thread, event)
 
     def print_em(*args):
         for a in args:
             print(str(a).ljust(5), end="")
-        print('')
+        print("")
 
-    print('Thread timelines')
+    print("Thread timelines")
     names = sorted(list(thread_names.values()), key=lambda e: int(e[1:]))  # sorts as T1, T2, T3, .... by removing 'T'
-    print_em('*', *names)
+    print_em("*", *names)
 
     sorted_intervals = sorted(list(event_timings.keys()))
     for interval in range(0, sorted_intervals[-1] + 1):
@@ -192,8 +192,8 @@ def analyze_debug_timing(file):
                 events = interval_map.get(thread_name, [])
                 for event in events:
                     with_event = list(names)
-                    with_event[i] = thread_name + ': ' + event
-                    print_em(f' {interval}', *with_event[: i + 1])
+                    with_event[i] = thread_name + ": " + event
+                    print_em(f" {interval}", *with_event[: i + 1])
 
 
 def what_is_in_master() -> str:
@@ -201,18 +201,18 @@ def what_is_in_master() -> str:
     :return: Returns a string like "4.6" to identify which release currently resides in master branch.
     """
     # The promotion target of the openshift/images master branch defines this release master is associated with.
-    ci_config_url = 'https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/openshift/images/openshift-images-master.yaml'
+    ci_config_url = "https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/openshift/images/openshift-images-master.yaml"
     content = exectools.urlopen_assert(ci_config_url).read()
     ci_config = yaml.safe_load(content)
     # Look for something like: https://github.com/openshift/release/blob/251cb12e913dcde7be7a2b36a211650ed91c45c4/ci-operator/config/openshift/images/openshift-images-master.yaml#L64
-    promotion_to = ci_config.get('promotion', {}).get('to', [])
+    promotion_to = ci_config.get("promotion", {}).get("to", [])
     if promotion_to:
-        target_release = promotion_to[0].get('name', None)
+        target_release = promotion_to[0].get("name", None)
     else:
         target_release = None
     if not target_release:
         red_print(content)
-        raise IOError('Unable to find which openshift release resides in master')
+        raise IOError("Unable to find which openshift release resides in master")
     return target_release
 
 
@@ -223,9 +223,9 @@ def extract_version_fields(version, at_least=0):
     :param version: A version to parse
     :param at_least: The minimum number of fields to find (else raise an error)
     """
-    fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
+    fields = [int(f) for f in version.strip().split("-")[0].lstrip("v").split(".")]  # v1.17.1 => [ '1', '17', '1' ]
     if len(fields) < at_least:
-        raise IOError(f'Unable to find required {at_least} fields in {version}')
+        raise IOError(f"Unable to find required {at_least} fields in {version}")
     return fields
 
 
@@ -242,22 +242,22 @@ def get_cincinnati_channels(major, minor):
     minor = int(minor)
 
     if major < 4:
-        raise ValueError(f'Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})')
+        raise ValueError(f"Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})")
 
     # Special case: OCP 4.1 used different channel names
     if major == 4 and minor == 1:
-        prefixes = ['prerelease', 'stable']
+        prefixes = ["prerelease", "stable"]
     else:
         # Standard channel names for all other versions (4.2+, 5.x+)
-        prefixes = ['candidate', 'fast', 'stable']
+        prefixes = ["candidate", "fast", "stable"]
 
-    return [f'{prefix}-{major}.{minor}' for prefix in prefixes]
+    return [f"{prefix}-{major}.{minor}" for prefix in prefixes]
 
 
 def get_docker_config_json(config_dir):
     flist = os.listdir(abspath(config_dir))
-    if 'config.json' in flist:
-        return abspath(os.path.join(config_dir, 'config.json'))
+    if "config.json" in flist:
+        return abspath(os.path.join(config_dir, "config.json"))
     else:
         raise FileNotFoundError("Can not find the registry config file in {}".format(config_dir))
 
@@ -268,11 +268,11 @@ def isolate_git_commit_in_release(release: str) -> Optional[str]:
     .git.<commit> information or .g<commit> (new style). If it does, it returns the value
     of <commit>. If it is not found, None is returned.
     """
-    match = re.match(r'.*\.git\.([a-f0-9]+)(?:\.+|$)', release)
+    match = re.match(r".*\.git\.([a-f0-9]+)(?:\.+|$)", release)
     if match:
         return match.group(1)
 
-    match = re.match(r'.*\.g([a-f0-9]+)(?:\.+|$)', release)
+    match = re.match(r".*\.g([a-f0-9]+)(?:\.+|$)", release)
     if match:
         return match.group(1)
 
@@ -289,14 +289,14 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     :param nightly_name: The name of the nightly to analyze
     :return: (major_minor, brew_arch, is_private)
     """
-    major_minor = '.'.join(nightly_name.split('.')[:2])
-    nightly_name = nightly_name[nightly_name.find('.nightly') + 1 :]  # strip off versioning info (e.g.  4.8.0-0.)
-    components = nightly_name.split('-')
-    is_private = 'priv' in components
-    pos = components.index('nightly')
+    major_minor = ".".join(nightly_name.split(".")[:2])
+    nightly_name = nightly_name[nightly_name.find(".nightly") + 1 :]  # strip off versioning info (e.g.  4.8.0-0.)
+    components = nightly_name.split("-")
+    is_private = "priv" in components
+    pos = components.index("nightly")
     possible_arch = components[pos + 1]
     if possible_arch not in GO_ARCHES:
-        go_arch = 'x86_64'  # for historical reasons, amd64 is not included in the release name
+        go_arch = "x86_64"  # for historical reasons, amd64 is not included in the release name
     else:
         go_arch = possible_arch
     brew_arch = brew_arch_for_go_arch(go_arch)
@@ -356,9 +356,9 @@ def to_nvre(build_record: Dict):
     From a build record object (such as an entry returned by listTagged),
     returns the full nvre in the form n-v-r:E.
     """
-    nvr = build_record['nvr']
-    if 'epoch' in build_record and build_record["epoch"] and build_record["epoch"] != 'None':
-        return f'{nvr}:{build_record["epoch"]}'
+    nvr = build_record["nvr"]
+    if "epoch" in build_record and build_record["epoch"] and build_record["epoch"] != "None":
+        return f"{nvr}:{build_record['epoch']}"
     return nvr
 
 
@@ -367,7 +367,7 @@ def strip_epoch(nvr: str):
     If an NVR string is N-V-R:E, returns only the NVR portion. Otherwise
     returns NVR exactly as-is.
     """
-    return nvr.split(':')[0]
+    return nvr.split(":")[0]
 
 
 def get_release_tag_datetime(release: str) -> Optional[str]:
@@ -384,7 +384,7 @@ def sort_semver(versions):
 def get_channel_versions(
     channel,
     arch,
-    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
+    graph_url="https://api.openshift.com/api/upgrades_info/v1/graph",
     graph_content_stable=None,
     graph_content_candidate=None,
 ):
@@ -400,24 +400,24 @@ def get_channel_versions(
     :return: (versions, edge_map)
     """
     content = None
-    if (channel == 'stable') and graph_content_stable:
+    if (channel == "stable") and graph_content_stable:
         # permit override
-        with open(graph_content_stable, 'r') as f:
+        with open(graph_content_stable, "r") as f:
             content = f.read()
 
-    if (channel != 'stable') and graph_content_candidate:
+    if (channel != "stable") and graph_content_candidate:
         # permit override
-        with open(graph_content_candidate, 'r') as f:
+        with open(graph_content_candidate, "r") as f:
             content = f.read()
 
     if not content:
-        url = f'{graph_url}?arch={arch}&channel={channel}'
+        url = f"{graph_url}?arch={arch}&channel={channel}"
         req = urllib.request.Request(url)
-        req.add_header('Accept', 'application/json')
+        req.add_header("Accept", "application/json")
         content = exectools.urlopen_assert(req).read()
 
     graph = json.loads(content)
-    versions = [node['version'] for node in graph['nodes']]
+    versions = [node["version"] for node in graph["nodes"]]
     descending_versions = sort_semver(versions)
 
     edges: Dict[str, List] = dict()
@@ -425,7 +425,7 @@ def get_channel_versions(
         # Ensure there is at least an empty list for all versions.
         edges[v] = []
 
-    for edge_def in graph['edges']:
+    for edge_def in graph["edges"]:
         # edge_def example [22, 20] where is number is an offset into versions
         from_ver = versions[edge_def[0]]
         to_ver = versions[edge_def[1]]
@@ -438,7 +438,7 @@ def get_build_suggestions(
     major,
     minor,
     arch,
-    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
+    suggestions_url="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
 ):
     """
     Loads suggestions_url/major.minor.yaml and returns minor_min, minor_max,
@@ -449,23 +449,23 @@ def get_build_suggestions(
     :param arch: Architecture to lookup
     :return: {minor_min, minor_max, minor_block_list, z_min, z_max, z_block_list}
     """
-    url = f'{suggestions_url}/{major}.{minor}.yaml'
+    url = f"{suggestions_url}/{major}.{minor}.yaml"
     req = urllib.request.Request(url)
-    req.add_header('Accept', 'application/yaml')
+    req.add_header("Accept", "application/yaml")
     suggestions = yaml.safe_load(exectools.urlopen_assert(req))
     if arch in suggestions:
         return suggestions[arch]
     else:
-        return suggestions['default']
+        return suggestions["default"]
 
 
 def get_release_calc_previous(
     version,
     arch,
-    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
+    graph_url="https://api.openshift.com/api/upgrades_info/v1/graph",
     graph_content_stable=None,
     graph_content_candidate=None,
-    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
+    suggestions_url="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
 ):
     major, minor = extract_version_fields(version, at_least=2)[:2]
     arch = go_arch_for_brew_arch(arch)  # Cincinnati is go code, and uses a different arch name than brew
@@ -483,22 +483,22 @@ def get_release_calc_previous(
     suggestions = get_build_suggestions(major, minor, arch, suggestions_url)
     for v in prev_versions:
         if (
-            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['minor_min'])
-            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['minor_max'])
-            and v not in suggestions['minor_block_list']
+            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions["minor_min"])
+            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions["minor_max"])
+            and v not in suggestions["minor_block_list"]
         ):
             upgrade_from.add(v)
     for v in curr_versions:
         if (
-            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['z_min'])
-            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['z_max'])
-            and v not in suggestions['z_block_list']
+            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions["z_min"])
+            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions["z_max"])
+            and v not in suggestions["z_block_list"]
         ):
             upgrade_from.add(v)
 
     candidate_channel_versions, candidate_edges = curr_versions, current_edges
     # 'nightly' was an older convention. This nightly variant check can be removed by Oct 2020.
-    if 'nightly' not in version and 'hotfix' not in version:
+    if "nightly" not in version and "hotfix" not in version:
         # If we are not calculating a previous list for standard release, we want edges from previously
         # released hotfixes to be valid for this node IF and only if that hotfix does not
         # have an edge to TWO previous standard releases.
@@ -506,7 +506,7 @@ def get_release_calc_previous(
 
         # If a release name in candidate contains 'hotfix', it was promoted as a hotfix for a customer.
         previous_hotfixes = list(
-            filter(lambda release: 'nightly' in release or 'hotfix' in release, candidate_channel_versions)
+            filter(lambda release: "nightly" in release or "hotfix" in release, candidate_channel_versions)
         )
         # For each hotfix that doesn't have 2 outgoing edges, and it as an incoming edge to this release
         for hotfix_version in previous_hotfixes:
@@ -518,9 +518,9 @@ def get_release_calc_previous(
 
 async def find_manifest_list_sha(pullspec):
     image_data = oc_image_info_for_arch__caching(pullspec)
-    if 'listDigest' not in image_data:
-        raise ValueError('Specified image is not a manifest-list.')
-    return image_data['listDigest']
+    if "listDigest" not in image_data:
+        raise ValueError("Specified image is not a manifest-list.")
+    return image_data["listDigest"]
 
 
 def get_release_name(
@@ -552,9 +552,9 @@ def get_release_name(
 def get_release_name_for_assembly(group_name: str, releases_config: Model, assembly_name: str):
     """Get release name for an assembly."""
     assembly_type = artcommonlib.assembly.assembly_type(releases_config, assembly_name)
-    patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+    patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get("patch_version")
     if assembly_type is AssemblyTypes.CUSTOM:
-        patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+        patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get("patch_version")
         # If patch_version is not set, go through the chain of assembly inheritance and determine one
         current_assembly = assembly_name
         while patch_version is None:
@@ -562,7 +562,7 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
             if parent_assembly is Missing:
                 break
             if artcommonlib.assembly.assembly_type(releases_config, parent_assembly) is AssemblyTypes.STANDARD:
-                patch_version = int(parent_assembly.rsplit('.', 1)[-1])
+                patch_version = int(parent_assembly.rsplit(".", 1)[-1])
                 break
             current_assembly = parent_assembly
         if patch_version is None:
@@ -570,7 +570,7 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 current_assembly
             ].assembly.basis.hotfix_previous_assembly
             if hotfix_previous_assembly:
-                patch_version = int(hotfix_previous_assembly.rsplit('.', 1)[-1])
+                patch_version = int(hotfix_previous_assembly.rsplit(".", 1)[-1])
             else:
                 raise ValueError(
                     "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
@@ -597,15 +597,15 @@ def oc_image_info(
     :return: Parsed JSON output or None if strict=False and image doesn't exist
     """
 
-    cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
+    cmd = ["oc", "image", "info", "-o", "json", pullspec]
     cmd.extend(options)
     if registry_config:
-        cmd.extend([f'--registry-config={registry_config}'])
+        cmd.extend([f"--registry-config={registry_config}"])
 
     rc, out, err = exectools.cmd_gather(cmd)
 
     if rc != 0:
-        if not strict and 'manifest unknown' in err.lower():
+        if not strict and "manifest unknown" in err.lower():
             return None
         # Raise IOError for errors (strict=True or other errors)
         raise IOError(f"oc image info failed (rc={rc}): {err}")
@@ -614,7 +614,7 @@ def oc_image_info(
 
 
 def oc_image_info_for_arch(
-    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
+    pullspec: str, go_arch: str = "amd64", registry_config: Optional[str] = None, strict: bool = True
 ) -> dict | None:
     """
     Filter by os because images can be multi-arch manifest lists
@@ -626,7 +626,7 @@ def oc_image_info_for_arch(
     :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
     :return: Dict of image info or None if strict=False and image doesn't exist
     """
-    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
+    result = oc_image_info(pullspec, f"--filter-by-os={go_arch}", registry_config=registry_config, strict=strict)
     if result is None:
         return None
     assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
@@ -635,7 +635,7 @@ def oc_image_info_for_arch(
 
 @lru_cache(maxsize=1000)
 def oc_image_info_for_arch__caching(
-    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
+    pullspec: str, go_arch: str = "amd64", registry_config: Optional[str] = None, strict: bool = True
 ) -> dict | None:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
@@ -668,7 +668,7 @@ def oc_image_info_show_multiarch(
     """
     return oc_image_info(
         pullspec,
-        '--show-multiarch',
+        "--show-multiarch",
         registry_config=registry_config,
         strict=strict,
     )
@@ -712,18 +712,18 @@ async def oc_image_info_async(
     :return: The parsed JSON output of `oc image info`.
     """
 
-    opts = ['-o', 'json']
+    opts = ["-o", "json"]
     if registry_config:
-        opts.extend([f'--registry-config={registry_config}'])
+        opts.extend([f"--registry-config={registry_config}"])
     opts.extend(options)
-    cmd = ['oc', 'image', 'info'] + opts + [pullspec]
+    cmd = ["oc", "image", "info"] + opts + [pullspec]
     _, out, _ = await exectools.cmd_gather_async(cmd)
     return json.loads(out)
 
 
 async def oc_image_info_for_arch_async(
     pullspec: str,
-    go_arch: str = 'amd64',
+    go_arch: str = "amd64",
     registry_config: Optional[str] = None,
 ) -> Dict:
     """
@@ -733,7 +733,7 @@ async def oc_image_info_for_arch_async(
     """
     return await oc_image_info_async(
         pullspec,
-        f'--filter-by-os={go_arch}',
+        f"--filter-by-os={go_arch}",
         registry_config=registry_config,
     )
 
@@ -741,7 +741,7 @@ async def oc_image_info_for_arch_async(
 @alru_cache
 async def oc_image_info_for_arch_async__caching(
     pullspec: str,
-    go_arch: str = 'amd64',
+    go_arch: str = "amd64",
     registry_config: Optional[str] = None,
 ) -> Dict:
     """
@@ -766,11 +766,11 @@ async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_
     :param path_specs: The specs of paths within the image to extract.
     :param registry_config: The path to the registry config file.
     """
-    cmd = ['oc', 'image', 'extract']
+    cmd = ["oc", "image", "extract"]
     for path_spec in path_specs:
-        cmd.extend(['--path', path_spec])
+        cmd.extend(["--path", path_spec])
     if registry_config:
-        cmd.extend([f'--registry-config={registry_config}'])
+        cmd.extend([f"--registry-config={registry_config}"])
     cmd.extend(["--", pullspec])
     await exectools.cmd_assert_async(cmd)
 
@@ -786,7 +786,7 @@ async def oc_image_info_show_multiarch_async(
     """
     return await oc_image_info_async(
         pullspec,
-        '--show-multiarch',
+        "--show-multiarch",
         registry_config=registry_config,
     )
 
@@ -811,9 +811,9 @@ def infer_assembly_type(custom, assembly_name):
     # Infer assembly type
     if custom:
         return AssemblyTypes.CUSTOM
-    elif re.search(r'^[fr]c\.[0-9]+$', assembly_name):
+    elif re.search(r"^[fr]c\.[0-9]+$", assembly_name):
         return AssemblyTypes.CANDIDATE
-    elif re.search(r'^ec\.[0-9]+$', assembly_name):
+    elif re.search(r"^ec\.[0-9]+$", assembly_name):
         return AssemblyTypes.PREVIEW
     else:
         return AssemblyTypes.STANDARD
@@ -886,7 +886,7 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
 
     # If no arch was found in the name, default to multi
     if not arch:
-        arch = 'multi'
+        arch = "multi"
 
     # Construct tag base (e.g., "4.21.0-0.nightly")
     # Note: rc_api_url will add the appropriate arch suffix (e.g., -s390x, -multi)
@@ -917,7 +917,7 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
                 data = await resp.json()
 
         # Check if the nightly name exists in the tags list
-        tags = data.get('tags', [])
+        tags = data.get("tags", [])
         if not isinstance(tags, list):
             logger.debug(f"Unexpected tags type: {type(tags)}, treating as non-existent")
             return False
@@ -926,7 +926,7 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
             if not isinstance(tag, dict):
                 logger.debug(f"Skipping non-dict tag entry: {type(tag)}")
                 continue
-            if tag.get('name') == nightly_name:
+            if tag.get("name") == nightly_name:
                 logger.info(f"Found existing nightly: {nightly_name}")
                 return True
 

@@ -10,7 +10,7 @@ class FindBugsQETestCase(unittest.TestCase):
             "--assembly=stream",
             "--group=openshift-4.6",
             "find-bugs:qe",
-            '--noop',
+            "--noop",
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(
@@ -19,5 +19,5 @@ class FindBugsQETestCase(unittest.TestCase):
         self.assertRegex(result.stderr.decode(), "Found \\d+ bugs")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -1,19 +1,19 @@
-STATE_PEND = 'pending'
-STATE_PASS = 'passed'
-STATE_FAIL = 'failed'
+STATE_PEND = "pending"
+STATE_PASS = "passed"
+STATE_FAIL = "failed"
 
 TEMPLATE_BASE_STATE = {
-    'status': STATE_PASS,
-    'msg': 'Complete',
+    "status": STATE_PASS,
+    "msg": "Complete",
 }
 
 TEMPLATE_IMAGE = {
-    'status': STATE_PEND,
-    'msg': '',
-    'images': {},
-    'total': 0,
-    'success': 0,
-    'fail': 0,
+    "status": STATE_PEND,
+    "msg": "",
+    "images": {},
+    "total": 0,
+    "success": 0,
+    "fail": 0,
 }
 
 
@@ -24,19 +24,19 @@ class DoozerStateError(Exception):
 
 
 def record_image_success(state, image):
-    state['success'] += 1
-    state['images'][image.distgit_key] = True
+    state["success"] += 1
+    state["images"][image.distgit_key] = True
 
 
 def record_image_fail(state, image, msg, logger=None):
-    state['fail'] += 1
-    state['images'][image.distgit_key] = msg
+    state["fail"] += 1
+    state["images"][image.distgit_key] = msg
     if logger:
-        logger.error('[{}] {}'.format(image.qualified_key, msg))
+        logger.error("[{}] {}".format(image.qualified_key, msg))
 
 
-def record_image_finish(state, msg='Complete'):
-    if state['fail']:
-        state['status'] = STATE_FAIL
-    elif state['total'] == state['success']:
-        state['status'] = STATE_PASS
+def record_image_finish(state, msg="Complete"):
+    if state["fail"]:
+        state["status"] = STATE_FAIL
+    elif state["total"] == state["success"]:
+        state["status"] = STATE_PASS

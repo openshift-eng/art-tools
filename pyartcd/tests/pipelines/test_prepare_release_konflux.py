@@ -113,10 +113,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             pipeline.shipment_data_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
         )
 
-    @patch('pyartcd.pipelines.prepare_release_konflux.GitRepository')
+    @patch("pyartcd.pipelines.prepare_release_konflux.GitRepository")
     async def test_setup_repos(self, MockGitRepositoryClass):
         # Mock file contents for YAML parsing
-        file_contents = {"releases.yml": 'releases_key: releases_value', "group.yml": 'group_key: group_value'}
+        file_contents = {"releases.yml": "releases_key: releases_value", "group.yml": "group_key: group_value"}
 
         # Create mock repositories
         mock_build_data_repo = AsyncMock(spec=GitRepository)
@@ -158,8 +158,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_shipment_data_repo.read_file.assert_not_awaited()
 
         # Verify config parsing
-        self.assertEqual(pipeline.releases_config, {'releases_key': 'releases_value'})
-        self.assertEqual(pipeline.group_config, {'group_key': 'group_value'})
+        self.assertEqual(pipeline.releases_config, {"releases_key": "releases_value"})
+        self.assertEqual(pipeline.group_config, {"group_key": "group_value"})
 
     async def test_validate_assembly_valid(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -319,7 +319,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config should specify `kind` for each advisory", str(context.exception))
 
-    @patch('pyartcd.pipelines.prepare_release_konflux.KonfluxDb')
+    @patch("pyartcd.pipelines.prepare_release_konflux.KonfluxDb")
     async def test_verify_attached_operators(self, MockKonfluxDb):
         """
         Tests that verify_attached_operators completes successfully when all
@@ -459,7 +459,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             "ET rpm advisory 12345 created with release date 2024-07-01"
         )
         pipeline.run_cmd_with_retry.assert_any_await(
-            [item for item in pipeline._elliott_base_command if item != '--build-system=konflux'],
+            [item for item in pipeline._elliott_base_command if item != "--build-system=konflux"],
             ["find-builds", "--kind=rpm", "--attach=12345", "--clean"],
         )
         pipeline.execute_command_with_logging.assert_awaited()
@@ -498,18 +498,18 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.validate_shipment_config(pipeline.shipment_config)
         self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
 
-    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_attached_operators', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_fbc_builds', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'get_snapshot', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "verify_attached_operators", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "attach_cve_flaws", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "create_update_build_data_pr", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI", spec=AsyncErrataAPI)
+    @patch.object(PrepareReleaseKonfluxPipeline, "update_shipment_mr", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "create_shipment_mr", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "find_bugs", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "find_or_build_fbc_builds", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "find_or_build_bundle_builds", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "find_builds_all", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "get_snapshot", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, "init_shipment", new_callable=AsyncMock)
     async def test_prepare_shipment_new_mr_prod_env(
         self,
         mock_init_shipment,
@@ -801,10 +801,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_find_builds_all.call_count, 1)
         self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
         self.assertEqual(mock_find_or_build_fbc_builds.call_count, 1)
-        mock_get_snapshot.assert_any_call(['extras-nvr'])
-        mock_get_snapshot.assert_any_call(['image-nvr'])
-        mock_get_snapshot.assert_any_call(['extras-bundle-nvr'])
-        mock_get_snapshot.assert_any_call(['fbc-nvr'])
+        mock_get_snapshot.assert_any_call(["extras-nvr"])
+        mock_get_snapshot.assert_any_call(["image-nvr"])
+        mock_get_snapshot.assert_any_call(["extras-bundle-nvr"])
+        mock_get_snapshot.assert_any_call(["fbc-nvr"])
         self.assertEqual(mock_get_snapshot.call_count, 4)
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
@@ -857,17 +857,17 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             pipeline.updated_assembly_group_config,
             Model(
                 {
-                    'shipment': {
-                        'env': 'prod',
-                        'advisories': [
-                            {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
-                            {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
-                            {'kind': 'metadata', 'live_id': 'LIVE_ID_FROM_ERRATA'},
-                            {'kind': 'fbc'},
+                    "shipment": {
+                        "env": "prod",
+                        "advisories": [
+                            {"kind": "image", "live_id": "LIVE_ID_FROM_ERRATA"},
+                            {"kind": "extras", "live_id": "LIVE_ID_FROM_ERRATA"},
+                            {"kind": "metadata", "live_id": "LIVE_ID_FROM_ERRATA"},
+                            {"kind": "fbc"},
                         ],
-                        'url': 'https://gitlab.example.com/mr/1',
+                        "url": "https://gitlab.example.com/mr/1",
                     },
-                    'advisories': {'rpm': 123},
+                    "advisories": {"rpm": 123},
                 }
             ),
         )

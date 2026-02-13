@@ -57,14 +57,14 @@ async def registry_login():
     """
 
     try:
-        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
+        await exectools.cmd_gather_async(f"oc --kubeconfig {os.environ['KUBECONFIG']} registry login")
 
     except KeyError:
-        logger.error('KUBECONFIG env var must be defined!')
+        logger.error("KUBECONFIG env var must be defined!")
         raise
 
     except ChildProcessError:
-        logger.error('Failed to login into OC registry')
+        logger.error("Failed to login into OC registry")
         raise
 
 
@@ -75,15 +75,15 @@ async def qci_registry_login():
 
     try:
         await exectools.cmd_gather_async(
-            f'oc registry login --registry=quay.io/openshift --auth-basic={os.environ["QCI_USER"]}:{os.environ["QCI_PASSWORD"]}'
+            f"oc registry login --registry=quay.io/openshift --auth-basic={os.environ['QCI_USER']}:{os.environ['QCI_PASSWORD']}"
         )
 
     except KeyError:
-        logger.error('QCI_USER and QCI_PASSWORD env vars must be defined!')
+        logger.error("QCI_USER and QCI_PASSWORD env vars must be defined!")
         raise
 
     except ChildProcessError:
-        logger.error('Failed to login into QCI registry')
+        logger.error("Failed to login into QCI registry")
         raise
 
 
@@ -116,20 +116,20 @@ def common_oc_wrapper(
 
 def get_release_image_info_from_pullspec(pullspec: str) -> (int, str):
     # oc image info --output=json <pullspec>
-    cmd_args = ['info', "--output=json", pullspec]
+    cmd_args = ["info", "--output=json", pullspec]
     res, out = common_oc_wrapper("single_image_info", "image", cmd_args, True, True)
     return res, json.loads(out)
 
 
 def extract_release_binary(image_pullspec: str, path_args: List[str]) -> (int, str):
     # oc image extract --confirm --only-files --path=/usr/bin/..:<workdir> <pullspec>
-    cmd_args = ['extract', '--confirm', '--only-files'] + path_args + [image_pullspec]
+    cmd_args = ["extract", "--confirm", "--only-files"] + path_args + [image_pullspec]
     return common_oc_wrapper("extract_image", "image", cmd_args, True, True)
 
 
 def get_release_image_pullspec(release_pullspec: str, image: str) -> (int, str):
     # oc adm release info --image-for=<image> <pullspec>
-    cmd_args = ['release', 'info', f'--image-for={image}', release_pullspec]
+    cmd_args = ["release", "info", f"--image-for={image}", release_pullspec]
     return common_oc_wrapper("image_info_in_release", "adm", cmd_args, True, True)
 
 
@@ -143,7 +143,7 @@ def extract_release_client_tools(release_pullspec: str, path_arg: str, single_ar
 
 
 def extract_baremetal_installer(
-    release_pullspec: str, path: str, arch: str, cmd: str = 'openshift-baremetal-install'
+    release_pullspec: str, path: str, arch: str, cmd: str = "openshift-baremetal-install"
 ) -> (int, str):
     """
     Extract baremetal-installer binary to specified location
@@ -152,24 +152,24 @@ def extract_baremetal_installer(
     :param arch: "amd64", "s390x", "ppc64le", "arm64"
     """
 
-    cmd_os = f'linux/{arch}'
+    cmd_os = f"linux/{arch}"
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
     args = [
-        'release',
-        'extract',
-        f'--command={cmd}',
-        '-n=ocp',
-        '--from',
+        "release",
+        "extract",
+        f"--command={cmd}",
+        "-n=ocp",
+        "--from",
         release_pullspec,
-        '--filter-by-os',
+        "--filter-by-os",
         cmd_os,
-        '--command-os',
+        "--command-os",
         cmd_os,
-        f'--to={path}',
+        f"--to={path}",
     ]
     return common_oc_wrapper(
-        cmd_result_name='extract_baremetal',
-        cli_verb='adm',
+        cmd_result_name="extract_baremetal",
+        cli_verb="adm",
         oc_args=args,
         check_status=True,
         return_value=True,

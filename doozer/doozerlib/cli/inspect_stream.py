@@ -12,7 +12,7 @@ from doozerlib.cli.release_gen_payload import PayloadGenerator
 @click.argument(
     "code", type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False), required=True
 )
-@click.option("--strict", default=False, type=bool, is_flag=True, help='Fail even if permitted')
+@click.option("--strict", default=False, type=bool, is_flag=True, help="Fail even if permitted")
 @click_coroutine
 @click.pass_obj
 async def inspect_stream(runtime, code, strict):
@@ -24,17 +24,17 @@ async def inspect_stream(runtime, code, strict):
         await assembly_inspector.initialize(lookup_mode=None)
         rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(runtime, assembly_inspector)
         if rhcos_inconsistencies:
-            msg = f'Found RHCOS inconsistencies in builds {rhcos_builds}'
+            msg = f"Found RHCOS inconsistencies in builds {rhcos_builds}"
             print(msg)
             pprint(rhcos_inconsistencies)
-            assembly_issue = AssemblyIssue(msg, component='rhcos', code=code)
+            assembly_issue = AssemblyIssue(msg, component="rhcos", code=code)
             if assembly_inspector.does_permit(assembly_issue):
-                print(f'Assembly permits code {code}.')
+                print(f"Assembly permits code {code}.")
                 if not strict:
                     exit(0)
-                print('Running in strict mode')
+                print("Running in strict mode")
             exit(1)
-        print(f'RHCOS builds consistent {rhcos_builds}')
+        print(f"RHCOS builds consistent {rhcos_builds}")
     elif code == AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT:
         requirements = runtime.group_config.rhcos.require_consistency
         if not requirements:
@@ -46,18 +46,18 @@ async def inspect_stream(runtime, code, strict):
         await assembly_inspector.initialize(lookup_mode="images")
         issues = _check_cross_payload_consistency_requirements(runtime, assembly_inspector, requirements)
         if issues:
-            print('Payload contents consistency requirements not satisfied')
+            print("Payload contents consistency requirements not satisfied")
             pprint(issues)
             not_permitted = [issue for issue in issues if not assembly_inspector.does_permit(issue)]
             if not_permitted:
-                print(f'Assembly does not permit: {not_permitted}')
+                print(f"Assembly does not permit: {not_permitted}")
                 exit(1)
             elif strict:
-                print('Running in strict mode; saw: {issues}')
+                print("Running in strict mode; saw: {issues}")
                 exit(1)
-        print('Payload contents consistency requirements satisfied')
+        print("Payload contents consistency requirements satisfied")
     else:
-        print(f'AssemblyIssueCode {code} not supported at this time :(')
+        print(f"AssemblyIssueCode {code} not supported at this time :(")
         exit(1)
 
 

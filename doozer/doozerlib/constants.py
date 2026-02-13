@@ -51,4 +51,4 @@ ART_FBC_GIT_REPO = "git@github.com:openshift-priv/art-fbc.git"
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
-ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+ART_BUILD_HISTORY_URL = "https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com"

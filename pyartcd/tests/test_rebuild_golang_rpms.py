@@ -40,5 +40,5 @@ class TestBumpRelease(TestCase):
         self.assertEqual(actual_r, expected_r)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

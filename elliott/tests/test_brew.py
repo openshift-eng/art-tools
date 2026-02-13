@@ -21,9 +21,9 @@ class TestBrew(unittest.TestCase):
         # Create Erratum(), create Build() using dict with all_errata
         # containing an object with 'id' matching Erratum.advisory_id
         b = brew.Build(
-            nvr='template-service-broker-docker-v3.7.36-2',
+            nvr="template-service-broker-docker-v3.7.36-2",
             body=test_structures.image_build_attached_open_json,
-            product_version='rhaos-test-7',
+            product_version="rhaos-test-7",
         )
         self.assertTrue(b.attached_to_open_erratum)
 
@@ -31,68 +31,68 @@ class TestBrew(unittest.TestCase):
         """We can tell if a build is attached to any closed erratum"""
         # Use filter #1991: (Active; Product: RHOSE; sorted by newest)
         b = brew.Build(
-            nvr='template-service-broker-docker-v3.7.36-2',
+            nvr="template-service-broker-docker-v3.7.36-2",
             body=test_structures.image_build_attached_closed_json,
-            product_version='rhaos-test-7',
+            product_version="rhaos-test-7",
         )
         self.assertTrue(b.attached_to_closed_erratum)
 
     def test_good_attached_brew_image_build(self):
         """We can create and process an attached image Build object"""
         b = brew.Build(
-            nvr='template-service-broker-docker-v3.7.36-2',
+            nvr="template-service-broker-docker-v3.7.36-2",
             body=test_structures.image_build_attached_json,
-            product_version='rhaos-test-7',
+            product_version="rhaos-test-7",
         )
 
-        self.assertEqual('template-service-broker-docker-v3.7.36-2', b.nvr)
-        self.assertEqual('image', b.kind)
-        self.assertEqual('tar', b.file_type)
+        self.assertEqual("template-service-broker-docker-v3.7.36-2", b.nvr)
+        self.assertEqual("image", b.kind)
+        self.assertEqual("tar", b.file_type)
         self.assertTrue(b.attached)
 
     def test_good_unattached_brew_image_build(self):
         """We can create and process an unattached image Build object"""
         b = brew.Build(
-            nvr='cri-o-docker-v3.7.37-1',
+            nvr="cri-o-docker-v3.7.37-1",
             body=test_structures.image_build_unattached_json,
-            product_version='rhaos-test-7',
+            product_version="rhaos-test-7",
         )
 
-        self.assertEqual('cri-o-docker-v3.7.37-1', b.nvr)
-        self.assertEqual('image', b.kind)
-        self.assertEqual('tar', b.file_type)
+        self.assertEqual("cri-o-docker-v3.7.37-1", b.nvr)
+        self.assertEqual("image", b.kind)
+        self.assertEqual("tar", b.file_type)
         self.assertFalse(b.attached)
 
     def test_good_attached_brew_rpm_build(self):
         """We can create and process an attached rpm Build object"""
         b = brew.Build(
-            nvr='coreutils-8.22-21.el7', body=test_structures.rpm_build_attached_json, product_version='rhaos-test-7'
+            nvr="coreutils-8.22-21.el7", body=test_structures.rpm_build_attached_json, product_version="rhaos-test-7"
         )
 
-        self.assertEqual('coreutils-8.22-21.el7', b.nvr)
-        self.assertEqual('rpm', b.kind)
-        self.assertEqual('rpm', b.file_type)
+        self.assertEqual("coreutils-8.22-21.el7", b.nvr)
+        self.assertEqual("rpm", b.kind)
+        self.assertEqual("rpm", b.file_type)
         self.assertTrue(b.attached)
 
     def test_good_unattached_brew_rpm_build(self):
         """We can create and process an unattached rpm Build object"""
         b = brew.Build(
-            nvr='ansible-service-broker-1.0.21-1.el7',
+            nvr="ansible-service-broker-1.0.21-1.el7",
             body=test_structures.rpm_build_unattached_json,
-            product_version='rhaos-test-7',
+            product_version="rhaos-test-7",
         )
 
-        self.assertEqual('ansible-service-broker-1.0.21-1.el7', b.nvr)
-        self.assertEqual('rpm', b.kind)
-        self.assertEqual('rpm', b.file_type)
+        self.assertEqual("ansible-service-broker-1.0.21-1.el7", b.nvr)
+        self.assertEqual("rpm", b.kind)
+        self.assertEqual("rpm", b.file_type)
         self.assertFalse(b.attached)
 
     def test_build_sorting(self):
         """Ensure we can sort a list of builds"""
-        b1 = brew.Build(nvr='abcd-1.0.0')
-        b2 = brew.Build(nvr='zyxw-1.0.0')
+        b1 = brew.Build(nvr="abcd-1.0.0")
+        b2 = brew.Build(nvr="zyxw-1.0.0")
         # Same one as before for equality
-        b3 = brew.Build(nvr='zyxw-1.0.0')
+        b3 = brew.Build(nvr="zyxw-1.0.0")
 
         self.assertGreater(b2, b1)
         self.assertLess(b1, b2)
@@ -100,15 +100,15 @@ class TestBrew(unittest.TestCase):
 
     def test_build_display(self):
         """Verify brew Builds display correctly"""
-        nvr = 'megafrobber-1.3.3-7'
+        nvr = "megafrobber-1.3.3-7"
         b = brew.Build(nvr=nvr)
         self.assertEqual(nvr, str(b))
         self.assertEqual("Build({nvr})".format(nvr=nvr), repr(b))
 
     def test_build_equality(self):
         """Ensure brew Builds are unique and can be tested for equality"""
-        b1 = brew.Build(nvr='megafrobber-1.3.3-7')
-        b2 = brew.Build(nvr='tuxracer-42')
+        b1 = brew.Build(nvr="megafrobber-1.3.3-7")
+        b2 = brew.Build(nvr="tuxracer-42")
 
         builds = set([])
         builds.add(str(b1))
@@ -119,30 +119,30 @@ class TestBrew(unittest.TestCase):
 
     def test_rpm_build_json_formatting(self):
         """Ensure a brew Build returns proper JSON for API posting"""
-        nvr = 'coreutils-8.22-21.el7'
-        pv = 'rhaos-test-7'
+        nvr = "coreutils-8.22-21.el7"
+        pv = "rhaos-test-7"
 
         b = brew.Build(nvr=nvr, body=test_structures.rpm_build_attached_json, product_version=pv)
 
         expected_json = {
-            'product_version': pv,
-            'build': nvr,
-            'file_types': ['rpm'],
+            "product_version": pv,
+            "build": nvr,
+            "file_types": ["rpm"],
         }
 
         self.assertEqual(expected_json, b.to_json())
 
     def test_image_build_json_formatting(self):
         """Ensure a brew Build returns proper JSON for API posting"""
-        nvr = 'template-service-broker-docker-v3.7.36-2'
-        pv = 'rhaos-test-7'
+        nvr = "template-service-broker-docker-v3.7.36-2"
+        pv = "rhaos-test-7"
 
         b = brew.Build(nvr=nvr, body=test_structures.image_build_attached_json, product_version=pv)
 
         expected_json = {
-            'product_version': pv,
-            'build': nvr,
-            'file_types': ['tar'],
+            "product_version": pv,
+            "build": nvr,
+            "file_types": ["tar"],
         }
 
         self.assertEqual(expected_json, b.to_json())
@@ -150,8 +150,8 @@ class TestBrew(unittest.TestCase):
     @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
     @mock.patch("requests.Session")
     def test_get_brew_build_success(self, MockSession, _):
-        nvr = 'coreutils-8.22-21.el7'
-        pv = 'rhaos-test-7'
+        nvr = "coreutils-8.22-21.el7"
+        pv = "rhaos-test-7"
         mock_session = MockSession.return_value
         mock_session.get.return_value.status_code = 200
         mock_session.get.return_value.json.return_value = test_structures.rpm_build_attached_json
@@ -164,8 +164,8 @@ class TestBrew(unittest.TestCase):
     @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
     @mock.patch("requests.Session")
     def test_get_brew_build_success_session(self, MockSession, _):
-        nvr = 'coreutils-8.22-21.el7'
-        pv = 'rhaos-test-7'
+        nvr = "coreutils-8.22-21.el7"
+        pv = "rhaos-test-7"
         mock_session = mock.MagicMock()
         mock_session.get.return_value.status_code = 200
         mock_session.get.return_value.json.return_value = test_structures.rpm_build_attached_json
@@ -178,8 +178,8 @@ class TestBrew(unittest.TestCase):
 
     @mock.patch("requests.Session")
     def test_get_brew_build_failure(self, mock_session):
-        nvr = 'coreutils-8.22-21.el7'
-        pv = 'rhaos-test-7'
+        nvr = "coreutils-8.22-21.el7"
+        pv = "rhaos-test-7"
         mock_session.get.return_value.status_code = 404
         mock_session.get.return_value.text = "__irrelevant__"
         with self.assertRaises(exceptions.BrewBuildException):
@@ -435,5 +435,5 @@ class TestBrew(unittest.TestCase):
         self.assertListEqual(actual, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

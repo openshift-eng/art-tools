@@ -144,7 +144,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
-        untag_builds.assert_awaited_once_with(ANY, [('test-target-tag', 'bar-1.0.0-1')])
+        untag_builds.assert_awaited_once_with(ANY, [("test-target-tag", "bar-1.0.0-1")])
 
     @patch("doozerlib.brew.get_builds_tags")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
@@ -174,16 +174,16 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         koji_api = runtime.build_retrying_koji_client.return_value
 
         kernel_build = {
-            'nvr': 'kernel-5.14.0-284.28.1.el9_2',
-            'version': '5.14.0',
-            'name': 'kernel',
-            'release': '284.28.1.el9_2',
+            "nvr": "kernel-5.14.0-284.28.1.el9_2",
+            "version": "5.14.0",
+            "name": "kernel",
+            "release": "284.28.1.el9_2",
         }
         kernel_rt_build = {
-            'nvr': 'kernel-rt-5.14.0-284.28.1.rt14.313.el9_2',
-            'version': '5.14.0',
-            'name': 'kernel-rt',
-            'release': '284.28.1.rt14.313.el9_2',
+            "nvr": "kernel-rt-5.14.0-284.28.1.rt14.313.el9_2",
+            "version": "5.14.0",
+            "name": "kernel-rt",
+            "release": "284.28.1.rt14.313.el9_2",
         }
 
         def _get_tagged_builds(
@@ -207,18 +207,18 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
-                kernel_build['nvr']: [{"name": "test-integration-tag"}],
-                kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
+                kernel_build["nvr"]: [{"name": "test-integration-tag"}],
+                kernel_rt_build["nvr"]: [{"name": "test-integration-tag"}],
             }[nvr]
             for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
-            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],
+            "tag_listing": {kernel_build["nvr"]: [], kernel_rt_build["nvr"]: []}[build],
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
         tag_builds.assert_awaited_once_with(
-            ANY, [('test-target-tag', kernel_build['nvr']), ('test-target-tag', kernel_rt_build['nvr'])], ANY
+            ANY, [("test-target-tag", kernel_build["nvr"]), ("test-target-tag", kernel_rt_build["nvr"])], ANY
         )
 
     @patch("doozerlib.brew.get_builds_tags")
@@ -249,16 +249,16 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         koji_api = runtime.build_retrying_koji_client.return_value
 
         kernel_build = {
-            'nvr': 'kernel-5.14.0-284.28.1.el9_2',
-            'version': '5.14.0',
-            'name': 'kernel',
-            'release': '284.28.1.el9_2',
+            "nvr": "kernel-5.14.0-284.28.1.el9_2",
+            "version": "5.14.0",
+            "name": "kernel",
+            "release": "284.28.1.el9_2",
         }
         kernel_rt_build = {
-            'nvr': 'kernel-rt-5.14.0-284.31.1.rt14.313.el9_2',
-            'version': '5.14.0',
-            'name': 'kernel-rt',
-            'release': '284.31.1.rt14.313.el9_2',
+            "nvr": "kernel-rt-5.14.0-284.31.1.rt14.313.el9_2",
+            "version": "5.14.0",
+            "name": "kernel-rt",
+            "release": "284.31.1.rt14.313.el9_2",
         }
 
         def _get_tagged_builds(
@@ -282,13 +282,13 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
-                kernel_build['nvr']: [{"name": "test-integration-tag"}],
-                kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
+                kernel_build["nvr"]: [{"name": "test-integration-tag"}],
+                kernel_rt_build["nvr"]: [{"name": "test-integration-tag"}],
             }[nvr]
             for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
-            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],
+            "tag_listing": {kernel_build["nvr"]: [], kernel_rt_build["nvr"]: []}[build],
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         with self.assertRaisesRegex(ValueError, "Version mismatch"):

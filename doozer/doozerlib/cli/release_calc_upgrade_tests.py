@@ -9,11 +9,11 @@ from doozerlib.cli import cli
 )
 @click.option("--version", required=True, help="The release version to calculate upgrade tests for (e.g. 4.6.31)")
 def release_calc_upgrade_tests(version):
-    arch = 'x86_64'
+    arch = "x86_64"
     versions = util.get_release_calc_previous(version, arch)
     major, minor = util.extract_version_fields(version, at_least=2)[:2]
-    curr_versions = [x for x in versions if f'{major}.{minor}' in x]
-    prev_versions = [x for x in versions if f'{major}.{minor - 1}' in x]
+    curr_versions = [x for x in versions if f"{major}.{minor}" in x]
+    prev_versions = [x for x in versions if f"{major}.{minor - 1}" in x]
 
     def get_test_edges(version_list):
         test_edges = []
@@ -30,4 +30,4 @@ def release_calc_upgrade_tests(version):
         return util.sort_semver(set(test_edges))
 
     edges = get_test_edges(curr_versions) + get_test_edges(prev_versions)
-    print(','.join(edges))
+    print(",".join(edges))

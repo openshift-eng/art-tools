@@ -20,31 +20,31 @@ def _get_valid_repos(ocp_build_data_dir: str) -> Set[str]:
         set: Set of valid repository names
     """
     valid_repos = set()
-    yaml = YAML(typ='safe')
+    yaml = YAML(typ="safe")
 
     # New style: repos/ directory with individual YAML files
-    repos_dir = Path(ocp_build_data_dir) / 'repos'
+    repos_dir = Path(ocp_build_data_dir) / "repos"
     if repos_dir.exists():
-        for repo_file in repos_dir.glob('*.yml'):
+        for repo_file in repos_dir.glob("*.yml"):
             try:
                 with open(repo_file) as f:
                     data = yaml.load(f)
                     # Repo files contain a list with one element
-                    if isinstance(data, list) and len(data) > 0 and 'name' in data[0]:
-                        valid_repos.add(data[0]['name'])
+                    if isinstance(data, list) and len(data) > 0 and "name" in data[0]:
+                        valid_repos.add(data[0]["name"])
             except Exception:
                 # Skip files that can't be parsed
                 pass
 
     # Old style: repos section in group.yml
-    group_yml = Path(ocp_build_data_dir) / 'group.yml'
+    group_yml = Path(ocp_build_data_dir) / "group.yml"
     if group_yml.exists():
         try:
             with open(group_yml) as f:
                 group_data = yaml.load(f)
-                if group_data and 'repos' in group_data:
+                if group_data and "repos" in group_data:
                     # In old style, repo names are the keys in the repos dict
-                    valid_repos.update(group_data['repos'].keys())
+                    valid_repos.update(group_data["repos"].keys())
         except Exception:
             # Skip if group.yml can't be parsed
             pass
@@ -75,8 +75,8 @@ def validate(file, data, images_dir=None):
 
     # Validate that the image has a delivery.delivery_repo_names field if it is not disabled or for_release is false
     if data.get("mode") != "disabled" and data.get("for_release") is not False:
-        delivery_info = data.get('delivery')
-        if not delivery_info or 'delivery_repo_names' not in delivery_info:
+        delivery_info = data.get("delivery")
+        if not delivery_info or "delivery_repo_names" not in delivery_info:
             errors.append(
                 "Image must have a 'delivery.delivery_repo_names' field unless 'mode' is 'disabled' or 'for_release' is false."
             )
@@ -115,4 +115,4 @@ def validate(file, data, images_dir=None):
                             f"or in the 'repos' section of {ocp_build_data_dir}/group.yml"
                         )
 
-    return '\n'.join(errors) if errors else None
+    return "\n".join(errors) if errors else None

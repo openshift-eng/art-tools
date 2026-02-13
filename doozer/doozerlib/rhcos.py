@@ -65,7 +65,7 @@ class RHCOSBuildFinder:
         # TODO: create private rhcos builds and do something with "private" here
         bucket = self.brew_arch
         if self.custom:
-            bucket += '-custom'
+            bucket += "-custom"
 
         multi_url = self.runtime.group_config.urls.rhcos_release_base["multi"]
         bucket_url = self.runtime.group_config.urls.rhcos_release_base[bucket]
@@ -78,7 +78,7 @@ class RHCOSBuildFinder:
 
         bucket_suffix = brew_suffix_for_arch(self.brew_arch)
         if self.custom:
-            bucket_suffix += '-custom'
+            bucket_suffix += "-custom"
 
         return f"{RHCOS_RELEASES_BASE_URL}/rhcos-{self.version}{bucket_suffix}"
 
@@ -169,7 +169,7 @@ class RHCOSBuildFinder:
                 stdout, _ = exectools.cmd_assert(
                     f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
                 )
-                with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
+                with open(os.path.join(temp_dir, "meta.json"), "r") as f:
                     meta_data = json.load(f)
             return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
         elif meta_type == "meta":
@@ -177,7 +177,7 @@ class RHCOSBuildFinder:
                 stdout, _ = exectools.cmd_assert(
                     f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
                 )
-                with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
+                with open(os.path.join(temp_dir, "extensions.json"), "r") as f:
                     extensions_data = json.load(f)
             return {"extensions": {"manifest": extensions_data}}
 
@@ -216,7 +216,7 @@ class RHCOSBuildFinder:
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_major}.{rhel_minor}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
             with request.urlopen(url) as req:
-                return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
+                return json.loads(req.read().decode())["rpmostree.rpmdb.pkglist"]
         else:
             return []
 
@@ -259,19 +259,19 @@ class RHCOSBuildInspector:
 
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
             self._build_meta = finder.rhcos_build_meta_layered(
-                pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
+                pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type="meta"
             )
             self._os_commitmeta = finder.rhcos_build_meta_layered(
-                pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
+                pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type="commitmeta"
             )
             self.rhel_build_meta = finder.rhel_build_meta_layered(pullspec_for_tag.get("rhel-coreos", None))
             # if there is el10 then add it to metadata
             if pullspec_for_tag.get("rhel-coreos-10", None):
                 self._build_meta_10 = finder.rhcos_build_meta_layered(
-                    pullspec=pullspec_for_tag.get("rhel-coreos-10-extensions", None), meta_type='meta'
+                    pullspec=pullspec_for_tag.get("rhel-coreos-10-extensions", None), meta_type="meta"
                 )
                 self._os_commitmeta_10 = finder.rhcos_build_meta_layered(
-                    pullspec=pullspec_for_tag.get("rhel-coreos-10", None), meta_type='commitmeta'
+                    pullspec=pullspec_for_tag.get("rhel-coreos-10", None), meta_type="commitmeta"
                 )
                 self.rhel_build_meta = self.rhel_build_meta + finder.rhel_build_meta_layered(
                     pullspec_for_tag.get("rhel-coreos-10", None)
@@ -281,22 +281,22 @@ class RHCOSBuildInspector:
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
                     raise Exception(
-                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus {self.build_id}'
+                        f"Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus {self.build_id}"
                     )
                 self.build_id = image_build_id
 
             # The first digits of the RHCOS build are the major.minor of the rhcos stream name.
             # Which, near branch cut, might not match the actual release stream.
             # Sadly we don't have any other labels or anything to look at to determine the stream.
-            version = self.build_id.split('.')[0]
-            self.stream_version = version[0] + '.' + version[1:]  # e.g. 43.82.202102081639.0 -> "4.3"
+            version = self.build_id.split(".")[0]
+            self.stream_version = version[0] + "." + version[1:]  # e.g. 43.82.202102081639.0 -> "4.3"
 
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
-            self._build_meta = finder.rhcos_build_meta(self.build_id, meta_type='meta')
-            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, meta_type='commitmeta')
+            self._build_meta = finder.rhcos_build_meta(self.build_id, meta_type="meta")
+            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, meta_type="commitmeta")
 
     def __repr__(self):
-        return f'RHCOSBuild:{self.brew_arch}:{self.build_id}'
+        return f"RHCOSBuild:{self.brew_arch}:{self.build_id}"
 
     def get_os_metadata(self) -> Dict:
         """
@@ -319,7 +319,7 @@ class RHCOSBuildInspector:
         entries = []
 
         # Process _os_commitmeta (rhel-coreos)
-        commitmeta_entries = self._os_commitmeta.get('rpmostree.rpmdb.pkglist', [])
+        commitmeta_entries = self._os_commitmeta.get("rpmostree.rpmdb.pkglist", [])
         if not commitmeta_entries:
             raise Exception(f"no pkglist in OS Metadata for build {self.build_id}")
         for entry in commitmeta_entries:
@@ -327,7 +327,7 @@ class RHCOSBuildInspector:
 
         # Process _os_commitmeta_10 (rhel-coreos-10)
         if self._build_meta_10:
-            commitmeta_10_entries = self._os_commitmeta_10.get('rpmostree.rpmdb.pkglist', [])
+            commitmeta_10_entries = self._os_commitmeta_10.get("rpmostree.rpmdb.pkglist", [])
             for entry in commitmeta_10_entries:
                 entries.append(entry + ["rhel-coreos-10"])
 
@@ -335,7 +335,7 @@ class RHCOSBuildInspector:
             for name, vra in extensions_manifest.items():
                 # e.g. "kernel-rt-core": "4.18.0-372.32.1.rt7.189.el8_6.x86_64"
                 # or "qemu-img": "15:6.2.0-11.module+el8.6.0+16538+01ea313d.6.x86_64"
-                values = vra.rsplit('-', 1)
+                values = vra.rsplit("-", 1)
                 if len(values) != 2:
                     self.runtime.logger.warning("Skipping extension rpm %s with invalid version-release: %s", name, vra)
                     continue
@@ -343,13 +343,13 @@ class RHCOSBuildInspector:
                 # if epoch is not specified, just use 0. for some reason it's included in the version in
                 # RHCOS metadata as "epoch:version"; but if we query brew for it that way, it does not
                 # like the format, so we separate it out from the version.
-                epoch, version = version.split(':', 1) if ':' in version else ('0', version)
-                release, arch = ra.rsplit('.', 1)
+                epoch, version = version.split(":", 1) if ":" in version else ("0", version)
+                release, arch = ra.rsplit(".", 1)
                 entries.append([name, epoch, version, release, arch, repo_name])
 
         # Process _build_meta (rhcos-coreos-extensions)
         try:
-            extensions = self._build_meta['extensions']['manifest']
+            extensions = self._build_meta["extensions"]["manifest"]
             _process_extensions(extensions, "rhcos-coreos-extensions")
         except KeyError:
             pass  # no extensions before 4.8; ignore missing
@@ -357,7 +357,7 @@ class RHCOSBuildInspector:
         # Process _build_meta_10 (rhel-coreos-10-extensions)
         if self._build_meta_10:
             try:
-                extensions_10 = self._build_meta_10['extensions']['manifest']
+                extensions_10 = self._build_meta_10["extensions"]["manifest"]
                 _process_extensions(extensions_10, "rhel-coreos-10-extensions")
             except KeyError:
                 pass
@@ -384,7 +384,7 @@ class RHCOSBuildInspector:
                 continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
-            rpm_nvrs.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}')
+            rpm_nvrs.append(f"{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}")
 
         return rpm_nvrs
 
@@ -400,7 +400,7 @@ class RHCOSBuildInspector:
                 continue
             # Example entry ['NetworkManager', '1', '1.14.0', '14.el8', 'x86_64' ]
             # rpm_entry[1] is epoch.
-            rpm_nvras.append(f'{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}.{rpm_entry[4]}')
+            rpm_nvras.append(f"{rpm_entry[0]}-{rpm_entry[2]}-{rpm_entry[3]}.{rpm_entry[4]}")
 
         return rpm_nvras
 
@@ -434,10 +434,10 @@ class RHCOSBuildInspector:
             tasks = []
             with koji_api.multicall(strict=True) as m:
                 for rpm_def in rpm_defs:
-                    tasks.append(m.getBuild(rpm_def['build_id'], brew.KojiWrapperOpts(caching=True), strict=True))
+                    tasks.append(m.getBuild(rpm_def["build_id"], brew.KojiWrapperOpts(caching=True), strict=True))
             for task in tasks:
                 package_build = task.result
-                package_name = package_build['package_name']
+                package_name = package_build["package_name"]
                 aggregate[package_name] = package_build
         return aggregate
 
@@ -493,7 +493,7 @@ class RHCOSBuildInspector:
             if el_ver:
                 return el_ver
 
-        raise IOError(f'Unable to determine RHEL version base for rhcos {self.build_id}')
+        raise IOError(f"Unable to determine RHEL version base for rhcos {self.build_id}")
 
     async def find_non_latest_rpms(self, exclude_rhel: Optional[bool] = False) -> List[Tuple[str, str, str]]:
         """

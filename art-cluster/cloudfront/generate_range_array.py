@@ -51,16 +51,16 @@ from typing import Dict, List, Tuple
 AWS_IP_RANGES_URL = "https://ip-ranges.amazonaws.com/ip-ranges.json"
 
 with urllib.request.urlopen(AWS_IP_RANGES_URL) as f:
-    cidrs = json.load(f)['prefixes']
+    cidrs = json.load(f)["prefixes"]
 
 ranges_by_region: Dict[str, List[Tuple[int, int]]] = {}
 for cb in cidrs:
-    service = cb['service']
+    service = cb["service"]
     if service.lower() != "ec2":
         continue
 
-    region = cb['region']
-    if not region.startswith('us-'):
+    region = cb["region"]
+    if not region.startswith("us-"):
         continue
 
     if region not in ranges_by_region:
@@ -69,7 +69,7 @@ for cb in cidrs:
     else:
         region_range = ranges_by_region[region]
 
-    prefix = cb['ip_prefix']
+    prefix = cb["ip_prefix"]
     net = ip_network(prefix)
 
     first_address_decimal = int(ip_address(net[0]))

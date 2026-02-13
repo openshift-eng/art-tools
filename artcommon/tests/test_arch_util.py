@@ -30,7 +30,7 @@ class TestArchUtil(unittest.TestCase):
             self.assertEqual(arch_util.brew_arch_for_go_arch(brew_arch), brew_arch)
 
         with self.assertRaises(Exception):
-            self.assertEqual(arch_util.brew_arch_for_go_arch('wrong'), 'bogus')
+            self.assertEqual(arch_util.brew_arch_for_go_arch("wrong"), "bogus")
 
     def test_go_arch_suffixes(self):
         expectations = {
@@ -44,7 +44,7 @@ class TestArchUtil(unittest.TestCase):
             self.assertEqual(arch_util.go_suffix_for_arch(arch), suffix)
 
         for arch, suffix in expectations.items():
-            self.assertEqual(arch_util.go_suffix_for_arch(arch, is_private=True), f'{suffix}-priv')
+            self.assertEqual(arch_util.go_suffix_for_arch(arch, is_private=True), f"{suffix}-priv")
 
     def test_go_arch_for_brew_arch(self):
         expectations = {
@@ -62,4 +62,4 @@ class TestArchUtil(unittest.TestCase):
             self.assertEqual(arch_util.go_arch_for_brew_arch(go_arch), go_arch)
 
         with self.assertRaises(Exception):
-            self.assertEqual(arch_util.go_arch_for_brew_arch('wrong'), 'bogus')
+            self.assertEqual(arch_util.go_arch_for_brew_arch("wrong"), "bogus")

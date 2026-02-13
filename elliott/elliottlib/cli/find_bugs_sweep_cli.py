@@ -47,15 +47,15 @@ class FindBugsSweep(FindBugsMode):
     def __init__(self, cve_only: bool = False):
         # Policy document: https://docs.google.com/document/d/1RkyN1hp1_mUqeks0kVzPscDeZVo-RDCYCTq6VLNB9i4/edit?tab=t.0#heading=h.m52kbuqe0dss
         # Accordingly, ART only sweeps VERIFIED by default.
-        super().__init__(status={'VERIFIED'}, cve_only=cve_only)
+        super().__init__(status={"VERIFIED"}, cve_only=cve_only)
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
-@click.option("--add", "-a", 'advisory_id', type=int, metavar='ADVISORY', help="Add found bugs to ADVISORY")
+@click.option("--add", "-a", "advisory_id", type=int, metavar="ADVISORY", help="Add found bugs to ADVISORY")
 @common.use_default_advisory_option
 @click.option(
     "--include-status",
-    'include_status',
+    "include_status",
     multiple=True,
     default=None,
     required=False,
@@ -64,7 +64,7 @@ class FindBugsSweep(FindBugsMode):
 )
 @click.option(
     "--exclude-status",
-    'exclude_status',
+    "exclude_status",
     multiple=True,
     default=None,
     required=False,
@@ -73,17 +73,17 @@ class FindBugsSweep(FindBugsMode):
 )
 @click.option("--report", required=False, is_flag=True, help="Output a detailed report of found bugs")
 @click.option(
-    '--output',
-    '-o',
+    "--output",
+    "-o",
     required=False,
-    type=click.Choice(['text', 'json', 'slack']),
-    default='text',
-    help='Applies chosen format to --report output',
+    type=click.Choice(["text", "json", "slack"]),
+    default="text",
+    help="Applies chosen format to --report output",
 )
 @click.option(
     "--into-default-advisories",
     is_flag=True,
-    help='Attaches bugs found to their correct default advisories, e.g. operator-related bugs go to '
+    help="Attaches bugs found to their correct default advisories, e.g. operator-related bugs go to "
     '"extras" instead of the default "image", bugs filtered into "none" are not attached at all.',
 )
 @click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
@@ -147,7 +147,7 @@ async def find_bugs_sweep_cli(
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
 
-    if runtime.build_system == 'konflux':
+    if runtime.build_system == "konflux":
         raise click.BadParameter("Do not use find-bugs:sweep with --build-system=konflux, instead use find-bugs")
 
     runtime.initialize(mode="both")
@@ -162,15 +162,15 @@ async def find_bugs_sweep_cli(
         find_bugs_obj,
         noop=noop,
         permissive=permissive,
-        bug_tracker=runtime.get_bug_tracker('jira'),
+        bug_tracker=runtime.get_bug_tracker("jira"),
         operator_bundle_advisory=operator_bundle_advisory,
     )
 
     if not bugs:
-        logger.info('No bugs found')
+        logger.info("No bugs found")
         sys.exit(0)
 
-    if output == 'text':
+    if output == "text":
         click.echo(f"Found {len(bugs)} bugs")
         click.echo(", ".join(sorted(str(b.id) for b in bugs)))
 
@@ -282,9 +282,9 @@ async def find_and_attach_bugs(
         permissive=permissive,
     )
     for kind, kind_bugs in bugs_by_type.items():
-        logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
+        logger.info(f"{kind} bugs: {[b.id for b in kind_bugs]}")
 
-    if runtime.build_system == 'konflux':
+    if runtime.build_system == "konflux":
         return bugs
 
     if not any([advisory_id, default_advisory_type, advisory_ids]):
@@ -331,14 +331,14 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
     """
     # fetch builds from ET advisories
     builds_by_kind: Dict[str, List[str]] = {}
-    if runtime.build_system == 'brew':
+    if runtime.build_system == "brew":
         advisory_ids = runtime.get_default_advisories()
         for kind, kind_advisory_id in advisory_ids.items():
             if int(kind_advisory_id) <= 0:
                 logger.info(f"{kind} advisory is not initialized: {kind_advisory_id}")
                 continue
             builds_by_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
-    elif runtime.build_system == 'konflux':
+    elif runtime.build_system == "konflux":
         # fetch builds from shipments
         assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
         shipment = assembly_group_config.get("shipment", {})
@@ -357,10 +357,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]
     included_bug_ids = {i["id"] for i in issues_config.include}
     excluded_bug_ids = {i["id"] for i in issues_config.exclude}
 
-    if bug_tracker_type == 'jira':
+    if bug_tracker_type == "jira":
         included_bug_ids = {i for i in included_bug_ids if JIRABug.looks_like_a_jira_bug(i)}
         excluded_bug_ids = {i for i in excluded_bug_ids if JIRABug.looks_like_a_jira_bug(i)}
-    elif bug_tracker_type == 'bugzilla':
+    elif bug_tracker_type == "bugzilla":
         included_bug_ids = {i for i in included_bug_ids if not JIRABug.looks_like_a_jira_bug(i)}
         excluded_bug_ids = {i for i in excluded_bug_ids if not JIRABug.looks_like_a_jira_bug(i)}
     return included_bug_ids, excluded_bug_ids
@@ -440,7 +440,7 @@ def categorize_bugs_by_type(
         non_tracker_bugs -= bugs_by_type["rhcos"]
 
     # microshift bugs go to microshift advisory
-    bugs_by_type["microshift"] = {b for b in non_tracker_bugs if b.component and b.component.startswith('MicroShift')}
+    bugs_by_type["microshift"] = {b for b in non_tracker_bugs if b.component and b.component.startswith("MicroShift")}
     non_tracker_bugs -= bugs_by_type["microshift"]
 
     # remaining non-tracker bugs go to image advisory
@@ -470,7 +470,7 @@ def categorize_bugs_by_type(
     # Validate tracker bugs' summary suffixes
     invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
-        logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        logger.info(f"Tracker bug, component: {(b.id, b.whiteboard_component)}")
         if not b.has_valid_target_version_in_summary(major_version, minor_version):
             invalid_summary_trackers.add(b)
 
@@ -502,7 +502,7 @@ def categorize_bugs_by_type(
         attached_nvrs = builds_by_advisory_kind.get(kind, [])
         packages = {parse_nvr(nvr)["name"] for nvr in attached_nvrs}
         exception_packages = []
-        if kind == 'image':
+        if kind == "image":
             # golang builder is a special tracker component
             # which applies to all our golang images
             exception_packages.append(constants.GOLANG_BUILDER_CVE_COMPONENT)
@@ -536,8 +536,8 @@ def categorize_bugs_by_type(
     def _message(kind: str, bug_data: list[tuple[str, str]]) -> str:
         advisory_type = "errata" if runtime.build_system == "brew" else "shipment"
         return (
-            f'No attached builds found in {advisory_type} advisories for {kind} tracker bugs (bug, package): '
-            f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
+            f"No attached builds found in {advisory_type} advisories for {kind} tracker bugs (bug, package): "
+            f"{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition"
         )
 
     def _is_image_component(component: str) -> bool:
@@ -548,8 +548,8 @@ def categorize_bugs_by_type(
         still_not_found = not_found
         if permitted_bug_ids:
             logger.info(
-                'The following tracker bugs will be included in image advisory because they are '
-                f'explicitly included in the assembly config: {permitted_bug_ids}'
+                "The following tracker bugs will be included in image advisory because they are "
+                f"explicitly included in the assembly config: {permitted_bug_ids}"
             )
             bugs_by_type["image"] = {b for b in not_found if b.id in permitted_bug_ids}
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
@@ -617,9 +617,9 @@ def rhcos_bugs(bugs: type_bug_set) -> type_bug_set:
     return rhcos_bugs
 
 
-def print_report(bugs: type_bug_list, output: str = 'text') -> None:
-    approved_url = 'https://source.redhat.com/groups/public/openshift/openshift_wiki/openshift_bugzilla_process'
-    if output == 'slack':
+def print_report(bugs: type_bug_list, output: str = "text") -> None:
+    approved_url = "https://source.redhat.com/groups/public/openshift/openshift_wiki/openshift_bugzilla_process"
+    if output == "slack":
         for bug in bugs:
             if bug.release_blocker:
                 click.echo(
@@ -630,7 +630,7 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
             else:
                 click.echo("<{}|{}> - {:<25s} ".format(bug.weburl, bug.id, bug.component))
 
-    elif output == 'json':
+    elif output == "json":
         print(
             json.dumps(
                 [
@@ -656,7 +656,7 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
         )
         for bug in bugs:
             days_ago = bug.created_days_ago()
-            cf_pm_score = bug.cf_pm_score if hasattr(bug, "cf_pm_score") else '?'
+            cf_pm_score = bug.cf_pm_score if hasattr(bug, "cf_pm_score") else "?"
             click.echo(
                 "{:<13s} {:<25s} {:<12s} {:<7s} {:<3d} days   {:60s} ".format(
                     str(bug.id), bug.component, bug.status, cf_pm_score, days_ago, bug.summary[:60]

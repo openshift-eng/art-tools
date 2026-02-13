@@ -8,16 +8,16 @@ from lambda_r2_lib import S3_BUCKET_NAME
 
 VERBOSE = False
 
-DEFAULT_OUTPUT_FILE = 'index.html'
+DEFAULT_OUTPUT_FILE = "index.html"
 
 # bytes pretty-printing
 UNITS_MAPPING = [
-    (1024**5, ' PB'),
-    (1024**4, ' TB'),
-    (1024**3, ' GB'),
-    (1024**2, ' MB'),
-    (1024**1, ' KB'),
-    (1024**0, (' byte', ' bytes')),
+    (1024**5, " PB"),
+    (1024**4, " TB"),
+    (1024**3, " GB"),
+    (1024**2, " MB"),
+    (1024**1, " KB"),
+    (1024**0, (" byte", " bytes")),
 ]
 
 
@@ -25,12 +25,12 @@ class S3Path:
     def __init__(self, is_dir: bool, s3_entry):
         self._is_dir = is_dir
         self._is_symlink = False
-        self._last_modified = s3_entry.get('LastModified', None)  # Only included in file entries (not directory keys)
-        self._size = s3_entry.get('Size', 0)
+        self._last_modified = s3_entry.get("LastModified", None)  # Only included in file entries (not directory keys)
+        self._size = s3_entry.get("Size", 0)
         if self._is_dir:
-            self._absolute = s3_entry['Prefix'].lstrip('/')
+            self._absolute = s3_entry["Prefix"].lstrip("/")
         else:
-            self._absolute = s3_entry['Key']
+            self._absolute = s3_entry["Key"]
         self.name = Path(self._absolute).name
 
     def is_dir(self):
@@ -55,28 +55,28 @@ class S3Path:
 # This function is a generator
 def s3_list_dir(s3_client, bucket_name: str, dir_path: str):
     try:
-        dir_path = dir_path.lstrip('/')
-        if dir_path not in [None, '', '.', '/']:
-            prefix = dir_path.rstrip('/') + '/'
+        dir_path = dir_path.lstrip("/")
+        if dir_path not in [None, "", ".", "/"]:
+            prefix = dir_path.rstrip("/") + "/"
         else:
-            prefix = ''
+            prefix = ""
 
         s3_result = {}
-        while not s3_result or s3_result['IsTruncated']:
-            continuation_key = s3_result.get('NextContinuationToken', None)
+        while not s3_result or s3_result["IsTruncated"]:
+            continuation_key = s3_result.get("NextContinuationToken", None)
             kwargs = {}
             if continuation_key:
-                kwargs['ContinuationToken'] = continuation_key
+                kwargs["ContinuationToken"] = continuation_key
 
             if VERBOSE:
-                print(f'Querying {bucket_name} with prefix {prefix} and continuation: {continuation_key}')
+                print(f"Querying {bucket_name} with prefix {prefix} and continuation: {continuation_key}")
             s3_result = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter="/", **kwargs)
 
             if VERBOSE:
-                print(f'Query result: {s3_result}')
+                print(f"Query result: {s3_result}")
 
             # Example CommonPrefixes entry: {'Prefix': 'srv/enterprise/reposync/rhel-server-ose-rpms/repodata/'}
-            for entry in s3_result.get('CommonPrefixes', []):
+            for entry in s3_result.get("CommonPrefixes", []):
                 yield S3Path(True, entry)
 
             # Example Content entry:
@@ -85,8 +85,8 @@ def s3_list_dir(s3_client, bucket_name: str, dir_path: str):
             #    'ETag': '"570dacca4771943793bf981ca2c0ba1d"',
             #    'Size': 62780,
             #    'StorageClass': 'STANDARD'}
-            for entry in s3_result.get('Contents', []):
-                if entry['Key'] == prefix:
+            for entry in s3_result.get("Contents", []):
+                if entry["Key"] == prefix:
                     # If there was an actual 'directory' object created to for this prefix
                     continue
                 yield S3Path(False, entry)
@@ -118,7 +118,7 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
         return None
 
     if VERBOSE:
-        print(f'Traversing dir {str(path_top_dir)}')
+        print(f"Traversing dir {str(path_top_dir)}")
 
     index_file = StringIO()
     body_top = (
@@ -367,7 +367,7 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
     </svg>
 <header>
     <h1>"""
-        f'{path_top_dir.name}'
+        f"{path_top_dir.name}"
         """</h1>
              </header>
                  <main>
@@ -410,7 +410,7 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
             continue
 
         if VERBOSE:
-            print(f'{entry.absolute()}')
+            print(f"{entry.absolute()}")
 
         entry_count += 1
 
@@ -418,10 +418,10 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
             continue
 
         size_bytes = -1  # is a folder
-        size_pretty = '&mdash;'
-        last_modified = '-'
-        last_modified_human_readable = '-'
-        last_modified_iso = ''
+        size_pretty = "&mdash;"
+        last_modified = "-"
+        last_modified_human_readable = "-"
+        last_modified_iso = ""
         try:
             if entry.is_file():
                 size_bytes = entry.size()
@@ -431,27 +431,27 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
                 last_modified_human_readable = last_modified.strftime("%c")
 
         except Exception as e:
-            print('ERROR accessing file name:', e, entry)
+            print("ERROR accessing file name:", e, entry)
             continue
 
         entry_path = str(entry.name)
 
         if entry.is_dir() and not entry.is_symlink():
-            entry_type = 'folder'
-            if os.name not in ('nt',):
+            entry_type = "folder"
+            if os.name not in ("nt",):
                 # append trailing slash to dirs, unless it's windows
-                entry_path = os.path.join(entry.name, '')
+                entry_path = os.path.join(entry.name, "")
 
         elif entry.is_dir() and entry.is_symlink():
-            entry_type = 'folder-shortcut'
-            print('dir-symlink', entry.absolute())
+            entry_type = "folder-shortcut"
+            print("dir-symlink", entry.absolute())
 
         elif entry.is_file() and entry.is_symlink():
-            entry_type = 'file-shortcut'
-            print('file-symlink', entry.absolute())
+            entry_type = "file-shortcut"
+            print("file-symlink", entry.absolute())
 
         else:
-            entry_type = 'file'
+            entry_type = "file"
 
         index_file.write(f"""
         <tr class="file">
@@ -498,31 +498,31 @@ def lambda_handler(event, context):
     # the R2 bucket via incremental update (which they call sippy).
     # r2_s3_client = get_r2_s3_client()
     if aws_s3_client is None:
-        aws_s3_client = boto3.client('s3')
+        aws_s3_client = boto3.client("s3")
 
-    request = event['Records'][0]['cf']['request']
-    uri = request.get('uri', '')
-    query_string = request.get('querystring', '')
+    request = event["Records"][0]["cf"]["request"]
+    uri = request.get("uri", "")
+    query_string = request.get("querystring", "")
     query_components = parse_qs(query_string)
 
     if VERBOSE:
-        print(f'query_components: {query_components}')
+        print(f"query_components: {query_components}")
 
     entry_offset = 0
-    if 'entry' in query_components:
-        entry_offset = int(query_components['entry'][0])
+    if "entry" in query_components:
+        entry_offset = int(query_components["entry"][0])
 
-    if '..' in uri:
+    if ".." in uri:
         return request
 
     # The browser may have escaped chars like + with %2B. Decode for API based S3 queries.
     uri = unquote(uri)
 
-    if uri.endswith('/'):
-        dir_key = uri.rstrip('/')
+    if uri.endswith("/"):
+        dir_key = uri.rstrip("/")
     else:
-        if uri.endswith('index.html'):
-            dir_key = uri.rsplit('/', 1)[0]  # Strip off index.html
+        if uri.endswith("index.html"):
+            dir_key = uri.rsplit("/", 1)[0]  # Strip off index.html
         else:
             # The request is not for an index rendering. Allow it to pass
             # on to the origin.
@@ -534,21 +534,21 @@ def lambda_handler(event, context):
         return request
 
     return {
-        'status': '200',
-        'statusDescription': 'OK',
-        'headers': {
-            'cache-control': [
+        "status": "200",
+        "statusDescription": "OK",
+        "headers": {
+            "cache-control": [
                 {
-                    'key': 'Cache-Control',
-                    'value': 'max-age=0',
+                    "key": "Cache-Control",
+                    "value": "max-age=0",
                 },
             ],
             "content-type": [
                 {
-                    'key': 'Content-Type',
-                    'value': 'text/html',
+                    "key": "Content-Type",
+                    "value": "text/html",
                 },
             ],
         },
-        'body': content,
+        "body": content,
     }

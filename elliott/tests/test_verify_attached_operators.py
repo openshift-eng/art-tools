@@ -11,7 +11,7 @@ from elliottlib.exceptions import BrewBuildException
 
 class TestVerifyAttachedOperators(unittest.TestCase):
     def setUp(self):
-        self.respath = Path(os.path.dirname(__file__), 'resources')
+        self.respath = Path(os.path.dirname(__file__), "resources")
 
     @patch("artcommonlib.exectools.cmd_assert", autospec=True)
     def test_nvr_for_operand_pullspec(self, mock_cmd):
@@ -42,7 +42,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
             release="1",
             nvr="ose-ptp-operator-metadata-container-v4.11.0.202303240327.p0.g88b8e8d.assembly.stream-1",
         )
-        fixture_path = self.respath.joinpath('test_verify_attached_operators', 'operator_manifests.zip')
+        fixture_path = self.respath.joinpath("test_verify_attached_operators", "operator_manifests.zip")
         mock_get_req.return_value = MagicMock(
             status_code=200,
             content=Path(fixture_path).read_bytes(),
@@ -50,7 +50,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
         self.assertEqual(
             "ptp-operator.4.11.0-202303240327",
-            vaocli._download_bundle_csv(bundle_build)['metadata']['name'],
+            vaocli._download_bundle_csv(bundle_build)["metadata"]["name"],
         )
 
     @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # suppress output
@@ -83,8 +83,8 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     def test_get_attached_advisory_ids(self, mock_gbb):
         mock_gbb.return_value = MagicMock(
             all_errata=[
-                {'id': 42, 'name': 'RHSA-2022:7400', 'status': 'DROPPED_NO_SHIP'},
-                {'id': 104603, 'name': 'RHSA-2022:7401', 'status': 'SHIPPED_LIVE'},
+                {"id": 42, "name": "RHSA-2022:7400", "status": "DROPPED_NO_SHIP"},
+                {"id": 104603, "name": "RHSA-2022:7401", "status": "SHIPPED_LIVE"},
             ]
         )
         self.assertEqual({104603}, vaocli._get_attached_advisory_ids("nvr"), "contains only shipped")
@@ -92,33 +92,33 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     @patch("elliottlib.errata.get_cached_image_cdns", autospec=True)
     def test_get_cdn_repos(self, mock_gci_cdns):
         mock_gci_cdns.return_value = {
-            'nvr1': {
-                'docker': {
-                    'target': {
-                        'external_repos': {
-                            'openshift4/ose-metallb-operator': "{metadata}",
-                            'openshift4/ose-metallb-rhel8-operator': "{metadata}",
+            "nvr1": {
+                "docker": {
+                    "target": {
+                        "external_repos": {
+                            "openshift4/ose-metallb-operator": "{metadata}",
+                            "openshift4/ose-metallb-rhel8-operator": "{metadata}",
                         },
-                        'repos': {  # not actually used, just for context
-                            'redhat-openshift4-ose-metallb-operator': "{metadata}",
-                            'redhat-openshift4-ose-metallb-rhel8-operator': "{metadata}",
+                        "repos": {  # not actually used, just for context
+                            "redhat-openshift4-ose-metallb-operator": "{metadata}",
+                            "redhat-openshift4-ose-metallb-rhel8-operator": "{metadata}",
                         },
                     }
                 }
             },
-            'nvr2': {
-                'docker': {
-                    'target': {
-                        'external_repos': {
-                            'openshift4/ose-some-other-operator': "{metadata}",
+            "nvr2": {
+                "docker": {
+                    "target": {
+                        "external_repos": {
+                            "openshift4/ose-some-other-operator": "{metadata}",
                         },
                     }
                 }
             },
         }
         self.assertEqual(
-            {'openshift4/ose-metallb-operator', 'openshift4/ose-metallb-rhel8-operator'},
-            vaocli._get_cdn_repos({42}, 'nvr1'),
+            {"openshift4/ose-metallb-operator", "openshift4/ose-metallb-rhel8-operator"},
+            vaocli._get_cdn_repos({42}, "nvr1"),
             "returns external repos for nvr1 and not nvr2",
         )
 

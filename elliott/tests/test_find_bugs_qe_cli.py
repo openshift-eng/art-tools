@@ -10,15 +10,15 @@ from flexmock import flexmock
 class FindBugsQETestCase(unittest.TestCase):
     def test_find_bugs_qe(self):
         runner = CliRunner()
-        jira_bug = flexmock(id='OCPBUGS-123', status="MODIFIED")
-        bz_bug = flexmock(id='BZ-123', status="MODIFIED")
+        jira_bug = flexmock(id="OCPBUGS-123", status="MODIFIED")
+        bz_bug = flexmock(id="BZ-123", status="MODIFIED")
 
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(JIRABugTracker).should_receive("get_config").and_return(
             {
-                'target_release': ['4.6.z'],
-                'server': "server",
+                "target_release": ["4.6.z"],
+                "server": "server",
             }
         )
         client = flexmock()
@@ -31,28 +31,28 @@ class FindBugsQETestCase(unittest.TestCase):
         )
         flexmock(JIRABugTracker).should_receive("update_bug_status").with_args(
             jira_bug,
-            'ON_QA',
+            "ON_QA",
             comment=expected_comment,
             noop=True,
         )
 
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return(
             {
-                'target_release': ['4.6.z'],
-                'server': "bugzilla.redhat.com",
+                "target_release": ["4.6.z"],
+                "server": "bugzilla.redhat.com",
             }
         )
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(BugzillaBugTracker).should_receive("search").and_return([bz_bug])
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").with_args(
             bz_bug,
-            'ON_QA',
+            "ON_QA",
             comment=expected_comment,
             noop=True,
         )
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:qe', '--noop'])
+        result = runner.invoke(cli, ["-g", "openshift-4.6", "find-bugs:qe", "--noop"])
         self.assertEqual(result.exit_code, 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

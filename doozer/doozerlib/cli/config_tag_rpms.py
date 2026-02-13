@@ -84,7 +84,7 @@ class TagRPMsCli:
 
         task_ids = cast(List[int], await exectools.to_thread(_func))
         if task_ids:
-            TASK_URL = f'{BREWWEB_URL}/taskinfo?taskID='
+            TASK_URL = f"{BREWWEB_URL}/taskinfo?taskID="
             logger.info("Waiting for task(s) to complete: %s", ", ".join(map(lambda t: f"{TASK_URL}{t}", task_ids)))
             errors = await brew.watch_tasks_async(session, logger.info, task_ids)
             # we will treat "already tagged" error as a success
@@ -218,19 +218,19 @@ class TagRPMsCli:
                     if not nvr_dict:
                         continue
 
-                    package_names = {b['name'] for b in nvr_dict.values()}
-                    are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
+                    package_names = {b["name"] for b in nvr_dict.values()}
+                    are_these_kernel_packages = "kernel" in package_names or "kernel-rt" in package_names
                     if not are_these_kernel_packages:
                         continue
 
-                    expected = {'kernel', 'kernel-rt'}
+                    expected = {"kernel", "kernel-rt"}
                     if package_names != expected:
                         raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
                     if len(nvr_dict) != len(expected):
                         raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
 
-                    kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
-                    kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+                    kernel_build = next(b for b in nvr_dict.values() if b["name"] == "kernel")
+                    kernel_rt_build = next(b for b in nvr_dict.values() if b["name"] == "kernel-rt")
 
                     # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
                     kernel_version = (
@@ -289,7 +289,7 @@ class TagRPMsCli:
 
 @cli.command("config:tag-rpms", short_help="Tag or untag RPMs for RPM delivery")
 @click.option(
-    '--dry-run', is_flag=True, help='Do not tag anything, but only print which builds will be tagged or untagged'
+    "--dry-run", is_flag=True, help="Do not tag anything, but only print which builds will be tagged or untagged"
 )
 @click.option("--json", "as_json", is_flag=True, help="Print out the result as JSON format")
 @pass_runtime

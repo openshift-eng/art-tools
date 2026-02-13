@@ -47,7 +47,7 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': 'api'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "api"}]}
 
         self.assertEqual(builder._prefetch(metadata=metadata, group="test-group"), [{"type": "gomod", "path": "api"}])
 
@@ -76,11 +76,11 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.content.source.pkg_managers = ["npm", "gomod"]
-        metadata.config.cachito.packages = {'npm': [{'path': 'web'}], 'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"npm": [{"path": "web"}], "gomod": [{"path": "."}]}
 
         self.assertEqual(
             builder._prefetch(metadata=metadata, group="test-group"),
-            [{'type': 'gomod', 'path': '.'}, {'type': 'npm', 'path': 'web'}],
+            [{"type": "gomod", "path": "."}, {"type": "npm", "path": "web"}],
         )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -92,10 +92,10 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
 
         result = builder._prefetch(metadata=metadata, group="test-group")
-        expected = [{'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -107,13 +107,13 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'release'
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
 
         result = builder._prefetch(metadata=metadata, group="test-group")
-        expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "rpm", "path": "."}, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -125,13 +125,13 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["npm"]
-        metadata.config.cachito.packages = {'npm': [{'path': 'frontend'}]}
+        metadata.config.cachito.packages = {"npm": [{"path": "frontend"}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "custom/path"
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'release'
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
 
         result = builder._prefetch(metadata=metadata, group="test-group")
-        expected = [{'type': 'rpm', 'path': 'custom/path'}, {'type': 'npm', 'path': 'frontend'}]
+        expected = [{"type": "rpm", "path": "custom/path"}, {"type": "npm", "path": "frontend"}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -143,11 +143,11 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = True
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.artifact_lockfile.get.return_value = "."
 
         result = builder._prefetch(metadata=metadata, group="test-group")
-        expected = [{'type': 'generic', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "generic", "path": "."}, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -159,10 +159,10 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
 
         result = builder._prefetch(metadata=metadata, group="test-group")
-        expected = [{'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -176,35 +176,35 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
-        metadata.get_enabled_repos.return_value = {'repo1', 'repo2'}
-        metadata.get_arches.return_value = ['x86_64', 'aarch64']
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+        metadata.get_enabled_repos.return_value = {"repo1", "repo2"}
+        metadata.get_arches.return_value = ["x86_64", "aarch64"]
 
         mock_repo1 = MagicMock()
-        mock_repo1.content_set.side_effect = lambda arch: f'repo1-content-set-{arch}'
+        mock_repo1.content_set.side_effect = lambda arch: f"repo1-content-set-{arch}"
         mock_repo2 = MagicMock()
-        mock_repo2.content_set.side_effect = lambda arch: f'repo2-content-set-{arch}'
+        mock_repo2.content_set.side_effect = lambda arch: f"repo2-content-set-{arch}"
 
-        metadata.runtime.repos = {'repo1': mock_repo1, 'repo2': mock_repo2}
+        metadata.runtime.repos = {"repo1": mock_repo1, "repo2": mock_repo2}
 
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
         expected_rpm_data = {
-            'type': 'rpm',
-            'path': '.',
-            'options': {
-                'dnf': {
-                    'repo1-content-set-x86_64': {'gpgcheck': '0'},
-                    'repo1-content-set-aarch64': {'gpgcheck': '0'},
-                    'repo2-content-set-x86_64': {'gpgcheck': '0'},
-                    'repo2-content-set-aarch64': {'gpgcheck': '0'},
+            "type": "rpm",
+            "path": ".",
+            "options": {
+                "dnf": {
+                    "repo1-content-set-x86_64": {"gpgcheck": "0"},
+                    "repo1-content-set-aarch64": {"gpgcheck": "0"},
+                    "repo2-content-set-x86_64": {"gpgcheck": "0"},
+                    "repo2-content-set-aarch64": {"gpgcheck": "0"},
                 }
             },
         }
-        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        expected = [expected_rpm_data, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -218,16 +218,16 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'release'
-        metadata.get_enabled_repos.return_value = {'repo1', 'repo2'}
-        metadata.get_arches.return_value = ['x86_64']
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
+        metadata.get_enabled_repos.return_value = {"repo1", "repo2"}
+        metadata.get_arches.return_value = ["x86_64"]
 
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
-        expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "rpm", "path": "."}, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -241,11 +241,11 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
 
         result = builder._prefetch(metadata=metadata, group="test-group")
 
-        expected = [{'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -259,16 +259,16 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
         metadata.get_enabled_repos.return_value = set()
-        metadata.get_arches.return_value = ['x86_64']
+        metadata.get_arches.return_value = ["x86_64"]
 
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
-        expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        expected = [{"type": "rpm", "path": "."}, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -282,26 +282,26 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
-        metadata.get_enabled_repos.return_value = {'repo1'}
-        metadata.get_arches.return_value = ['x86_64']
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+        metadata.get_enabled_repos.return_value = {"repo1"}
+        metadata.get_arches.return_value = ["x86_64"]
 
         mock_repo1 = MagicMock()
         mock_repo1.content_set.return_value = None
 
-        metadata.runtime.repos = {'repo1': mock_repo1}
+        metadata.runtime.repos = {"repo1": mock_repo1}
 
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
         expected_rpm_data = {
-            'type': 'rpm',
-            'path': '.',
-            'options': {'dnf': {'repo1-x86_64': {'gpgcheck': '0'}}},
+            "type": "rpm",
+            "path": ".",
+            "options": {"dnf": {"repo1-x86_64": {"gpgcheck": "0"}}},
         }
-        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        expected = [expected_rpm_data, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -315,32 +315,32 @@ class TestKonfluxCachi2(TestCase):
         metadata.is_artifact_lockfile_enabled.return_value = False
         metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.content.source.pkg_managers = ["gomod"]
-        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.cachito.packages = {"gomod": [{"path": "."}]}
         metadata.config.konflux.cachi2.lockfile.get.return_value = "."
 
-        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
-        metadata.get_enabled_repos.return_value = {'ocp-repo', 'rhel-repo'}
-        metadata.get_arches.return_value = ['x86_64']
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+        metadata.get_enabled_repos.return_value = {"ocp-repo", "rhel-repo"}
+        metadata.get_arches.return_value = ["x86_64"]
 
         mock_ocp_repo = MagicMock()
-        mock_ocp_repo.content_set.side_effect = lambda arch: f'ocp-repo-content-set-{arch}'
+        mock_ocp_repo.content_set.side_effect = lambda arch: f"ocp-repo-content-set-{arch}"
 
         mock_rhel_repo = MagicMock()
-        mock_rhel_repo.content_set.side_effect = lambda arch: f'rhel-repo-content-set-{arch}'
+        mock_rhel_repo.content_set.side_effect = lambda arch: f"rhel-repo-content-set-{arch}"
 
-        metadata.runtime.repos = {'ocp-repo': mock_ocp_repo, 'rhel-repo': mock_rhel_repo}
+        metadata.runtime.repos = {"ocp-repo": mock_ocp_repo, "rhel-repo": mock_rhel_repo}
 
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
         expected_rpm_data = {
-            'type': 'rpm',
-            'path': '.',
-            'options': {
-                'dnf': {
-                    'ocp-repo-content-set-x86_64': {'gpgcheck': '0'},
-                    'rhel-repo-content-set-x86_64': {'gpgcheck': '0'},
+            "type": "rpm",
+            "path": ".",
+            "options": {
+                "dnf": {
+                    "ocp-repo-content-set-x86_64": {"gpgcheck": "0"},
+                    "rhel-repo-content-set-x86_64": {"gpgcheck": "0"},
                 }
             },
         }
-        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        expected = [expected_rpm_data, {"type": "gomod", "path": "."}]
         self.assertEqual(result, expected)

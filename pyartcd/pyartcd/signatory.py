@@ -47,7 +47,7 @@ class AsyncSignatory:
     ```
     """
 
-    SEND_DESTINATION = '/topic/VirtualTopic.eng.art.artifact.sign'
+    SEND_DESTINATION = "/topic/VirtualTopic.eng.art.artifact.sign"
     CONSUMER_QUEUE_TEMPLATE = "/queue/Consumer.{service_account}.{subscription}.VirtualTopic.eng.robosignatory.art.sign"
 
     def __init__(
@@ -147,7 +147,7 @@ class AsyncSignatory:
         # Example request: https://datagrepper.stage.engineering.redhat.com/id?id=ID:umb-stage-3.umb-001.preprod.us-east-1.aws.redhat.com-38533-1689629292398-10:23520:-1:1:1&is_raw=true&size=extra-large
         artifact_base64 = io.BytesIO()
         base64.encode(artifact, artifact_base64)
-        request_id = f'{product}-{typ}-{datetime.utcnow().strftime("%Y%m%d%H%M%S")}-{uuid.uuid4()}'
+        request_id = f"{product}-{typ}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4()}"
         message = {
             "artifact": artifact_base64.getvalue().decode(),
             "artifact_meta": {

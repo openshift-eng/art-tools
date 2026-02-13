@@ -281,8 +281,8 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         }
 
         async def mock_bundle_search(*args, **kwargs):
-            where = kwargs.get('where', {})
-            if where.get('name') == 'test-operator-1-bundle':
+            where = kwargs.get("where", {})
+            if where.get("name") == "test-operator-1-bundle":
                 yield bundle_build1
 
         async def mock_fbc_search(*args, **kwargs):
@@ -304,7 +304,7 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
 
         self.fbc_cli.operator_nvrs = ("test-operator-1-1.0.0-1", "test-operator-2-1.0.0-1")
 
-        with mock.patch.object(self.fbc_cli._logger, 'warning') as mock_warning:
+        with mock.patch.object(self.fbc_cli._logger, "warning") as mock_warning:
             await self.fbc_cli.run()
 
             mock_warning.assert_called_once_with("Bundle build not found for test-operator-2-1.0.0-1. Will skip it.")

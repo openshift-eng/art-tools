@@ -75,9 +75,9 @@ async def check_multi_nightly_exists_for_model(model_nightly_name: str) -> bool:
     major_minor, _, _ = isolate_nightly_name_components(model_nightly_name)
 
     # Extract timestamp from model nightly (last 4 parts: YYYY-MM-DD-HHMMSS)
-    parts = model_nightly_name.split('-')
+    parts = model_nightly_name.split("-")
     if len(parts) >= 6:
-        multi_ts = '-'.join(parts[-4:])
+        multi_ts = "-".join(parts[-4:])
     else:
         return False
 
@@ -260,21 +260,21 @@ read and propagate/expose this annotation in its display of the release image.
     # For multi-model mode, we don't need to clone sources - just introspect an existing nightly
     if multi_model:
         runtime.initialize(
-            mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system='konflux'
+            mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system="konflux"
         )
-    elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
+    elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == "brew":
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
         runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     # Compute repository names if not specified
     if repository is None:
-        major_version = int(runtime.group_config.vars['MAJOR'])
+        major_version = int(runtime.group_config.vars["MAJOR"])
         repository = get_art_prod_image_repo_for_version(major_version, "dev").split("/")[-1]
         runtime.logger.info(f"Repository not specified, using computed value: {repository}")
 
     if private_repository is None:
-        major_version = int(runtime.group_config.vars['MAJOR'])
+        major_version = int(runtime.group_config.vars["MAJOR"])
         private_repository = get_art_prod_image_repo_for_version(major_version, "dev-priv").split("/")[-1]
         runtime.logger.info(f"Private repository not specified, using computed value: {private_repository}")
 
@@ -303,7 +303,7 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 
 def default_imagestream_base_name_generic(version: str, build_system) -> str:
-    if uses_konflux_imagestream_override(version) or build_system == 'brew':
+    if uses_konflux_imagestream_override(version) or build_system == "brew":
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -317,9 +317,9 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 
 
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
-    if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
+    if assembly_name == "stream" and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    elif uses_konflux_imagestream_override(version) or build_system == 'brew':
+    elif uses_konflux_imagestream_override(version) or build_system == "brew":
         return f"{version}-art-assembly-{assembly_name}"
     else:  # konflux
         return f"{version}-konflux-art-assembly-{assembly_name}"
@@ -362,7 +362,7 @@ async def modify_and_replace_api_object(
     filepath = backup_file_path.joinpath(
         f"replacing-{api_obj.kind()}.{api_obj.namespace()}.{api_obj.name()}.before-modify.json"
     )
-    async with aiofiles.open(filepath, mode='w+') as backup_file:
+    async with aiofiles.open(filepath, mode="w+") as backup_file:
         await backup_file.write(api_obj.as_json(indent=4))
 
     modifier_func(api_obj)
@@ -542,14 +542,14 @@ class GenPayloadCli:
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
-            await assembly_inspector.initialize(lookup_mode='both')
+            await assembly_inspector.initialize(lookup_mode="both")
 
         self.payload_entries_for_arch, self.private_payload_entries_for_arch = await self.generate_payload_entries(
             assembly_inspector
         )
         assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
 
-        self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
+        self.logger.info("\n%s", yaml.dump(assembly_report, default_flow_style=False, indent=2))
         with self.output_path.joinpath("assembly-report.yaml").open(mode="w") as report_file:
             yaml.dump(assembly_report, stream=report_file, default_flow_style=False, indent=2)
         span.set_attribute("doozer.result.report", assembly_report)
@@ -577,19 +577,19 @@ class GenPayloadCli:
         rt = self.runtime
 
         # Multi-model mode only supports Konflux
-        if rt.build_system != 'konflux':
+        if rt.build_system != "konflux":
             self.logger.warning(
                 f"Multi-model mode requires Konflux build system, but runtime is set to '{rt.build_system}'. "
                 f"Overriding to 'konflux' for multi-model processing."
             )
             # Override for multi-model processing (not restored - keep as 'konflux' for entire payload generation)
-            rt.build_system = 'konflux'
+            rt.build_system = "konflux"
 
         # Create a temporary assembly name for the multi-model
         # Use a simple name that won't be parsed as a SemVer version
         # Extract just the timestamp part to keep it unique
-        parts = multi_model_nightly.split('-')
-        timestamp_suffix = '-'.join(parts[-4:]) if len(parts) >= 4 else multi_model_nightly
+        parts = multi_model_nightly.split("-")
+        timestamp_suffix = "-".join(parts[-4:]) if len(parts) >= 4 else multi_model_nightly
         multi_model_assembly_name = f"multi_model.{timestamp_suffix}"
 
         # Create GenAssemblyCli instance to generate the assembly definition
@@ -632,19 +632,19 @@ class GenPayloadCli:
         rt = self.runtime
 
         # Extract the assembly name from the definition
-        multi_model_assembly_name = list(assembly_def['releases'].keys())[0]
+        multi_model_assembly_name = list(assembly_def["releases"].keys())[0]
 
         # Fix basis.time format if it's a datetime object (convert to ISO 8601 string)
-        assembly_config = assembly_def['releases'][multi_model_assembly_name]['assembly']
-        if 'basis' in assembly_config and 'time' in assembly_config['basis']:
-            basis_time = assembly_config['basis']['time']
+        assembly_config = assembly_def["releases"][multi_model_assembly_name]["assembly"]
+        if "basis" in assembly_config and "time" in assembly_config["basis"]:
+            basis_time = assembly_config["basis"]["time"]
             if isinstance(basis_time, datetime):
                 # Convert to ISO 8601 format string
-                assembly_config['basis']['time'] = basis_time.isoformat()
+                assembly_config["basis"]["time"] = basis_time.isoformat()
                 self.logger.info(f"Converted basis.time to ISO format: {assembly_config['basis']['time']}")
 
         # Update runtime's releases_config with the new assembly
-        rt.releases_config.releases[multi_model_assembly_name] = assembly_def['releases'][multi_model_assembly_name]
+        rt.releases_config.releases[multi_model_assembly_name] = assembly_def["releases"][multi_model_assembly_name]
 
         # Update runtime to use this assembly
         rt.assembly = multi_model_assembly_name
@@ -675,8 +675,8 @@ class GenPayloadCli:
         :return: Resolved nightly name
         """
         # Check if this is an arch:offset specification
-        if ':' in multi_model_spec and not multi_model_spec.startswith('4.'):
-            parts = multi_model_spec.split(':', 1)
+        if ":" in multi_model_spec and not multi_model_spec.startswith("4."):
+            parts = multi_model_spec.split(":", 1)
             if len(parts) != 2:
                 raise DoozerFatalError(
                     f"Invalid multi-model specification: {multi_model_spec}. Expected 'arch:offset' or nightly name."
@@ -685,7 +685,7 @@ class GenPayloadCli:
             arch, offset_str = parts
 
             # Validate architecture
-            valid_arches = ['amd64', 's390x', 'ppc64le', 'arm64']
+            valid_arches = ["amd64", "s390x", "ppc64le", "arm64"]
             if arch not in valid_arches:
                 raise DoozerFatalError(f"Invalid architecture '{arch}'. Must be one of: {valid_arches}")
 
@@ -725,7 +725,7 @@ class GenPayloadCli:
                     stream_data = await resp.json()
 
                 # Get the tags list (releases are called "tags" in this API)
-                releases = stream_data.get('tags', [])
+                releases = stream_data.get("tags", [])
                 if not releases:
                     raise DoozerFatalError(f"No releases found in stream '{stream_name}' for {arch}")
 
@@ -734,7 +734,7 @@ class GenPayloadCli:
                         f"Offset {offset} is out of range. Stream '{stream_name}' only has {len(releases)} releases."
                     )
 
-                nightly_name = releases[offset]['name']
+                nightly_name = releases[offset]["name"]
                 self.logger.info(f"Resolved {arch}:{offset} to nightly: {nightly_name}")
                 return nightly_name
 
@@ -815,7 +815,7 @@ class GenPayloadCli:
         span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
 
-        if self.runtime.build_system == 'brew':
+        if self.runtime.build_system == "brew":
             with rt.shared_build_status_detector() as bsd:
                 # Use the list of builds associated with the group/assembly to warm up BSD caches
                 assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
@@ -963,7 +963,7 @@ class GenPayloadCli:
                     if desired_tag not in current_tags:
                         # The hotfix tag is missing, so apply it.
                         self.logger.info(
-                            'Adding tag %s to build: %s to prevent garbage collection.', desired_tag, build_id
+                            "Adding tag %s to build: %s to prevent garbage collection.", desired_tag, build_id
                         )
                         m.tagBuild(desired_tag, build_id)
 
@@ -978,7 +978,7 @@ class GenPayloadCli:
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
             if build_inspector:
                 image_meta = build_inspector.get_image_meta()
-                if self.runtime.build_system == 'brew':
+                if self.runtime.build_system == "brew":
                     non_latest_rpms = await build_inspector.find_non_latest_rpms()
                 else:  # konflux
                     non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
@@ -988,7 +988,7 @@ class GenPayloadCli:
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
                     for installed_nevra, newest_nevra, repo in arch_non_latest_rpms:
                         nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
-                        rpm_name = parse_nvr(nevr)['name']
+                        rpm_name = parse_nvr(nevr)["name"]
                         is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)
                         if is_exempt:
                             self.logger.warning(
@@ -1052,7 +1052,7 @@ class GenPayloadCli:
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
 
         arches = (
-            self.runtime.group_config.konflux.arches if self.runtime.build_system == 'konflux' else self.runtime.arches
+            self.runtime.group_config.konflux.arches if self.runtime.build_system == "konflux" else self.runtime.arches
         )
 
         for arch in arches:
@@ -1075,9 +1075,9 @@ class GenPayloadCli:
                     continue
 
                 if v.build_record_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
-                    if self.runtime.build_system == 'brew':
+                    if self.runtime.build_system == "brew":
                         public_build = v.image_meta.get_latest_brew_build(
-                            default=None, el_target=v.image_meta.branch_el_target(), extra_pattern='*.p0.*'
+                            default=None, el_target=v.image_meta.branch_el_target(), extra_pattern="*.p0.*"
                         )
                     else:
                         public_build = await v.image_meta.get_latest_konflux_build(
@@ -1085,7 +1085,7 @@ class GenPayloadCli:
                         )
 
                     if not public_build:
-                        raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
+                        raise IOError(f"Unable to find last public build for {v.image_meta.distgit_key}")
 
                     public_bbi = BuildRecordInspector.get_build_record_inspector(
                         runtime=self.runtime, build_obj=public_build
@@ -1108,7 +1108,7 @@ class GenPayloadCli:
                     )
 
                     self.logger.info(
-                        f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream'
+                        f"Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream"
                     )
                     public_entries[k] = public_entry
                     # It's an embargoed build. Filter it out if its stream
@@ -1372,14 +1372,14 @@ class GenPayloadCli:
         mirror_src_for_dest: Dict[str, str] = dict()
 
         # Login to the konflux registry
-        if self.runtime.build_system == 'konflux':
+        if self.runtime.build_system == "konflux":
             cmd = [
-                'oc',
-                'registry',
-                'login',
-                '--registry',
-                'quay.io/redhat-user-workloads',
-                f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}',
+                "oc",
+                "registry",
+                "login",
+                "--registry",
+                "quay.io/redhat-user-workloads",
+                f"--registry-config={os.getenv('KONFLUX_ART_IMAGES_AUTH_FILE')}",
             ]
             await exectools.cmd_assert_async(cmd)
 
@@ -1414,15 +1414,15 @@ class GenPayloadCli:
             if self.apply or self.apply_multi_arch:
                 self.logger.info(f"Mirroring images from {str(src_dest_path)}")
                 cmd = [
-                    'oc',
-                    'image',
-                    'mirror',
-                    '--keep-manifest-list',
-                    '--continue-on-error',
-                    f'--filename={str(src_dest_path)}',
+                    "oc",
+                    "image",
+                    "mirror",
+                    "--keep-manifest-list",
+                    "--continue-on-error",
+                    f"--filename={str(src_dest_path)}",
                 ]
-                if self.runtime.build_system == 'konflux':
-                    cmd.append(f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}')
+                if self.runtime.build_system == "konflux":
+                    cmd.append(f"--registry-config={os.getenv('KONFLUX_ART_IMAGES_AUTH_FILE')}")
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
@@ -1533,7 +1533,7 @@ class GenPayloadCli:
             istream_apiobj = self.ensure_imagestream_apiobj(imagestream_name)
 
             if self.is_imagestream_locked(istream_apiobj):
-                self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+                self.logger.warning(f"The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.")
                 return
 
             pruning_tags, adding_tags = await self.apply_imagestream_update(
@@ -1542,7 +1542,7 @@ class GenPayloadCli:
 
             if pruning_tags:
                 self.logger.warning(
-                    'The following tag names are no longer part of the release and will be pruned in %s:%s: %s',
+                    "The following tag names are no longer part of the release and will be pruned in %s:%s: %s",
                     imagestream_namespace,
                     imagestream_name,
                     pruning_tags,
@@ -1559,7 +1559,7 @@ class GenPayloadCli:
                             # This is not a fatal error, but failure to delete may leave issues being
                             # displayed on the release controller page.
                             self.logger.error(
-                                'Unable to delete %s tag fully from %s imagestream in %s:\n%s',
+                                "Unable to delete %s tag fully from %s imagestream in %s:\n%s",
                                 old_tag,
                                 imagestream_name,
                                 imagestream_namespace,
@@ -1568,7 +1568,7 @@ class GenPayloadCli:
 
             if adding_tags:
                 self.logger.warning(
-                    'The following tag names are net new to %s:%s: %s',
+                    "The following tag names are net new to %s:%s: %s",
                     imagestream_namespace,
                     imagestream_name,
                     adding_tags,
@@ -1604,8 +1604,8 @@ class GenPayloadCli:
         is removed.
         https://github.com/openshift/release-controller/blob/master/hack/release-tool.py
         """
-        imagestream_mode = imagestream_obj.get_annotation('release.openshift.io/mode')
-        return imagestream_mode == 'locked'
+        imagestream_mode = imagestream_obj.get_annotation("release.openshift.io/mode")
+        return imagestream_mode == "locked"
 
     async def apply_imagestream_update(
         self, istream_apiobj, istags: List[Dict], incomplete_payload_update: bool
@@ -1652,32 +1652,32 @@ class GenPayloadCli:
                 # Note that existing_istag.annotations may be None (vs model.Missing) if
                 # "annotations: null" is specified in the istag, so take care before
                 # assuming it is dict-like.
-                if existing_istag.annotations and 'reverted-from' in existing_istag.annotations:
+                if existing_istag.annotations and "reverted-from" in existing_istag.annotations:
                     revereted_tag_name = existing_istag.name
-                    reverted_from_image = existing_istag.annotations['reverted-from']
-                    reverted_to_image = existing_istag['from'].name
+                    reverted_from_image = existing_istag.annotations["reverted-from"]
+                    reverted_to_image = existing_istag["from"].name
                     if revereted_tag_name not in incoming_tag_lookup:
                         if not incomplete_payload_update:
                             self.logger.warning(
-                                f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.'
+                                f"The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events."
                             )
                     else:
-                        target_image = incoming_tag_lookup[revereted_tag_name]['from'].name
+                        target_image = incoming_tag_lookup[revereted_tag_name]["from"].name
                         self.logger.warning(
-                            f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.'
+                            f"The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}."
                         )
                         if target_image == reverted_from_image:
                             self.logger.warning(
-                                f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}'
+                                f"The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}"
                             )
-                            incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
+                            incoming_tag_lookup[revereted_tag_name]["from"].name = reverted_to_image
                             # We must also preserve the annotation to persist the revert for the next update
-                            incoming_tag_lookup[revereted_tag_name]['annotations'] = (
+                            incoming_tag_lookup[revereted_tag_name]["annotations"] = (
                                 existing_istag.annotations.primitive()
                             )
                         else:
                             self.logger.warning(
-                                f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}'
+                                f"The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}"
                             )
 
             new_istags = list(istags)  # copy, don't update/embed list parameter
@@ -1786,10 +1786,10 @@ class GenPayloadCli:
             # Extract the timestamp: 2025-11-12-194750 (skip the "nightly" part)
             # Use the resolved nightly name, not the original spec
             nightly_name = self.resolved_multi_model_nightly or self.multi_model
-            parts = nightly_name.split('-')
+            parts = nightly_name.split("-")
             if len(parts) >= 6:
                 # Last 4 parts are: YYYY, MM, DD, HHMMSS (skip "nightly" which is 5th from last)
-                multi_ts = '-'.join(parts[-4:])
+                multi_ts = "-".join(parts[-4:])
             else:
                 raise DoozerFatalError(f"Could not extract timestamp from multi-model nightly {nightly_name}")
         else:
@@ -1903,7 +1903,7 @@ class GenPayloadCli:
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(dict(image=output_pullspec, manifests=manifests), default_flow_style=False))
-        await manifest_tool(f'push from-spec {str(component_manifest_path)}')
+        await manifest_tool(f"push from-spec {str(component_manifest_path)}")
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
         sha = await find_manifest_list_sha(output_pullspec)
@@ -2000,7 +2000,7 @@ class GenPayloadCli:
         async with aiofiles.open(release_payload_ml_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(ml_dict, default_flow_style=False))
 
-        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
+        await manifest_tool(f"push from-spec {str(release_payload_ml_path)}")
 
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
         sha = await find_manifest_list_sha(multi_release_dest)
@@ -2019,15 +2019,15 @@ class GenPayloadCli:
         multi_art_latest_is = self.ensure_imagestream_apiobj(imagestream_name)
 
         if self.is_imagestream_locked(multi_art_latest_is):
-            self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+            self.logger.warning(f"The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.")
             return
 
         # For nightlies, these will be set as annotations on the release imagestream tag.
         # For non-nightlies, the new 4.x-art-assembly-$name the annotations will also be
         # applied at the top level annotations for the imagestream.
         pipeline_metadata_annotations = {
-            'release.openshift.io/build-url': os.getenv('BUILD_URL', ''),
-            'release.openshift.io/runtime-brew-event': str(self.runtime.brew_event),
+            "release.openshift.io/build-url": os.getenv("BUILD_URL", ""),
+            "release.openshift.io/runtime-brew-event": str(self.runtime.brew_event),
         }
 
         def add_multi_nightly_release(obj: oc.APIObject):
@@ -2050,8 +2050,8 @@ class GenPayloadCli:
                 # nightly to a new one.
                 def is_accepted(tag):
                     # Returns true if the imagestream tag has been accepted.
-                    annotations = tag.get('annotations') or {}  # Handle `annotations: null`
-                    return annotations.get('release.openshift.io/phase', 'Unknown') == 'Accepted'
+                    annotations = tag.get("annotations") or {}  # Handle `annotations: null`
+                    return annotations.get("release.openshift.io/phase", "Unknown") == "Accepted"
 
                 imagestream_tags: List = obj_model.spec["tags"]._primitive()
 
@@ -2059,7 +2059,7 @@ class GenPayloadCli:
                 release_tags = []
                 other_tags = []
                 for tag in imagestream_tags:
-                    if 'nightly-multi' in tag.get('name', ''):
+                    if "nightly-multi" in tag.get("name", ""):
                         release_tags.append(tag)
                     else:
                         other_tags.append(tag)
@@ -2075,16 +2075,16 @@ class GenPayloadCli:
                     )  # Keep the newest accepted of the payloads we were going to otherwise prune
 
                 if release_tags:
-                    last_nightly_tagname = release_tags[-1].get('name', None)
+                    last_nightly_tagname = release_tags[-1].get("name", None)
                     if last_nightly_tagname:
-                        date_str = last_nightly_tagname.split('-multi-')[
+                        date_str = last_nightly_tagname.split("-multi-")[
                             -1
                         ]  # 4.18.0-0.nightly-multi-2024-10-10-163835 => "2024-10-10-163835"
                         last_nightly_time = datetime.strptime(date_str, "%Y-%m-%d-%H%M%S")
                         current_time = datetime.utcnow()
 
-                        major = self.runtime.group_config.vars['MAJOR']
-                        minor = self.runtime.group_config.vars['MINOR']
+                        major = self.runtime.group_config.vars["MAJOR"]
+                        minor = self.runtime.group_config.vars["MINOR"]
 
                         master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
                         if major != master_major or minor != master_minor:
@@ -2096,7 +2096,7 @@ class GenPayloadCli:
                         # In multi-model mode, skip rate-limiting to allow on-demand multi-arch payload generation
                         if not self.multi_model and current_time < last_nightly_time + next_nightly_delay:
                             self.logger.info(
-                                f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update'
+                                f"The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update"
                             )
                             return
 
@@ -2250,7 +2250,7 @@ class PayloadGenerator:
         rpms_dict = {entry[0]: entry[:-1] for entry in rpm_list if entry[-1] not in COREOS_RHEL10_STREAMS}
 
         def _to_nvr(nevra):
-            return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
+            return f"{nevra[0]}-{nevra[2]}-{nevra[3]}"
 
         if {"kernel-core", "kernel-rt-core"} <= rpms_dict.keys():
             kernel_entry = rpms_dict["kernel-core"]
@@ -2265,9 +2265,9 @@ class PayloadGenerator:
                 inconsistency = True
             elif kernel_r != kernel_rt_r:
                 # 372.43.1.el8_6 => 372.43.1
-                kernel_r = kernel_r.rsplit('.', 1)[0]
+                kernel_r = kernel_r.rsplit(".", 1)[0]
                 # 372.41.1.rt7.198.el8_6 => 372.41.1
-                kernel_rt_r = kernel_rt_r.rsplit('.', 3)[0]
+                kernel_rt_r = kernel_rt_r.rsplit(".", 3)[0]
                 if kernel_r != kernel_rt_r:
                     inconsistency = True
             if inconsistency:
@@ -2361,7 +2361,7 @@ class PayloadGenerator:
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
         # For Konflux we're tracking package build NVRs as they come from the SBOM
-        if self.runtime.build_system == 'brew':
+        if self.runtime.build_system == "brew":
             rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["build_id"]))
         else:
             rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["nvr"], self.package_rpm_finder))
@@ -2562,8 +2562,8 @@ class PayloadGenerator:
         """
 
         pipeline_metadata = {
-            'release.openshift.io/build-url': os.getenv('BUILD_URL', ''),
-            'release.openshift.io/runtime-brew-event': str(self.runtime.brew_event),
+            "release.openshift.io/build-url": os.getenv("BUILD_URL", ""),
+            "release.openshift.io/runtime-brew-event": str(self.runtime.brew_event),
         }
 
         return pipeline_metadata
@@ -2681,10 +2681,10 @@ class PayloadGenerator:
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
         # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
-        if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
-            release_suffix = 'release'
+        if runtime.build_system == "brew" or uses_konflux_imagestream_override(major_minor):
+            release_suffix = "release"
         else:
-            release_suffix = 'konflux-release'
+            release_suffix = "konflux-release"
 
         rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
@@ -2747,9 +2747,9 @@ class PayloadGenerator:
                     # from the assembly definition
                     issues.append(
                         AssemblyIssue(
-                            f'{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed rhcos:'
-                            f' {entry.rhcos_build} and {actual_digest}',
-                            component='reference-releases',
+                            f"{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed rhcos:"
+                            f" {entry.rhcos_build} and {actual_digest}",
+                            component="reference-releases",
                         )
                     )
             else:

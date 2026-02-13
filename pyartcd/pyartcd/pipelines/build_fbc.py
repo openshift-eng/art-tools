@@ -31,7 +31,7 @@ def _generate_fbc_lock_name(
         - For OpenShift: "lock:fbc-build:{group}"
         - For non-OpenShift: "lock:fbc-build:{group}-ocp-{major_minor}"
     """
-    if group.startswith('openshift-'):
+    if group.startswith("openshift-"):
         # For OpenShift products, use the traditional lock naming
         return f"lock:fbc-build:{group}"
     else:
@@ -89,24 +89,24 @@ class BuildFbcPipeline:
 
     async def run(self):
         try:
-            release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-            self._logger.info('Rebasing and building FBC repo with release %s', release_str)
+            release_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            self._logger.info("Rebasing and building FBC repo with release %s", release_str)
             build_records = await self._rebase_and_build(
                 release=release_str,
-                commit_message='Rebase FBC segment with release {}'.format(release_str),
+                commit_message="Rebase FBC segment with release {}".format(release_str),
             )
 
             # Parse doozer record.log
-            self._logger.info('Parsing doozer record.log')
+            self._logger.info("Parsing doozer record.log")
             lines = []
             for record in build_records:
-                lines.append(f'{record["fbc_nvr"]} -> {record["bundle_nvrs"]}')
-            self._logger.info('Successfully built: %s', '\n'.join(lines))
+                lines.append(f"{record['fbc_nvr']} -> {record['bundle_nvrs']}")
+            self._logger.info("Successfully built: %s", "\n".join(lines))
 
         except Exception as e:
-            self._logger.error('Encountered error: %s', e)
+            self._logger.error("Encountered error: %s", e)
             await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
+                f"*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n"
             )
             raise
 
@@ -115,46 +115,46 @@ class BuildFbcPipeline:
         group = f"openshift-{self.version}" if not self.group else self.group
 
         cmd = [
-            'doozer',
-            '--build-system=konflux',
-            f'--working-dir={self.runtime.doozer_working}',
-            f'--assembly={self.assembly}',
-            f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
+            "doozer",
+            "--build-system=konflux",
+            f"--working-dir={self.runtime.doozer_working}",
+            f"--assembly={self.assembly}",
+            f"--group={group}{'@' + self.data_gitref if self.data_gitref else ''}",
         ]
         if self.data_path:
-            cmd.append(f'--data-path={self.data_path}')
+            cmd.append(f"--data-path={self.data_path}")
         if only:
-            cmd.append(f'--images={only}')
+            cmd.append(f"--images={only}")
         if exclude:
-            cmd.append(f'--exclude={exclude}')
+            cmd.append(f"--exclude={exclude}")
         cmd += opts
-        self._logger.info(f'Running doozer command: {" ".join(cmd)}')
+        self._logger.info(f"Running doozer command: {' '.join(cmd)}")
         await exectools.cmd_assert_async(cmd)
 
     async def _rebase_and_build(self, release: str, commit_message: str):
         doozer_opts = [
-            'beta:fbc:rebase-and-build',
-            '--version',
+            "beta:fbc:rebase-and-build",
+            "--version",
             self.version,
-            '--release',
+            "--release",
             release,
-            '--message',
+            "--message",
             commit_message,
         ]
         if self.runtime.dry_run:
-            doozer_opts.append('--dry-run')
+            doozer_opts.append("--dry-run")
         if self.fbc_repo:
-            doozer_opts.extend(['--fbc-repo', self.fbc_repo])
+            doozer_opts.extend(["--fbc-repo", self.fbc_repo])
         # Load group config to get product information
         group = f"openshift-{self.version}" if not self.group else self.group
         group_config = await load_group_config(
             group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
         )
-        product = group_config.get('product', 'ocp')
+        product = group_config.get("product", "ocp")
 
         # Set namespace based on product
         namespace = resolve_konflux_namespace_by_product(product)
-        doozer_opts.extend(['--konflux-namespace', namespace])
+        doozer_opts.extend(["--konflux-namespace", namespace])
 
         # Use kubeconfig from CLI parameter or product-specific environment variable
         final_kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
@@ -164,7 +164,7 @@ class BuildFbcPipeline:
                 f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
             )
 
-        doozer_opts.extend(['--konflux-kubeconfig', final_kubeconfig])
+        doozer_opts.extend(["--konflux-kubeconfig", final_kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -172,102 +172,102 @@ class BuildFbcPipeline:
             plr_template_url = constants.KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
                 owner=plr_template_owner, branch_name=plr_template_branch
             )
-            doozer_opts.extend(['--plr-template', plr_template_url])
+            doozer_opts.extend(["--plr-template", plr_template_url])
         if self.skip_checks:
-            doozer_opts.append('--skip-checks')
+            doozer_opts.append("--skip-checks")
         if self.reset_to_prod:
-            doozer_opts.append('--reset-to-prod')
+            doozer_opts.append("--reset-to-prod")
         else:
-            doozer_opts.append('--no-reset-to-prod')
+            doozer_opts.append("--no-reset-to-prod")
         if self.prod_registry_auth:
-            doozer_opts.extend(['--prod-registry-auth', self.prod_registry_auth])
+            doozer_opts.extend(["--prod-registry-auth", self.prod_registry_auth])
         if self.force:
-            doozer_opts.append('--force')
+            doozer_opts.append("--force")
         if self.major_minor:
-            doozer_opts.extend(['--major-minor', self.major_minor])
+            doozer_opts.extend(["--major-minor", self.major_minor])
         if self.operator_nvrs:
-            doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
+            doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(",")])
         try:
             await self._run_doozer(doozer_opts, only=self.only, exclude=self.exclude)
         finally:
             # Parse both rebase and build records from the combined operation
-            successful_rebase_records, failed_rebase_records = await self._parse_record_log('rebase_fbc_konflux')
-            successful_build_records, failed_build_records = await self._parse_record_log('build_fbc_konflux')
+            successful_rebase_records, failed_rebase_records = await self._parse_record_log("rebase_fbc_konflux")
+            successful_build_records, failed_build_records = await self._parse_record_log("build_fbc_konflux")
 
             self._logger.info(
-                'Successfully rebased: %s', ', '.join([str(entry['name']) for entry in successful_rebase_records])
+                "Successfully rebased: %s", ", ".join([str(entry["name"]) for entry in successful_rebase_records])
             )
             if failed_rebase_records:
                 self._logger.error(
-                    'Failed to rebase: %s', ', '.join([str(entry['name']) for entry in failed_rebase_records])
+                    "Failed to rebase: %s", ", ".join([str(entry["name"]) for entry in failed_rebase_records])
                 )
 
             self._logger.info(
-                'Successfully built: %s', ', '.join([str(entry['name']) for entry in successful_build_records])
+                "Successfully built: %s", ", ".join([str(entry["name"]) for entry in successful_build_records])
             )
             if failed_build_records:
                 self._logger.error(
-                    'Failed to build: %s', ', '.join([str(entry['name']) for entry in failed_build_records])
+                    "Failed to build: %s", ", ".join([str(entry["name"]) for entry in failed_build_records])
                 )
 
         return successful_build_records
 
     async def _parse_record_log(self, entry_type: str):
-        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
         if not record_log_path.exists():
-            raise FileNotFoundError('record.log not found')
+            raise FileNotFoundError("record.log not found")
         with record_log_path.open() as file:
             record_log = parse_record_log(file)
         entries = record_log.get(entry_type, [])
-        successful_records = [entry for entry in entries if entry and int(str(entry['status'])) == 0]
-        failed_records = [entry for entry in entries if entry and int(str(entry['status'])) != 0]
+        successful_records = [entry for entry in entries if entry and int(str(entry["status"])) == 0]
+        failed_records = [entry for entry in entries if entry and int(str(entry["status"])) != 0]
         return successful_records, failed_records
 
 
-@cli.command('build-fbc', help='Rebase and build FBC segments for OLM operators')
-@click.option('--version', required=True, help='OCP version')
-@click.option('--assembly', required=True, help='Assembly name')
+@cli.command("build-fbc", help="Rebase and build FBC segments for OLM operators")
+@click.option("--version", required=True, help="OCP version")
+@click.option("--assembly", required=True, help="Assembly name")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
-@click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
+@click.option("--data-gitref", required=False, help="(Optional) Doozer data path git [branch / tag / sha] to use")
 @click.option(
-    '--only',
+    "--only",
     required=False,
-    help='(Optional) List **only** the operators you want to build, everything else gets ignored.\n'
-    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-    'Leave empty to build all (except EXCLUDE, if defined)',
+    help="(Optional) List **only** the operators you want to build, everything else gets ignored.\n"
+    "Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n"
+    "Leave empty to build all (except EXCLUDE, if defined)",
 )
 @click.option(
-    '--exclude',
+    "--exclude",
     required=False,
-    help='(Optional) List the operators you **don\'t** want to build, everything else gets built.\n'
-    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-    'Leave empty to build all (or ONLY, if defined)',
+    help="(Optional) List the operators you **don't** want to build, everything else gets built.\n"
+    "Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n"
+    "Leave empty to build all (or ONLY, if defined)",
 )
 @click.option(
-    '--operator-nvrs',
+    "--operator-nvrs",
     required=False,
-    help='(Optional) List **only** the operator NVRs you want to build FBC segments for, everything else '
-    'gets ignored. The operators should not be mode:disabled/wip in ocp-build-data',
+    help="(Optional) List **only** the operator NVRs you want to build FBC segments for, everything else "
+    "gets ignored. The operators should not be mode:disabled/wip in ocp-build-data",
 )
-@click.option('--fbc-repo', required=False, default='', help='(Optional) URL of the FBC repository')
+@click.option("--fbc-repo", required=False, default="", help="(Optional) URL of the FBC repository")
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
-    default='',
-    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+    default="",
+    help="Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>",
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @click.option(
@@ -275,20 +275,20 @@ class BuildFbcPipeline:
 )
 @click.option(
     "--prod-registry-auth",
-    metavar='PATH',
+    metavar="PATH",
     help="The registry authentication file to use for the production index image.",
 )
 @click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
 @click.option(
     "--major-minor",
-    metavar='MAJOR.MINOR',
+    metavar="MAJOR.MINOR",
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
 @click.option(
-    '--ignore-locks',
+    "--ignore-locks",
     is_flag=True,
     default=False,
-    help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
+    help="Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)",
 )
 @pass_runtime
 @click_coroutine
@@ -313,7 +313,7 @@ async def build_fbc(
     ignore_locks: bool,
 ):
     # Validate that --major-minor is provided for non-OpenShift groups
-    if not group.startswith('openshift-') and not major_minor:
+    if not group.startswith("openshift-") and not major_minor:
         raise click.BadParameter(f"--major-minor is required for non-OpenShift group '{group}'")
 
     pipeline = BuildFbcPipeline(
@@ -339,7 +339,7 @@ async def build_fbc(
 
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+        runtime.logger.warning("Env var BUILD_URL has not been defined: a random identifier will be used for the locks")
 
     if ignore_locks:
         await pipeline.run()

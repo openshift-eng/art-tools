@@ -21,19 +21,19 @@ from elliottlib.runtime import Runtime
 
 @cli.command("verify-attached-operators", short_help="Verify attached operator bundle references are (being) shipped")
 @click.option(
-    "--omit-shipped", required=False, is_flag=True, help='Do not query shipped images to satisfy bundle references'
+    "--omit-shipped", required=False, is_flag=True, help="Do not query shipped images to satisfy bundle references"
 )
 @click.option(
     "--omit-attached",
     required=False,
     is_flag=True,
-    help='Do not query images shipping in other advisories to satisfy bundle references',
+    help="Do not query images shipping in other advisories to satisfy bundle references",
 )
 @click.option(
     "--gather-dependencies",
     required=False,
     is_flag=True,
-    help='Attach unshipped dependencies to advisory, removing them from any other advisory',
+    help="Attach unshipped dependencies to advisory, removing them from any other advisory",
 )
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=True)
 @pass_runtime
@@ -166,13 +166,13 @@ def _analyze_image_builds(
 def _validate_csvs(bundles):
     invalid = set()
     for bundle in bundles:
-        nvr, csv = bundle['nvr'], bundle['csv']
+        nvr, csv = bundle["nvr"], bundle["csv"]
         # check the CSV for invalid metadata
         try:
-            if not re.search(r'-\d{12}', csv['metadata']['name']):
+            if not re.search(r"-\d{12}", csv["metadata"]["name"]):
                 red_print(f"Bundle {nvr} CSV metadata.name has no datestamp: {csv['metadata']['name']}")
                 invalid.add(nvr)
-            if not re.search(r'-\d{12}', csv['spec']['version']):
+            if not re.search(r"-\d{12}", csv["spec"]["version"]):
                 red_print(f"Bundle {nvr} CSV spec.version has no datestamp: {csv['spec']['version']}")
                 invalid.add(nvr)
         except KeyError as ex:
@@ -195,11 +195,11 @@ def _get_attached_image_builds(brew_session, advisories):
 
 
 def _is_image(build):
-    return build.get('extra', {}).get('osbs_build', {}).get('kind') == "container_build"
+    return build.get("extra", {}).get("osbs_build", {}).get("kind") == "container_build"
 
 
 def _is_bundle(image_build):
-    return 'operator_bundle' in image_build.get('extra', {}).get('osbs_build', {}).get('subtypes', [])
+    return "operator_bundle" in image_build.get("extra", {}).get("osbs_build", {}).get("subtypes", [])
 
 
 def _get_bundle_images(image_builds):
@@ -208,7 +208,7 @@ def _get_bundle_images(image_builds):
     bundles = []
     for image in image_builds:
         if _is_bundle(image):
-            image['csv'] = _download_bundle_csv(image)
+            image["csv"] = _download_bundle_csv(image)
             bundles.append(image)
     return bundles
 
@@ -216,9 +216,9 @@ def _get_bundle_images(image_builds):
 def _download_bundle_csv(bundle_build):
     # the CSV is buried in an archive
     url = constants.BREW_DOWNLOAD_TEMPLATE.format(
-        name=bundle_build['package_name'],
-        version=bundle_build['version'],
-        release=bundle_build['release'],
+        name=bundle_build["package_name"],
+        version=bundle_build["version"],
+        release=bundle_build["release"],
         file_path="operator-manifests/operator_manifests.zip",
     )
     try:
@@ -247,9 +247,9 @@ def _get_shipped_images(runtime: Runtime, brew_session):
     # NOTE: this will tend to be the slow part, aside from querying ET
     tags = {f"{image.branch()}-container-released" for image in runtime.image_metas()}
     released = brew.get_tagged_builds(
-        [(tag, None) for tag in tags], build_type='image', event=None, session=brew_session
+        [(tag, None) for tag in tags], build_type="image", event=None, session=brew_session
     )
-    released = brew.get_build_objects([b['build_id'] for b in released], session=brew_session)
+    released = brew.get_build_objects([b["build_id"] for b in released], session=brew_session)
     return [b for b in released if _is_image(b)]  # filter out source images
 
 
@@ -257,9 +257,9 @@ def _extract_available_image_shasums(image_builds):
     # get shasums for all attached or released images
     image_digests = set()
     for img in image_builds:
-        for pullspec in img['extra']['image']['index']['pull']:
+        for pullspec in img["extra"]["image"]["index"]["pull"]:
             if "@sha256:" in pullspec:
-                image_digests.add(pullspec.split('@')[1])
+                image_digests.add(pullspec.split("@")[1])
     return image_digests
 
 
@@ -269,9 +269,9 @@ def _missing_references(
     # check that bundle references are all either shipped or shipping,
     # and that they will/did ship to the right repo on the registry
     references = [
-        [ref['image'], build]  # ref => the bundle build that references it
+        [ref["image"], build]  # ref => the bundle build that references it
         for build in bundles
-        for ref in build['csv']['spec']['relatedImages']
+        for ref in build["csv"]["spec"]["relatedImages"]
     ]
     green_print(f"Found {len(bundles)} bundles with {len(references)} references")
     problems = set()
@@ -280,7 +280,7 @@ def _missing_references(
         # validate an image reference from a bundle is shipp(ed/ing) to the right repo
         repo, digest = image_pullspec.rsplit("@", 1)  # split off the @sha256:...
         _, repo = repo.split("/", 1)  # pick off the registry
-        ref = image_pullspec.rsplit('/', 1)[1]  # just need the name@digest
+        ref = image_pullspec.rsplit("/", 1)[1]  # just need the name@digest
         nvr = _nvr_for_operand_pullspec(runtime, ref)  # convert ref to nvr
         context = f"Bundle {build['nvr']} reference {nvr}:\n   "
 

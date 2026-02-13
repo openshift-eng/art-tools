@@ -55,7 +55,7 @@ class BuildStatusDetector:
         uncached = set(build_ids) - self.shipping_statuses.keys()
         if uncached:
             uncached = list(uncached)
-            self.logger and self.logger.info(f'Getting tags for {len(uncached)} builds...')
+            self.logger and self.logger.info(f"Getting tags for {len(uncached)} builds...")
             tag_lists = brew.get_builds_tags(uncached, self.koji_session)
             for index, tags in enumerate(tag_lists):
                 build_id = uncached[index]
@@ -117,7 +117,7 @@ class BuildStatusDetector:
         :param candidate_tag: string tag name that contains candidate builds
         :return: a list of brew RPMs from builds in the corresponding embargoed tag
         """
-        embargoed_tag = candidate_tag.replace('-candidate', '-embargoed')
+        embargoed_tag = candidate_tag.replace("-candidate", "-embargoed")
         key = embargoed_tag
         with self.cache_lock:
             if key not in self.embargoed_rpms_cache:
@@ -146,7 +146,7 @@ class BuildStatusDetector:
         with self.cache_lock:
             if key not in self.unshipped_candidate_rpms_cache:
                 latest_in_tag: List[Dict] = self.koji_session.getLatestBuilds(candidate_tag, event=event, type="rpm")
-                latest_by_package: Dict[str, Dict] = {b['package_name']: b for b in latest_in_tag}
+                latest_by_package: Dict[str, Dict] = {b["package_name"]: b for b in latest_in_tag}
 
                 # Due to assemblies existing in their own conceptual build streams,
                 # We need to check any group members for their latest build in the
@@ -156,7 +156,7 @@ class BuildStatusDetector:
                     if not assembly_build_dict:
                         # Likely this RPM has not been built for this RHEL version.
                         continue
-                    package_name = assembly_build_dict['package_name']
+                    package_name = assembly_build_dict["package_name"]
                     if package_name in latest_by_package:
                         # Override the package with whatever is latest for this assembly
                         latest_by_package[package_name] = assembly_build_dict

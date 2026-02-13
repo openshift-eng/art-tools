@@ -99,7 +99,7 @@ class AddModifier(object):
         ceiling_dir = kwargs.get("ceiling_dir")
         build_system = kwargs["context"].get("build_system", "brew")
         dest_path = (
-            str(kwargs["context"]['distgit_path'].joinpath(self.path))
+            str(kwargs["context"]["distgit_path"].joinpath(self.path))
             if build_system == "brew"
             else f"{ceiling_dir}/{self.path}"
         )
@@ -224,7 +224,7 @@ class RemoveModifier(object):
         """
         context = kwargs["context"]
         component = context["component_name"]
-        distgit_path = Path(context['distgit_path'])
+        distgit_path = Path(context["distgit_path"])
         ceiling_dir = Path(kwargs["ceiling_dir"])
 
         LOGGER.info("Distgit repo %s: Running 'remove' modification action...", component)

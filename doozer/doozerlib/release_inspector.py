@@ -73,17 +73,17 @@ async def extract_nvr_from_pullspec(pullspec: str, arch: str = None) -> Tuple[st
     :return: Tuple of (name, version, release)
     """
     filter_arg = f"--filter-by-os={arch}" if arch else ""
-    rc, stdout, stderr = await exectools.cmd_gather_async(f'oc image info -o json {filter_arg} {pullspec}', check=False)
+    rc, stdout, stderr = await exectools.cmd_gather_async(f"oc image info -o json {filter_arg} {pullspec}", check=False)
 
     if rc != 0:
         raise IOError(f"Failed to get image info for {pullspec}: {stderr}")
 
     image_info = json.loads(stdout)
-    labels = image_info['config']['config']['Labels']
+    labels = image_info["config"]["config"]["Labels"]
 
-    name = labels.get('com.redhat.component')
-    version = labels.get('version')
-    release = labels.get('release')
+    name = labels.get("com.redhat.component")
+    version = labels.get("version")
+    release = labels.get("release")
 
     if not (name and version and release):
         raise IOError(f"Missing NVR labels in {pullspec}")
@@ -101,7 +101,7 @@ async def get_build_inspector_from_nvr(runtime: Runtime, nvr: str, pullspec: str
     :param pullspec: Image pullspec (required for Brew builds)
     :return: BuildRecordInspector for the build
     """
-    if runtime.build_system == 'brew':
+    if runtime.build_system == "brew":
         if not pullspec:
             raise ValueError("pullspec is required for Brew builds")
         return BrewBuildRecordInspector(runtime, pullspec)

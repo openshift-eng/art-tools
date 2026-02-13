@@ -91,7 +91,7 @@ class BuildFinder:
 
         # Honor pinned rpm nvrs pinned by "is"
         for distgit_key, rpm_meta in rpm_map.items():
-            meta_config = assembly_metadata_config(releases_config, assembly, 'rpm', distgit_key, rpm_meta.config)
+            meta_config = assembly_metadata_config(releases_config, assembly, "rpm", distgit_key, rpm_meta.config)
             nvr = meta_config["is"][f"el{el_version}"]
             if not nvr:
                 continue
@@ -172,7 +172,7 @@ class BuildFinder:
         ] = {}  # rpms pinned to the runtime assembly; keys are rpm component names, values are brew build dicts
 
         meta_config = assembly_metadata_config(
-            releases_config, assembly, 'image', image_meta.distgit_key, image_meta.config
+            releases_config, assembly, "image", image_meta.distgit_key, image_meta.config
         )
         # honor image member dependencies
         dep_nvrs = {

@@ -8,7 +8,7 @@ from artcommonlib.gitdata import GitData
 from artcommonlib.util import deep_merge
 from ruamel.yaml import YAML
 
-yaml = YAML(typ='safe')
+yaml = YAML(typ="safe")
 
 
 class _IncludeConstructor:
@@ -36,7 +36,7 @@ class _IncludeConstructor:
                 file = file.resolve()
                 if self.base_dir and not file.is_relative_to(self.base_dir):
                     raise IOError(f"Included path {file} is outside of base dir {self.base_dir}")
-                with open(file, 'r') as f:
+                with open(file, "r") as f:
                     content = f.read()
                 if self.replace_vars:
                     content = content.format(**self.replace_vars)
@@ -70,7 +70,7 @@ class BuildDataLoader:
         group_config_with_assembly = loader.load_group_config(assembly="ec.1", releases_config=releases_config)
     """
 
-    BuildSystem = Literal['brew', 'konflux']
+    BuildSystem = Literal["brew", "konflux"]
 
     def __init__(
         self,
@@ -123,7 +123,7 @@ class BuildDataLoader:
                 path = path.resolve()
                 if not path.is_relative_to(base_dir):
                     raise IOError(f"Included path {path} is outside of base dir {base_dir}")
-                with open(path, 'r') as f:
+                with open(path, "r") as f:
                     doc = yaml.load(f)
                 if isinstance(merged_doc, dict):
                     merged_doc = {**merged_doc, **doc}
@@ -154,7 +154,7 @@ class BuildDataLoader:
         # into the YAML content. If `vars` found, the format will be
         # preformed and the YAML model will reloaded from that result
         group_config = self.load_config("group")
-        variables = group_config.get('vars')
+        variables = group_config.get("vars")
         if variables and not isinstance(variables, dict):
             raise TypeError("The 'vars' field in group configuration must be a dictionary if present.")
         if additional_vars is not None:
@@ -172,9 +172,9 @@ class BuildDataLoader:
         if group_ext_file.exists():
             if allow_includes:
                 yaml.constructor.add_constructor(
-                    '!include', _IncludeConstructor(base_dir=data_dir, replace_vars=variables)
+                    "!include", _IncludeConstructor(base_dir=data_dir, replace_vars=variables)
                 )
-            with group_ext_file.open('r') as f:
+            with group_ext_file.open("r") as f:
                 content = f.read()
                 if variables:
                     content = content.format(**variables)
@@ -184,8 +184,8 @@ class BuildDataLoader:
             group_config = deep_merge(group_config, group_ext)
 
         # If build system is konflux, merge konflux-specific overrides
-        if self.build_system == 'konflux':
-            konflux_overrides = group_config.get('konflux')
+        if self.build_system == "konflux":
+            konflux_overrides = group_config.get("konflux")
             if konflux_overrides:
                 group_config = deep_merge(group_config, konflux_overrides)
 
@@ -202,7 +202,7 @@ class BuildDataLoader:
         :param config_file: If specified, this file will be used.
         """
         # We never support variable substitution in releases config
-        return self.load_config(key='releases', config_file=config_file, default={}, replace_vars=None)
+        return self.load_config(key="releases", config_file=config_file, default={}, replace_vars=None)
 
     def load_config(
         self, key: str, default: Any = None, config_file: str | None = None, replace_vars: dict[str, str] | None = None

@@ -15,7 +15,7 @@ from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
-yaml = YAML(typ='safe')
+yaml = YAML(typ="safe")
 yaml.default_flow_style = False
 yaml.preserve_quotes = True
 yaml.explicit_start = True
@@ -56,15 +56,15 @@ async def gather_opm(args: List[str], auth: Optional[OpmRegistryAuth] = None, **
             if auth.username:
                 if not auth.password:
                     raise ValueError("password is required when using a username.")
-                auth_token = base64.b64encode(f'{auth.username}:{auth.password}'.encode()).decode()
+                auth_token = base64.b64encode(f"{auth.username}:{auth.password}".encode()).decode()
             elif auth.password:  # Use the password as the auth token
                 auth_token = auth.password
             if auth_token:
                 auth_content = json.dumps(
                     {
-                        'auths': {
+                        "auths": {
                             auth.registry_url or "quay.io": {
-                                'auth': auth_token,
+                                "auth": auth_token,
                             },
                         },
                     }
@@ -141,7 +141,7 @@ async def generate_basic_template(catalog_file: Path, template_file: Path, outpu
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Generating basic template {template_file} from {catalog_file}")
-    with open(template_file, 'w') as out:
+    with open(template_file, "w") as out:
         await gather_opm(
             ["alpha", "convert-template", "basic", "-o", output_format, "--", str(catalog_file)], stdout=out
         )
@@ -168,7 +168,7 @@ async def render_catalog_from_template(
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Rendering catalog {catalog_file} from template {template_file}")
-    with open(catalog_file, 'w') as out:
+    with open(catalog_file, "w") as out:
         await gather_opm(
             [
                 "alpha",

@@ -39,7 +39,7 @@ class GitRepository:
                 ["git", "-C", repo_dir, "remote", "set-url", "--", "origin", remote_url], env=env
             )
         if upstream_remote_url:
-            if 'upstream' not in remotes:
+            if "upstream" not in remotes:
                 await exectools.cmd_assert_async(
                     ["git", "-C", repo_dir, "remote", "add", "--", "upstream", upstream_remote_url], env=env
                 )
@@ -47,7 +47,7 @@ class GitRepository:
                 await exectools.cmd_assert_async(
                     ["git", "-C", repo_dir, "remote", "set-url", "--", "upstream", upstream_remote_url], env=env
                 )
-        elif 'upstream' in remotes:
+        elif "upstream" in remotes:
             await exectools.cmd_assert_async(["git", "-C", repo_dir, "remote", "remove", "upstream"], env=env)
 
     async def read_file(self, relative_filepath: Union[str, Path]) -> str:

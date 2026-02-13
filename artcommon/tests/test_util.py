@@ -15,51 +15,51 @@ class TestUtil(unittest.TestCase):
     def test_convert_remote_git_to_https(self):
         # git@ to https
         self.assertEqual(
-            util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
-            'https://github.com/openshift/aos-cd-jobs',
+            util.convert_remote_git_to_https("git@github.com:openshift/aos-cd-jobs.git"),
+            "https://github.com/openshift/aos-cd-jobs",
         )
 
         # https to https (no-op)
         self.assertEqual(
-            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
-            'https://github.com/openshift/aos-cd-jobs',
+            util.convert_remote_git_to_https("https://github.com/openshift/aos-cd-jobs"),
+            "https://github.com/openshift/aos-cd-jobs",
         )
 
         # https to https, remove suffix
         self.assertEqual(
-            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
-            'https://github.com/openshift/aos-cd-jobs',
+            util.convert_remote_git_to_https("https://github.com/openshift/aos-cd-jobs.git"),
+            "https://github.com/openshift/aos-cd-jobs",
         )
 
         # ssh to https
         self.assertEqual(
-            util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-            'https://github.com/openshift/aos-cd-jobs',
+            util.convert_remote_git_to_https("ssh://ocp-build@github.com/openshift/aos-cd-jobs.git"),
+            "https://github.com/openshift/aos-cd-jobs",
         )
 
     def test_convert_remote_git_to_ssh(self):
         # git@ to https
         self.assertEqual(
-            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-            'git@github.com:openshift/aos-cd-jobs.git',
+            util.convert_remote_git_to_ssh("https://github.com/openshift/aos-cd-jobs"),
+            "git@github.com:openshift/aos-cd-jobs.git",
         )
 
         # https to https (no-op)
         self.assertEqual(
-            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-            'git@github.com:openshift/aos-cd-jobs.git',
+            util.convert_remote_git_to_ssh("https://github.com/openshift/aos-cd-jobs"),
+            "git@github.com:openshift/aos-cd-jobs.git",
         )
 
         # https to https, remove suffix
         self.assertEqual(
-            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-            'git@github.com:openshift/aos-cd-jobs.git',
+            util.convert_remote_git_to_ssh("https://github.com/openshift/aos-cd-jobs"),
+            "git@github.com:openshift/aos-cd-jobs.git",
         )
 
         # ssh to https
         self.assertEqual(
-            util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-            'git@github.com:openshift/aos-cd-jobs.git',
+            util.convert_remote_git_to_ssh("ssh://ocp-build@github.com/openshift/aos-cd-jobs.git"),
+            "git@github.com:openshift/aos-cd-jobs.git",
         )
 
     def test_find_latest_builds(self):
@@ -121,16 +121,16 @@ class TestUtil(unittest.TestCase):
 
     def test_isolate_assembly_in_release(self):
         test_cases = [
-            ('1.2.3-y.p.p1', None),
-            ('1.2.3-y.p.p1.assembly', None),
-            ('1.2.3-y.p.p1.assembly.x', 'x'),
-            ('1.2.3-y.p.p1.assembly.xyz', 'xyz'),
-            ('1.2.3-y.p.p1.assembly.xyz.el7', 'xyz'),
-            ('1.2.3-y.p.p1.assembly.4.9.99.el7', '4.9.99'),
-            ('1.2.3-y.p.p1.assembly.4.9.el700.hi', '4.9'),
-            ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
-            ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
-            ('1.2.3-y.el9.p1.assembly.test', 'test'),
+            ("1.2.3-y.p.p1", None),
+            ("1.2.3-y.p.p1.assembly", None),
+            ("1.2.3-y.p.p1.assembly.x", "x"),
+            ("1.2.3-y.p.p1.assembly.xyz", "xyz"),
+            ("1.2.3-y.p.p1.assembly.xyz.el7", "xyz"),
+            ("1.2.3-y.p.p1.assembly.4.9.99.el7", "4.9.99"),
+            ("1.2.3-y.p.p1.assembly.4.9.el700.hi", "4.9"),
+            ("1.2.3-y.p.p1.assembly.art12398.el10", "art12398"),
+            ("1.2.3-y.p.p1.assembly.art12398.el10", "art12398"),
+            ("1.2.3-y.el9.p1.assembly.test", "test"),
         ]
 
         for t in test_cases:
@@ -141,18 +141,18 @@ class TestUtil(unittest.TestCase):
     def test_split_el_suffix_in_release(self):
         test_cases = [
             # (release_string, expected_prefix, expected_suffix)
-            ('1.2.3-y.p.p1.assembly.4.9.99.el7', '1.2.3-y.p.p1.assembly.4.9.99', 'el7'),
-            ('ansible-runner-http-1.0.0-2.el8ar', 'ansible-runner-http-1.0.0-2', 'el8'),
-            ('1.2.3-y.p.p1.assembly.art12398.el199', '1.2.3-y.p.p1.assembly.art12398', 'el199'),
-            ('1.2.3-y.p.p1.assembly.art12398', '1.2.3-y.p.p1.assembly.art12398', None),
+            ("1.2.3-y.p.p1.assembly.4.9.99.el7", "1.2.3-y.p.p1.assembly.4.9.99", "el7"),
+            ("ansible-runner-http-1.0.0-2.el8ar", "ansible-runner-http-1.0.0-2", "el8"),
+            ("1.2.3-y.p.p1.assembly.art12398.el199", "1.2.3-y.p.p1.assembly.art12398", "el199"),
+            ("1.2.3-y.p.p1.assembly.art12398", "1.2.3-y.p.p1.assembly.art12398", None),
             # OKD/SCOS test cases
             (
-                '4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9',
-                '4.17.0-202407241200.p0.assembly.stream.gdeadbee',
-                'scos9',
+                "4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9",
+                "4.17.0-202407241200.p0.assembly.stream.gdeadbee",
+                "scos9",
             ),
-            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', '1.2.3-y.p.p1.assembly.4.9.99', 'scos8'),
-            ('1.2.3-y.p.p1.assembly.art12398.scos10', '1.2.3-y.p.p1.assembly.art12398', 'scos10'),
+            ("1.2.3-y.p.p1.assembly.4.9.99.scos8", "1.2.3-y.p.p1.assembly.4.9.99", "scos8"),
+            ("1.2.3-y.p.p1.assembly.art12398.scos10", "1.2.3-y.p.p1.assembly.art12398", "scos10"),
         ]
 
         for t in test_cases:
@@ -162,17 +162,17 @@ class TestUtil(unittest.TestCase):
 
     def test_isolate_el_version_in_release(self):
         test_cases = [
-            ('container-selinux-2.167.0-1.module+el8.5.0+12397+bf23b712:2', 8),
-            ('ansible-runner-http-1.0.0-2.el8ar', 8),
-            ('1.2.3-y.p.p1.assembly.4.9.99.el7', 7),
-            ('1.2.3-y.p.p1.assembly.4.9.el7', 7),
-            ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
-            ('1.2.3-y.p.p1.assembly.art12398', None),
-            ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
+            ("container-selinux-2.167.0-1.module+el8.5.0+12397+bf23b712:2", 8),
+            ("ansible-runner-http-1.0.0-2.el8ar", 8),
+            ("1.2.3-y.p.p1.assembly.4.9.99.el7", 7),
+            ("1.2.3-y.p.p1.assembly.4.9.el7", 7),
+            ("1.2.3-y.p.p1.assembly.art12398.el199", 199),
+            ("1.2.3-y.p.p1.assembly.art12398", None),
+            ("1.2.3-y.p.p1.assembly.4.7.e.8", None),
             # OKD/SCOS test cases
-            ('4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9', 9),
-            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', 8),
-            ('1.2.3-y.p.p1.assembly.art12398.scos10', 10),
+            ("4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9", 9),
+            ("1.2.3-y.p.p1.assembly.4.9.99.scos8", 8),
+            ("1.2.3-y.p.p1.assembly.art12398.scos10", 10),
         ]
 
         for t in test_cases:
@@ -181,16 +181,16 @@ class TestUtil(unittest.TestCase):
             self.assertEqual(actual, expected)
 
     def test_isolate_rhel_major_from_version(self):
-        self.assertEqual(9, util.isolate_rhel_major_from_version('9.2'))
-        self.assertEqual(8, util.isolate_rhel_major_from_version('8.6'))
-        self.assertEqual(10, util.isolate_rhel_major_from_version('10.1'))
-        self.assertEqual(None, util.isolate_rhel_major_from_version('invalid'))
+        self.assertEqual(9, util.isolate_rhel_major_from_version("9.2"))
+        self.assertEqual(8, util.isolate_rhel_major_from_version("8.6"))
+        self.assertEqual(10, util.isolate_rhel_major_from_version("10.1"))
+        self.assertEqual(None, util.isolate_rhel_major_from_version("invalid"))
 
     def test_isolate_rhel_major_from_distgit_branch(self):
-        self.assertEqual(9, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-9'))
-        self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
-        self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
-        self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))
+        self.assertEqual(9, util.isolate_rhel_major_from_distgit_branch("rhaos-4.16-rhel-9"))
+        self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch("rhaos-4.16-rhel-8"))
+        self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch("rhaos-4.16-rhel-10"))
+        self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch("invalid"))
 
     def test_merge_objects(self):
         yaml_data = """
@@ -230,40 +230,40 @@ alternative_upstream:
         alt_config = config.alternative_upstream[0]
         merged_config = Model(deep_merge(config.primitive(), alt_config.primitive()))
 
-        self.assertEqual(merged_config.name, 'openshift/ose-machine-config-operator')
-        self.assertEqual(merged_config.distgit.branch, 'rhaos-4.16-rhel-8')
-        self.assertEqual(merged_config.content.source.git.branch.target, 'release-4.16')
-        self.assertEqual(merged_config.get('from').get('builder'), [{'stream': 'golang'}, {'stream': 'rhel-9-golang'}])
-        self.assertEqual(merged_config.get('from').get('member'), 'openshift-enterprise-base')
+        self.assertEqual(merged_config.name, "openshift/ose-machine-config-operator")
+        self.assertEqual(merged_config.distgit.branch, "rhaos-4.16-rhel-8")
+        self.assertEqual(merged_config.content.source.git.branch.target, "release-4.16")
+        self.assertEqual(merged_config.get("from").get("builder"), [{"stream": "golang"}, {"stream": "rhel-9-golang"}])
+        self.assertEqual(merged_config.get("from").get("member"), "openshift-enterprise-base")
 
     def test_isolate_major_minor_in_group(self):
-        major, minor = isolate_major_minor_in_group('openshift-4.16')
+        major, minor = isolate_major_minor_in_group("openshift-4.16")
         self.assertEqual(major, 4)
         self.assertEqual(minor, 16)
 
-        major, minor = isolate_major_minor_in_group('invalid-4.16')
+        major, minor = isolate_major_minor_in_group("invalid-4.16")
         self.assertEqual(major, None)
         self.assertEqual(minor, None)
 
-        major, minor = isolate_major_minor_in_group('openshift-4.invalid')
+        major, minor = isolate_major_minor_in_group("openshift-4.invalid")
         self.assertEqual(major, None)
         self.assertEqual(minor, None)
 
-        major, minor = isolate_major_minor_in_group('openshift-invalid.16')
+        major, minor = isolate_major_minor_in_group("openshift-invalid.16")
         self.assertEqual(major, None)
         self.assertEqual(minor, None)
 
 
 class TestSoftwareLifecyclePhase(unittest.TestCase):
     def test_from_name_valid(self):
-        self.assertEqual(SoftwareLifecyclePhase.from_name('eol'), SoftwareLifecyclePhase.EOL)
-        self.assertEqual(SoftwareLifecyclePhase.from_name('pre-release'), SoftwareLifecyclePhase.PRE_RELEASE)
-        self.assertEqual(SoftwareLifecyclePhase.from_name('signing'), SoftwareLifecyclePhase.SIGNING)
-        self.assertEqual(SoftwareLifecyclePhase.from_name('release'), SoftwareLifecyclePhase.RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.from_name("eol"), SoftwareLifecyclePhase.EOL)
+        self.assertEqual(SoftwareLifecyclePhase.from_name("pre-release"), SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.from_name("signing"), SoftwareLifecyclePhase.SIGNING)
+        self.assertEqual(SoftwareLifecyclePhase.from_name("release"), SoftwareLifecyclePhase.RELEASE)
 
     def test_from_name_invalid(self):
         with self.assertRaises(ValueError):
-            SoftwareLifecyclePhase.from_name('invalid')
+            SoftwareLifecyclePhase.from_name("invalid")
 
     def test_lt(self):
         self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < SoftwareLifecyclePhase.SIGNING)

@@ -5,11 +5,11 @@ from botocore.client import Config
 # ENDPOINT_URL, requests from boto3 are actually sent to CloudFlare and not
 # AWS.
 S3_BUCKET_NAME = "art-srv-enterprise"
-S3_REGION_NAME = 'us-east-1'
+S3_REGION_NAME = "us-east-1"
 
 
 # Ensure s3v4 signature is used regardless of the region the lambda is executing in.
-BOTO3_CLIENT_CONFIG = Config(signature_version='s3v4')
+BOTO3_CLIENT_CONFIG = Config(signature_version="s3v4")
 # According to https://docs.aws.amazon.com/codeguru/detector-library/python/lambda-client-reuse/
 # s3 clients can and should be reused. This allows the client to be cached in an execution
 # environment and reused if possible. Initialize these lazily so we can handle ANY s3 errors
@@ -28,8 +28,8 @@ def get_secrets_manager_secret_dict(secret_name):
         # or endpoint information is required because the lambda is running with
         # a role that allows access to necessary secrets.
         secrets_client = boto3.client(
-            service_name='secretsmanager',
-            region_name='us-east-1',
+            service_name="secretsmanager",
+            region_name="us-east-1",
         )
 
     try:
@@ -40,7 +40,7 @@ def get_secrets_manager_secret_dict(secret_name):
         raise
 
     # Assume it is a key/value pair secret and parse as json
-    username_password_keypairs_str = get_secret_value_response['SecretString']
+    username_password_keypairs_str = get_secret_value_response["SecretString"]
     return json.loads(username_password_keypairs_str)
 
 
@@ -50,13 +50,13 @@ def get_r2_s3_client():
     # If we have not initialized an R2 client, do so now.
     if s3_client is None:
         cloudflare_r2_bucket_info = get_secrets_manager_secret_dict(
-            'prod/lambda/cloudflare-r2-art-srv-enterprise-read-only'
+            "prod/lambda/cloudflare-r2-art-srv-enterprise-read-only"
         )
         s3_client = boto3.client(
             "s3",
-            aws_access_key_id=cloudflare_r2_bucket_info['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=cloudflare_r2_bucket_info['AWS_SECRET_ACCESS_KEY'],
-            endpoint_url=cloudflare_r2_bucket_info['AWS_ENDPOINT_URL'],
+            aws_access_key_id=cloudflare_r2_bucket_info["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=cloudflare_r2_bucket_info["AWS_SECRET_ACCESS_KEY"],
+            endpoint_url=cloudflare_r2_bucket_info["AWS_ENDPOINT_URL"],
             region_name=S3_REGION_NAME,
             config=BOTO3_CLIENT_CONFIG,
         )

@@ -138,10 +138,10 @@ class CVPInspector:
             if check["name"] not in included_checks:
                 continue
             self._logger.info(f"* {check['name']} {check['status']}")
-            if check['name'] == "content_set_check":
+            if check["name"] == "content_set_check":
                 try:
                     examination_report = await self.diagnostic_content_set_check(build, check)
-                    report[check['name']] = examination_report
+                    report[check["name"]] = examination_report
                 except Exception as e:
                     self._logger.warning(f"Error processing sanity_test_optional_checks result for {build['nvr']} :{e}")
         return report
@@ -389,7 +389,7 @@ class CVPInspector:
 
     def _load_content_set_to_repo_names(self):
         for repo_name, repo_info in self._group_config.get("repos", {}).items():
-            for arch, cs_name in repo_info.get('content_set', {}).items():
+            for arch, cs_name in repo_info.get("content_set", {}).items():
                 if arch == "optional":
                     continue  # not a real arch name
                 self._content_set_to_repo_names[cs_name] = repo_name

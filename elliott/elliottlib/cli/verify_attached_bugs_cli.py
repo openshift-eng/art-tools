@@ -92,7 +92,7 @@ async def verify_attached_bugs_cli(
             "Cannot verify advisory bug sorting. To verify that bugs are attached to the "
             "correct release advisories, run with --assembly=<release>"
         )
-        advisory_id_map = {'?': a for a in advisories}
+        advisory_id_map = {"?": a for a in advisories}
     else:
         advisory_id_map = runtime.get_default_advisories()
     if not advisory_id_map:
@@ -129,7 +129,7 @@ async def verify_attached_bugs(
 
         # skip advisory type check if advisories are
         # manually passed in, and we don't know their type
-        if '?' not in advisory_id_map.keys():
+        if "?" not in advisory_id_map.keys():
             included_bug_ids = set()
             if runtime.assembly:
                 issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
@@ -166,12 +166,12 @@ async def verify_attached_bugs(
     default=False,
 )
 @click.option(
-    '--output',
-    '-o',
+    "--output",
+    "-o",
     required=False,
-    type=click.Choice(['text', 'json', 'slack']),
-    default='text',
-    help='Applies chosen format to command output',
+    type=click.Choice(["text", "json", "slack"]),
+    default="text",
+    help="Applies chosen format to command output",
 )
 @pass_runtime
 @click_coroutine
@@ -198,8 +198,8 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
     validator = BugValidator(runtime, output)
     find_bugs_obj = FindBugsSweep(cve_only=False)
     ocp_bugs = []
-    logger.info(f'Using {runtime.assembly} assembly to search bugs')
-    for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
+    logger.info(f"Using {runtime.assembly} assembly to search bugs")
+    for b in [runtime.get_bug_tracker("jira"), runtime.get_bug_tracker("bugzilla")]:
         bugs = find_bugs_obj.search(bug_tracker_obj=b, verbose=runtime.debug)
         logger.info(f"Found {len(bugs)} {b.type} bugs: {[b.id for b in bugs]}")
         ocp_bugs.extend(bugs)
@@ -214,9 +214,9 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
 
 
 class BugValidator:
-    def __init__(self, runtime: Runtime, output: str = 'text'):
+    def __init__(self, runtime: Runtime, output: str = "text"):
         self.runtime = runtime
-        self.target_releases: List[str] = runtime.get_bug_tracker('jira').config['target_release']
+        self.target_releases: List[str] = runtime.get_bug_tracker("jira").config["target_release"]
         self.et_data: Dict[str, Any] = runtime.get_errata_config()
         self.errata_api = AsyncErrataAPI(self.et_data.get("server", constants.errata_url))
         self.problems: List[str] = []
@@ -227,13 +227,13 @@ class BugValidator:
 
     def report(self):
         if self.problems:
-            if self.output == 'text':
+            if self.output == "text":
                 print("Found the following problems, please investigate")
                 for problem in self.problems:
                     print(problem)
-            elif self.output == 'json':
+            elif self.output == "json":
                 print(json.dumps(self.problems, indent=2, sort_keys=False))
-            elif self.output == 'slack':
+            elif self.output == "slack":
                 for problem in self.problems:
                     print(problem)
             exit(1)
@@ -300,15 +300,15 @@ class BugValidator:
                 extra_bugs = actual - expected
                 if bugs_not_found:
                     self._complain(
-                        f'Expected Bugs not found in {kind} advisory ({advisory_id}): {[b.id for b in bugs_not_found]}'
+                        f"Expected Bugs not found in {kind} advisory ({advisory_id}): {[b.id for b in bugs_not_found]}"
                     )
                 if extra_bugs:
                     self._complain(
-                        f'Unexpected Bugs found in {kind} advisory ({advisory_id}): {[b.id for b in extra_bugs]}'
+                        f"Unexpected Bugs found in {kind} advisory ({advisory_id}): {[b.id for b in extra_bugs]}"
                     )
 
     async def verify_bugs_multiple_advisories(self, non_flaw_bugs: List[Bug]):
-        logger.info(f'Checking {len(non_flaw_bugs)} bugs, if any bug is attached to multiple advisories')
+        logger.info(f"Checking {len(non_flaw_bugs)} bugs, if any bug is attached to multiple advisories")
 
         async def get_all_advisory_ids(bug):
             try:
@@ -317,9 +317,9 @@ class BugValidator:
                 try:
                     sync_jira_issue(bug.id)
                 except Exception as e:
-                    return f'Failed to sync bug {bug.id}: {e}'
+                    return f"Failed to sync bug {bug.id}: {e}"
             if len(all_advisories_id) > 1:
-                return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
+                return f"Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}"
             return None
 
         results = await asyncio.gather(*[asyncio.create_task(get_all_advisory_ids(bug)) for bug in non_flaw_bugs])
@@ -440,7 +440,7 @@ class BugValidator:
         # we do this to gather bug ids from all advisories of a bug type
         # and fetch them in one go to avoid multiple requests
         attached_bug_map: Dict[int, Set[Bug]] = {advisory_id: set() for advisory_id in advisory_ids}
-        for bug_tracker_type in ['jira', 'bugzilla']:
+        for bug_tracker_type in ["jira", "bugzilla"]:
             bug_tracker = self.runtime.get_bug_tracker(bug_tracker_type)
             all_bug_ids = {bug_id for bug_dict in advisory_bug_id_map.values() for bug_id in bug_dict[bug_tracker_type]}
             bug_map: Dict[Bug] = bug_tracker.get_bugs_map(all_bug_ids)
@@ -477,19 +477,19 @@ class BugValidator:
         next_version = (v[0], v[1] + 1)
 
         def is_next_target(target_v):
-            pattern = re.compile(r'^\d+\.\d+\.([0z])$')
+            pattern = re.compile(r"^\d+\.\d+\.([0z])$")
             return pattern.match(target_v) and minor_version_tuple(target_v) == next_version
 
         def managed_by_art(b: Bug):
-            components_not_managed_by_art = self.runtime.get_bug_tracker('jira').component_filter()
+            components_not_managed_by_art = self.runtime.get_bug_tracker("jira").component_filter()
             return b.component not in components_not_managed_by_art
 
         # retrieve blockers and filter to those with correct product and target version
         blockers = []
         if jira_ids:
-            blockers.extend(self.runtime.get_bug_tracker('jira').get_bugs(jira_ids))
+            blockers.extend(self.runtime.get_bug_tracker("jira").get_bugs(jira_ids))
         if bz_ids:
-            blockers.extend(self.runtime.get_bug_tracker('bugzilla').get_bugs(bz_ids))
+            blockers.extend(self.runtime.get_bug_tracker("bugzilla").get_bugs(bz_ids))
         logger.debug(f"Candidate Blocker bugs found: {[b.id for b in blockers]}")
         blocking_bugs = {}
         for bug in blockers:
@@ -519,50 +519,50 @@ class BugValidator:
             for blocker in blockers:
                 message = str()
                 if blocker.status not in [
-                    'VERIFIED',
-                    'RELEASE_PENDING',
-                    'CLOSED',
-                    'Release Pending',
-                    'Verified',
-                    'Closed',
+                    "VERIFIED",
+                    "RELEASE_PENDING",
+                    "CLOSED",
+                    "Release Pending",
+                    "Verified",
+                    "Closed",
                 ] and not (blocker.status == bug.status == "ON_QA"):
-                    if self.output == 'text':
+                    if self.output == "text":
                         message = (
                             f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
                             f"{blocker.id} which has status {blocker.status} and target release {blocker.target_release}"
                         )
-                    elif self.output == 'slack':
+                    elif self.output == "slack":
                         message = (
                             f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of "
                             f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
                         )
                     self._complain(message)
-                if blocker.status in ['CLOSED', 'Closed'] and blocker.resolution not in [
-                    'CURRENTRELEASE',
-                    'NEXTRELEASE',
-                    'ERRATA',
-                    'DUPLICATE',
-                    'NOTABUG',
-                    'WONTFIX',
-                    'Done',
-                    'Fixed',
-                    'Done-Errata',
-                    'Obsolete',
-                    'Current Release',
-                    'Errata',
-                    'Next Release',
+                if blocker.status in ["CLOSED", "Closed"] and blocker.resolution not in [
+                    "CURRENTRELEASE",
+                    "NEXTRELEASE",
+                    "ERRATA",
+                    "DUPLICATE",
+                    "NOTABUG",
+                    "WONTFIX",
+                    "Done",
+                    "Fixed",
+                    "Done-Errata",
+                    "Obsolete",
+                    "Current Release",
+                    "Errata",
+                    "Next Release",
                     "Won't Do",
                     "Won't Fix",
-                    'Duplicate',
-                    'Duplicate Issue',
-                    'Not a Bug',
+                    "Duplicate",
+                    "Duplicate Issue",
+                    "Not a Bug",
                 ]:
-                    if self.output == 'text':
+                    if self.output == "text":
                         message = (
                             f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
                             f"{blocker.id} which was CLOSED {blocker.resolution}"
                         )
-                    elif self.output == 'slack':
+                    elif self.output == "slack":
                         message = (
                             f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug "
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
@@ -570,7 +570,7 @@ class BugValidator:
                     self._complain(message)
                 if (
                     is_attached
-                    and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']
+                    and blocker.status in ["ON_QA", "Verified", "VERIFIED"]
                     and is_release_next_week(f"openshift-{major}.{minor + 1}")
                 ):
                     try:
@@ -585,13 +585,13 @@ class BugValidator:
                             self._complain(message)
                             continue
                     if not blocker_advisories:
-                        if self.output == 'text':
+                        if self.output == "text":
                             message = (
                                 f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
                                 f"{blocker.id} which is on {blocker.status} and target release "
                                 f"{blocker.target_release} but is not attached to any advisory"
                             )
-                        elif self.output == 'slack':
+                        elif self.output == "slack":
                             message = (
                                 f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of "
                                 f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
@@ -600,7 +600,7 @@ class BugValidator:
 
     def _verify_bug_status(self, bugs):
         # complain about bugs that are not yet ON_QA or more.
-        good_resolution = ['CURRENTRELEASE', 'ERRATA', 'Done', 'Fixed', 'Done-Errata', 'Current Release', 'Errata']
+        good_resolution = ["CURRENTRELEASE", "ERRATA", "Done", "Fixed", "Done-Errata", "Current Release", "Errata"]
         for bug in bugs:
             if bug.is_flaw_bug():
                 continue
@@ -609,7 +609,7 @@ class BugValidator:
             if bug.status in ["CLOSED", "Closed"] and bug.resolution in good_resolution:
                 continue
             status = f"{bug.status}"
-            if bug.status in ['CLOSED', 'Closed']:
+            if bug.status in ["CLOSED", "Closed"]:
                 status = f"{bug.status}: {bug.resolution}"
             self._complain(f"Bug <{bug.weburl}|{bug.id}> has invalid status {status}")
 

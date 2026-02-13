@@ -41,8 +41,8 @@ class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):
         for source in [
             "git@github.com:myorg/",
             "git@github.com/myorg/",
-            'ssh://someone@github.com/myorg',
-            'ssh://someone@github.com:myorg',
+            "ssh://someone@github.com/myorg",
+            "ssh://someone@github.com:myorg",
         ]:
             actual = artcommonlib.util.convert_remote_git_to_https(source)
             self.assertEqual(actual, expected)
@@ -56,5 +56,5 @@ class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):
         self.assertEqual(actual, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

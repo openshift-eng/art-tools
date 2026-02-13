@@ -85,29 +85,29 @@ standard_library.install_aliases()
 
 
 @cli.command("db:query", short_help="Query database records")
-@click.option("-p", "--operation", required=True, metavar='NAME', help="Which operation to query (e.g. 'build')")
-@click.option("-a", "--attribute", default=[], metavar='NAME', multiple=True, help="Attribute name to output")
-@click.option("-m", "--match", default=[], metavar='NAME=VALUE', multiple=True, help="name=value matches (AND logic)")
+@click.option("-p", "--operation", required=True, metavar="NAME", help="Which operation to query (e.g. 'build')")
+@click.option("-a", "--attribute", default=[], metavar="NAME", multiple=True, help="Attribute name to output")
+@click.option("-m", "--match", default=[], metavar="NAME=VALUE", multiple=True, help="name=value matches (AND logic)")
 @click.option(
-    "-l", "--like", default=[], metavar='NAME=%VALUE%', multiple=True, help="name LIKE value matches (AND logic)"
+    "-l", "--like", default=[], metavar="NAME=%VALUE%", multiple=True, help="name LIKE value matches (AND logic)"
 )
 @click.option(
     "-w",
     "--where",
-    metavar='EXPR',
-    default='',
-    help="Complex expression instead of matching. e.g. ( `NAME`=\"VALUE\" and `NAME2` LIKE \"VALUE2%\" ) or NOT `NAME3` < \"VALUE3\"",
+    metavar="EXPR",
+    default="",
+    help='Complex expression instead of matching. e.g. ( `NAME`="VALUE" and `NAME2` LIKE "VALUE2%" ) or NOT `NAME3` < "VALUE3"',
 )
 @click.option(
     "-s",
     "--sort-by",
-    '--order-by',
+    "--order-by",
     default=None,
-    metavar='NAME',
+    metavar="NAME",
     help="Attribute name to sort by. Note: The sort attribute must be present in at least one of the predicates of the expression.",
 )
-@click.option("--limit", default=0, metavar='NUM', help="Limit records returned to specified number")
-@click.option("-o", "--output", metavar='format', default="human", help='Output format: human, csv, or yaml')
+@click.option("--limit", default=0, metavar="NUM", help="Limit records returned to specified number")
+@click.option("-o", "--output", metavar="format", default="human", help="Output format: human, csv, or yaml")
 @pass_runtime
 def db_select(runtime, operation, attribute, match, like, where, sort_by, limit, output):
     """
@@ -128,60 +128,60 @@ def db_select(runtime, operation, attribute, match, like, where, sort_by, limit,
 
     runtime.initialize(clone_distgits=False, no_group=True)
     if not runtime.datastore:
-        red_print('--datastore must be specified')
+        red_print("--datastore must be specified")
         exit(1)
 
     if not attribute:  # No attribute names identified? return everything.
-        names = '*'
+        names = "*"
     else:
-        names = ','.join([f'`{a}`' for a in attribute])
+        names = ",".join([f"`{a}`" for a in attribute])
 
-    where_str = ''
+    where_str = ""
     if where:
-        where_str = ' WHERE ' + f'{where}'
+        where_str = " WHERE " + f"{where}"
     elif match or like:
-        where_str = ' WHERE '
+        where_str = " WHERE "
         if match:
-            quoted_match = ['`{}`="{}"'.format(*a_match.split('=')) for a_match in match]
-            where_str += ' AND '.join(quoted_match)
+            quoted_match = ['`{}`="{}"'.format(*a_match.split("=")) for a_match in match]
+            where_str += " AND ".join(quoted_match)
         if like:
-            quoted_like = ['`{}` LIKE "{}"'.format(*a_like.split('=')) for a_like in like]
-            where_str += ' AND '.join(quoted_like)
+            quoted_like = ['`{}` LIKE "{}"'.format(*a_like.split("=")) for a_like in like]
+            where_str += " AND ".join(quoted_like)
 
-    sort_by_str = ''
+    sort_by_str = ""
     if sort_by:
         # https://docs.aws.amazon.com/AmazonSimpleDB/latest/DeveloperGuide/SortingDataSelect.html
-        sort_by_str = f' ORDER BY `{sort_by}` ASC'
+        sort_by_str = f" ORDER BY `{sort_by}` ASC"
 
-    domain = f'`{runtime.datastore}_{operation}`'
+    domain = f"`{runtime.datastore}_{operation}`"
 
-    result = runtime.db.select(f'SELECT {names} FROM {domain}{where_str}{sort_by_str}', limit=int(limit))
+    result = runtime.db.select(f"SELECT {names} FROM {domain}{where_str}{sort_by_str}", limit=int(limit))
 
-    if output.lower() == 'yaml':
+    if output.lower() == "yaml":
         print(yaml.safe_dump(result))
 
-    elif output.lower == 'csv':
-        include_name = 'name' in attribute
+    elif output.lower == "csv":
+        include_name = "name" in attribute
         for item in result:
             if include_name:
-                print('Name', end=',')
-            for a in item['Attributes']:
-                print(a['Name'], end=',')
+                print("Name", end=",")
+            for a in item["Attributes"]:
+                print(a["Name"], end=",")
             print()
 
             if include_name:
-                print(item['Name'], end=',')
-            for a in item['Attributes']:
-                print(a['Value'], end=',')
+                print(item["Name"], end=",")
+            for a in item["Attributes"]:
+                print(a["Value"], end=",")
             print()
     else:
         # human
         for item in result:
-            print(item['Name'] + ':')
+            print(item["Name"] + ":")
 
-            for a in item['Attributes']:
-                print('\t' + a['Name'], end='=')
-                print(a['Value'])
+            for a in item["Attributes"]:
+                print("\t" + a["Name"], end="=")
+                print(a["Value"])
             print()
 
 
@@ -195,9 +195,9 @@ def cleanup(runtime):
 
     runtime.initialize(no_group=True)
 
-    runtime.logger.info('Clearing out {}'.format(runtime.working_dir))
+    runtime.logger.info("Clearing out {}".format(runtime.working_dir))
 
-    ignore_list = ['settings.yaml']
+    ignore_list = ["settings.yaml"]
     with Dir(runtime.working_dir):
         for ent in os.listdir("."):
             if ent in ignore_list:
@@ -214,35 +214,35 @@ def cleanup(runtime):
 @cli.command("release:calc-previous", short_help="Returns a list of releases to include in a release's previous field")
 @click.option(
     "--version",
-    metavar='NEW_VER',
+    metavar="NEW_VER",
     required=True,
     help="The release to calculate previous for (e.g. 4.5.4 or 4.6.0..hotfix)",
 )
 @click.option(
-    "-a", "--arch", metavar='ARCH', help="Arch for which the repo should be generated", default='x86_64', required=False
+    "-a", "--arch", metavar="ARCH", help="Arch for which the repo should be generated", default="x86_64", required=False
 )
 @click.option(
     "--graph-url",
-    metavar='GRAPH_URL',
+    metavar="GRAPH_URL",
     required=False,
-    default='https://api.openshift.com/api/upgrades_info/v1/graph',
+    default="https://api.openshift.com/api/upgrades_info/v1/graph",
     help="Cincinnati graph URL to query",
 )
 @click.option(
     "--graph-content-stable",
-    metavar='JSON_FILE',
+    metavar="JSON_FILE",
     required=False,
     help="Override content from stable channel - primarily for testing",
 )
 @click.option(
     "--graph-content-candidate",
-    metavar='JSON_FILE',
+    metavar="JSON_FILE",
     required=False,
     help="Override content from candidate channel - primarily for testing",
 )
 @click.option(
     "--suggestions-url",
-    metavar='SUGGESTIONS_URL',
+    metavar="SUGGESTIONS_URL",
     required=False,
     default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
     help="Suggestions URL, load from {major}-{minor}-{arch}.yaml",
@@ -253,14 +253,14 @@ def release_calc_previous(version, arch, graph_url, graph_content_stable, graph_
     results = get_release_calc_previous(
         version, arch, graph_url, graph_content_stable, graph_content_candidate, suggestions_url
     )
-    print(','.join(results))
+    print(",".join(results))
 
 
 @cli.command("beta:reposync", short_help="Sync yum repos listed in group.yaml to local directory.")
 @click.option("-o", "--output", metavar="DIR", help="Output directory to sync to", required=True)
 @click.option("-c", "--cachedir", metavar="DIR", help="Cache directory for yum", required=True)
 @click.option(
-    "-a", "--arch", metavar='ARCH', help="Arch for which the repo should be generated", default='x86_64', required=False
+    "-a", "--arch", metavar="ARCH", help="Arch for which the repo should be generated", default="x86_64", required=False
 )
 @click.option(
     "--repo-type",
@@ -274,12 +274,12 @@ def release_calc_previous(version, arch, graph_url, graph_content_stable, graph_
     "--name",
     "names",
     default=[],
-    metavar='NAME',
+    metavar="NAME",
     multiple=True,
     help="Only sync the specified repository names; if not specified all will be synced.",
 )
 @click.option(
-    '--dry-run', default=False, is_flag=True, help='Print derived yum configuration for sync operation and exit'
+    "--dry-run", default=False, is_flag=True, help="Print derived yum configuration for sync operation and exit"
 )
 @pass_runtime
 def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
@@ -325,26 +325,26 @@ installonly_limit=3
     print("repo config:\n", content)
 
     if not os.path.isdir(output):
-        yellow_print('Creating outputdir: {}'.format(output))
-        exectools.cmd_assert('mkdir -p {}'.format(output))
+        yellow_print("Creating outputdir: {}".format(output))
+        exectools.cmd_assert("mkdir -p {}".format(output))
 
     if not os.path.isdir(cachedir):
-        yellow_print('Creating cachedir: {}'.format(cachedir))
-        exectools.cmd_assert('mkdir -p {}'.format(cachedir))
+        yellow_print("Creating cachedir: {}".format(cachedir))
+        exectools.cmd_assert("mkdir -p {}".format(cachedir))
 
     metadata_dir = None
     yc_file = None
     try:
         # If corrupted, reposync metadata can interfere with subsequent runs.
         # Ensure we have a clean space for each invocation.
-        metadata_dir = tempfile.mkdtemp(prefix='reposync-metadata.', dir=cachedir)
+        metadata_dir = tempfile.mkdtemp(prefix="reposync-metadata.", dir=cachedir)
         yc_file = tempfile.NamedTemporaryFile()
-        yc_file.write(content.encode('utf-8'))
+        yc_file.write(content.encode("utf-8"))
 
         # must flush so it can be read
         yc_file.flush()
 
-        exectools.cmd_assert('yum clean all')  # clean the cache first to avoid outdated repomd.xml files
+        exectools.cmd_assert("yum clean all")  # clean the cache first to avoid outdated repomd.xml files
 
         for repo in repos.values():
             # If specific names were specified, only synchronize them.
@@ -352,33 +352,33 @@ installonly_limit=3
                 continue
 
             if not repo.is_reposync_enabled():
-                runtime.logger.info('Skipping repo {} because reposync is disabled in group.yml'.format(repo.name))
+                runtime.logger.info("Skipping repo {} because reposync is disabled in group.yml".format(repo.name))
                 continue
 
-            color_print('Syncing repo {}'.format(repo.name), 'blue')
+            color_print("Syncing repo {}".format(repo.name), "blue")
             cmd = (
-                'dnf '
-                f'--config {yc_file.name} '
-                f'--repoid {repo.name} '
-                'reposync '
-                f'--arch {arch} '
-                '--arch noarch '
-                '--delete '
-                '--download-metadata '
-                f'--download-path {output} '
+                "dnf "
+                f"--config {yc_file.name} "
+                f"--repoid {repo.name} "
+                "reposync "
+                f"--arch {arch} "
+                "--arch noarch "
+                "--delete "
+                "--download-metadata "
+                f"--download-path {output} "
             )
             if repo.is_reposync_latest_only():
-                cmd += '--newest-only '
+                cmd += "--newest-only "
 
             if dry_run:
-                cmd += '--urls '
+                cmd += "--urls "
 
             rc, out, err = exectools.cmd_gather(cmd, realtime=True)
             if rc != 0:
                 if not repo.cs_optional:
                     raise DoozerFatalError(err)
                 else:
-                    runtime.logger.warning('Failed to sync repo {} but marked as optional: {}'.format(repo.name, err))
+                    runtime.logger.warning("Failed to sync repo {} but marked as optional: {}".format(repo.name, err))
                     optional_fails.append(repo.name)
     finally:
         yc_file.close()
@@ -386,12 +386,12 @@ installonly_limit=3
 
     if optional_fails:
         yellow_print(
-            'Completed with the following optional repos skipped or partial due to failure, see log.:\n{}'.format(
-                '\n'.join(optional_fails)
+            "Completed with the following optional repos skipped or partial due to failure, see log.:\n{}".format(
+                "\n".join(optional_fails)
             )
         )
     else:
-        green_print('Repos synced to {}'.format(output))
+        green_print("Repos synced to {}".format(output))
 
 
 @cli.command("analyze:debug-log", short_help="Output an analysis of the debug log")
@@ -433,16 +433,16 @@ def main():
         # nicely instead of a gross stack-trace.
         # All internal errors that should simply cause the app
         # to exit with an error code should use DoozerFatalError
-        red_print('\nDoozer Failed With Error:\n' + str(ex))
+        red_print("\nDoozer Failed With Error:\n" + str(ex))
 
         if cli_package.CTX_GLOBAL and cli_package.CTX_GLOBAL.obj:
-            cli_package.CTX_GLOBAL.obj.state['status'] = state.STATE_FAIL
-            cli_package.CTX_GLOBAL.obj.state['msg'] = str(ex)
+            cli_package.CTX_GLOBAL.obj.state["status"] = state.STATE_FAIL
+            cli_package.CTX_GLOBAL.obj.state["msg"] = str(ex)
         sys.exit(1)
     finally:
         if cli_package.CTX_GLOBAL and cli_package.CTX_GLOBAL.obj and cli_package.CTX_GLOBAL.obj.initialized:
             cli_package.CTX_GLOBAL.obj.save_state()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -10,17 +10,17 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("attach-bugs", short_help="List and (optional) add bugs to ADVISORY")
-@click.argument('bug_ids', metavar='<BUGID>', nargs=-1, required=True, default=None)
+@click.argument("bug_ids", metavar="<BUGID>", nargs=-1, required=True, default=None)
 @click.option("--report", required=False, is_flag=True, help="Output a detailed report of bugs")
 @click.option(
-    '--output',
-    '-o',
+    "--output",
+    "-o",
     required=False,
-    type=click.Choice(['text', 'json', 'slack']),
-    default='text',
-    help='Applies chosen format to --report output',
+    type=click.Choice(["text", "json", "slack"]),
+    default="text",
+    help="Applies chosen format to --report output",
 )
-@click.option("--advisory", "-a", 'advisory', type=int, metavar='ADVISORYID', help="Attach bugs to ADVISORY")
+@click.option("--advisory", "-a", "advisory", type=int, metavar="ADVISORYID", help="Attach bugs to ADVISORY")
 @use_default_advisory_option
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
@@ -56,21 +56,21 @@ def attach_bugs_cli(runtime: Runtime, advisory, default_advisory_type, bug_ids, 
 
     jira_ids, bz_ids = get_jira_bz_bug_ids(bug_ids)
     if jira_ids:
-        attach_bugs(runtime, advisory, jira_ids, report, output, noop, runtime.get_bug_tracker('jira'))
+        attach_bugs(runtime, advisory, jira_ids, report, output, noop, runtime.get_bug_tracker("jira"))
     if bz_ids:
-        attach_bugs(runtime, advisory, bz_ids, report, output, noop, runtime.get_bug_tracker('bugzilla'))
+        attach_bugs(runtime, advisory, bz_ids, report, output, noop, runtime.get_bug_tracker("bugzilla"))
 
 
 def attach_bugs(runtime, advisory, bug_ids, report, output, noop, bug_tracker):
     major, minor = runtime.get_major_minor()
-    version = f'{major}.{minor}'
+    version = f"{major}.{minor}"
     bugs = bug_tracker.get_bugs(bug_ids, verbose=runtime.debug)
 
     # Check if target release and OCP version match
     target_release = Bug.get_target_release(bugs)
     if version not in target_release:
         raise ValueError(
-            'Target release version for given bugs (%s) does not match the group (%s): aborting',
+            "Target release version for given bugs (%s) does not match the group (%s): aborting",
             target_release,
             version,
         )

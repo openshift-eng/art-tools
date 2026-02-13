@@ -18,7 +18,7 @@ from artcommonlib.model import Missing, Model
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 from doozerlib.repodata import Repodata, RepodataLoader
 
-DEFAULT_REPOTYPES = ['unsigned', 'signed']
+DEFAULT_REPOTYPES = ["unsigned", "signed"]
 
 # This architecture is handled differently in some cases for legacy reasons
 ARCH_X86_64 = "x86_64"
@@ -37,7 +37,7 @@ class Repo(object):
         gpgcheck: bool = True,
         plashet_config: Optional[PlashetConfig] = None,
         template_vars: Optional[Dict[str, str]] = None,
-    ) -> 'Repo':
+    ) -> "Repo":
         """
         Create a Repo instance from a new-style RepoConf (Pydantic model).
 
@@ -53,7 +53,7 @@ class Repo(object):
         arches = list(valid_arches)
 
         # Handle plashet type repos
-        if repo_config.type == 'plashet':
+        if repo_config.type == "plashet":
             if not plashet_config:
                 raise ValueError(f"Repo '{repo_config.name}' is of type 'plashet' but no plashet_config was provided")
             if not repo_config.plashet:
@@ -67,7 +67,7 @@ class Repo(object):
             conf = repo_config.conf.copy() if repo_config.conf else {}
 
             # If baseurl is not provided in repo config, construct it from plashet config
-            if 'baseurl' not in conf or not conf['baseurl']:
+            if "baseurl" not in conf or not conf["baseurl"]:
                 baseurl_dict = {}
 
                 for arch in arches:
@@ -78,23 +78,23 @@ class Repo(object):
                         replace_vars=template_vars,
                     )
 
-                conf['baseurl'] = baseurl_dict
-            repo_dict['conf'] = conf
+                conf["baseurl"] = baseurl_dict
+            repo_dict["conf"] = conf
 
         # Handle external type repos (existing logic)
-        elif repo_config.type == 'external':
+        elif repo_config.type == "external":
             if repo_config.conf:
-                repo_dict['conf'] = repo_config.conf
+                repo_dict["conf"] = repo_config.conf
         else:
             raise ValueError(f"Unsupported repo type: {repo_config.type}")
 
         # Add content_set if present
         if repo_config.content_set:
-            repo_dict['content_set'] = repo_config.content_set.model_dump(exclude_none=True)
+            repo_dict["content_set"] = repo_config.content_set.model_dump(exclude_none=True)
 
         # Add reposync if present
         if repo_config.reposync:
-            repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
+            repo_dict["reposync"] = repo_config.reposync.model_dump(exclude_none=True)
 
         return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
 
@@ -112,21 +112,21 @@ class Repo(object):
         self._invalid_cs_arches = set()
 
         self._data = Model(data)
-        for req in ['conf', 'content_set']:
+        for req in ["conf", "content_set"]:
             if req not in self._data:
                 raise ValueError('Repo definitions must contain "{}" key!'.format(req))
         if self._data.conf.baseurl is Missing:
-            raise ValueError('Repo definitions must include conf.baseurl!')
+            raise ValueError("Repo definitions must include conf.baseurl!")
 
         # fill out default conf values
         conf = self._data.conf
-        conf.name = conf.get('name', name)
+        conf.name = conf.get("name", name)
         self.gpgcheck = gpgcheck
 
         def pkgs_to_list(pkgs_str):
             pkgs_str = pkgs_str.strip()
             if "," in pkgs_str and " " in pkgs_str:
-                raise ValueError('pkgs string cannot contain both commas and spaces')
+                raise ValueError("pkgs string cannot contain both commas and spaces")
             elif "," in pkgs_str:
                 return pkgs_str.split(",")
             elif " " in pkgs_str:
@@ -136,15 +136,15 @@ class Repo(object):
             return []
 
         # these will be used to filter the packages
-        includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
+        includepkgs_str = conf.get("extra_options", {}).get("includepkgs", "")
         self.includepkgs = pkgs_to_list(includepkgs_str)
 
-        excludepkgs_str = conf.get('extra_options', {}).get('exclude', "") or conf.get('extra_options', {}).get(
-            'excludepkgs', ""
+        excludepkgs_str = conf.get("extra_options", {}).get("exclude", "") or conf.get("extra_options", {}).get(
+            "excludepkgs", ""
         )
         self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
-        self.cs_optional = self._data.content_set.get('optional', False)
+        self.cs_optional = self._data.content_set.get("optional", False)
 
         self.repotypes = DEFAULT_REPOTYPES
         self.baseurl(DEFAULT_REPOTYPES[0], self._valid_arches[0])  # run once just to populate self.repotypes
@@ -169,9 +169,9 @@ class Repo(object):
         val = self._data.conf.enabled
         if isinstance(val, str):
             val = val.lower()
-            if val in ('true', 'yes'):
+            if val in ("true", "yes"):
                 return True
-            if val in ('false', 'no'):
+            if val in ("false", "no"):
                 return False
             raise ValueError(f"Invalid enabled option {val}")
         if val in (Missing, 1, True):
@@ -208,7 +208,7 @@ class Repo(object):
 
     def baseurl(self, repotype, arch):
         if not repotype:
-            repotype = 'unsigned'
+            repotype = "unsigned"
         """Get baseurl based on repo type, if one was specified for this repo."""
         bu = self._data.conf.baseurl
         if isinstance(bu, str):
@@ -218,37 +218,37 @@ class Repo(object):
                 bu_sub = bu
             else:
                 if repotype not in bu:
-                    raise ValueError('{} is not a valid repotype option in {}'.format(repotype, list(bu.keys())))
+                    raise ValueError("{} is not a valid repotype option in {}".format(repotype, list(bu.keys())))
                 self.repotypes = list(bu.keys())
                 bu_sub = bu[repotype]
             if isinstance(bu_sub, str):
                 return bu_sub
             elif isinstance(bu_sub, dict):
                 if arch not in self._valid_arches:
-                    raise ValueError('{} is not a valid arch option!'.format(arch))
+                    raise ValueError("{} is not a valid arch option!".format(arch))
                 if arch not in bu_sub:
-                    raise ValueError('No baseurl available for arch {}'.format(arch))
+                    raise ValueError("No baseurl available for arch {}".format(arch))
                 return bu_sub[arch]
             return bu[repotype]
         else:
-            raise ValueError('baseurl must be str or dict!')
+            raise ValueError("baseurl must be str or dict!")
 
     def content_set(self, arch):
         """Return content set name for given arch with sane fallbacks and error handling."""
 
         if arch not in self._valid_arches:
-            raise ValueError(f'{arch} is not a valid arch!')
+            raise ValueError(f"{arch} is not a valid arch!")
         if arch in self._invalid_cs_arches:
             return None
         if self._data.content_set[arch] is Missing:
-            if self._data.content_set['default'] is Missing:
-                if self._data.content_set['optional'] is not Missing and self._data.content_set['optional']:
-                    return ''
+            if self._data.content_set["default"] is Missing:
+                if self._data.content_set["optional"] is not Missing and self._data.content_set["optional"]:
+                    return ""
                 else:
                     raise ValueError(
-                        '{} does not contain a content_set for {} and no default was provided.'.format(self.name, arch)
+                        "{} does not contain a content_set for {} and no default was provided.".format(self.name, arch)
                     )
-            return self._data.content_set['default']
+            return self._data.content_set["default"]
         else:
             return self._data.content_set[arch]
 
@@ -270,10 +270,10 @@ class Repo(object):
             name = rhel-7-server-ansible-2.4-rpms
         """
         if not repotype:
-            repotype = 'unsigned'
+            repotype = "unsigned"
 
         if arch not in self._valid_arches:
-            raise ValueError('{} does not identify a yum repository for arch: {}'.format(self.name, arch))
+            raise ValueError("{} does not identify a yum repository for arch: {}".format(self.name, arch))
 
         if not section_name:  # If the caller has not specified a name, use group.yml name.
             section_name = self.name
@@ -281,29 +281,29 @@ class Repo(object):
         # Get baseurl once and reuse it
         baseurl_value = self.baseurl(repotype, arch)
 
-        result = '[{}]\n'.format(section_name)
+        result = "[{}]\n".format(section_name)
 
         # Sort keys so they are always in the same order, makes unit
         # testing much easier
         for k in sorted(self._data.conf.keys()):
             v = self._data.conf[k]
 
-            if k == 'ci_alignment':
+            if k == "ci_alignment":
                 # Special keyword that does not translate to yum conf content.
                 continue
 
-            line = '{} = {}\n'
-            if k == 'baseurl':
+            line = "{} = {}\n"
+            if k == "baseurl":
                 line = line.format(k, baseurl_value)
-            elif k == 'name':
+            elif k == "name":
                 line = line.format(k, section_name)
-            elif k == 'extra_options':
-                opt_lines = ''
+            elif k == "extra_options":
+                opt_lines = ""
                 for opt, val in v.items():
                     opt_lines += "{} = {}\n".format(opt, val)
                 line = opt_lines
             else:
-                if k == 'enabled' and enabled is not None:
+                if k == "enabled" and enabled is not None:
                     v = 1 if enabled else 0
                 line = line.format(k, v)
 
@@ -311,26 +311,26 @@ class Repo(object):
 
         # Usually, gpgcheck will not be specified, in build metadata, but don't override if it is there
         if (
-            self._data.conf.get('gpgcheck', None) is None
-            and self._data.conf.get('extra_options', {}).get('gpgcheck', None) is None
+            self._data.conf.get("gpgcheck", None) is None
+            and self._data.conf.get("extra_options", {}).get("gpgcheck", None) is None
         ):
             # If we are building a signed repo file, and overall gpgcheck is desired
-            if repotype == 'signed' and self.gpgcheck:
-                result += 'gpgcheck = 1\n'
+            if repotype == "signed" and self.gpgcheck:
+                result += "gpgcheck = 1\n"
             else:
-                result += 'gpgcheck = 0\n'
+                result += "gpgcheck = 0\n"
 
         if (
-            self._data.conf.get('gpgkey', None) is None
-            and self._data.conf.get('extra_options', {}).get('gpgkey', None) is None
+            self._data.conf.get("gpgkey", None) is None
+            and self._data.conf.get("extra_options", {}).get("gpgkey", None) is None
         ):
             # This key will bed used only if gpgcheck=1
-            result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
+            result += "gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n"
 
-        if konflux and ('ocp-artifacts' in baseurl_value or 'download.devel.redhat.com/' in baseurl_value):
-            result += f'sslcacert = {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}/{KONFLUX_REPO_CA_BUNDLE_FILENAME}\n'
+        if konflux and ("ocp-artifacts" in baseurl_value or "download.devel.redhat.com/" in baseurl_value):
+            result += f"sslcacert = {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}/{KONFLUX_REPO_CA_BUNDLE_FILENAME}\n"
 
-        result += '\n'
+        result += "\n"
 
         return result
 
@@ -445,7 +445,7 @@ class Repos(object):
                 if repo_config.disabled:
                     continue
                 # Skip repos that are neither external nor plashet
-                if repo_config.type not in ['external', 'plashet']:
+                if repo_config.type not in ["external", "plashet"]:
                     continue
 
                 # Use static method to convert new-style RepoConf to Repo instance
@@ -471,7 +471,7 @@ class Repos(object):
     def __getitem__(self, item: str) -> Repo:
         """Allows getting a Repo() object simply by name via repos[repo_name]"""
         if item not in self._repos:
-            raise ValueError('{} is not a valid repo name!'.format(item))
+            raise ValueError("{} is not a valid repo name!".format(item))
         return self._repos[item]
 
     def items(self):
@@ -498,7 +498,7 @@ class Repos(object):
             If False, disabled repos will be included with enabled=0 and a warning will be printed.
         """
 
-        result = ''
+        result = ""
         for r in self._repos.values():
             # A repo is enabled only if BOTH conditions are true:
             # 1. enabled in group.yml (r.enabled)
@@ -520,7 +520,7 @@ class Repos(object):
             else:
                 # When generating a repo file for multi-arch builds, we need all arches in the same repo file.
                 for iarch in r.arches:
-                    section_name = '{}-{}'.format(r.name, iarch)
+                    section_name = "{}-{}".format(r.name, iarch)
                     result += r.conf_section(
                         repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux
                     )
@@ -584,9 +584,9 @@ class Repos(object):
         }
 
         headers = {
-            'Content-Type': "application/json",
-            'Authorization': "Basic cWE6cWE=",  # qa:qa
-            'Cache-Control': "no-cache",
+            "Content-Type": "application/json",
+            "Authorization": "Basic cWE6cWE=",  # qa:qa
+            "Cache-Control": "no-cache",
         }
 
         # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp
@@ -626,7 +626,7 @@ class Repos(object):
         content_set_defined = {}
         for name, repo in self._repos.items():
             content_set_defined[name] = False
-            for arch in self._arches + ['default']:
+            for arch in self._arches + ["default"]:
                 if repo._data.content_set[arch] is not Missing:
                     content_set_defined[name] = True
 
@@ -645,9 +645,9 @@ class Repos(object):
                 for name, cs in cs_names.items():
                     if cs not in valid:
                         if not self._repos[name].cs_optional:
-                            invalid.append('{}/{}'.format(arch, cs))
+                            invalid.append("{}/{}".format(arch, cs))
                         self._repos[name].set_invalid_cs_arch(arch)
 
         if invalid:
-            cs_lst = ', '.join(invalid)
-            raise ValueError('The following content set names are given, do not exist, and are not optional: ' + cs_lst)
+            cs_lst = ", ".join(invalid)
+            raise ValueError("The following content set names are given, do not exist, and are not optional: " + cs_lst)

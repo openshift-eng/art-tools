@@ -36,5 +36,5 @@ class SnapshotTestCases(unittest.TestCase):
         self.assertIn("microshift-bootc-v4.18.0-202503121435.p0.gc0eec47.assembly.4.18.2.el9", result.stdout.decode())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

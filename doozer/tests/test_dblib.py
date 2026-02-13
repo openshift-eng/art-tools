@@ -84,7 +84,7 @@ class DBLibTest(unittest.TestCase):
     def test_record_with_empty_value(self):
         if not self.setup_failed:
             try:
-                with self.db.record(operation='build', metadata=None):
+                with self.db.record(operation="build", metadata=None):
                     Record.set("name", "test")
                     Record.set("position", None)
                     Record.set("country", "")

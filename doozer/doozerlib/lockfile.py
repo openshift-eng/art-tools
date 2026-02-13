@@ -64,7 +64,7 @@ class RpmInfo:
         Returns:
             RpmInfo: A new instance of RpmInfo populated with data from rpm and metadata.
         """
-        epoch = str(rpm.epoch) if rpm.epoch not in (None, '', '0') else '0'
+        epoch = str(rpm.epoch) if rpm.epoch not in (None, "", "0") else "0"
         evr = f"{epoch}:{rpm.version}-{rpm.release}"
         return cls(
             name=rpm.name,
@@ -76,7 +76,7 @@ class RpmInfo:
             epoch=rpm.epoch or 0,
             version=rpm.version,
             release=rpm.release,
-            url=f'{baseurl}{rpm.location}',
+            url=f"{baseurl}{rpm.location}",
         )
 
     def to_dict(self) -> Dict[str, object]:
@@ -223,7 +223,7 @@ class RpmInfoCollector:
             requested_repos (set[str]): Set of repository names to load.
             arch (str): Architecture identifier for fetching repodata.
         """
-        not_yet_loaded = {repo for repo in requested_repos if f'{repo}-{arch}' not in self.loaded_repos}
+        not_yet_loaded = {repo for repo in requested_repos if f"{repo}-{arch}" not in self.loaded_repos}
         already_loaded = requested_repos - not_yet_loaded
 
         current_span = trace.get_current_span()
@@ -270,24 +270,24 @@ class RpmInfoCollector:
         missing_rpms = unresolved_rpms
 
         for repo_name in repo_names:
-            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            repodata = self.loaded_repos.get(f"{repo_name}-{arch}")
             if repodata is None:
                 self.logger.error(
-                    f'repodata {repo_name}-{arch} not found while fetching rpms, it should be loaded by now'
+                    f"repodata {repo_name}-{arch} not found while fetching rpms, it should be loaded by now"
                 )
                 continue
 
             repo = self.repos._repos[repo_name]
             if repo is None:
-                self.logger.error(f'repo {repo_name} not found')
+                self.logger.error(f"repo {repo_name} not found")
                 continue
 
             found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
 
             content_set_id = repo.content_set(arch)
             if content_set_id is None:
-                self.logger.warning(f'repo {repo_name} has no content_set for {arch}, falling back to repo key')
-                content_set_id = f'{repo_name}-{arch}'
+                self.logger.warning(f"repo {repo_name} has no content_set for {arch}, falling back to repo key")
+                content_set_id = f"{repo_name}-{arch}"
 
             rpm_info_list.extend(
                 [
@@ -354,9 +354,9 @@ class RpmInfoCollector:
         Returns:
             Tuple[str, int, str]: (checksum, size, url) for modules.yaml file
         """
-        repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+        repodata = self.loaded_repos.get(f"{repo_name}-{arch}")
         if repodata is None:
-            self.logger.warning(f'repodata {repo_name}-{arch} not found')
+            self.logger.warning(f"repodata {repo_name}-{arch} not found")
             return "sha256:unknown", 0, "repodata/modules.yaml"
 
         if (
@@ -384,19 +384,19 @@ class RpmInfoCollector:
             list[ModuleInfo]: Repository-based module metadata (one entry per repo with modules)
         """
         module_info_list = []
-        search_names = {name.split(':')[0] for name in module_names}
+        search_names = {name.split(":")[0] for name in module_names}
         unresolved_search_names = set(search_names)
         processed_repos = set()
 
         for repo_name in repo_names:
-            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            repodata = self.loaded_repos.get(f"{repo_name}-{arch}")
             if repodata is None:
-                self.logger.error(f'repodata {repo_name}-{arch} not found while fetching modules')
+                self.logger.error(f"repodata {repo_name}-{arch} not found while fetching modules")
                 continue
 
             repo = self.repos._repos[repo_name]
             if repo is None:
-                self.logger.error(f'repo {repo_name} not found')
+                self.logger.error(f"repo {repo_name} not found")
                 continue
 
             matching_modules = [
@@ -406,18 +406,18 @@ class RpmInfoCollector:
             ]
 
             self.logger.debug(
-                f'Repository {repo_name}-{arch}: found {len(repodata.modules)} total modules, {len(matching_modules)} matching {module_names}'
+                f"Repository {repo_name}-{arch}: found {len(repodata.modules)} total modules, {len(matching_modules)} matching {module_names}"
             )
 
             if repodata.modules:
                 module_summary = [(m.name, m.arch) for m in repodata.modules[:5]]
-                self.logger.debug(f'Available modules (first 5): {module_summary}')
+                self.logger.debug(f"Available modules (first 5): {module_summary}")
 
             if not matching_modules:
-                self.logger.debug(f'No matching modules found in {repo_name}-{arch}, skipping repository')
+                self.logger.debug(f"No matching modules found in {repo_name}-{arch}, skipping repository")
                 continue
 
-            content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
+            content_set_id = repo.content_set(arch) or f"{repo_name}-{arch}"
 
             repo_key = f"{content_set_id}"
             if repo_key in processed_repos:
@@ -524,11 +524,11 @@ class RPMLockfileGenerator:
 
         if not rpms_to_install:
             self.logger.warning(
-                f'Empty RPM list to install for {image_meta.distgit_key}; all required RPMs may be inherited? Skipping lockfile generation.'
+                f"Empty RPM list to install for {image_meta.distgit_key}; all required RPMs may be inherited? Skipping lockfile generation."
             )
             return False, set()
         else:
-            self.logger.info(f'{image_meta.distgit_key} image needs to install {len(rpms_to_install)} rpms')
+            self.logger.info(f"{image_meta.distgit_key} image needs to install {len(rpms_to_install)} rpms")
 
         return True, rpms_to_install
 
@@ -610,7 +610,7 @@ class RPMLockfileGenerator:
 
         # Load repositories once for both RPM and module collection to avoid race condition
         # Only attempt loading if we have real repository objects (not test mocks)
-        if hasattr(self.builder.repos, '_repos') and enabled_repos:
+        if hasattr(self.builder.repos, "_repos") and enabled_repos:
             try:
                 await asyncio.gather(*(self.builder._load_repos(enabled_repos, arch) for arch in arches))
             except (TypeError, AttributeError):
@@ -687,7 +687,7 @@ class ArtifactLockfileGenerator:
 
     def _extract_filename_from_url(self, url: str) -> str:
         """Extract filename from URL for artifact naming."""
-        return url.split('/')[-1] or 'artifact'
+        return url.split("/")[-1] or "artifact"
 
     def should_generate_artifact_lockfile(self, image_meta: ImageMetadata, dest_dir: Path) -> bool:
         """
@@ -731,7 +731,7 @@ class ArtifactLockfileGenerator:
         artifact_infos = []
         async with aiohttp.ClientSession() as session:
             for url in required_artifact_urls:
-                artifact_resource = {'name': self._extract_filename_from_url(url), 'url': url}
+                artifact_resource = {"name": self._extract_filename_from_url(url), "url": url}
                 artifact_info = await self._download_and_compute_checksum(session, artifact_resource)
                 artifact_infos.append(artifact_info)
 
@@ -754,7 +754,7 @@ class ArtifactLockfileGenerator:
         Returns:
             ArtifactInfo: Artifact metadata with checksum.
         """
-        url = artifact_resource['url']
+        url = artifact_resource["url"]
 
         self.logger.debug(f"Downloading artifact from {url}")
 
@@ -769,7 +769,7 @@ class ArtifactLockfileGenerator:
             from urllib.parse import urlparse
 
             parsed_url = urlparse(url)
-            filename = parsed_url.path.split('/')[-1]
+            filename = parsed_url.path.split("/")[-1]
             if not filename:
                 # Fallback if URL doesn't end with a filename
                 filename = f"{artifact_resource['name']}-artifact"

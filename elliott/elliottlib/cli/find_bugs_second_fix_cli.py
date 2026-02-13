@@ -14,7 +14,7 @@ LOGGER = logutil.get_logger(__name__)
 class FindBugsSecondFix(FindBugsMode):
     def __init__(self):
         super().__init__(
-            status={'MODIFIED', 'VERIFIED', 'ON_QA'},
+            status={"MODIFIED", "VERIFIED", "ON_QA"},
             cve_only=True,
         )
 
@@ -30,13 +30,13 @@ def find_bugs_second_fix_cli(runtime: Runtime, close, noop):
 
         $ elliott -g openshift-4.Y find-bugs:second-fix
     """
-    runtime.initialize(mode='images')
+    runtime.initialize(mode="images")
     find_bugs_obj = FindBugsSecondFix()
-    find_bugs_second_fix(runtime, find_bugs_obj, close, noop, runtime.get_bug_tracker('jira'))
+    find_bugs_second_fix(runtime, find_bugs_obj, close, noop, runtime.get_bug_tracker("jira"))
 
 
 def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
-    allowed_phases = ['pre-release', 'signing']
+    allowed_phases = ["pre-release", "signing"]
     phase_value = runtime.group_config.software_lifecycle.phase
     if phase_value in allowed_phases:
         LOGGER.info(
@@ -58,13 +58,13 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
         )
 
         if close:
-            bug_tracker = runtime.get_bug_tracker('jira')
+            bug_tracker = runtime.get_bug_tracker("jira")
             for k in second_fix_trackers:
                 LOGGER.info(f"Tracker {k.id} is a second fix for it's associated CVE and therefore it will be closed")
-                comment = f'''
+                comment = f"""
 Closing this CVE tracker, as the CVE has been declared fixed for this component for {major_version}.{int(minor_version) - 1}.
 in pre-release
-'''
+"""
                 target = "CLOSED"
                 try:
                     bug_tracker.update_bug_status(
@@ -72,7 +72,7 @@ in pre-release
                     )
                 except Exception as e:
                     LOGGER.error(traceback.format_exc())
-                    LOGGER.error(f'exception with OCPBUGS: {k} bug tracker: {e}')
+                    LOGGER.error(f"exception with OCPBUGS: {k} bug tracker: {e}")
         else:
             LOGGER.info(
                 f"Found {len(second_fix_trackers)} CVE trackers that are not first-fix for OCP {major_version}.{minor_version} pre-release"

@@ -10,7 +10,7 @@ def stub_runtime():
     rt = runtime.Runtime(
         latest_parent_version=False,
         stage=False,
-        branch='test-branch',
+        branch="test-branch",
         rhpkg_config="",
     )
     rt._logger = logging.getLogger(__name__)

@@ -104,12 +104,12 @@ class SyncRhcosBfbPipeline:
                     raise Exception(f"Failed to download {download_url}: HTTP {response.status}")
 
                 # Log file size
-                content_length = response.headers.get('content-length')
+                content_length = response.headers.get("content-length")
                 if content_length:
                     size_mb = int(content_length) / (1024 * 1024)
                     self.runtime.logger.info(f"{artifact_path} size: {size_mb:.1f} MB")
 
-                with open(local_path, 'wb') as f:
+                with open(local_path, "wb") as f:
                     downloaded = 0
                     last_logged_mb = 0
                     async for chunk in response.content.iter_chunked(1024 * 1024):  # 1MB chunks

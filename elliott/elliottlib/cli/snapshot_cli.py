@@ -69,13 +69,13 @@ async def get_build_records_by_nvrs(runtime: Runtime, nvrs: list[str]) -> dict[s
     type_nvrs = defaultdict(list)
     for nvr in nvrs:
         nvr_dict = parse_nvr(nvr)
-        if nvr_dict['name'].replace('-container', '') in runtime.image_map:
+        if nvr_dict["name"].replace("-container", "") in runtime.image_map:
             type_nvrs[KonfluxBuildRecord].append(nvr)
-        elif nvr_dict['name'].endswith('-bundle-container') or nvr_dict['name'].endswith('-metadata-container'):
+        elif nvr_dict["name"].endswith("-bundle-container") or nvr_dict["name"].endswith("-metadata-container"):
             type_nvrs[KonfluxBundleBuildRecord].append(nvr)
-        elif nvr_dict['name'].endswith('-fbc'):
+        elif nvr_dict["name"].endswith("-fbc"):
             type_nvrs[KonfluxFbcBuildRecord].append(nvr)
-        elif nvr_dict['name'].endswith('-container'):
+        elif nvr_dict["name"].endswith("-container"):
             type_nvrs[KonfluxBuildRecord].append(nvr)
         else:
             raise ValueError(f"Unknown NVR type for {nvr}. Expected bundle-container, fbc, or container.")
@@ -110,33 +110,33 @@ class CreateSnapshotCli:
         self.job_url = job_url
         self.image_repo_pull_secret = image_repo_pull_secret
         self.konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=self.konflux_config['namespace'],
-            config_file=self.konflux_config['kubeconfig'],
-            context=self.konflux_config['context'],
+            default_namespace=self.konflux_config["namespace"],
+            config_file=self.konflux_config["kubeconfig"],
+            context=self.konflux_config["context"],
             dry_run=self.dry_run,
         )
         self.konflux_client.verify_connection()
 
     async def run(self):
         if self.runtime.konflux_db is None:
-            raise RuntimeError('Must run Elliott with Konflux DB initialized')
+            raise RuntimeError("Must run Elliott with Konflux DB initialized")
 
         # Ensure the Snapshot CRD is accessible (skip in dry-run mode)
         if not self.dry_run:
             try:
                 await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
-                if self.konflux_config['kubeconfig']:
+                if self.konflux_config["kubeconfig"]:
                     LOGGER.info("Successfully verified cluster access using provided kubeconfig")
                 else:
                     LOGGER.info("Successfully verified cluster access using current oc context")
             except exceptions.ResourceNotFoundError:
-                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config["kubeconfig"] else "current oc context"
                 raise RuntimeError(
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
                 ) from None
             except Exception:
-                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config["kubeconfig"] else "current oc context"
                 LOGGER.exception(
                     f"Could not verify cluster access using {kubeconfig_msg}. "
                     f"Proceeding anyway - operations may fail if cluster is not accessible."
@@ -167,7 +167,7 @@ class CreateSnapshotCli:
             LOGGER.info("Created Konflux Snapshot(s): %s", ", ".join(snapshot_urls))
             return snapshot_objs
         except Exception as e:
-            kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+            kubeconfig_msg = "provided kubeconfig" if self.konflux_config["kubeconfig"] else "current oc context"
             raise RuntimeError(
                 f"Failed to create snapshots in the cluster using {kubeconfig_msg}. "
                 f"Error: {e}. Make sure you're connected to the right cluster and have proper permissions."
@@ -281,12 +281,12 @@ class CreateSnapshotCli:
         # This is to ensure that the snapshot objects are created in a consistent order
         snapshot_objs: list[dict] = []
         for index, (application_name, components) in enumerate(sorted(app_components.items()), start=1):
-            components = sorted(components, key=lambda c: c['name'])
+            components = sorted(components, key=lambda c: c["name"])
 
             # Prepare metadata with labels and optional annotations
             metadata = {
                 "name": f"{snapshot_name}-{index}",
-                "namespace": self.konflux_config['namespace'],
+                "namespace": self.konflux_config["namespace"],
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": application_name,
@@ -316,11 +316,11 @@ class CreateSnapshotCli:
         components = set()
         for build in self.builds:
             nvr = parse_nvr(build)
-            if nvr['name'] in components:
+            if nvr["name"] in components:
                 raise ValueError(
                     f"Multiple builds found for component {nvr['name']}. Please provide only one build per component."
                 )
-            components.add(nvr['name'])
+            components.add(nvr["name"])
 
         LOGGER.info("Fetching NVRs from DB...")
         records = await get_build_records_by_nvrs(self.runtime, self.builds)
@@ -336,26 +336,26 @@ def snapshot_cli():
     "new", short_help="Create new Konflux Snapshot(s) in the given namespace for the given builds (NVRs)"
 )
 @click.option(
-    '--konflux-kubeconfig',
-    metavar='PATH',
-    help='Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).',
+    "--konflux-kubeconfig",
+    metavar="PATH",
+    help="Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).",
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
-    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
+    help="The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).",
 )
 @click.option(
-    '--pull-secret',
-    metavar='PATH',
-    help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
+    "--pull-secret",
+    metavar="PATH",
+    help="Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.",
 )
-@click.argument('builds', metavar='<NVR>', nargs=-1, required=False, default=None)
+@click.argument("builds", metavar="<NVR>", nargs=-1, required=False, default=None)
 @click.option(
     "--builds-file",
     "-f",
@@ -363,11 +363,11 @@ def snapshot_cli():
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
-@click.option('--apply', is_flag=True, default=False, help='Create the snapshot in cluster (False by default)')
+@click.option("--apply", is_flag=True, default=False, help="Create the snapshot in cluster (False by default)")
 @click.option(
-    '--job-url',
-    metavar='URL',
-    help='The URL of the job that created this snapshot. This will be added as an annotation to the snapshot.',
+    "--job-url",
+    metavar="URL",
+    help="The URL of the job that created this snapshot. This will be added as an annotation to the snapshot.",
 )
 @click.pass_obj
 @click_coroutine
@@ -397,7 +397,7 @@ async def new_snapshot_cli(
         raise click.BadParameter("Use only one of --build or --builds-file")
 
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(mode='images', build_system='konflux')
+    runtime.initialize(mode="images", build_system="konflux")
 
     # Resolve kubeconfig and namespace using helper functions
     konflux_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
@@ -409,9 +409,9 @@ async def new_snapshot_cli(
         builds = [line.strip() for line in builds_file.readlines()]
 
     konflux_config = {
-        'kubeconfig': konflux_kubeconfig,
-        'namespace': konflux_namespace,
-        'context': konflux_context,
+        "kubeconfig": konflux_kubeconfig,
+        "namespace": konflux_namespace,
+        "context": konflux_context,
     }
 
     pipeline = CreateSnapshotCli(
@@ -445,33 +445,33 @@ class GetSnapshotCli:
         self.snapshot = snapshot
         self.image_repo_pull_secret = image_repo_pull_secret
         self.konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=self.konflux_config['namespace'],
-            config_file=self.konflux_config['kubeconfig'],
-            context=self.konflux_config['context'],
+            default_namespace=self.konflux_config["namespace"],
+            config_file=self.konflux_config["kubeconfig"],
+            context=self.konflux_config["context"],
             dry_run=self.dry_run,
         )
         self.konflux_client.verify_connection()
 
     async def run(self):
         if self.runtime.konflux_db is None:
-            raise RuntimeError('Konflux DB is not initialized')
+            raise RuntimeError("Konflux DB is not initialized")
 
         # Ensure the Snapshot CRD is accessible (skip in dry-run mode)
         if not self.dry_run:
             try:
                 await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
-                if self.konflux_config['kubeconfig']:
+                if self.konflux_config["kubeconfig"]:
                     LOGGER.info("Successfully verified cluster access using provided kubeconfig")
                 else:
                     LOGGER.info("Successfully verified cluster access using current oc context")
             except exceptions.ResourceNotFoundError:
-                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config["kubeconfig"] else "current oc context"
                 raise RuntimeError(
                     f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster using {kubeconfig_msg}. "
                     f"Make sure you're connected to the right cluster."
                 ) from None
             except Exception:
-                kubeconfig_msg = "provided kubeconfig" if self.konflux_config['kubeconfig'] else "current oc context"
+                kubeconfig_msg = "provided kubeconfig" if self.konflux_config["kubeconfig"] else "current oc context"
                 LOGGER.exception(
                     f"Could not verify cluster access using {kubeconfig_msg}. "
                     f"Proceeding anyway - operations may fail if cluster is not accessible."
@@ -511,13 +511,13 @@ class GetSnapshotCli:
             expected_labels = ["com.redhat.component", "version", "release"]
 
         for image_info in image_infos:
-            labels = image_info['config']['config']['Labels']
+            labels = image_info["config"]["config"]["Labels"]
             if self.for_fbc:
-                nvr = labels.get('com.redhat.art.nvr')
+                nvr = labels.get("com.redhat.art.nvr")
             else:
-                name = labels.get('com.redhat.component')
-                version = labels.get('version')
-                release = labels.get('release')
+                name = labels.get("com.redhat.component")
+                version = labels.get("version")
+                release = labels.get("release")
                 nvr = f"{name}-{version}-{release}"
 
             if nvr:
@@ -529,28 +529,28 @@ class GetSnapshotCli:
 
 @snapshot_cli.command("get", short_help="Get NVRs from a Konflux Snapshot")
 @click.option(
-    '--konflux-kubeconfig',
-    metavar='PATH',
-    help='Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).',
+    "--konflux-kubeconfig",
+    metavar="PATH",
+    help="Path to the kubeconfig file to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., KONFLUX_SA_KUBECONFIG for openshift- groups, OADP_KONFLUX_SA_KUBECONFIG for oadp- groups).",
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
-    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
+    help="The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).",
 )
 @click.option(
-    '--pull-secret',
-    metavar='PATH',
-    help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.',
+    "--pull-secret",
+    metavar="PATH",
+    help="Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.",
 )
-@click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
-@click.option('--dry-run', is_flag=True, help='Do not fetch, just print what would happen')
-@click.argument('snapshot', metavar='SNAPSHOT', nargs=1)
+@click.option("--for-fbc", is_flag=True, help="To indicate that the given builds are fbc builds.")
+@click.option("--dry-run", is_flag=True, help="Do not fetch, just print what would happen")
+@click.argument("snapshot", metavar="SNAPSHOT", nargs=1)
 @click.pass_obj
 @click_coroutine
 async def get_snapshot_cli(
@@ -577,9 +577,9 @@ async def get_snapshot_cli(
     konflux_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
-        'kubeconfig': konflux_kubeconfig,
-        'namespace': konflux_namespace,
-        'context': konflux_context,
+        "kubeconfig": konflux_kubeconfig,
+        "namespace": konflux_namespace,
+        "context": konflux_context,
     }
 
     pipeline = GetSnapshotCli(
@@ -591,4 +591,4 @@ async def get_snapshot_cli(
         snapshot=snapshot,
     )
     nvrs = await pipeline.run()
-    click.echo('\n'.join(sorted(nvrs)))
+    click.echo("\n".join(sorted(nvrs)))

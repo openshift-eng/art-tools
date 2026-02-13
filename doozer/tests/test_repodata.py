@@ -276,7 +276,7 @@ data:
             [rpm.nevra for rpm in repodata.primary_rpms], ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"]
         )
         self.assertEqual(
-            [m.nsvca for m in repodata.modules], ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64']
+            [m.nsvca for m in repodata.modules], ["aaa:rhel8:1:deadbeef:x86_64", "bbb:rhel9:2:beefdead:x86_64"]
         )
 
     def test_get_rpms_by_name_found(self):
@@ -816,7 +816,7 @@ data:
     arch: x86_64
 """
             if not url:
-                return b''
+                return b""
             if url.endswith("primary.xml.gz"):
                 return primary_xml.encode()
             if url.endswith("modules.yaml.gz"):
@@ -838,7 +838,7 @@ data:
             [rpm.nevra for rpm in repodata.primary_rpms], ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"]
         )
         self.assertEqual(
-            [m.nsvca for m in repodata.modules], ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64']
+            [m.nsvca for m in repodata.modules], ["aaa:rhel8:1:deadbeef:x86_64", "bbb:rhel9:2:beefdead:x86_64"]
         )
 
 
@@ -899,9 +899,9 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
             logger,
         )
         expected = [
-            ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),
-            ('c-0:1.0.0-el8.x86_64', 'c-0:3.0.0-el8.x86_64', 'bravo-x86_64'),
-            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64'),
+            ("b-0:1.0.0-el8.x86_64", "b-0:2.0.0-el8.x86_64", "alfa-x86_64"),
+            ("c-0:1.0.0-el8.x86_64", "c-0:3.0.0-el8.x86_64", "bravo-x86_64"),
+            ("d-0:1.0.0-el8.x86_64", "d-0:2.0.0-el8.x86_64", "bravo-x86_64"),
         ]
         self.assertEqual(actual, expected)
 
@@ -997,10 +997,10 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
             logger,
         )
         expected = [
-            ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),
-            ('c-0:1.0.0-el8.x86_64', 'c-0:3.0.0-el8.x86_64', 'bravo-x86_64'),
-            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64'),
-            ('e-0:1.0.0-el8.x86_64', 'e-0:1.1.0-el8.x86_64', 'charlie-x86_64'),
-            ('f-0:1.0.0-el8.x86_64', 'f-0:999.0.0-el8.x86_64', 'bravo-x86_64'),
+            ("b-0:1.0.0-el8.x86_64", "b-0:2.0.0-el8.x86_64", "alfa-x86_64"),
+            ("c-0:1.0.0-el8.x86_64", "c-0:3.0.0-el8.x86_64", "bravo-x86_64"),
+            ("d-0:1.0.0-el8.x86_64", "d-0:2.0.0-el8.x86_64", "bravo-x86_64"),
+            ("e-0:1.0.0-el8.x86_64", "e-0:1.1.0-el8.x86_64", "charlie-x86_64"),
+            ("f-0:1.0.0-el8.x86_64", "f-0:999.0.0-el8.x86_64", "bravo-x86_64"),
         ]
         self.assertEqual(actual, expected)

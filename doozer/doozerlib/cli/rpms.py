@@ -53,14 +53,14 @@ def rpms_print(runtime, short, output, pattern):
             click.echo(s)
         else:
             # Write to a file
-            with io.open(output, 'a', encoding="utf-8") as out_file:
+            with io.open(output, "a", encoding="utf-8") as out_file:
                 out_file.write("{}\n".format(s))
 
 
 @cli.command("rpms:clone", help="Clone a group's rpm distgit repos locally.")
 @pass_runtime
 def rpms_clone(runtime):
-    runtime.initialize(mode='rpms', clone_distgits=True)
+    runtime.initialize(mode="rpms", clone_distgits=True)
     # Never delete after clone; defeats the purpose of cloning
     runtime.remove_tmp_working_dir = False
 
@@ -73,7 +73,7 @@ def rpms_clone(runtime):
 )
 @pass_runtime
 def rpms_clone_sources(runtime, output_yml):
-    runtime.initialize(mode='rpms')
+    runtime.initialize(mode="rpms")
     # Never delete after clone; defeats the purpose of cloning
     runtime.remove_tmp_working_dir = False
     [r for r in runtime.rpm_metas()]
@@ -84,14 +84,14 @@ def rpms_clone_sources(runtime, output_yml):
 @cli.command("rpms:rebase-and-build", help="Rebase and build rpms in the group or given by --rpms.")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     default=None,
     callback=validate_rpm_version,
     help="Version string to populate in specfile.",
     required=True,
 )
 @click.option(
-    "--release", metavar='RELEASE', default=None, help="Release label to populate in specfile.", required=True
+    "--release", metavar="RELEASE", default=None, help="Release label to populate in specfile.", required=True
 )
 @click.option(
     "--embargoed",
@@ -99,8 +99,8 @@ def rpms_clone_sources(runtime, output_yml):
     is_flag=True,
     help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
 )
-@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--scratch", default=False, is_flag=True, help="Perform a scratch build.")
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @pass_runtime
 @click_coroutine
 async def rpms_rebase_and_build(
@@ -119,10 +119,10 @@ async def rpms_rebase_and_build(
 async def _rpms_rebase_and_build(
     runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool, dry_run: bool
 ):
-    if version.startswith('v'):
+    if version.startswith("v"):
         version = version[1:]
 
-    runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)  # We will clone distgits later.
+    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False)  # We will clone distgits later.
     if runtime.local:
         raise DoozerFatalError("Local RPM build is not currently supported.")
     if runtime.group_config.public_upstreams and (release is None or not release.endswith(".p?")):
@@ -166,14 +166,14 @@ async def _rpms_rebase_and_build(
 @cli.command("rpms:rebase", help="Rebase rpms in the group or given by --rpms.")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     default=None,
     callback=validate_rpm_version,
     help="Version string to populate in specfile.",
     required=True,
 )
 @click.option(
-    "--release", metavar='RELEASE', default=None, help="Release label to populate in specfile.", required=True
+    "--release", metavar="RELEASE", default=None, help="Release label to populate in specfile.", required=True
 )
 @click.option(
     "--embargoed",
@@ -181,9 +181,9 @@ async def _rpms_rebase_and_build(
     is_flag=True,
     help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
 )
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @click.option(
-    '--push/--no-push', default=False, is_flag=True, help='Push changes back to config repo. --no-push is default'
+    "--push/--no-push", default=False, is_flag=True, help="Push changes back to config repo. --no-push is default"
 )
 @pass_runtime
 @click_coroutine
@@ -204,10 +204,10 @@ async def rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: b
 
 
 async def _rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, push: bool, dry_run: bool):
-    if version.startswith('v'):
+    if version.startswith("v"):
         version = version[1:]
 
-    runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)  # We will clone distgits later.
+    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False)  # We will clone distgits later.
     if runtime.local:
         raise DoozerFatalError("Local RPM build is not currently supported.")
     if runtime.group_config.public_upstreams and (release is None or not release.endswith(".p?")):
@@ -270,8 +270,8 @@ async def _rebase_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata, v
 
 
 @cli.command("rpms:build", help="Build rpms in the group or given by --rpms.")
-@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--scratch", default=False, is_flag=True, help="Perform a scratch build.")
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @pass_runtime
 @click_coroutine
 async def rpms_build(runtime: Runtime, scratch: bool, dry_run: bool):
@@ -284,7 +284,7 @@ async def rpms_build(runtime: Runtime, scratch: bool, dry_run: bool):
 
 
 async def _rpms_build(runtime: Runtime, scratch: bool, dry_run: bool):
-    runtime.initialize(mode='rpms', clone_source=False, clone_distgits=False)  # We will clone distgits later.
+    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False)  # We will clone distgits later.
     if runtime.local:
         raise DoozerFatalError("Local RPM build is not currently supported.")
 
@@ -358,11 +358,11 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
         builds = get_build_objects(nvrs, koji_api)
 
     for build in builds:
-        rebase_url = build["extra"]["source"]["original_url"].split('+')[-1]
-        rebase_repo_url, rebase_commitish = rebase_url.split('#')
+        rebase_url = build["extra"]["source"]["original_url"].split("+")[-1]
+        rebase_repo_url, rebase_commitish = rebase_url.split("#")
 
         el_version = isolate_el_version_in_release(build["nvr"])
-        el_target = f'el{el_version}' if el_version else ''
+        el_target = f"el{el_version}" if el_version else ""
 
         nvr = build["nvr"]
 
@@ -382,8 +382,8 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             rebase_repo_url=rebase_repo_url,
             rebase_commitish=rebase_commitish,
             embargoed=is_release_embargoed(rpm.release, runtime.build_system),
-            start_time=datetime.strptime(build["creation_time"], '%Y-%m-%d %H:%M:%S.%f'),
-            end_time=datetime.strptime(build["completion_time"], '%Y-%m-%d %H:%M:%S.%f'),
+            start_time=datetime.strptime(build["creation_time"], "%Y-%m-%d %H:%M:%S.%f"),
+            end_time=datetime.strptime(build["completion_time"], "%Y-%m-%d %H:%M:%S.%f"),
             artifact_type=ArtifactType.RPM,
             engine=Engine.BREW,
             image_pullspec="n/a",
@@ -391,11 +391,11 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             outcome=KonfluxBuildOutcome.SUCCESS,
             art_job_url=os.getenv("BUILD_URL", "n/a"),
             build_pipeline_url=str(build["task_id"]),
-            pipeline_commit='n/a',
+            pipeline_commit="n/a",
             nvr=nvr,
             build_id=str(build["build_id"]),
         )
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         runtime.konflux_db.add_build(build_record)
-        rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
+        rpm.logger.info("Brew build info for %s stored successfully", build["nvr"])

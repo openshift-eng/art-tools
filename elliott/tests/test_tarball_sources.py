@@ -17,8 +17,8 @@ class TarballSourcesTestCase(unittest.TestCase):
             advisory = MockErratum.return_value
             advisory.errata_id = 45606
             advisory.errata_name = "RHBA-2019:2581-02"
-            advisory.errata_state = 'SHIPPED_LIVE'
-            advisory._product = 'RHOSE'
+            advisory.errata_state = "SHIPPED_LIVE"
+            advisory._product = "RHOSE"
             advisory.synopsis = "dummy synopsis"
             errata_builds = {
                 "RHEL-7-OSE-3.11": [
@@ -104,5 +104,5 @@ class TarballSourcesTestCase(unittest.TestCase):
             self.assertEqual(actual, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

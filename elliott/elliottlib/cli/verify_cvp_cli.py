@@ -25,20 +25,20 @@ LOGGER = logging.getLogger(__name__)
 
 @cli.command("verify-cvp", short_help="Verify CVP test results")
 @click.option(
-    '--all', 'all_images', required=False, is_flag=True, help='Verify all latest image builds (default to False)'
+    "--all", "all_images", required=False, is_flag=True, help="Verify all latest image builds (default to False)"
 )
-@click.option('--build', '-b', 'nvrs', multiple=True, metavar='NVR_OR_ID', help='Only verify specified builds')
+@click.option("--build", "-b", "nvrs", multiple=True, metavar="NVR_OR_ID", help="Only verify specified builds")
 @click.option(
-    '--include-content-set-check', "include_content_set_check", is_flag=True, help="Include content_set_check"
+    "--include-content-set-check", "include_content_set_check", is_flag=True, help="Include content_set_check"
 )
 @click.option(
-    '--output',
-    '-o',
-    'output',
-    metavar='FORMAT',
+    "--output",
+    "-o",
+    "output",
+    metavar="FORMAT",
     default="text",
-    type=click.Choice(['text', 'json', 'yaml']),
-    help='Output format. One of: text|json|yaml',
+    type=click.Choice(["text", "json", "yaml"]),
+    help="Output format. One of: text|json|yaml",
 )
 @pass_runtime
 @click_coroutine
@@ -58,9 +58,9 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
     $ elliott --group openshift-4.12 verify-cvp --all --include-content-set-check -o yaml
     """
     if bool(all_images) + bool(nvrs) != 1:
-        raise click.BadParameter('You must use one of --all or --build.')
+        raise click.BadParameter("You must use one of --all or --build.")
 
-    runtime.initialize(mode='images')
+    runtime.initialize(mode="images")
 
     # Load brew builds
     brew_session = runtime.build_retrying_koji_client()
@@ -99,8 +99,8 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                 r["dg_key"] = inspector.component_distgit_keys[parse_nvr(nvr)["name"]]
                 r["build_url"] = f"https://brewweb.devel.redhat.com/buildinfo?buildID={nvr_builds[nvr]['id']}"
                 if test_result:
-                    r["ref_url"] = test_result['ref_url']
-                    r["outcome"] = test_result['outcome']
+                    r["ref_url"] = test_result["ref_url"]
+                    r["outcome"] = test_result["outcome"]
             return results
 
         report = {
@@ -136,7 +136,7 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                     r["dg_key"] = inspector.component_distgit_keys[parse_nvr(nvr)["name"]]
                     r["build_url"] = f"https://brewweb.devel.redhat.com/buildinfo?buildID={nvr_builds[nvr]['id']}"
                     if result:
-                        r["ref_url"] = urljoin(nvr_results[nvr]['ref_url'], "sanity-tests-optional-results.json")
+                        r["ref_url"] = urljoin(nvr_results[nvr]["ref_url"], "sanity-tests-optional-results.json")
                         failed = {
                             check["name"]
                             for check in result["checks"]
@@ -223,7 +223,7 @@ def print_report(report: Dict):
                     continue
                 red_print(f"* {check_name}: FAILED")
                 for test_name, test_result in check_result.items():
-                    if test_result['outcome'] == "PASSED":
+                    if test_result["outcome"] == "PASSED":
                         green_print(f"\t* {test_name}: {test_result['outcome']}")
                         continue
                     red_print(f"\t- {test_name}: {test_result['outcome']}")
@@ -245,8 +245,8 @@ def print_report(report: Dict):
 
 async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
     pbar_header(
-        'Generating list of images: ',
-        f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...',
+        "Generating list of images: ",
+        f"Hold on a moment, fetching Brew builds for {len(image_metas)} components...",
         seq=image_metas,
         file=sys.stderr,
     )

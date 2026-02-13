@@ -9,7 +9,7 @@ from ruamel.yaml import scalarstring
 
 class StrictBaseModel(BaseModel):
     # do not allow extra fields
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
 
 
 class Metadata(StrictBaseModel):
@@ -74,7 +74,7 @@ class Issues(StrictBaseModel):
 class ReleaseNotes(StrictBaseModel):
     """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
-    type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
+    type: Literal["RHEA", "RHBA", "RHSA"]  # Advisory type
     live_id: int = None
     synopsis: str = None
     topic: str = None
@@ -86,9 +86,9 @@ class ReleaseNotes(StrictBaseModel):
 
     # serialize special text fields, if they contain a new-line char
     # configure them to be LiteralScalarString
-    @field_serializer('topic', 'solution', 'description')
+    @field_serializer("topic", "solution", "description")
     def serialize_text_fields(self, field: str, _info):
-        if field and '\n' in field:
+        if field and "\n" in field:
             return scalarstring.LiteralScalarString(field)
         return field
 
@@ -128,11 +128,11 @@ class Environments(StrictBaseModel):
 
     stage: ShipmentEnv = Field(
         ...,
-        description='Config for releasing to stage environment',
+        description="Config for releasing to stage environment",
     )
     prod: ShipmentEnv = Field(
         ...,
-        description='Config for releasing to prod environment',
+        description="Config for releasing to prod environment",
     )
 
 
@@ -141,11 +141,11 @@ class Tools(StrictBaseModel):
 
     art_tools: Optional[str] = Field(
         None,
-        description='art-tools repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift-eng@main',
+        description="art-tools repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift-eng@main",
     )
     build_data: Optional[str] = Field(
         None,
-        description='ocp-build-data repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift@openshift-{MAJOR}.{MINOR}',
+        description="ocp-build-data repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift@openshift-{MAJOR}.{MINOR}",
     )
 
 
@@ -158,29 +158,29 @@ class Shipment(StrictBaseModel):
     snapshot: Optional[Snapshot] = None
     data: Optional[Data] = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def make_sure_data_is_present_unless_fbc(self) -> Self:
         release_notes_present = self.data and self.data.releaseNotes
         if self.metadata.fbc and release_notes_present:
-            raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
+            raise ValueError("FBC shipment is not expected to have data.releaseNotes defined")
         # Only require releaseNotes for OpenShift products (groups starting with 'openshift-')
-        if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith('openshift-'):
-            raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
+        if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith("openshift-"):
+            raise ValueError("A regular shipment is expected to have data.releaseNotes defined")
         return self
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def shipment_and_snapshot_application_must_match(self) -> Self:
         if self.snapshot and self.snapshot.spec.application != self.metadata.application:
             raise ValueError(
-                f'shipment.snapshot.spec.application={self.snapshot.spec.application} is expected to be the same as shipment.metadata.application={self.metadata.application}'
+                f"shipment.snapshot.spec.application={self.snapshot.spec.application} is expected to be the same as shipment.metadata.application={self.metadata.application}"
             )
         return self
 
 
 def add_schema_comment(schema: dict):
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M %Z")
-    comment = f'Schema generated on {timestamp} from {__name__}'
-    schema['$comment'] = comment
+    comment = f"Schema generated on {timestamp} from {__name__}"
+    schema["$comment"] = comment
 
 
 class ShipmentConfig(StrictBaseModel):

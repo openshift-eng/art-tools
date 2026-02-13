@@ -13,7 +13,7 @@ from artcommonlib.logutil import get_logger
 from artcommonlib.pushd import Dir
 from future.utils import as_native_str
 
-SCHEMES = ['ssh', 'ssh+git', "http", "https"]
+SCHEMES = ["ssh", "ssh+git", "http", "https"]
 
 
 class SafeFormatter(string.Formatter):
@@ -32,7 +32,7 @@ class SafeFormatter(string.Formatter):
             try:
                 return kwargs[key]
             except KeyError:
-                return '{' + key + '}'
+                return "{" + key + "}"
         else:
             return string.Formatter.get_value(key, args, kwargs)
 
@@ -56,7 +56,7 @@ class DataObj(object):
         self.key = key
         self.path = path
         self.base_dir = os.path.dirname(self.path)
-        self.filename = self.path.replace(self.base_dir, '').strip('/')
+        self.filename = self.path.replace(self.base_dir, "").strip("/")
         self.data = data
         self.indent = 2
         self.block_seq_indent = None
@@ -64,21 +64,21 @@ class DataObj(object):
     @as_native_str()
     def __repr__(self):
         result = {
-            'key': self.key,
-            'path': self.path,
-            'data': self.data,
+            "key": self.key,
+            "path": self.path,
+            "data": self.data,
         }
         return str(result)
 
     def reload(self):
-        with open(self.path, 'r') as f:
+        with open(self.path, "r") as f:
             # Reload with ruamel.yaml and guess the indent.
             self.data, self.indent, self.block_seq_indent = ruamel.yaml.util.load_yaml_guess_indent(
                 f, preserve_quotes=True
             )
 
     def save(self):
-        with open(self.path, 'w') as f:
+        with open(self.path, "w") as f:
             # pyyaml doesn't preserve the order of keys or comments when loading and saving yamls.
             # Save with ruamel.yaml instead to keep the format as much as possible.
             ruamel.yaml.round_trip_dump(self.data, f, indent=self.indent, block_seq_indent=self.block_seq_indent)
@@ -88,10 +88,10 @@ class GitData(object):
     def __init__(
         self,
         data_path=None,
-        clone_dir='./',
-        commitish='master',
+        clone_dir="./",
+        commitish="master",
         sub_dir=None,
-        exts=['yaml', 'yml', 'json'],
+        exts=["yaml", "yml", "json"],
         reclone=False,
         logger=None,
     ):
@@ -115,7 +115,7 @@ class GitData(object):
 
         self.remote_path = None
         self.sub_dir = sub_dir
-        self.exts = ['.' + e.lower() for e in exts]
+        self.exts = ["." + e.lower() for e in exts]
         self.commit_hash = None
         self.origin_url = None
         self.reclone = reclone
@@ -129,10 +129,10 @@ class GitData(object):
         """
 
         # Remove trailing slash to prevent GitDataBranchException:
-        self.data_path = data_path.rstrip('/')
+        self.data_path = data_path.rstrip("/")
 
         data_url = urllib.parse.urlparse(self.data_path)
-        if data_url.scheme in SCHEMES or (data_url.scheme == '' and ':' in data_url.path):
+        if data_url.scheme in SCHEMES or (data_url.scheme == "" and ":" in data_url.path):
             data_name = os.path.splitext(os.path.basename(data_url.path))[0]
             data_destination = os.path.join(self.clone_dir, data_name)
             clone_data = True
@@ -141,66 +141,66 @@ class GitData(object):
                 shutil.rmtree(data_destination)
 
             if os.path.isdir(data_destination):
-                self.logger.info('Data clone directory already exists, checking commit sha')
+                self.logger.info("Data clone directory already exists, checking commit sha")
                 with Dir(data_destination):
                     # check the current status of what's local
                     rc, out, err = exectools.cmd_gather("git status -sb")
                     if rc:
-                        raise GitDataException('Error getting data repo status: {}'.format(err))
+                        raise GitDataException("Error getting data repo status: {}".format(err))
 
-                    lines = out.strip().split('\n')
-                    synced = 'ahead' not in lines[0] and 'behind' not in lines[0] and len(lines) == 1
+                    lines = out.strip().split("\n")
+                    synced = "ahead" not in lines[0] and "behind" not in lines[0] and len(lines) == 1
 
                     # check if there are unpushed
                     # verify local branch
                     rc, out, err = exectools.cmd_gather("git rev-parse --abbrev-ref HEAD")
                     if rc:
-                        raise GitDataException('Error checking local branch name: {}'.format(err))
+                        raise GitDataException("Error checking local branch name: {}".format(err))
                     branch = out.strip()
                     if branch != self.branch:
                         if not synced:
                             msg = (
-                                'Local branch is `{}`, but requested `{}` and you have uncommitted/pushed changes\n'
-                                'You must either clear your local data or manually checkout the correct branch.'
+                                "Local branch is `{}`, but requested `{}` and you have uncommitted/pushed changes\n"
+                                "You must either clear your local data or manually checkout the correct branch."
                             ).format(branch, self.branch)
                             raise GitDataBranchException(msg)
                     else:
                         # Check if local is synced with remote
                         rc, out, err = exectools.cmd_gather(["git", "ls-remote", self.data_path, self.branch])
                         if rc:
-                            raise GitDataException('Unable to check remote sha: {}'.format(err))
-                        remote = out.strip().split('\t')[0]
+                            raise GitDataException("Unable to check remote sha: {}".format(err))
+                        remote = out.strip().split("\t")[0]
                         try:
-                            exectools.cmd_assert('git branch --contains {}'.format(remote))
-                            self.logger.info('{} is already cloned and latest'.format(self.data_path))
+                            exectools.cmd_assert("git branch --contains {}".format(remote))
+                            self.logger.info("{} is already cloned and latest".format(self.data_path))
                             clone_data = False
                         except:
                             if not synced:
                                 msg = (
-                                    'Local data is out of sync with remote and you have unpushed commits: {}\n'
-                                    'You must either clear your local data\n'
-                                    'or manually rebase from latest remote to continue'
+                                    "Local data is out of sync with remote and you have unpushed commits: {}\n"
+                                    "You must either clear your local data\n"
+                                    "or manually rebase from latest remote to continue"
                                 ).format(data_destination)
                                 raise GitDataException(msg)
 
             if clone_data:
                 if os.path.isdir(data_destination):  # delete if already there
                     shutil.rmtree(data_destination)
-                self.logger.info('Cloning config data from {}'.format(self.data_path))
+                self.logger.info("Cloning config data from {}".format(self.data_path))
                 if not os.path.isdir(data_destination):
                     # Clone all branches as we must sometimes reference master /OWNERS for maintainer information
                     cmd = "git clone --no-single-branch {} {}".format(self.data_path, data_destination)
                     exectools.cmd_assert(cmd, set_env=GIT_NO_PROMPTS)
-                    exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=GIT_NO_PROMPTS)
+                    exectools.cmd_assert(f"git -C {data_destination} checkout {self.branch}", set_env=GIT_NO_PROMPTS)
 
             self.remote_path = self.data_path
             self.data_path = data_destination
-        elif data_url.scheme in ['', 'file']:
+        elif data_url.scheme in ["", "file"]:
             self.remote_path = None
             self.data_path = os.path.abspath(self.data_path)  # just in case relative path was given
         else:
             raise ValueError(
-                'Invalid data_path: {} - invalid scheme: {}'.format(self.data_path, data_url.scheme),
+                "Invalid data_path: {} - invalid scheme: {}".format(self.data_path, data_url.scheme),
             )
 
         if self.sub_dir:
@@ -208,14 +208,14 @@ class GitData(object):
         else:
             self.data_dir = self.data_path
 
-        self.origin_url, _ = exectools.cmd_assert(f'git -C {self.data_path} remote get-url origin', strip=True)
-        self.commit_hash, _ = exectools.cmd_assert(f'git -C {self.data_path} rev-parse HEAD', strip=True)
-        ref, _ = exectools.cmd_assert(f'git -C {self.data_path} rev-parse --abbrev-ref HEAD', strip=True)
+        self.origin_url, _ = exectools.cmd_assert(f"git -C {self.data_path} remote get-url origin", strip=True)
+        self.commit_hash, _ = exectools.cmd_assert(f"git -C {self.data_path} rev-parse HEAD", strip=True)
+        ref, _ = exectools.cmd_assert(f"git -C {self.data_path} rev-parse --abbrev-ref HEAD", strip=True)
         ref_s = f"({ref})" if ref != "HEAD" else ""
-        self.logger.info(f'On commit: {self.commit_hash} {ref_s}')
+        self.logger.info(f"On commit: {self.commit_hash} {ref_s}")
 
         if not os.path.isdir(self.data_dir):
-            raise GitDataPathException('{} is not a valid sub-directory in the data'.format(self.sub_dir))
+            raise GitDataPathException("{} is not a valid sub-directory in the data".format(self.sub_dir))
 
     def load_yaml_file(self, file_path, strict=True):
         full_path = os.path.join(self.data_dir, file_path)
@@ -225,7 +225,7 @@ class GitData(object):
             else:
                 return None
 
-        with io.open(full_path, 'r', encoding="utf-8") as f:
+        with io.open(full_path, "r", encoding="utf-8") as f:
             raw_text = f.read()
 
         try:
@@ -235,8 +235,8 @@ class GitData(object):
 
         return data
 
-    def load_data(self, path='', key=None, keys=None, exclude=None, filter_funcs=None, replace_vars=None):
-        full_path = os.path.join(self.data_dir, path.replace('\\', '/'))
+    def load_data(self, path="", key=None, keys=None, exclude=None, filter_funcs=None, replace_vars=None):
+        full_path = os.path.join(self.data_dir, path.replace("\\", "/"))
         if path and not os.path.isdir(full_path):
             raise GitDataPathException('Cannot find "{}" under "{}"'.format(path, self.data_dir))
 
@@ -247,7 +247,7 @@ class GitData(object):
             exclude = [exclude]
 
         if key and keys:
-            raise GitDataException('Must use key or keys, but not both!')
+            raise GitDataException("Must use key or keys, but not both!")
 
         if key:
             keys = [key]
@@ -272,7 +272,7 @@ class GitData(object):
             if ext.lower() in self.exts:
                 data_file = os.path.join(full_path, name)
                 if os.path.isfile(data_file):
-                    with io.open(data_file, 'r', encoding="utf-8") as f:
+                    with io.open(data_file, "r", encoding="utf-8") as f:
                         raw_text = f.read()
                         if replace_vars:
                             # Use safe substitution - replace found vars, leave unfound ones as-is
@@ -281,7 +281,7 @@ class GitData(object):
                                 raw_text = formatter.format(raw_text, **replace_vars)
                             except Exception as e:
                                 self.logger.warning(
-                                    'Error applying template substitution to {}: {}'.format(data_file, e)
+                                    "Error applying template substitution to {}: {}".format(data_file, e)
                                 )
                         try:
                             data = yaml.full_load(raw_text)
@@ -309,9 +309,9 @@ class GitData(object):
         """
         Commit outstanding data changes
         """
-        self.logger.info('Commit config: {}'.format(msg))
+        self.logger.info("Commit config: {}".format(msg))
         with Dir(self.data_path):
-            exectools.cmd_assert('git add .')
+            exectools.cmd_assert("git add .")
             exectools.cmd_assert('git commit --allow-empty -m "{}"'.format(msg))
 
     def push(self):
@@ -319,6 +319,6 @@ class GitData(object):
         Push changes back to data repo.
         Will of course fail if user does not have write access.
         """
-        self.logger.info('Pushing config...')
+        self.logger.info("Pushing config...")
         with Dir(self.data_path):
-            exectools.cmd_assert('git push')
+            exectools.cmd_assert("git push")
