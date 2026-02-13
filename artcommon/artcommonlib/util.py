@@ -26,7 +26,7 @@ from artcommonlib.constants import (
 )
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
-from pyartcd.util import isolate_el_version_in_release
+from artcommonlib.release_util import isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
