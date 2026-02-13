@@ -61,7 +61,7 @@ def config_commit(runtime, message, push):
     Commit outstanding metadata config changes
     """
     _fix_runtime_mode(runtime)
-    runtime.initialize(no_group=False, **CONFIG_RUNTIME_OPTS)
+    runtime.initialize(no_group=False, prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
 
     # This is ok to run if automation is frozen as long as you are not pushing
     if push:
@@ -81,7 +81,7 @@ def config_push(runtime):
     Will of course fail if user does not have write access.
     """
     _fix_runtime_mode(runtime)
-    runtime.initialize(no_group=False, **CONFIG_RUNTIME_OPTS)
+    runtime.initialize(no_group=False, prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     config = mdc(runtime)
     config.push()
 
@@ -95,7 +95,7 @@ def config_get(runtime):
     config manually.
     """
     _fix_runtime_mode(runtime)
-    runtime.initialize(no_group=False, **CONFIG_RUNTIME_OPTS)
+    runtime.initialize(no_group=False, prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
 
 
 @cli.command("config:read-group", short_help="Output aspects of the group.yml")
@@ -130,7 +130,7 @@ def config_read_group(runtime, key, as_len, as_yaml, permit_missing_group, defau
     """
     _fix_runtime_mode(runtime)
     try:
-        runtime.initialize(**CONFIG_RUNTIME_OPTS)
+        runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     except gitdata.GitDataException:
         # This may happen if someone if trying to get data for a branch that does not exist.
         # This may be perfectly OK if they are just trying to check the next minor's branch,
@@ -210,7 +210,7 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
-    runtime.initialize(**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     content = get_releases(runtime)
 
     if as_len:
@@ -261,7 +261,7 @@ def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
-    runtime.initialize(**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     releases = get_releases(runtime)['releases']
     try:
         assembly_data = releases[runtime.assembly]
@@ -330,7 +330,7 @@ def config_mode(runtime, mode, push, message):
     if not runtime.load_wip and CONFIG_RUNTIME_OPTS['mode'] == 'both':
         red_print('Updating all mode for all configs in group is not allowed! Please specifiy configs directly.')
         sys.exit(1)
-    runtime.initialize(**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     config = mdc(runtime)
     config.update('mode', mode)
     if not message:
@@ -377,7 +377,7 @@ def config_print(runtime, key, name_only, as_yaml):
     _fix_runtime_mode(runtime)
     opts = dict(CONFIG_RUNTIME_OPTS)
     opts['config_only'] = False  # This verb must load image & rpm data
-    runtime.initialize(**opts)
+    runtime.initialize(prevent_cloning=True, **opts)
     config = mdc(runtime)
     config.config_print(key, name_only, as_yaml)
 
@@ -411,7 +411,7 @@ def config_gencsv(runtime, keys, as_type, output):
 
     """
     _fix_runtime_mode(runtime)
-    runtime.initialize(**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     config = mdc(runtime)
     config.config_gen_csv(keys, as_type, output)
 
@@ -441,7 +441,7 @@ def config_gencsv(runtime, keys, as_type, output):
 )
 @pass_runtime
 def config_rhcos_src(runtime: Runtime, version, output, brew_root, arch):
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     package_build_objects: Dict[str, Dict] = dict()
     if arch:
@@ -495,7 +495,7 @@ def config_update_required(runtime, image_list):
     with which images are required and which are not.
     """
     _fix_runtime_mode(runtime)
-    runtime.initialize(**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(**CONFIG_RUNTIME_OPTS, prevent_cloning=True)
 
     with io.open(image_list, 'r', encoding="utf-8") as il:
         image_list = [i.strip() for i in il.readlines() if i.strip()]
@@ -609,7 +609,7 @@ async def config_find_package_repo(runtime, packages, arch, as_yaml, all_version
     opts = dict(CONFIG_RUNTIME_OPTS)
     opts['group_only'] = False  # Need repos, so can't use group_only
     opts['config_only'] = False  # Need repos, so can't use config_only
-    runtime.initialize(**opts)
+    runtime.initialize(**opts, prevent_cloning=True)
 
     if arch not in runtime.arches:
         runtime.logger.warning(
