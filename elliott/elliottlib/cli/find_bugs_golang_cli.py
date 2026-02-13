@@ -392,9 +392,9 @@ class FindBugsGolangCli:
                     f"{bug.cve_id} is fixed in golang builder(s) {fixed_in_builds} which are found to be "
                     f"the parent images in {self.pullspec}. Bug is considered fixed."
                 )
-                return True, comment, f"{len(fixed_builds)}/{total_builds} fixed builds", fixed_in_builds
+                return True, comment, f"{fixed_builds}/{total_builds} fixed builds", fixed_in_builds
 
-            return False, '', f"{len(fixed_builds)}/{total_builds} fixed builds", "N/A"
+            return False, '', f"{fixed_builds}/{total_builds} fixed builds", "N/A"
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
