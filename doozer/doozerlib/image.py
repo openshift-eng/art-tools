@@ -62,6 +62,14 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
                     # Got both values from tag parsing - return immediately
                     return rhel_version, golang_version
 
+        # If the tag didn't contain a RHEL version, try matching against the full pullspec.
+        # This handles pullspecs like registry.redhat.io/rhel9-eus/rhel-9.6-bootc:9.6
+        # where the RHEL version appears in the registry path rather than the tag.
+        if not rhel_version:
+            match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', pullspec)
+            if match:
+                rhel_version = int(match.group(1))
+
         # At this point, we're missing at least one value - fall back to inspecting image labels
         image_info = cast(Dict, util.oc_image_info_for_arch__caching(pullspec))
         labels = image_info['config']['config']['Labels']
@@ -853,10 +861,15 @@ class ImageMetadata(Metadata):
 
         Delegates to extract_builder_info_from_pullspec() for the actual extraction logic.
 
-        Args:
+        If the upstream Dockerfile uses ARG substitutions without defaults (e.g. FROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}),
+        the pullspec will be unresolvable (e.g. ":"). In that case, apply the content.source.modifications (replace actions)
+        to the Dockerfile content before re-parsing, as the modifications may provide the ARG default values needed to
+        resolve the FROM directive.
+
+        Arg(s):
             source_dir: Path to the upstream source directory (already includes content.source.path if applicable)
 
-        Returns:
+        Return Value(s):
             Tuple of (rhel_version, golang_version) where:
             - rhel_version: int or None (e.g., 9)
             - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
@@ -871,14 +884,30 @@ class ImageMetadata(Metadata):
 
         try:
             with open(df_path) as f:
-                dfp = DockerfileParser(fileobj=f)
-                parent_images = dfp.parent_images
+                df_content = f.read()
+
+            dfp = DockerfileParser()
+            dfp.content = df_content
+            parent_images = dfp.parent_images
 
             # We will infer the versions from the last build layer in the upstream Dockerfile
             last_layer_pullspec = parent_images[-1]
 
-            # Use the cached function to extract builder info
-            rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
+            # If the pullspec contains unresolved ARG references (e.g. "${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}")
+            # or collapsed to just ":" due to ARGs without defaults, apply content.source.modifications
+            # (replace actions) to the Dockerfile content and re-parse.
+            if not last_layer_pullspec or "${" in last_layer_pullspec or last_layer_pullspec == ":":
+                self.logger.info(
+                    '[%s] Upstream Dockerfile last FROM has unresolved ARG references ("%s"), '
+                    'applying content.source.modifications and re-parsing',
+                    self.distgit_key,
+                    last_layer_pullspec,
+                )
+                last_layer_pullspec = self._resolve_pullspec_with_modifications(df_content)
+
+            if last_layer_pullspec:
+                # Use the cached function to extract builder info
+                rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
 
         except Exception as e:
             # Log the exception but don't raise - caller will decide how to handle None return
@@ -890,6 +919,60 @@ class ImageMetadata(Metadata):
             self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
 
         return rhel_version, golang_version
+
+    def _resolve_pullspec_with_modifications(self, df_content: str) -> str | None:
+        """
+        Apply content.source.modifications (replace actions) to the Dockerfile content
+        and re-parse to extract the last parent image pullspec.
+
+        This handles the case where upstream Dockerfiles use ARGs without defaults
+        (e.g. FROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}) and the ocp-build-data modifications
+        provide the ARG default values needed to resolve the FROM directive.
+
+        Arg(s):
+            df_content: The raw Dockerfile content string.
+
+        Return Value(s):
+            The resolved pullspec string, or None if it cannot be resolved.
+        """
+        modifications = self.config.content.source.modifications
+        if not modifications:
+            self.logger.warning(
+                '[%s] No content.source.modifications defined; cannot resolve unresolved ARG references',
+                self.distgit_key,
+            )
+            return None
+
+        # Apply replace modifications to the Dockerfile content
+        modified_content = df_content
+        for mod in modifications:
+            if mod.get('action') == 'replace' and mod.get('match') and mod.get('replacement') is not None:
+                modified_content = modified_content.replace(mod['match'], mod['replacement'])
+
+        # Re-parse the modified Dockerfile
+        dfp = DockerfileParser()
+        dfp.content = modified_content
+        parent_images = dfp.parent_images
+
+        if not parent_images:
+            self.logger.warning('[%s] No parent images found after applying modifications', self.distgit_key)
+            return None
+
+        pullspec = parent_images[-1]
+        if not pullspec or "${" in pullspec or pullspec == ":":
+            self.logger.warning(
+                '[%s] Pullspec still unresolved after applying modifications: "%s"',
+                self.distgit_key,
+                pullspec,
+            )
+            return None
+
+        self.logger.info(
+            '[%s] Resolved pullspec after applying modifications: "%s"',
+            self.distgit_key,
+            pullspec,
+        )
+        return pullspec
 
     def _default_brew_target(self):
         """Returns derived brew target name from the distgit branch name"""
