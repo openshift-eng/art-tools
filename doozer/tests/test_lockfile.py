@@ -760,8 +760,8 @@ class TestArtifactLockfileGenerator(unittest.IsolatedAsyncioTestCase):
         mock_image_meta = MagicMock()
         mock_image_meta.distgit_key = "test-image"
         mock_image_meta.get_required_artifacts.return_value = [
-            "https://example.com/cert1.pem",
-            "https://example.com/cert2.pem",
+            {'url': "https://example.com/cert1.pem", 'filename': None},
+            {'url': "https://example.com/cert2.pem", 'filename': None},
         ]
 
         mock_dest_dir = Path("/tmp/test")
@@ -795,10 +795,10 @@ class TestArtifactLockfileGenerator(unittest.IsolatedAsyncioTestCase):
 
         # Verify calls
         self.generator._download_and_compute_checksum.assert_any_call(
-            mock_session, {'name': 'cert1.pem', 'url': 'https://example.com/cert1.pem'}
+            mock_session, {'url': 'https://example.com/cert1.pem', 'filename': None}
         )
         self.generator._download_and_compute_checksum.assert_any_call(
-            mock_session, {'name': 'cert2.pem', 'url': 'https://example.com/cert2.pem'}
+            mock_session, {'url': 'https://example.com/cert2.pem', 'filename': None}
         )
 
         # Verify lockfile data structure
@@ -807,6 +807,69 @@ class TestArtifactLockfileGenerator(unittest.IsolatedAsyncioTestCase):
             "artifacts": [
                 {"download_url": "https://example.com/cert1.pem", "checksum": "sha256:abc1", "filename": "cert1.pem"},
                 {"download_url": "https://example.com/cert2.pem", "checksum": "sha256:abc2", "filename": "cert2.pem"},
+            ],
+        }
+        mock_write_yaml.assert_called_once_with(expected_lockfile_data, mock_dest_dir / "artifacts.lock.yaml")
+
+    @patch.object(ArtifactLockfileGenerator, '_write_yaml')
+    @patch('aiohttp.ClientSession')
+    async def test_generate_artifact_lockfile_custom_filename(self, mock_session_class, mock_write_yaml):
+        """Test artifact lockfile generation with custom destination filenames"""
+        # Setup mocks
+        mock_image_meta = MagicMock()
+        mock_image_meta.distgit_key = "test-image"
+        mock_image_meta.get_required_artifacts.return_value = [
+            {'url': "https://example.com/v1.2.3/long-path/file.jar", 'filename': "custom.jar"},
+            {'url': "https://example.com/cert.pem", 'filename': None},  # Auto-extract
+        ]
+
+        mock_dest_dir = Path("/tmp/test")
+
+        # Mock session and download behavior
+        mock_session = MagicMock()
+        mock_session_class.return_value.__aenter__.return_value = mock_session
+
+        mock_artifact_info1 = MagicMock()
+        mock_artifact_info1.to_dict.return_value = {
+            "download_url": "https://example.com/v1.2.3/long-path/file.jar",
+            "checksum": "sha256:abc1",
+            "filename": "custom.jar",
+        }
+        mock_artifact_info2 = MagicMock()
+        mock_artifact_info2.to_dict.return_value = {
+            "download_url": "https://example.com/cert.pem",
+            "checksum": "sha256:abc2",
+            "filename": "cert.pem",
+        }
+
+        # Mock the download and compute checksum method
+        self.generator._download_and_compute_checksum = AsyncMock()
+        self.generator._download_and_compute_checksum.side_effect = [mock_artifact_info1, mock_artifact_info2]
+
+        # Mock should_generate_artifact_lockfile to return True
+        self.generator.should_generate_artifact_lockfile = MagicMock(return_value=True)
+
+        # Execute
+        await self.generator.generate_artifact_lockfile(mock_image_meta, mock_dest_dir)
+
+        # Verify calls
+        self.generator._download_and_compute_checksum.assert_any_call(
+            mock_session, {'url': 'https://example.com/v1.2.3/long-path/file.jar', 'filename': 'custom.jar'}
+        )
+        self.generator._download_and_compute_checksum.assert_any_call(
+            mock_session, {'url': 'https://example.com/cert.pem', 'filename': None}
+        )
+
+        # Verify lockfile data structure
+        expected_lockfile_data = {
+            "metadata": {"version": "1.0"},
+            "artifacts": [
+                {
+                    "download_url": "https://example.com/v1.2.3/long-path/file.jar",
+                    "checksum": "sha256:abc1",
+                    "filename": "custom.jar",
+                },
+                {"download_url": "https://example.com/cert.pem", "checksum": "sha256:abc2", "filename": "cert.pem"},
             ],
         }
         mock_write_yaml.assert_called_once_with(expected_lockfile_data, mock_dest_dir / "artifacts.lock.yaml")
