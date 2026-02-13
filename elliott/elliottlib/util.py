@@ -414,6 +414,14 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     # quickly determine build system from given nvrs using build_visibility suffix
     build_system = None
     for nvr in nvrs:
+        parsed_nvr = parse_nvr(nvr)
+        # golang builder image does not have build visibility suffix
+        # so assume that build system is konflux
+        # even if it is built in brew, we should be able to get that info from ART's build records DB
+        if GOLANG_BUILDER_IMAGE_NAME in parsed_nvr["name"]:
+            build_system = 'konflux'
+            continue
+
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
         nvr_build_system = get_build_system(nvr[2].split('.')[1])
