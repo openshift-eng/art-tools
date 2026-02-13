@@ -778,6 +778,137 @@ RUN echo "test"
         # Verify config was merged (should detect el8 from ubi8 tag)
         self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
 
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_determine_upstream_builder_info_unresolved_args_with_modifications(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """
+        Test that when upstream Dockerfile has unresolved ARG references (e.g. FROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}),
+        the RHEL version is correctly extracted by applying content.source.modifications (replace actions) to the
+        Dockerfile content before re-parsing.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+        metadata = self._create_image_metadata('openshift/microshift-bootc-rhel9')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/microshift-bootc-rhel9',
+                'distgit': {'branch': 'rhaos-4.18-rhel-9'},
+                'content': {
+                    'source': {
+                        'dockerfile': 'packaging/imagemode/Containerfile.repobase',
+                        'modifications': [
+                            {
+                                'action': 'replace',
+                                'match': 'ARG BASE_IMAGE_URL',
+                                'replacement': "ARG BASE_IMAGE_URL='registry.redhat.io/rhel9-eus/rhel-9.6-bootc'",
+                            },
+                            {
+                                'action': 'replace',
+                                'match': 'ARG BASE_IMAGE_TAG',
+                                'replacement': "ARG BASE_IMAGE_TAG='9.6'",
+                            },
+                        ],
+                        'git': {'url': 'git@github.com:openshift-priv/microshift.git'},
+                    },
+                },
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.18-rhel-8'}}],
+            }
+        )
+
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+        mock_joinpath.return_value = MagicMock()
+
+        # Mock the Dockerfile content with unresolved ARGs
+        dockerfile_content = (
+            "ARG BASE_IMAGE_URL\nARG BASE_IMAGE_TAG\nFROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}\nRUN echo test\n"
+        )
+        mock_open.return_value.__enter__.return_value.read.return_value = dockerfile_content
+
+        # Mock DockerfileParser to return unresolved pullspec for the initial parse,
+        # then the resolved pullspec after modifications are applied.
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp_cls:
+            mock_dfp_initial = MagicMock()
+            mock_dfp_initial.parent_images = [':']
+
+            mock_dfp_modified = MagicMock()
+            mock_dfp_modified.parent_images = ['registry.redhat.io/rhel9-eus/rhel-9.6-bootc:9.6']
+
+            mock_dfp_cls.side_effect = [mock_dfp_initial, mock_dfp_modified]
+
+            metadata.determine_targets = MagicMock(return_value=['target-1', 'target-2'])
+            metadata._apply_alternative_upstream_config()
+
+        # ART is el9, upstream resolves to rhel9 after modifications — versions match, no merge needed
+        self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.18-rhel-9')
+        metadata.determine_targets.assert_not_called()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    def test_determine_upstream_builder_info_unresolved_args_no_modifications(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """
+        Test that when upstream Dockerfile has unresolved ARG references and there are no
+        content.source.modifications, the method returns None for rhel_version gracefully.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+        metadata = self._create_image_metadata('openshift/test_no_mods')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_no_mods',
+                'distgit': {'branch': 'rhaos-4.18-rhel-9'},
+                'content': {
+                    'source': {
+                        'git': {'url': 'git@github.com:openshift-priv/test.git'},
+                    },
+                },
+            }
+        )
+
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+        mock_joinpath.return_value = MagicMock()
+
+        dockerfile_content = "ARG BASE_IMAGE_URL\nARG BASE_IMAGE_TAG\nFROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}\n"
+        mock_open.return_value.__enter__.return_value.read.return_value = dockerfile_content
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp_cls:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [':']
+            mock_dfp_cls.return_value = mock_dfp_instance
+
+            # Should raise IOError because rhel_version could not be determined
+            with self.assertRaises(IOError):
+                metadata._apply_alternative_upstream_config()
+
+    @patch('doozerlib.image.util.oc_image_info_for_arch__caching', side_effect=Exception('not available'))
+    def test_extract_builder_info_from_pullspec_rhel_in_path(self, _mock_oc_image_info):
+        """
+        Test that extract_builder_info_from_pullspec can detect RHEL version from the
+        registry path when the tag doesn't contain a rhel/ubi/centos pattern.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+        rhel_version, golang_version = extract_builder_info_from_pullspec(
+            'registry.redhat.io/rhel9-eus/rhel-9.6-bootc:9.6'
+        )
+        self.assertEqual(rhel_version, 9)
+        self.assertIsNone(golang_version)
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
