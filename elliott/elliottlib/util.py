@@ -436,7 +436,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
         else:
             build_system = nvr_build_system
 
-    if golang_builder_nvrs:
+    if build_system is None and golang_builder_nvrs:
         try:
             golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger)
         except Exception as e:
