@@ -2233,6 +2233,8 @@ class KonfluxRebaser:
         csv_file, image_refs = self._get_csv_file_and_refs(metadata, dest_dir, csv_config)
         registry = csv_config['registry'].rstrip("/")
         image_map = csv_config.get('image-map', {})
+        # External images are not built by us and should be skipped when replacing image refs
+        external_images = set(csv_config.get('external-images', []))
 
         def _map_image_name(name, image_map):
             for match, replacement in image_map.items():
@@ -2242,13 +2244,19 @@ class KonfluxRebaser:
 
         for ref in image_refs:
             name = ref['name']
-            name = _map_image_name(name, image_map)
+            mapped_name = _map_image_name(name, image_map)
             spec = ref['from']['name']
 
-            distgit = self._runtime.name_in_bundle_map.get(name, None)
+            # Skip external images that are not built by us
+            if name in external_images or mapped_name in external_images:
+                continue
+
+            distgit = self._runtime.name_in_bundle_map.get(mapped_name, None)
             # fail if upstream is referring to an image we don't actually build
             if not distgit:
-                raise ValueError('Unable to find {} in image-references data for {}'.format(name, metadata.distgit_key))
+                raise ValueError(
+                    'Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key)
+                )
 
             meta = self._runtime.image_map.get(distgit, None)
             if meta:  # image is currently be processed

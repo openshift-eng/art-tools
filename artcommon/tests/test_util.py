@@ -492,5 +492,64 @@ class TestKonfluxImagestreamOverride(unittest.TestCase):
             util.uses_konflux_imagestream_override("openshift-4.12")
 
 
+class TestIsFutureReleaseDate(unittest.TestCase):
+    """Tests for is_future_release_date function"""
+
+    def test_future_date_yyyy_mm_dd_format(self):
+        """Test future date in YYYY-MM-DD format"""
+        future_date = "2099-12-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mm_dd_format(self):
+        """Test past date in YYYY-MM-DD format"""
+        past_date = "2020-01-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_future_date_yyyy_mmm_dd_format(self):
+        """Test future date in YYYY-Mon-DD format (e.g., 2099-Dec-31)"""
+        future_date = "2099-Dec-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mmm_dd_format(self):
+        """Test past date in YYYY-Mon-DD format (e.g., 2020-Jan-01)"""
+        past_date = "2020-Jan-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_invalid_date_format(self):
+        """Test invalid date format returns False"""
+        invalid_date = "not-a-date"
+        result = util.is_future_release_date(invalid_date)
+        self.assertFalse(result)
+
+    def test_empty_string(self):
+        """Test empty string returns False"""
+        result = util.is_future_release_date("")
+        self.assertFalse(result)
+
+    def test_partial_date(self):
+        """Test partial date returns False"""
+        result = util.is_future_release_date("2024-01")
+        self.assertFalse(result)
+
+    def test_various_month_abbreviations(self):
+        """Test various month abbreviations in YYYY-Mon-DD format"""
+        # Test different month abbreviations
+        test_cases = [
+            ("2099-Jan-15", True),  # Future
+            ("2099-Feb-15", True),
+            ("2099-Mar-15", True),
+            ("2020-Apr-15", False),  # Past
+            ("2020-May-15", False),
+            ("2020-Jun-15", False),
+        ]
+        for date_str, expected in test_cases:
+            result = util.is_future_release_date(date_str)
+            self.assertEqual(result, expected, f"Failed for date: {date_str}")
+
+
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()

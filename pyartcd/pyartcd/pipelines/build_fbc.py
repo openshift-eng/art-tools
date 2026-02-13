@@ -89,6 +89,11 @@ class BuildFbcPipeline:
         self._slack_client.bind_channel(version)
 
     async def run(self):
+        # Check for required environment variables
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError('GITHUB_TOKEN environment variable is required for accessing openshift-priv repos')
+
         try:
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
             self._logger.info('Rebasing and building FBC repo with release %s', release_str)
