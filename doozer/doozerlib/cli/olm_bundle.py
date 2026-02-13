@@ -30,7 +30,7 @@ def list_olm_operators(runtime: Runtime):
     Example:
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators
     """
-    runtime.initialize(clone_distgits=False, prevent_cloning=True)
+    runtime.initialize(clone_distgits=False)
 
     for image in runtime.image_metas():
         if image.enabled and image.config['update-csv'] is not Missing:
