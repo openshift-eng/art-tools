@@ -487,7 +487,7 @@ class KonfluxRebaser:
         self, metadata: ImageMetadata, stream_name: str, original_parent: str, dfp: DockerfileParser
     ):
         stream_image = None
-        if self.variant is BuildVariant.OCP and metadata.canonical_builders_enabled:
+        if metadata.canonical_builders_enabled:
             # canonical_builders_from_upstream is enabled: try matching upstream golang builders
             stream_image = await self._resolve_image_from_upstream_parent(original_parent, dfp)
 
