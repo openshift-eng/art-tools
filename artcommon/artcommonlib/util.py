@@ -18,6 +18,7 @@ import requests
 import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
+    GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_NAMESPACE,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
@@ -25,6 +26,7 @@ from artcommonlib.constants import (
 )
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
+from pyartcd.util import isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -441,6 +443,9 @@ def extract_group_from_nvr(nvr: str) -> Optional[str]:
     match = re.search(r'-v(\d+)\.(\d+)\.', nvr)
     if match:
         major, minor = match.groups()
+        if GOLANG_BUILDER_IMAGE_NAME in nvr:
+            el_v = isolate_el_version_in_release(nvr)
+            return f"rhel-{el_v}-golang-{major}.{minor}"
         return f"openshift-{major}.{minor}"
     return None
 
