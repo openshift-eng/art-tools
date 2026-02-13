@@ -5,18 +5,17 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools, logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
 from artcommonlib.util import uses_konflux_imagestream_override
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from doozerlib import constants
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
-from doozerlib.util import isolate_nightly_name_components, rc_api_url
+from doozerlib.util import rc_api_url
 
 logger = logutil.get_logger(__name__)
 
@@ -121,7 +120,7 @@ async def get_nightlies(
     if latest:
         allow_pending = True
         allow_rejected = True
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     include_arches: Set[str] = determine_arch_list(runtime, set(exclude_arches))
 
     # make lists of nightly objects per arch
