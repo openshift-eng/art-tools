@@ -2,13 +2,11 @@ import os
 import unittest
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import click
 import koji
-from artcommonlib.brew import BuildStates
-from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
-from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from pyartcd.pipelines.update_golang import (
     UpdateGolangPipeline,
     extract_and_validate_golang_nvrs,
@@ -17,8 +15,6 @@ from pyartcd.pipelines.update_golang import (
     is_latest_build,
     move_golang_bugs,
 )
-
-from pyartcd import constants
 
 
 class TestExtractAndValidateGolangNvrs(unittest.TestCase):

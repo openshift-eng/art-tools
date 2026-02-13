@@ -5,7 +5,6 @@ import subprocess
 import click
 import koji
 import requests
-import yaml
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
 from artcommonlib.util import isolate_major_minor_in_group

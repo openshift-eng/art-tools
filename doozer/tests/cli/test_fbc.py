@@ -6,7 +6,6 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
-from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from doozerlib.cli.fbc import FbcImportCli, FbcRebaseAndBuildCli
 from doozerlib.exceptions import DoozerFatalError

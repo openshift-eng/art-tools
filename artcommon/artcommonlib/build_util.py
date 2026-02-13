@@ -1,7 +1,6 @@
 from typing import Dict, Iterable, List, Optional
 
 from artcommonlib import logutil
-from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 
 LOGGER = logutil.get_logger(__name__)

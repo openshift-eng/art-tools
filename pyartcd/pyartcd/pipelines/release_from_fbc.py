@@ -18,17 +18,12 @@ from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
-    ComponentSource,
-    Data,
     Environments,
-    GitSource,
     Metadata,
-    ReleaseNotes,
     Shipment,
     ShipmentConfig,
     ShipmentEnv,
     Snapshot,
-    SnapshotComponent,
     SnapshotSpec,
 )
 from elliottlib.util import extract_nvrs_from_fbc

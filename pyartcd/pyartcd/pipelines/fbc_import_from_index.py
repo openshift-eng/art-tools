@@ -1,14 +1,12 @@
 import logging
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import click
 from artcommonlib import exectools
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 
 

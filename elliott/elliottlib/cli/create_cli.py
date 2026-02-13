@@ -10,10 +10,7 @@ from elliottlib import errata
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.errata_async import AsyncErrataAPI
-from elliottlib.runtime import Runtime
 from elliottlib.util import (
-    YMD,
-    exit_unauthorized,
     get_advisory_boilerplate,
     validate_email_address,
     validate_release_date,

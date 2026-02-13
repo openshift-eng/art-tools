@@ -1,9 +1,7 @@
 import asyncio
-import os
 from pathlib import Path
 
 import click
-from aioredlock import LockError
 from artcommonlib import exectools
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product

@@ -7,7 +7,6 @@ import random
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from json import JSONDecodeError
 from typing import Dict, List, Optional, cast
 
 import aiohttp

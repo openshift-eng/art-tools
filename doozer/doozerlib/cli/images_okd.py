@@ -25,7 +25,6 @@ from artcommonlib.util import (
     convert_remote_git_to_ssh,
     deep_merge,
     download_file_from_github,
-    remove_prefix,
     split_git_url,
 )
 from artcommonlib.variants import BuildVariant

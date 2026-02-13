@@ -4,16 +4,14 @@ Used by both release:gen-payload and release:gen-assembly commands.
 """
 
 import json
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 from artcommonlib import exectools
-from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
-from doozerlib.util import isolate_nightly_name_components
 
 
 async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor: str) -> str:

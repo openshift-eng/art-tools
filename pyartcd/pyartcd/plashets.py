@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import re
 import shutil
 import string
 from datetime import datetime

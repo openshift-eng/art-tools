@@ -1,7 +1,6 @@
 import os
 
 import click
-from aioredlock import LockError
 from artcommonlib import exectools
 
 from pyartcd import constants, jenkins, locks

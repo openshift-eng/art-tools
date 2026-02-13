@@ -17,7 +17,7 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import get_build_system
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME, GOLANG_RPM_PACKAGE_NAME
 from artcommonlib.format_util import green_prefix, green_print, red_prefix
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.util import extract_related_images_from_fbc

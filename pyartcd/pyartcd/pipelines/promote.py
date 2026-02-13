@@ -6,13 +6,11 @@ import logging
 import os
 import re
 import shutil
-import ssl
 import sys
 import tarfile
 import traceback
 from collections import OrderedDict
-from datetime import datetime, timezone
-from io import StringIO
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote, urlparse
@@ -32,7 +30,7 @@ from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.util import isolate_major_minor_in_group, new_roundtrip_yaml_handler
+from artcommonlib.util import isolate_major_minor_in_group
 from elliottlib.errata import get_errata_live_id
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import (
@@ -40,7 +38,6 @@ from elliottlib.shipment_utils import (
     get_shipment_configs_from_mr,
 )
 from github import Github, GithubException
-from requests_gssapi import HTTPSPNEGOAuth
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
 from semver import VersionInfo

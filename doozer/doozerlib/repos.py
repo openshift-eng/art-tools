@@ -4,7 +4,6 @@ import json
 import os
 import threading
 import time
-from string import Template
 from typing import Dict, List, Optional, Union, cast
 
 import requests

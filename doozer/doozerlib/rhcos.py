@@ -16,7 +16,7 @@ from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import brew
-from doozerlib.repodata import OutdatedRPMFinder, Repodata
+from doozerlib.repodata import OutdatedRPMFinder
 from doozerlib.runtime import Runtime
 
 logger = logutil.get_logger(__name__)

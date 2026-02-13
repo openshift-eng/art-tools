@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, PlashetRepo, RepoSync
 from artcommonlib.config.repo import Repo as RepoConf
-from doozerlib.repos import Repo, Repos
+from doozerlib.repos import Repo
 
 EXPECTED_BASIC_REPO = """[rhaos-4.4-rhel-8-build]
 baseurl = http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/x86_64/

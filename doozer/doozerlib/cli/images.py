@@ -19,7 +19,6 @@ from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
-from future import standard_library
 
 from doozerlib import Runtime, coverity, state
 from doozerlib.brew import get_watch_task_info_copy

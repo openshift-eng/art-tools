@@ -2,7 +2,6 @@ import logging
 from typing import Dict, List
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
-from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import brew
 
 

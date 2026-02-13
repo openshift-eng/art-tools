@@ -1,7 +1,6 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from artcommonlib.model import Missing
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 
 

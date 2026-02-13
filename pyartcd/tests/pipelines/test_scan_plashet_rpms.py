@@ -1,7 +1,6 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import httpx
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo
 from pyartcd.pipelines.scan_plashet_rpms import ScanPlashetRpmsPipeline

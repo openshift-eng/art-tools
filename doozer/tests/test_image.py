@@ -8,16 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
+from doozerlib import build_info, image
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
-
-try:
-    from importlib import reload
-except ImportError:
-    pass
-from doozerlib import build_info, image
 
 TEST_YAML = """---
 name: 'openshift/test'

@@ -1,10 +1,9 @@
 import asyncio
 import base64
 import json
-import re
 import sys
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import click
 import openshift_client as oc

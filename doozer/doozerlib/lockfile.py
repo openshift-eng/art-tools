@@ -1,21 +1,20 @@
 import asyncio
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import total_ordering
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 import aiohttp
 import yaml
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.rpm_utils import compare_nvr
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
-from doozerlib.repodata import Repodata, Rpm, RpmModule
+from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)

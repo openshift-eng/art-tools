@@ -6,7 +6,6 @@ import unittest
 from unittest import mock
 
 from elliottlib import brew, constants, errata, exceptions
-from flexmock import flexmock
 from tenacity import wait_none
 
 from . import test_structures

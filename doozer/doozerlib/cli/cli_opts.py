@@ -1,7 +1,5 @@
 import io
 
-import yaml
-
 GLOBAL_OPT_DEFAULTS = {
     'distgit_threads': 20,
     'rhpkg_clone_timeout': 900,

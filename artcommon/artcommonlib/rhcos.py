@@ -1,7 +1,7 @@
 import json
 
 from artcommonlib import exectools, logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import ListModel, Model
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import get_art_prod_image_repo_for_version
