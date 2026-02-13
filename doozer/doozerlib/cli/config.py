@@ -210,7 +210,7 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
-    runtime.initialize(prevent_cloning=True**CONFIG_RUNTIME_OPTS)
+    runtime.initialize(prevent_cloning=True, **CONFIG_RUNTIME_OPTS)
     content = get_releases(runtime)
 
     if as_len:
