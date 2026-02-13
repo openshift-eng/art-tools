@@ -5,7 +5,6 @@ import click
 from artcommonlib.format_util import green_print
 
 import elliottlib
-from elliottlib import errata
 from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker, get_jira_bz_bug_ids
 from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.util import pbar_header, progress_func

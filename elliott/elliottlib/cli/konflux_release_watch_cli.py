@@ -1,10 +1,8 @@
-import os
 import sys
 from datetime import timedelta
 
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.util import (
     KubeCondition,
     new_roundtrip_yaml_handler,

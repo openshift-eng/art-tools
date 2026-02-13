@@ -14,7 +14,7 @@ from doozerlib.backend.konflux_fbc import (
     KonfluxFbcRebaser,
     _generate_fbc_branch_name,
 )
-from doozerlib.backend.pipelinerun_utils import PipelineRunInfo, PodInfo
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.opm import OpmRegistryAuth, yaml
 

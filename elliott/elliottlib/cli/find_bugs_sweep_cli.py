@@ -1,5 +1,4 @@
 import json
-import re
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
@@ -10,7 +9,6 @@ from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug

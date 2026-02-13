@@ -7,8 +7,6 @@ import openshift_client as octool
 from artcommonlib import exectools
 from tenacity import retry, stop_after_attempt
 
-from pyartcd.runtime import Runtime
-
 logger = logging.getLogger(__name__)
 
 

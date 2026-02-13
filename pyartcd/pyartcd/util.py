@@ -21,7 +21,7 @@ from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_i
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
-from pyartcd import constants, jenkins, record
+from pyartcd import constants, record
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)

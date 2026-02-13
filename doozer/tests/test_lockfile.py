@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 from doozerlib.lockfile import (
-    DEFAULT_RPM_LOCKFILE_NAME,
     ArtifactInfo,
     ArtifactLockfileGenerator,
     ModuleInfo,
@@ -12,8 +11,8 @@ from doozerlib.lockfile import (
     RpmInfoCollector,
     RPMLockfileGenerator,
 )
-from doozerlib.repodata import Repodata, Rpm, RpmModule
-from doozerlib.repos import Repo, Repos
+from doozerlib.repodata import Rpm, RpmModule
+from doozerlib.repos import Repos
 
 
 class TestRpmInfo(unittest.TestCase):

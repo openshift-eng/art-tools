@@ -110,8 +110,6 @@ class DB(object):
             )
             return False
 
-        import mysql.connector as mysql_connector
-
         # if required configuration parameters are found, set instance attributes to configuration values
         self.host = os.getenv(constants.DB_HOST, constants.default_db_params[constants.DB_HOST])
         self.port = os.getenv(constants.DB_PORT, constants.default_db_params[constants.DB_PORT])

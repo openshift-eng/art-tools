@@ -3,7 +3,6 @@ import datetime
 import io
 import itertools
 import os
-import pathlib
 import re
 import shutil
 import signal
@@ -26,11 +25,10 @@ from artcommonlib.assembly import (
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
-from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
+from artcommonlib.util import isolate_el_version_in_brew_tag
 from jira import JIRA
 from semver import Version
 

@@ -11,7 +11,6 @@ import time
 import traceback
 from datetime import datetime, timezone
 from functools import cached_property
-from importlib import util
 from io import StringIO
 from pathlib import Path
 from typing import Optional, cast
@@ -22,14 +21,13 @@ import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
+from artcommonlib.config.repo import RepoList
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.util import (
-    convert_remote_git_to_ssh,
     get_art_prod_image_repo_for_version,
     get_ocp_version_from_group,
     new_roundtrip_yaml_handler,

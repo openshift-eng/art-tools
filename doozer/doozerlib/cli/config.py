@@ -4,7 +4,7 @@ import io
 import os
 import pathlib
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import click
 import yaml

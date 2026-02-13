@@ -4,21 +4,13 @@ Test functions related to controlled command execution
 """
 
 import asyncio
+import logging
 import subprocess
 import time
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import exectools
-
-try:
-    from importlib import reload
-except ImportError:
-    pass
-import logging
-import os
-import shutil
-import tempfile
 
 
 class RetryTestCase(IsolatedAsyncioTestCase):

@@ -1,4 +1,3 @@
-import asyncio
 import itertools
 from typing import Iterable, Optional
 from urllib.parse import urlparse

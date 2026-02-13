@@ -1,6 +1,5 @@
 import io
 import os
-import pathlib
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 

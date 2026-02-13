@@ -1,4 +1,3 @@
-import re
 import traceback
 from time import sleep
 from typing import Dict, Optional, Tuple

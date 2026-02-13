@@ -10,7 +10,7 @@ from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from prettytable import PrettyTable
-from pyartcd.util import get_release_name_for_assembly, load_releases_config
+from pyartcd.util import get_release_name_for_assembly
 from semver.version import Version
 
 from elliottlib import Runtime, constants, errata

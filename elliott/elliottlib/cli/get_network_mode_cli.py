@@ -1,9 +1,8 @@
 import json
-from typing import Dict
 
 import click
 from artcommonlib import logutil
-from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import ArtifactType, KonfluxBuildOutcome, KonfluxBuildRecord
 
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.runtime import Runtime

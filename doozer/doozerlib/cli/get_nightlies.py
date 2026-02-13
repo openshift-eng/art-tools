@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Sequence, Set, Tuple
 
 import aiohttp
 import click

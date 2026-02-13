@@ -15,7 +15,7 @@ from artcommonlib.rhcos import RhcosMissingContainerException, get_container_con
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
-from doozerlib import Runtime, brew, util
+from doozerlib import Runtime, brew
 from doozerlib.build_info import BuildRecordInspector
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector

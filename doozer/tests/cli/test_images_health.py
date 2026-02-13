@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant

@@ -21,11 +21,9 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch,
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
 from artcommonlib.constants import (
     COREOS_RHEL10_STREAMS,
-    RHCOS_RELEASES_STREAM_URL,
 )
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
@@ -40,13 +38,11 @@ from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from doozerlib import release_inspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.build_info import (
     BuildRecordInspector,
     ImageInspector,
-    KonfluxBuildRecordInspector,
 )
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli

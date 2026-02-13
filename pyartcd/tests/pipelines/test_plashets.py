@@ -1,8 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from click.testing import CliRunner
-from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline, build_plashets_cli
+from pyartcd.pipelines.build_plashets import BuildPlashetsPipeline
 
 
 class TestBuildCompose(unittest.IsolatedAsyncioTestCase):

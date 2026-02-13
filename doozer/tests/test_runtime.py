@@ -2,10 +2,8 @@
 import logging
 import unittest
 
-from artcommonlib import exectools, logutil
 from artcommonlib.model import Model
 from doozerlib import runtime
-from flexmock import flexmock
 
 
 def stub_runtime():

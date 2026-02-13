@@ -17,17 +17,13 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.brew import watch_task_async
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from ghapi.all import GhApi
-from github import Github, GithubException
-from ruamel.yaml import YAML
+from github import Github
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.constants import GITHUB_OWNER
-from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
 
 _LOGGER = logging.getLogger(__name__)

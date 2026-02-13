@@ -1,7 +1,7 @@
 import unittest
 
 from flexmock import flexmock
-from validator import releases, support
+from validator import releases
 
 group_config = group_cfg = {
     'vars': {'MAJOR': 4, 'MINOR': 18},

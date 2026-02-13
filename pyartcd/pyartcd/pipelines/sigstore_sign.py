@@ -1,8 +1,6 @@
-import asyncio
-import json
 import os
 import sys
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set
 
 import click
 from artcommonlib import exectools

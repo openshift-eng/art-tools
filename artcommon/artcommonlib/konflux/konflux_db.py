@@ -1,10 +1,8 @@
 import asyncio
 import concurrent
-import copy
 import inspect
 import logging
 import pprint
-import re
 import threading
 import typing
 from collections import defaultdict
