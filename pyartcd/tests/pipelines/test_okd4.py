@@ -21,7 +21,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         self.mock_runtime.working_dir = MagicMock()
         self.mock_runtime.logger = MagicMock()
         self.mock_runtime.dry_run = False
-        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+        self.mock_runtime.doozer_working = "/tmp/doozer_working"
 
         mock_slack_client = MagicMock()
         mock_slack_client.say = AsyncMock()
@@ -37,22 +37,22 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.20',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.20",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
         with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+            patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag,
+            patch("pyartcd.pipelines.okd.jenkins") as mock_jenkins,
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -63,13 +63,13 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
 
             # Check first call (stream-coreos)
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.20:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.20-art:stream-coreos')
+            self.assertEqual(first_call[1]["source_pullspec"], "origin/scos-4.20:stream-coreos")
+            self.assertEqual(first_call[1]["target_tag"], "origin/scos-4.20-art:stream-coreos")
 
             # Check second call (stream-coreos-extensions)
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.20:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.20-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]["source_pullspec"], "origin/scos-4.20:stream-coreos-extensions")
+            self.assertEqual(second_call[1]["target_tag"], "origin/scos-4.20-art:stream-coreos-extensions")
 
             # Should update Jenkins description twice (once per successful tag)
             self.assertEqual(mock_jenkins.update_description.call_count, 2)
@@ -82,20 +82,20 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='4.22.1',  # Not 'stream'
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
+            assembly="4.22.1",  # Not 'stream'
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.22",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+        with patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag:
             # when
             await pipeline.mirror_coreos_imagestreams()
 
@@ -111,20 +111,20 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         self.mock_runtime.dry_run = True
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.20',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.20",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+        with patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag:
             # when
             await pipeline.mirror_coreos_imagestreams()
 
@@ -139,25 +139,25 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.20',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.20",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
         with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+            patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag,
+            patch("pyartcd.pipelines.okd.jenkins") as mock_jenkins,
         ):
             # Simulate a failure for both tags
-            mock_tag.side_effect = Exception('oc tag failed')
+            mock_tag.side_effect = Exception("oc tag failed")
 
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -170,7 +170,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             error_calls = [
                 call
                 for call in mock_jenkins.update_description.call_args_list
-                if 'Failed to mirror CoreOS imagestream tag' in str(call)
+                if "Failed to mirror CoreOS imagestream tag" in str(call)
             ]
             self.assertEqual(len(error_calls), 2)
 
@@ -182,22 +182,22 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.20',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.20",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='custom-namespace',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="custom-namespace",
         )
 
         with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins'),
+            patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag,
+            patch("pyartcd.pipelines.okd.jenkins"),
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -208,13 +208,13 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
 
             # Check first call uses custom namespace
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'custom-namespace/scos-4.20:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'custom-namespace/scos-4.20-art:stream-coreos')
+            self.assertEqual(first_call[1]["source_pullspec"], "custom-namespace/scos-4.20:stream-coreos")
+            self.assertEqual(first_call[1]["target_tag"], "custom-namespace/scos-4.20-art:stream-coreos")
 
             # Check second call uses custom namespace
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'custom-namespace/scos-4.20:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.20-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]["source_pullspec"], "custom-namespace/scos-4.20:stream-coreos-extensions")
+            self.assertEqual(second_call[1]["target_tag"], "custom-namespace/scos-4.20-art:stream-coreos-extensions")
 
     async def test_mirror_coreos_imagestreams_skipped_for_4_21(self):
         """
@@ -224,20 +224,20 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.21',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.21",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+        with patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag:
             # when
             await pipeline.mirror_coreos_imagestreams()
 
@@ -252,20 +252,20 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.22",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+        with patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag:
             # when
             await pipeline.mirror_coreos_imagestreams()
 
@@ -280,22 +280,22 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.23',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.23",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
         with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins'),
+            patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag,
+            patch("pyartcd.pipelines.okd.jenkins"),
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -306,12 +306,12 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
 
             # Check that 4.22 is used as source, 4.23 as target
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos')
+            self.assertEqual(first_call[1]["source_pullspec"], "origin/scos-4.22:stream-coreos")
+            self.assertEqual(first_call[1]["target_tag"], "origin/scos-4.23-art:stream-coreos")
 
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]["source_pullspec"], "origin/scos-4.22:stream-coreos-extensions")
+            self.assertEqual(second_call[1]["target_tag"], "origin/scos-4.23-art:stream-coreos-extensions")
 
     async def test_mirror_coreos_imagestreams_5_0_uses_4_22_source(self):
         """
@@ -321,22 +321,22 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
         # given
         pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='5.0',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="5.0",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
         with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins'),
+            patch.object(pipeline, "_tag_image_to_stream", new_callable=AsyncMock) as mock_tag,
+            patch("pyartcd.pipelines.okd.jenkins"),
         ):
             # when
             await pipeline.mirror_coreos_imagestreams()
@@ -347,12 +347,12 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
 
             # Check that 4.22 is used as source, 5.0 as target
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-5.0-art:stream-coreos')
+            self.assertEqual(first_call[1]["source_pullspec"], "origin/scos-4.22:stream-coreos")
+            self.assertEqual(first_call[1]["target_tag"], "origin/scos-5.0-art:stream-coreos")
 
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-5.0-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]["source_pullspec"], "origin/scos-4.22:stream-coreos-extensions")
+            self.assertEqual(second_call[1]["target_tag"], "origin/scos-5.0-art:stream-coreos-extensions")
 
 
 class TestGetPayloadTagName(IsolatedAsyncioTestCase):
@@ -365,7 +365,7 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
         self.mock_runtime.working_dir = MagicMock()
         self.mock_runtime.logger = MagicMock()
         self.mock_runtime.dry_run = False
-        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+        self.mock_runtime.doozer_working = "/tmp/doozer_working"
 
         mock_slack_client = MagicMock()
         mock_slack_client.say = AsyncMock()
@@ -375,17 +375,17 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
 
         self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.22",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
     def test_get_payload_tag_name_with_okd_payload_name(self):
@@ -395,16 +395,16 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
 
         # given
         image_metadata = {
-            'okd': {'payload_name': 'custom-okd-name'},
-            'payload_name': 'standard-name',
-            'name': 'openshift/ose-foo',
+            "okd": {"payload_name": "custom-okd-name"},
+            "payload_name": "standard-name",
+            "name": "openshift/ose-foo",
         }
 
         # when
-        result = self.pipeline._get_payload_tag_name('foo', image_metadata)
+        result = self.pipeline._get_payload_tag_name("foo", image_metadata)
 
         # then
-        self.assertEqual(result, 'custom-okd-name')
+        self.assertEqual(result, "custom-okd-name")
 
     def test_get_payload_tag_name_with_payload_name(self):
         """
@@ -412,13 +412,13 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
         """
 
         # given
-        image_metadata = {'payload_name': 'standard-name', 'name': 'openshift/ose-foo'}
+        image_metadata = {"payload_name": "standard-name", "name": "openshift/ose-foo"}
 
         # when
-        result = self.pipeline._get_payload_tag_name('foo', image_metadata)
+        result = self.pipeline._get_payload_tag_name("foo", image_metadata)
 
         # then
-        self.assertEqual(result, 'standard-name')
+        self.assertEqual(result, "standard-name")
 
     def test_get_payload_tag_name_strips_ose_prefix(self):
         """
@@ -426,13 +426,13 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
         """
 
         # given
-        image_metadata = {'name': 'openshift/ose-cli'}
+        image_metadata = {"name": "openshift/ose-cli"}
 
         # when
-        result = self.pipeline._get_payload_tag_name('cli', image_metadata)
+        result = self.pipeline._get_payload_tag_name("cli", image_metadata)
 
         # then
-        self.assertEqual(result, 'cli')
+        self.assertEqual(result, "cli")
 
     def test_get_payload_tag_name_keeps_non_ose_name(self):
         """
@@ -440,13 +440,13 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
         """
 
         # given
-        image_metadata = {'name': 'openshift/installer'}
+        image_metadata = {"name": "openshift/installer"}
 
         # when
-        result = self.pipeline._get_payload_tag_name('installer', image_metadata)
+        result = self.pipeline._get_payload_tag_name("installer", image_metadata)
 
         # then
-        self.assertEqual(result, 'installer')
+        self.assertEqual(result, "installer")
 
     def test_get_payload_tag_name_uses_distgit_key_as_fallback(self):
         """
@@ -457,10 +457,10 @@ class TestGetPayloadTagName(IsolatedAsyncioTestCase):
         image_metadata = {}
 
         # when
-        result = self.pipeline._get_payload_tag_name('my-image', image_metadata)
+        result = self.pipeline._get_payload_tag_name("my-image", image_metadata)
 
         # then
-        self.assertEqual(result, 'my-image')
+        self.assertEqual(result, "my-image")
 
 
 class TestBuildingImages(IsolatedAsyncioTestCase):
@@ -473,7 +473,7 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
         self.mock_runtime.working_dir = MagicMock()
         self.mock_runtime.logger = MagicMock()
         self.mock_runtime.dry_run = False
-        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+        self.mock_runtime.doozer_working = "/tmp/doozer_working"
 
         mock_slack_client = MagicMock()
         mock_slack_client.say = AsyncMock()
@@ -483,17 +483,17 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.22",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
     def test_building_images_with_strategy_none(self):
@@ -531,7 +531,7 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
-        self.pipeline.build_plan.images_included = ['image1', 'image2']
+        self.pipeline.build_plan.images_included = ["image1", "image2"]
 
         # when
         result = self.pipeline.building_images()
@@ -561,7 +561,7 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.EXCEPT
-        self.pipeline.build_plan.images_excluded = ['image1']
+        self.pipeline.build_plan.images_excluded = ["image1"]
 
         # when
         result = self.pipeline.building_images()
@@ -580,7 +580,7 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
         self.mock_runtime.working_dir = MagicMock()
         self.mock_runtime.logger = MagicMock()
         self.mock_runtime.dry_run = False
-        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+        self.mock_runtime.doozer_working = "/tmp/doozer_working"
 
         mock_slack_client = MagicMock()
         mock_slack_client.say = AsyncMock()
@@ -590,17 +590,17 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
         self.pipeline = KonfluxOkdPipeline(
             runtime=self.mock_runtime,
-            image_build_strategy='all',
+            image_build_strategy="all",
             image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
+            assembly="stream",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            data_gitref="",
+            version="4.22",
             ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
+            plr_template="",
+            lock_identifier="test-lock",
+            build_priority="10",
+            imagestream_namespace="origin",
         )
 
     def test_include_exclude_param_with_strategy_all(self):
@@ -624,13 +624,13 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
-        self.pipeline.build_plan.images_included = ['image1', 'image2', 'image3']
+        self.pipeline.build_plan.images_included = ["image1", "image2", "image3"]
 
         # when
         result = self.pipeline.include_exclude_param()
 
         # then
-        self.assertEqual(result, ['--images=image1,image2,image3'])
+        self.assertEqual(result, ["--images=image1,image2,image3"])
 
     def test_include_exclude_param_with_strategy_except(self):
         """
@@ -639,13 +639,13 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.EXCEPT
-        self.pipeline.build_plan.images_excluded = ['bad1', 'bad2']
+        self.pipeline.build_plan.images_excluded = ["bad1", "bad2"]
 
         # when
         result = self.pipeline.include_exclude_param()
 
         # then
-        self.assertEqual(result, ['--images=', '--exclude=bad1,bad2'])
+        self.assertEqual(result, ["--images=", "--exclude=bad1,bad2"])
 
     def test_include_exclude_param_with_strategy_none_raises_error(self):
         """
@@ -659,7 +659,7 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             self.pipeline.include_exclude_param()
 
-        self.assertIn('Invalid build strategy', str(context.exception))
+        self.assertIn("Invalid build strategy", str(context.exception))
 
 
 class TestBuildPlan(IsolatedAsyncioTestCase):
@@ -695,7 +695,7 @@ class TestBuildPlan(IsolatedAsyncioTestCase):
 
         # given
         plan = BuildPlan(image_build_strategy=BuildStrategy.EXCEPT)
-        plan.images_excluded = ['image1', 'image2']
+        plan.images_excluded = ["image1", "image2"]
         plan.active_image_count = 10
 
         # when
@@ -704,6 +704,6 @@ class TestBuildPlan(IsolatedAsyncioTestCase):
         # then
         self.assertIn('"image_build_strategy"', result)
         self.assertIn('"images_excluded"', result)
-        self.assertIn('image1', result)
-        self.assertIn('image2', result)
+        self.assertIn("image1", result)
+        self.assertIn("image2", result)
         self.assertIn('"active_image_count": 10', result)

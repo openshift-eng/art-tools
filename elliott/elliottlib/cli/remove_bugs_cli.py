@@ -12,9 +12,9 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("remove-bugs", short_help="Remove provided BUGS from ADVISORY")
-@click.option('--advisory', '-a', 'advisory_id', type=int, metavar='ADVISORY', help='Remove found bugs from ADVISORY')
+@click.option("--advisory", "-a", "advisory_id", type=int, metavar="ADVISORY", help="Remove found bugs from ADVISORY")
 @use_default_advisory_option
-@click.argument('bug_ids', metavar='<BUGID>', nargs=-1, required=False, default=None)
+@click.argument("bug_ids", metavar="<BUGID>", nargs=-1, required=False, default=None)
 @click.option(
     "--all", "remove_all", required=False, default=False, is_flag=True, help="Remove all bugs attached to the Advisory"
 )
@@ -62,9 +62,9 @@ def remove_bugs_cli(runtime, advisory_id, default_advisory_type, bug_ids, remove
         bz_ids = set(bz_ids) & set(attached_bz_ids)
 
     if jira_ids:
-        remove_bugs(advisory, jira_ids, runtime.get_bug_tracker('jira'), noop)
+        remove_bugs(advisory, jira_ids, runtime.get_bug_tracker("jira"), noop)
     if bz_ids:
-        remove_bugs(advisory, bz_ids, runtime.get_bug_tracker('bugzilla'), noop)
+        remove_bugs(advisory, bz_ids, runtime.get_bug_tracker("bugzilla"), noop)
 
 
 def remove_bugs(advisory, bug_ids, bug_tracker, noop):
@@ -75,4 +75,4 @@ def remove_bugs(advisory, bug_ids, bug_tracker, noop):
     try:
         bug_tracker.remove_bugs(advisory, bug_ids, noop)
     except ErrataException as ex:
-        raise ElliottFatalError(getattr(ex, 'message', repr(ex)))
+        raise ElliottFatalError(getattr(ex, "message", repr(ex)))

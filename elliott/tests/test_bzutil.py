@@ -62,10 +62,10 @@ class TestBugTracker(unittest.TestCase):
         valid_flaw_bugs = [flaw_a, flaw_b]
 
         tracker_bugs = [
-            flexmock(corresponding_flaw_bug_ids=[flaw_a.id, flaw_b.id], id=10, whiteboard_component='component:foo'),
-            flexmock(corresponding_flaw_bug_ids=[flaw_b.id, flaw_c.id], id=11, whiteboard_component='component:bar'),
+            flexmock(corresponding_flaw_bug_ids=[flaw_a.id, flaw_b.id], id=10, whiteboard_component="component:foo"),
+            flexmock(corresponding_flaw_bug_ids=[flaw_b.id, flaw_c.id], id=11, whiteboard_component="component:bar"),
             flexmock(corresponding_flaw_bug_ids=[flaw_b.id], id=12, whiteboard_component=None),
-            flexmock(corresponding_flaw_bug_ids=[flaw_c.id], id=13, whiteboard_component='component:foobar'),
+            flexmock(corresponding_flaw_bug_ids=[flaw_c.id], id=13, whiteboard_component="component:foobar"),
         ]
 
         flexmock(BugzillaBugTracker).should_receive("login")
@@ -73,8 +73,8 @@ class TestBugTracker(unittest.TestCase):
         expected = (
             {10: [flaw_a.id, flaw_b.id], 11: [flaw_b.id]},
             {
-                flaw_a.id: {'bug': flaw_a, 'trackers': [tracker_bugs[0]]},
-                flaw_b.id: {'bug': flaw_b, 'trackers': [tracker_bugs[0], tracker_bugs[1]]},
+                flaw_a.id: {"bug": flaw_a, "trackers": [tracker_bugs[0]]},
+                flaw_b.id: {"bug": flaw_b, "trackers": [tracker_bugs[0], tracker_bugs[1]]},
             },
         )
         brew_api = flexmock()
@@ -89,10 +89,10 @@ class TestBugTracker(unittest.TestCase):
         valid_flaw_bugs = [flaw_a, flaw_b]
 
         tracker_bugs = [
-            flexmock(corresponding_flaw_bug_ids=[flaw_a.id, flaw_b.id], id=10, whiteboard_component='component:foo'),
-            flexmock(corresponding_flaw_bug_ids=[flaw_b.id, flaw_c.id], id=11, whiteboard_component='component:bar'),
+            flexmock(corresponding_flaw_bug_ids=[flaw_a.id, flaw_b.id], id=10, whiteboard_component="component:foo"),
+            flexmock(corresponding_flaw_bug_ids=[flaw_b.id, flaw_c.id], id=11, whiteboard_component="component:bar"),
             flexmock(corresponding_flaw_bug_ids=[flaw_b.id], id=12, whiteboard_component=None),
-            flexmock(corresponding_flaw_bug_ids=[flaw_c.id], id=13, whiteboard_component='component:foobar'),
+            flexmock(corresponding_flaw_bug_ids=[flaw_c.id], id=13, whiteboard_component="component:foobar"),
         ]
 
         flexmock(BugzillaBugTracker).should_receive("login")
@@ -111,24 +111,24 @@ class TestBugTracker(unittest.TestCase):
 
 class TestJIRABugTracker(unittest.TestCase):
     def test_get_config(self):
-        config = {'foo': 1, 'jira_config': {'bar': 2}}
+        config = {"foo": 1, "jira_config": {"bar": 2}}
         vars_mock = flexmock(MAJOR="4", MINOR="9")
         runtime = flexmock(
             group_config=flexmock(vars=vars_mock),
             gitdata=flexmock(),
         )
-        runtime.gitdata.should_receive("load_data").with_args(key='bug', replace_vars=vars_mock).and_return(
+        runtime.gitdata.should_receive("load_data").with_args(key="bug", replace_vars=vars_mock).and_return(
             flexmock(data=config)
         )
 
         actual = JIRABugTracker.get_config(runtime)
-        expected = {'foo': 1, 'bar': 2}
+        expected = {"foo": 1, "bar": 2}
         self.assertEqual(actual, expected)
 
     def test_security_filtering_in_query(self):
         """Test that security filtering is included in JQL query when enabled"""
         # Create a minimal tracker for testing
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL}
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
         flexmock(JIRABugTracker).should_receive("_init_fields")
@@ -150,36 +150,36 @@ class TestJIRABugTracker(unittest.TestCase):
     def test_search_with_security_filtering(self):
         """Test that search results respect security filtering"""
         # Mock configuration
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'token_auth': 'mock_token'}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "token_auth": "mock_token"}
 
         # Create mock issues with different security levels
         mock_security_allowed = flexmock(name="Red Hat Employee")
         mock_security_disallowed = flexmock(name="Special Public")
 
         mock_issue_allowed = flexmock(
-            key='OCPBUGS-11111',
+            key="OCPBUGS-11111",
             fields=flexmock(
-                summary='Allowed security bug',
-                status=flexmock(name='NEW'),
-                components=[flexmock(name='Test Component')],
-                labels=['Security', 'SecurityTracking'],
+                summary="Allowed security bug",
+                status=flexmock(name="NEW"),
+                components=[flexmock(name="Test Component")],
+                labels=["Security", "SecurityTracking"],
                 security=mock_security_allowed,
-                project=flexmock(key='OCPBUGS'),
+                project=flexmock(key="OCPBUGS"),
             ),
-            permalink=lambda: get_jira_browse_url('OCPBUGS-11111'),
+            permalink=lambda: get_jira_browse_url("OCPBUGS-11111"),
         )
 
         mock_issue_disallowed = flexmock(
-            key='OCPBUGS-22222',
+            key="OCPBUGS-22222",
             fields=flexmock(
-                summary='Disallowed security bug',
-                status=flexmock(name='NEW'),
-                components=[flexmock(name='Test Component')],
-                labels=['Security', 'SecurityTracking'],
+                summary="Disallowed security bug",
+                status=flexmock(name="NEW"),
+                components=[flexmock(name="Test Component")],
+                labels=["Security", "SecurityTracking"],
                 security=mock_security_disallowed,
-                project=flexmock(key='OCPBUGS'),
+                project=flexmock(key="OCPBUGS"),
             ),
-            permalink=lambda: get_jira_browse_url('OCPBUGS-22222'),
+            permalink=lambda: get_jira_browse_url("OCPBUGS-22222"),
         )
 
         # Mock JIRA client search - should only return allowed bugs when filtering is enabled
@@ -195,59 +195,59 @@ class TestJIRABugTracker(unittest.TestCase):
 
         # Create tracker and perform search
         tracker = JIRABugTracker(config)
-        bugs = tracker.search(['NEW'], 'default')
+        bugs = tracker.search(["NEW"], "default")
 
         # Verify we only got the allowed bug
         self.assertEqual(len(bugs), 1)
-        self.assertEqual(bugs[0].id, 'OCPBUGS-11111')
-        self.assertEqual(bugs[0].security_level.name, 'Red Hat Employee')
+        self.assertEqual(bugs[0].id, "OCPBUGS-11111")
+        self.assertEqual(bugs[0].security_level.name, "Red Hat Employee")
         self.assertIn(bugs[0].security_level.name, constants.JIRA_SECURITY_ALLOWLIST)
 
         # Test with security filtering disabled - should return both bugs
         JIRABugTracker.ENABLE_SECURITY_LEVEL_FILTERING = False
         mock_jira_client.should_receive("search_issues").and_return([mock_issue_allowed, mock_issue_disallowed])
 
-        bugs = tracker.search(['NEW'], 'default')
+        bugs = tracker.search(["NEW"], "default")
 
         # Verify we got both bugs when filtering is disabled
         self.assertEqual(len(bugs), 2)
         bug_ids = [bug.id for bug in bugs]
-        self.assertIn('OCPBUGS-11111', bug_ids)
-        self.assertIn('OCPBUGS-22222', bug_ids)
+        self.assertIn("OCPBUGS-11111", bug_ids)
+        self.assertIn("OCPBUGS-22222", bug_ids)
 
     def test_get_available_target_versions(self):
         """Test fetching available target versions from JIRA"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL}
 
         # Mock issue types response (JIRA returns objects, not dicts)
-        bug_type = flexmock(id='1', name='Bug')
-        story_type = flexmock(id='2', name='Story')
+        bug_type = flexmock(id="1", name="Bug")
+        story_type = flexmock(id="2", name="Story")
         mock_issue_types = [bug_type, story_type]
 
         # Mock fields response with Target Version field
-        version1 = flexmock(name='4.17.0')
-        version2 = flexmock(name='4.17.z')
-        version3 = flexmock(name='4.18.0')
-        version4 = flexmock(name='4.18.z')
+        version1 = flexmock(name="4.17.0")
+        version2 = flexmock(name="4.17.z")
+        version3 = flexmock(name="4.18.0")
+        version4 = flexmock(name="4.18.z")
 
-        field = flexmock(fieldId='customfield_12319940', allowedValues=[version1, version2, version3, version4])
+        field = flexmock(fieldId="customfield_12319940", allowedValues=[version1, version2, version3, version4])
         mock_fields = [field]
 
         mock_jira_client = flexmock()
-        mock_jira_client.should_receive('project_issue_types').with_args('OCPBUGS').and_return(mock_issue_types)
-        mock_jira_client.should_receive('project_issue_fields').with_args('OCPBUGS', '1').and_return(mock_fields)
+        mock_jira_client.should_receive("project_issue_types").with_args("OCPBUGS").and_return(mock_issue_types)
+        mock_jira_client.should_receive("project_issue_fields").with_args("OCPBUGS", "1").and_return(mock_fields)
 
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
         available_versions = tracker._get_available_target_versions()
 
         self.assertEqual(len(available_versions), 4)
-        self.assertIn('4.17.0', available_versions)
-        self.assertIn('4.17.z', available_versions)
-        self.assertIn('4.18.0', available_versions)
-        self.assertIn('4.18.z', available_versions)
+        self.assertIn("4.17.0", available_versions)
+        self.assertIn("4.17.z", available_versions)
+        self.assertIn("4.18.0", available_versions)
+        self.assertIn("4.18.z", available_versions)
 
         # Test caching - should not call API methods again
         available_versions_2 = tracker._get_available_target_versions()
@@ -255,13 +255,13 @@ class TestJIRABugTracker(unittest.TestCase):
 
     def test_get_available_target_versions_error_handling(self):
         """Test error handling when fetching target versions fails"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL}
 
         mock_jira_client = flexmock()
-        mock_jira_client.should_receive('project_issue_types').and_raise(Exception('API error'))
+        mock_jira_client.should_receive("project_issue_types").and_raise(Exception("API error"))
 
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
         available_versions = tracker._get_available_target_versions()
@@ -271,160 +271,160 @@ class TestJIRABugTracker(unittest.TestCase):
 
     def test_query_with_valid_target_versions(self):
         """Test _query filters target versions correctly when all are valid"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'target_release': ['4.17.0', '4.17.z']}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "target_release": ["4.17.0", "4.17.z"]}
 
         mock_jira_client = flexmock()
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
 
         # Mock available versions
-        flexmock(tracker).should_receive('_get_available_target_versions').and_return(['4.17.0', '4.17.z', '4.18.0'])
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.17.0", "4.17.z", "4.18.0"])
 
-        query = tracker._query(status=['NEW'], target_release=['4.17.0', '4.17.z'], with_target_release=False)
+        query = tracker._query(status=["NEW"], target_release=["4.17.0", "4.17.z"], with_target_release=False)
 
         # Both versions should be included in the query
-        self.assertIn('4.17.0', query)
-        self.assertIn('4.17.z', query)
+        self.assertIn("4.17.0", query)
+        self.assertIn("4.17.z", query)
         self.assertIn('"Target Version" in', query)
 
     def test_query_with_invalid_target_versions(self):
         """Test _query filters out non-existent target versions"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'target_release': ['4.17.0', '4.20.0']}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "target_release": ["4.17.0", "4.20.0"]}
 
         mock_jira_client = flexmock()
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
 
         # Mock available versions - 4.20.0 does not exist
-        flexmock(tracker).should_receive('_get_available_target_versions').and_return(['4.17.0', '4.17.z', '4.18.0'])
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.17.0", "4.17.z", "4.18.0"])
 
-        query = tracker._query(status=['NEW'], target_release=['4.17.0', '4.20.0'], with_target_release=False)
+        query = tracker._query(status=["NEW"], target_release=["4.17.0", "4.20.0"], with_target_release=False)
 
         # Only 4.17.0 should be included, 4.20.0 should be filtered out
-        self.assertIn('4.17.0', query)
-        self.assertNotIn('4.20.0', query)
+        self.assertIn("4.17.0", query)
+        self.assertNotIn("4.20.0", query)
         self.assertIn('"Target Version" in', query)
 
     def test_query_with_all_invalid_target_versions(self):
         """Test _query behavior when all target versions are invalid"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'target_release': ['4.20.0', '4.21.0']}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "target_release": ["4.20.0", "4.21.0"]}
 
         mock_jira_client = flexmock()
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
 
         # Mock available versions - neither 4.20.0 nor 4.21.0 exist
-        flexmock(tracker).should_receive('_get_available_target_versions').and_return(['4.17.0', '4.17.z', '4.18.0'])
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.17.0", "4.17.z", "4.18.0"])
 
-        query = tracker._query(status=['NEW'], target_release=['4.20.0', '4.21.0'], with_target_release=False)
+        query = tracker._query(status=["NEW"], target_release=["4.20.0", "4.21.0"], with_target_release=False)
 
         # Should return None when all target versions are filtered out
         self.assertIsNone(query)
 
     def test_query_when_available_versions_fetch_fails(self):
         """Test _query proceeds with original query when fetching available versions fails"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'target_release': ['4.17.0']}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "target_release": ["4.17.0"]}
 
         mock_jira_client = flexmock()
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
 
         # Mock available versions returning empty list (error case)
-        flexmock(tracker).should_receive('_get_available_target_versions').and_return([])
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return([])
 
-        query = tracker._query(status=['NEW'], target_release=['4.17.0'], with_target_release=False)
+        query = tracker._query(status=["NEW"], target_release=["4.17.0"], with_target_release=False)
 
         # Should proceed with original query including the target version
-        self.assertIn('4.17.0', query)
+        self.assertIn("4.17.0", query)
         self.assertIn('"Target Version" in', query)
 
     def test_search_returns_empty_when_all_versions_filtered(self):
         """Test that search methods return empty list when all target versions are filtered out"""
-        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL, 'target_release': ['4.99.0']}
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL, "target_release": ["4.99.0"]}
 
         mock_jira_client = flexmock()
-        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
 
         # Mock available versions - 4.99.0 doesn't exist
-        flexmock(tracker).should_receive('_get_available_target_versions').and_return(['4.17.0', '4.17.z'])
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.17.0", "4.17.z"])
 
         # Test search method
-        result = tracker.search(['NEW'])
+        result = tracker.search(["NEW"])
         self.assertEqual(result, [])
 
         # Test blocker_search method
-        result = tracker.blocker_search(['NEW'])
+        result = tracker.blocker_search(["NEW"])
         self.assertEqual(result, [])
 
         # Test cve_tracker_search method
-        result = tracker.cve_tracker_search(['NEW'])
+        result = tracker.cve_tracker_search(["NEW"])
         self.assertEqual(result, [])
 
 
 class TestBugzillaBugTracker(unittest.TestCase):
     def test_get_config(self):
-        config = {'foo': 1, 'bugzilla_config': {'bar': 2}}
+        config = {"foo": 1, "bugzilla_config": {"bar": 2}}
         vars_mock = flexmock(MAJOR="4", MINOR="9")
         runtime = flexmock(
             group_config=flexmock(vars=vars_mock),
             gitdata=flexmock(),
         )
-        runtime.gitdata.should_receive("load_data").with_args(key='bug', replace_vars=vars_mock).and_return(
+        runtime.gitdata.should_receive("load_data").with_args(key="bug", replace_vars=vars_mock).and_return(
             flexmock(data=config)
         )
 
         actual = BugzillaBugTracker.get_config(runtime)
-        expected = {'foo': 1, 'bar': 2}
+        expected = {"foo": 1, "bar": 2}
         self.assertEqual(actual, expected)
 
 
 class TestJIRABug(unittest.TestCase):
     def test_depends_on(self):
-        bug = flexmock(key='OCPBUGS-1')
-        flexmock(JIRABug).should_receive("_get_depends").and_return(['foo'])
-        self.assertEqual(JIRABug(bug).depends_on, ['foo'])
+        bug = flexmock(key="OCPBUGS-1")
+        flexmock(JIRABug).should_receive("_get_depends").and_return(["foo"])
+        self.assertEqual(JIRABug(bug).depends_on, ["foo"])
 
     def test_is_placeholder_bug(self):
         bug1 = flexmock(
-            key='OCPBUGS-1',
-            fields=flexmock(summary='Placeholder', components=[flexmock(name='Release')], labels=['Automation']),
+            key="OCPBUGS-1",
+            fields=flexmock(summary="Placeholder", components=[flexmock(name="Release")], labels=["Automation"]),
         )
         self.assertEqual(JIRABug(bug1).is_placeholder_bug(), True)
 
         bug2 = flexmock(
-            key='OCPBUGS-2', fields=flexmock(summary='Placeholder', components=[flexmock(name='Foo')], labels=['Bar'])
+            key="OCPBUGS-2", fields=flexmock(summary="Placeholder", components=[flexmock(name="Foo")], labels=["Bar"])
         )
         self.assertEqual(JIRABug(bug2).is_placeholder_bug(), False)
 
     def test_is_ocp_bug(self):
-        bug1 = flexmock(key='OCPBUGS-1', fields=flexmock(project=flexmock(key='foo')))
+        bug1 = flexmock(key="OCPBUGS-1", fields=flexmock(project=flexmock(key="foo")))
         self.assertEqual(JIRABug(bug1).is_ocp_bug(), False)
 
-        bug2 = flexmock(key='OCPBUGS-1', fields=flexmock(project=flexmock(key='OCPBUGS')))
+        bug2 = flexmock(key="OCPBUGS-1", fields=flexmock(project=flexmock(key="OCPBUGS")))
         flexmock(JIRABug).should_receive("is_placeholder_bug").and_return(True)
         self.assertEqual(JIRABug(bug2).is_ocp_bug(), False)
 
-        bug2 = flexmock(key='OCPBUGS-1', fields=flexmock(project=flexmock(key='OCPBUGS')))
+        bug2 = flexmock(key="OCPBUGS-1", fields=flexmock(project=flexmock(key="OCPBUGS")))
         flexmock(JIRABug).should_receive("is_placeholder_bug").and_return(False)
         self.assertEqual(JIRABug(bug2).is_ocp_bug(), True)
 
     def test_is_tracker_bug(self):
         bug = flexmock(
-            key='OCPBUGS1',
+            key="OCPBUGS1",
             fields=flexmock(
-                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'],
-                issuetype=flexmock(name='Bug'),
+                labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "pscomponent:my-image", "flaw:bz#123"],
+                issuetype=flexmock(name="Bug"),
             ),
         )
         expected = True
@@ -433,9 +433,9 @@ class TestJIRABug(unittest.TestCase):
 
     def test_is_tracker_bug_missing_keywords(self):
         bug = flexmock(
-            key='OCPBUGS1',
+            key="OCPBUGS1",
             fields=flexmock(
-                labels=['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+                labels=["somethingelse", "pscomponent:my-image", "flaw:bz#123"], issuetype=flexmock(name="Bug")
             ),
         )
         expected = False
@@ -444,9 +444,9 @@ class TestJIRABug(unittest.TestCase):
 
     def test_is_tracker_bug_missing_pscomponent(self):
         bug = flexmock(
-            key='OCPBUGS1',
+            key="OCPBUGS1",
             fields=flexmock(
-                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+                labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "flaw:bz#123"], issuetype=flexmock(name="Bug")
             ),
         )
         expected = False
@@ -455,10 +455,10 @@ class TestJIRABug(unittest.TestCase):
 
     def test_is_tracker_bug_missing_flaw(self):
         bug = flexmock(
-            key='OCPBUGS1',
+            key="OCPBUGS1",
             fields=flexmock(
-                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image'],
-                issuetype=flexmock(name='Bug'),
+                labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "pscomponent:my-image"],
+                issuetype=flexmock(name="Bug"),
             ),
         )
         expected = False
@@ -490,15 +490,15 @@ class TestJIRABug(unittest.TestCase):
         self.assertEqual(actual, expected)
 
     def test_whiteboard_component(self):
-        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["foo"], issuetype=flexmock(name='Bug'))))
+        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["foo"], issuetype=flexmock(name="Bug"))))
         self.assertIsNone(bug.whiteboard_component)
 
-        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["pscomponent: "], issuetype=flexmock(name='Bug'))))
+        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["pscomponent: "], issuetype=flexmock(name="Bug"))))
         self.assertIsNone(bug.whiteboard_component)
 
         for expected in ["something", "openvswitch2.15", "trailing_blank 	"]:
             bug = JIRABug(
-                flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"], issuetype=flexmock(name='Bug')))
+                flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"], issuetype=flexmock(name="Bug")))
             )
             actual = bug.whiteboard_component
             self.assertEqual(actual, expected.strip())
@@ -506,13 +506,13 @@ class TestJIRABug(unittest.TestCase):
 
 class TestBugzillaBug(unittest.TestCase):
     def test_is_tracker_bug(self):
-        bug = flexmock(id='1', keywords=constants.TRACKER_BUG_KEYWORDS, whiteboard_component='my-image')
+        bug = flexmock(id="1", keywords=constants.TRACKER_BUG_KEYWORDS, whiteboard_component="my-image")
         expected = True
         actual = BugzillaBug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
 
     def test_is_tracker_bug_fail(self):
-        bug = flexmock(id='1', keywords=['SomeOtherKeyword'], whiteboard_component='my-image')
+        bug = flexmock(id="1", keywords=["SomeOtherKeyword"], whiteboard_component="my-image")
         expected = False
         actual = BugzillaBug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -746,29 +746,29 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
 
     def test_sort_cve_bugs(self):
         flaw_bugs = [
-            flexmock(alias=['CVE-2022-123'], severity='Low'),
-            flexmock(alias=['CVE-2022-9'], severity='urgent'),
-            flexmock(alias=['CVE-2022-10'], severity='urgent'),
-            flexmock(alias=['CVE-2021-789'], severity='medium'),
-            flexmock(alias=['CVE-2021-100'], severity='medium'),
+            flexmock(alias=["CVE-2022-123"], severity="Low"),
+            flexmock(alias=["CVE-2022-9"], severity="urgent"),
+            flexmock(alias=["CVE-2022-10"], severity="urgent"),
+            flexmock(alias=["CVE-2021-789"], severity="medium"),
+            flexmock(alias=["CVE-2021-100"], severity="medium"),
         ]
         sort_list = [b.alias[0] for b in bzutil.sort_cve_bugs(flaw_bugs)]
 
-        self.assertEqual('CVE-2022-9', sort_list[0])
-        self.assertEqual('CVE-2022-10', sort_list[1])
-        self.assertEqual('CVE-2021-100', sort_list[2])
-        self.assertEqual('CVE-2021-789', sort_list[3])
-        self.assertEqual('CVE-2022-123', sort_list[4])
+        self.assertEqual("CVE-2022-9", sort_list[0])
+        self.assertEqual("CVE-2022-10", sort_list[1])
+        self.assertEqual("CVE-2021-100", sort_list[2])
+        self.assertEqual("CVE-2021-789", sort_list[3])
+        self.assertEqual("CVE-2022-123", sort_list[4])
 
     def test_is_first_fix_any_validate(self):
         # Mock runtime object
         mock_runtime = flexmock()
-        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive("get_major_minor").and_return((4, 8))
 
         # should raise error when no tracker bugs are found
         self.assertRaisesRegex(
             ValueError,
-            r'does not seem to have trackers',
+            r"does not seem to have trackers",
             bzutil.is_first_fix_any,
             mock_runtime,
             BugzillaBug(flexmock(id=1)),
@@ -778,7 +778,7 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         # should raise error when flaw alias isn't present
         self.assertRaisesRegex(
             ValueError,
-            r'does not have a CVE alias',
+            r"does not have a CVE alias",
             bzutil.is_first_fix_any,
             mock_runtime,
             BugzillaBug(flexmock(id=1)),
@@ -788,34 +788,34 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
     def test_is_first_fix_any_image_delivery_repo(self):
         # Mock runtime object
         mock_runtime = flexmock()
-        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
+        mock_runtime.should_receive("get_major_minor").and_return((4, 8))
 
         # Mock image meta for openshift4/some-image delivery repo matching
         mock_meta = flexmock()
         mock_config = flexmock()
         mock_delivery = flexmock()
-        mock_delivery.delivery_repo_names = ['openshift4/some-image']
+        mock_delivery.delivery_repo_names = ["openshift4/some-image"]
         mock_config.delivery = mock_delivery
         mock_meta.config = mock_config
-        mock_meta.should_receive('get_component_name').and_return('some-image-component')
+        mock_meta.should_receive("get_component_name").and_return("some-image-component")
 
-        mock_runtime.should_receive('image_metas').and_return([mock_meta])
+        mock_runtime.should_receive("image_metas").and_return([mock_meta])
 
         hydra_data = {
-            'package_state': [
+            "package_state": [
                 {
-                    'product_name': "Red Hat OpenShift Container Platform 4",
-                    'fix_state': "Some other status",
-                    'package_name': "openshift4/some-image",
+                    "product_name": "Red Hat OpenShift Container Platform 4",
+                    "fix_state": "Some other status",
+                    "package_name": "openshift4/some-image",
                 },
             ],
         }
-        flexmock(requests).should_receive('get').and_return(
+        flexmock(requests).should_receive("get").and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
         )
 
-        flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='some-image-component')]
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=["CVE-123"]))
+        tracker_bugs = [flexmock(id=2, whiteboard_component="some-image-component")]
         expected = True
         actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
@@ -823,24 +823,24 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
     def test_is_first_fix_any_component_name(self):
         # Mock runtime object
         mock_runtime = flexmock()
-        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
-        mock_runtime.should_receive('image_metas').and_return([])
+        mock_runtime.should_receive("get_major_minor").and_return((4, 8))
+        mock_runtime.should_receive("image_metas").and_return([])
 
         hydra_data = {
-            'package_state': [
+            "package_state": [
                 {
-                    'product_name': "Red Hat OpenShift Container Platform 4",
-                    'fix_state': "Some other status",
-                    'package_name': "some-component-name",
+                    "product_name": "Red Hat OpenShift Container Platform 4",
+                    "fix_state": "Some other status",
+                    "package_name": "some-component-name",
                 },
             ],
         }
-        flexmock(requests).should_receive('get').and_return(
+        flexmock(requests).should_receive("get").and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
         )
 
-        flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='some-component-name')]
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=["CVE-123"]))
+        tracker_bugs = [flexmock(id=2, whiteboard_component="some-component-name")]
         expected = True
         actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
@@ -848,30 +848,30 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
     def test_is_first_fix_any_false(self):
         # Mock runtime object
         mock_runtime = flexmock()
-        mock_runtime.should_receive('get_major_minor').and_return((4, 8))
-        mock_runtime.should_receive('image_metas').and_return([])
+        mock_runtime.should_receive("get_major_minor").and_return((4, 8))
+        mock_runtime.should_receive("image_metas").and_return([])
 
         hydra_data = {
-            'package_state': [
+            "package_state": [
                 {
-                    'product_name': "Red Hat OpenShift Container Platform 4",
-                    'fix_state': "Affected",
-                    'package_name': "unrelated-component",
+                    "product_name": "Red Hat OpenShift Container Platform 4",
+                    "fix_state": "Affected",
+                    "package_name": "unrelated-component",
                 },
                 # will not be considered since it's not OCP 4
                 {
-                    'product_name': "Red Hat OpenShift Container Platform 3",
-                    'fix_state': "Affected",
-                    'package_name': "some-component-name",
+                    "product_name": "Red Hat OpenShift Container Platform 3",
+                    "fix_state": "Affected",
+                    "package_name": "some-component-name",
                 },
             ],
         }
-        flexmock(requests).should_receive('get').and_return(
+        flexmock(requests).should_receive("get").and_return(
             flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
         )
 
-        flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
-        tracker_bugs = [flexmock(id=2, whiteboard_component='some-component-name')]
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=["CVE-123"]))
+        tracker_bugs = [flexmock(id=2, whiteboard_component="some-component-name")]
         expected = False
         actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)

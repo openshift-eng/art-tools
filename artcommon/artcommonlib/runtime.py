@@ -31,7 +31,7 @@ class GroupRuntime(ABC):
             self.build_system = build_system
 
     def initialize_logging(self):
-        self.debug_log_path = os.path.join(self.working_dir, 'debug.log')
+        self.debug_log_path = os.path.join(self.working_dir, "debug.log")
 
         if self.initialized or self._logger:
             return
@@ -49,17 +49,17 @@ class GroupRuntime(ABC):
             log_level = logging.INFO
 
         logutil.setup_logging(log_level, self.debug_log_path)
-        self._logger = logging.getLogger('artcommonlib')
+        self._logger = logging.getLogger("artcommonlib")
 
     def initialize_konflux_db(self, disable_konflux_db_cache=False):
         if self.konflux_db:
             return  # already initialized
         try:
             self.konflux_db = KonfluxDb(enable_cache=disable_konflux_db_cache is False)
-            self._logger.info('Konflux DB initialized ')
+            self._logger.info("Konflux DB initialized ")
 
         except Exception as err:
-            self._logger.warning('Cannot connect to the Konflux DB: %s', str(err))
+            self._logger.warning("Cannot connect to the Konflux DB: %s", str(err))
 
     @property
     @abstractmethod

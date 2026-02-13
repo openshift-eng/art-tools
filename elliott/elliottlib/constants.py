@@ -12,9 +12,9 @@ BREW_DOWNLOAD_TEMPLATE = BREW_DOWNLOAD_URL + "/packages/{name}/{version}/{releas
 CGIT_URL = "https://pkgs.devel.redhat.com/cgit"
 RESULTSDB_API_URL = "https://resultsdb-api.engineering.redhat.com"
 
-VALID_BUG_STATES = ['NEW', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_QA', 'VERIFIED', 'RELEASE_PENDING', 'CLOSED']
-TRACKER_BUG_KEYWORDS = ['Security', 'SecurityTracking']
-BUGZILLA_PRODUCT_OCP = 'OpenShift Container Platform'
+VALID_BUG_STATES = ["NEW", "ASSIGNED", "POST", "MODIFIED", "ON_QA", "VERIFIED", "RELEASE_PENDING", "CLOSED"]
+TRACKER_BUG_KEYWORDS = ["Security", "SecurityTracking"]
+BUGZILLA_PRODUCT_OCP = "OpenShift Container Platform"
 BUG_SEVERITY_NUMBER_MAP = {
     "unspecified": 0,
     "low": 1,
@@ -24,7 +24,7 @@ BUG_SEVERITY_NUMBER_MAP = {
 }
 
 # Golang builder needs special treatment when associating security tracking bugs with builds:
-GOLANG_BUILDER_CVE_COMPONENT = 'openshift-golang-builder-container'
+GOLANG_BUILDER_CVE_COMPONENT = "openshift-golang-builder-container"
 
 BUG_LOOKUP_CHUNK_SIZE = 100
 BUG_ATTACH_CHUNK_SIZE = 100
@@ -32,7 +32,7 @@ BUG_ATTACH_CHUNK_SIZE = 100
 # When severity isn't set on all tracking and flaw bugs, default to "Low"
 # https://jira.coreos.com/browse/ART-1192
 SECURITY_IMPACT = ["Low", "Low", "Moderate", "Important", "Critical"]
-security_impact_map = {'Critical': 4, 'Important': 3, 'Moderate': 2, 'Low': 1}
+security_impact_map = {"Critical": 4, "Important": 3, "Moderate": 2, "Low": 1}
 errata_url = "https://errata.devel.redhat.com"
 # errata_url = "https://errata.stage.engineering.redhat.com"
 
@@ -104,7 +104,7 @@ ET_BAD_EXTERNAL_TEST_STATUSES = {
     "FAILED",
 }
 
-ADVISORY_TYPES = ('rhba', 'rhea', 'rhsa')
+ADVISORY_TYPES = ("rhba", "rhea", "rhsa")
 
 SFM2_ERRATA_ALERTS_URL = "https://sfm2.prodsec.redhat.com/api/public/errata/{id}/alerts"
 

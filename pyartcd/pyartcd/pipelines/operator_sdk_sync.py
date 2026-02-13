@@ -56,7 +56,7 @@ class OperatorSDKPipeline:
             sdk_build = [
                 b
                 for b in sum(list(map(list, advisory.errata_builds.values())), [])
-                if b.startswith('openshift-enterprise-operator-sdk-container')
+                if b.startswith("openshift-enterprise-operator-sdk-container")
             ]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
@@ -74,8 +74,8 @@ class OperatorSDKPipeline:
 
         sdkVersion = self._get_sdkversion(build)
         self._logger.info(sdkVersion)
-        for arch in self.arches.split(','):
-            self._extract_binaries(arch, sdkVersion, build['extra']['image']['index']['pull'][0])
+        for arch in self.arches.split(","):
+            self._extract_binaries(arch, sdkVersion, build["extra"]["image"]["index"]["pull"][0])
         if self.assembly:
             self._jira_client.complete_subtask(
                 self.parent_jira_key, "operator-sdk", f"operator_sdk_sync job: {jenkins.get_build_url()}"
@@ -96,7 +96,7 @@ class OperatorSDKPipeline:
 
         registry_repo = re.findall(r"^[^@]+", build)[0]
         shasum = re.findall(r"sha256:\w*", output)[0]
-        pullspec = f'{registry_repo}@{shasum}'
+        pullspec = f"{registry_repo}@{shasum}"
 
         rarch = brew_arch_for_go_arch(arch)
         tarballFilename = f"{self.sdk}-{sdkVersion}-linux-{rarch}.tar.gz"
@@ -108,10 +108,10 @@ class OperatorSDKPipeline:
             + f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
         )
         self.exec_cmd(cmd)
-        if arch == 'amd64' or arch == 'arm64':
+        if arch == "amd64" or arch == "arm64":
             tarballFilename = f"{self.sdk}-{sdkVersion}-darwin-{rarch}.tar.gz"
             major, minor = isolate_major_minor_in_group(self.group)
-            share_path = "mac_arm64" if arch == 'arm64' and (major, minor) >= (4, 12) else "mac"
+            share_path = "mac_arm64" if arch == "arm64" and (major, minor) >= (4, 12) else "mac"
             cmd = (
                 f"oc image extract {pullspec} --path /usr/share/{self.sdk}/{share_path}/{self.sdk}:./{rarch}/ --confirm"
                 + f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}"
@@ -148,7 +148,7 @@ class OperatorSDKPipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

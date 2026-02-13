@@ -37,8 +37,8 @@ class CgitAtomFeedEntry(NamedTuple):
 # These are used as labels to index selection of a subclass.
 #
 DISTGIT_TYPES = {
-    'image': ImageDistGitRepo,
-    'rpm': RPMDistGitRepo,
+    "image": ImageDistGitRepo,
+    "rpm": RPMDistGitRepo,
 }
 
 
@@ -142,16 +142,16 @@ class Metadata(MetadataBase):
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
                 build_obj = self.get_latest_build_sync(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
-                    self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
+                    self.commitish = isolate_git_commit_in_release(build_obj["nvr"])
                     self.logger.info(
-                        'Pinning upstream source to commit of assembly selected build '
-                        f'({build_obj["build_id"]}) -> commit {self.commitish}'
+                        "Pinning upstream source to commit of assembly selected build "
+                        f"({build_obj['build_id']}) -> commit {self.commitish}"
                     )
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
-                    if 'unittest' not in sys.modules.keys():
+                    if "unittest" not in sys.modules.keys():
                         raise IOError(
-                            f'Expected to find pre-existing build for {self.distgit_key} in order to pin upstream source commit'
+                            f"Expected to find pre-existing build for {self.distgit_key} in order to pin upstream source commit"
                         )
 
             # If you've read this far, you may be wondering, why are we not trying to find the SOURCE_GIT_URL from the last built image?
@@ -161,11 +161,11 @@ class Metadata(MetadataBase):
             # definitions, that's fine. This assembly should find it when looking up the content.source.git.url from the metadata.
 
     def distgit_remote_url(self):
-        pkgs_host = self.runtime.group_config.urls.get('pkgs_host', 'pkgs.devel.redhat.com')
+        pkgs_host = self.runtime.group_config.urls.get("pkgs_host", "pkgs.devel.redhat.com")
         # rhpkg uses a remote named like this to pull content from distgit
         if self.runtime.user:
-            return f'ssh://{self.runtime.user}@{pkgs_host}/{self.qualified_name}'
-        return f'ssh://{pkgs_host}/{self.qualified_name}'
+            return f"ssh://{self.runtime.user}@{pkgs_host}/{self.qualified_name}"
+        return f"ssh://{pkgs_host}/{self.qualified_name}"
 
     def distgit_repo(self, autoclone=True) -> DistGitRepo:
         if self._distgit_repo is None:
@@ -173,13 +173,13 @@ class Metadata(MetadataBase):
         return self._distgit_repo
 
     def build_root_tag(self):
-        return '{}-build'.format(self.branch())
+        return "{}-build".format(self.branch())
 
     def candidate_brew_tag(self):
-        return '{}-candidate'.format(self.branch())
+        return "{}-candidate".format(self.branch())
 
     def hotfix_brew_tag(self):
-        return f'{self.branch()}-hotfix'
+        return f"{self.branch()}-hotfix"
 
     def candidate_brew_tags(self):
         return [self.candidate_brew_tag()]
@@ -197,7 +197,7 @@ class Metadata(MetadataBase):
         """
         global_arches = (
             self.runtime.get_global_konflux_arches()
-            if self.runtime.build_system == 'konflux'
+            if self.runtime.build_system == "konflux"
             else self.runtime.get_global_arches()
         )
 
@@ -206,10 +206,10 @@ class Metadata(MetadataBase):
             intersection = list(set(global_arches) & set(ca))
             if len(intersection) != len(ca):
                 self.logger.info(
-                    f'Arches are being pruned by group.yml. Using computed {intersection} vs config list {ca}'
+                    f"Arches are being pruned by group.yml. Using computed {intersection} vs config list {ca}"
                 )
             if not intersection:
-                raise ValueError(f'No arches remained enabled in {self.qualified_key}')
+                raise ValueError(f"No arches remained enabled in {self.qualified_key}")
             return intersection
         else:
             return list(global_arches)
@@ -261,11 +261,11 @@ class Metadata(MetadataBase):
         et = ElementTree.fromstring(content)
 
         entry_list = list()
-        for et_entry in et.findall('{http://www.w3.org/2005/Atom}entry'):
+        for et_entry in et.findall("{http://www.w3.org/2005/Atom}entry"):
             entry = CgitAtomFeedEntry(
-                title=et_entry.find('{http://www.w3.org/2005/Atom}title').text,
-                updated=dateutil.parser.parse(et_entry.find('{http://www.w3.org/2005/Atom}updated').text),
-                id=et_entry.find('{http://www.w3.org/2005/Atom}id').text,
+                title=et_entry.find("{http://www.w3.org/2005/Atom}title").text,
+                updated=dateutil.parser.parse(et_entry.find("{http://www.w3.org/2005/Atom}updated").text),
+                id=et_entry.find("{http://www.w3.org/2005/Atom}id").text,
                 content=et_entry.find('{http://www.w3.org/2005/Atom}content[@type="text"]').text,
             )
             entry_list.append(entry)
@@ -320,7 +320,7 @@ class Metadata(MetadataBase):
         build = self.get_latest_brew_build(default=default, **kwargs)
         if default != -1 and build == default:
             return default
-        return build['name'], build['version'], build['release']
+        return build["name"], build["version"], build["release"]
 
     def has_source(self):
         """
@@ -360,20 +360,20 @@ class Metadata(MetadataBase):
         if not latest_build:
             return RebuildHint(
                 code=RebuildHintCode.NO_LATEST_BUILD,
-                reason=f'Component {component_name} has no latest build '
-                f'for assembly {self.runtime.assembly} '
-                f'and target {el_target}',
+                reason=f"Component {component_name} has no latest build "
+                f"for assembly {self.runtime.assembly} "
+                f"and target {el_target}",
             )
 
-        latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
+        latest_build_creation = dateutil.parser.parse(latest_build["creation_time"])
         latest_build_creation = latest_build_creation.replace(
             tzinfo=datetime.timezone.utc
         )  # If time lacks timezone info, interpret as UTC
 
         # Log scan-sources coordinates throughout to simplify setting up scan-sources
         # function tests to reproduce real-life scenarios.
-        self.logger.debug(f'scan-sources coordinate: latest_build: {latest_build}')
-        self.logger.debug(f'scan-sources coordinate: latest_build_creation_datetime: {latest_build_creation}')
+        self.logger.debug(f"scan-sources coordinate: latest_build: {latest_build}")
+        self.logger.debug(f"scan-sources coordinate: latest_build_creation_datetime: {latest_build_creation}")
 
         dgr = self.distgit_repo(autoclone=False)  # For scan-sources speed, we need to avoid cloning
         if not dgr.has_source():
@@ -384,19 +384,19 @@ class Metadata(MetadataBase):
             atom_entries = self.cgit_atom_feed(commit_hash=distgit_commitish, branch=self.branch())
             if not atom_entries:
                 raise IOError(
-                    f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?'
+                    f"No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?"
                 )
 
             latest_entry = atom_entries[0]  # Most recent commit's information
             dg_commit = latest_entry.id
-            self.logger.debug(f'scan-sources coordinate: dg_commit: {dg_commit}')
+            self.logger.debug(f"scan-sources coordinate: dg_commit: {dg_commit}")
             dg_commit_dt = latest_entry.updated
-            self.logger.debug(f'scan-sources coordinate: distgit_head_commit_datetime: {dg_commit_dt}')
+            self.logger.debug(f"scan-sources coordinate: distgit_head_commit_datetime: {dg_commit_dt}")
 
             if latest_build_creation > dg_commit_dt:
                 return RebuildHint(
                     code=RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER,
-                    reason='Distgit only repo commit is older than most recent build',
+                    reason="Distgit only repo commit is older than most recent build",
                 )
 
             # Two possible states here:
@@ -410,22 +410,22 @@ class Metadata(MetadataBase):
             if not last_failed_build:
                 return RebuildHint(
                     code=RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER,
-                    reason='Distgit only commit is newer than last successful build',
+                    reason="Distgit only commit is newer than last successful build",
                 )
 
-            last_failed_build_creation = dateutil.parser.parse(last_failed_build['creation_time'])
+            last_failed_build_creation = dateutil.parser.parse(last_failed_build["creation_time"])
             last_failed_build_creation = last_failed_build_creation.replace(
                 tzinfo=datetime.timezone.utc
             )  # If time lacks timezone info, interpret as UTC
             if last_failed_build_creation + datetime.timedelta(hours=rebuild_interval) > now:
                 return RebuildHint(
                     code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
-                    reason=f'Waiting at least {rebuild_interval} hours after last failed build',
+                    reason=f"Waiting at least {rebuild_interval} hours after last failed build",
                 )
 
             return RebuildHint(
                 code=RebuildHintCode.LAST_BUILD_FAILED,
-                reason=f'Last build failed > {rebuild_interval} hours ago; making another attempt',
+                reason=f"Last build failed > {rebuild_interval} hours ago; making another attempt",
             )
 
         # Otherwise, we have source. In the case of git source, check the upstream with ls-remote.
@@ -449,14 +449,14 @@ class Metadata(MetadataBase):
         else:
             # If it is not git, we will need to punt to the rest of doozer to get the upstream source for us.
             with Dir(dgr.source_path()):
-                upstream_commit_hash, _ = exectools.cmd_assert('git rev-parse HEAD', strip=True)
+                upstream_commit_hash, _ = exectools.cmd_assert("git rev-parse HEAD", strip=True)
 
-        self.logger.debug(f'scan-sources coordinate: upstream_commit_hash: {upstream_commit_hash}')
-        git_component = f'.g*{upstream_commit_hash[:7]}'  # use .g*<commit> so it matches new form ".g0123456" and old ".git.0123456"
+        self.logger.debug(f"scan-sources coordinate: upstream_commit_hash: {upstream_commit_hash}")
+        git_component = f".g*{upstream_commit_hash[:7]}"  # use .g*<commit> so it matches new form ".g0123456" and old ".git.0123456"
 
         # Scan for any build in this assembly which also includes the git commit.
         upstream_commit_build = self.get_latest_brew_build(
-            default=None, extra_pattern=f'*{git_component}*', el_target=el_target
+            default=None, extra_pattern=f"*{git_component}*", el_target=el_target
         )  # Latest build for this commit.
 
         if not upstream_commit_build:
@@ -466,19 +466,19 @@ class Metadata(MetadataBase):
 
             # Check whether a build attempt with this commit has failed before.
             failed_commit_build = self.get_latest_brew_build(
-                default=None, extra_pattern=f'*{git_component}*', build_state=BuildStates.FAILED, el_target=el_target
+                default=None, extra_pattern=f"*{git_component}*", build_state=BuildStates.FAILED, el_target=el_target
             )  # Have we tried before and failed?
 
             # If not, this is a net-new upstream commit. Build it.
             if not failed_commit_build:
                 return RebuildHint(
                     code=RebuildHintCode.NEW_UPSTREAM_COMMIT,
-                    reason='A new upstream commit exists and needs to be built',
+                    reason="A new upstream commit exists and needs to be built",
                 )
 
             # Otherwise, there was a failed attempt at this upstream commit on record.
             # Make sure provide at least rebuild_interval hours between such attempts
-            last_attempt_time = dateutil.parser.parse(failed_commit_build['creation_time'])
+            last_attempt_time = dateutil.parser.parse(failed_commit_build["creation_time"])
             last_attempt_time = last_attempt_time.replace(
                 tzinfo=datetime.timezone.utc
             )  # If time lacks timezone info, interpret as UTC
@@ -486,23 +486,23 @@ class Metadata(MetadataBase):
             if last_attempt_time + datetime.timedelta(hours=rebuild_interval) < now:
                 return RebuildHint(
                     code=RebuildHintCode.LAST_BUILD_FAILED,
-                    reason=f'It has been {rebuild_interval} hours since last failed build attempt',
+                    reason=f"It has been {rebuild_interval} hours since last failed build attempt",
                 )
 
             return RebuildHint(
                 code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
-                reason=f'Last build of upstream commit {upstream_commit_hash} failed, but holding off for at least {rebuild_interval} hours before next attempt',
+                reason=f"Last build of upstream commit {upstream_commit_hash} failed, but holding off for at least {rebuild_interval} hours before next attempt",
             )
 
-        if latest_build['nvr'] != upstream_commit_build['nvr']:
+        if latest_build["nvr"] != upstream_commit_build["nvr"]:
             return RebuildHint(
                 code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
-                reason=f'Latest build {latest_build["nvr"]} does not match upstream commit build {upstream_commit_build["nvr"]}; commit reverted?',
+                reason=f"Latest build {latest_build['nvr']} does not match upstream commit build {upstream_commit_build['nvr']}; commit reverted?",
             )
 
         return RebuildHint(
             code=RebuildHintCode.BUILD_IS_UP_TO_DATE,
-            reason=f'Build already exists for current upstream commit {upstream_commit_hash}: {latest_build}',
+            reason=f"Build already exists for current upstream commit {upstream_commit_hash}: {latest_build}",
         )
 
     def get_jira_info(self) -> Tuple[str, str]:
@@ -529,17 +529,17 @@ class Metadata(MetadataBase):
         jira_component = component_entry.issue_component
 
         if not issue_project:
-            issue_project = 'OCPBUGS'
+            issue_project = "OCPBUGS"
 
         if not jira_component:
-            jira_component = 'Unknown'
+            jira_component = "Unknown"
 
-        if self.distgit_key == 'openshift-enterprise-base':
+        if self.distgit_key == "openshift-enterprise-base":
             # This is a special case image that is represented by upstream but
             # no one release owns. ART should handle merges here.
-            jira_component = 'Release'
+            jira_component = "Release"
 
-        return maintainer.get('project', issue_project), maintainer.get('component', jira_component)
+        return maintainer.get("project", issue_project), maintainer.get("component", jira_component)
 
     def extract_kube_env_vars(self) -> Dict[str, str]:
         """
@@ -561,38 +561,38 @@ class Metadata(MetadataBase):
 
         use_path = None
         path_4x = upstream_source_path.joinpath(
-            'openshift-hack/images/hyperkube/Dockerfile.rhel'
+            "openshift-hack/images/hyperkube/Dockerfile.rhel"
         )  # for >= 4.6: https://github.com/openshift/kubernetes/blob/fcff70a54d3f0bde19e879062e8f1489ba5d0cb0/openshift-hack/images/hyperkube/Dockerfile.rhel#L16
         if path_4x.exists():
             use_path = path_4x
 
         path_3_11 = upstream_source_path.joinpath(
-            'images/hyperkube/Dockerfile'
+            "images/hyperkube/Dockerfile"
         )  # for 3.11: https://github.com/openshift/ose/blob/enterprise-3.11/images/hyperkube/Dockerfile
         if not use_path and path_3_11.exists():
             use_path = path_3_11
 
         kube_version_fields = []
-        kube_commit_hash = ''
+        kube_commit_hash = ""
         if use_path:
             dfp = DockerfileParser(cache_content=True, fileobj=io.BytesIO(use_path.read_bytes()))
-            build_versions = dfp.labels.get('io.openshift.build.versions', None)
+            build_versions = dfp.labels.get("io.openshift.build.versions", None)
             if not build_versions:
-                raise IOError(f'Unable to find io.openshift.build.versions label in {str(use_path)}')
+                raise IOError(f"Unable to find io.openshift.build.versions label in {str(use_path)}")
 
             # Find something like kubernetes=1.22.1 and extract version as group
             m = re.match(r"^.*[^\w]*kubernetes=([\d.]+).*", build_versions)
             if not m:
                 raise IOError(
-                    f'Unable to find `kubernetes=...` in io.openshift.build.versions label from {str(use_path)}'
+                    f"Unable to find `kubernetes=...` in io.openshift.build.versions label from {str(use_path)}"
                 )
 
-            base_kube_version = m.group(1).lstrip('v')
-            kube_version_fields = base_kube_version.split('.')  # 1.17.1 => [ '1', '17', '1']
+            base_kube_version = m.group(1).lstrip("v")
+            kube_version_fields = base_kube_version.split(".")  # 1.17.1 => [ '1', '17', '1']
 
             # upstream kubernetes creates a tag for each version. Go find its sha.
             rc, out, err = exectools.cmd_gather(
-                f'git ls-remote https://github.com/kubernetes/kubernetes v{base_kube_version}'
+                f"git ls-remote https://github.com/kubernetes/kubernetes v{base_kube_version}"
             )
             out = out.strip()
             if rc == 0 and out:
@@ -601,25 +601,25 @@ class Metadata(MetadataBase):
             else:
                 # That's strange, but let's not kill the build for it.  Poke in our repo's hash.
                 self.logger.warning(
-                    f'Unable to find upstream git tag v{base_kube_version} in https://github.com/kubernetes/kubernetes'
+                    f"Unable to find upstream git tag v{base_kube_version} in https://github.com/kubernetes/kubernetes"
                 )
                 kube_commit_hash = source_full_sha
 
         if kube_version_fields:
             # For historical consistency with tito's flow, we add +OS_GIT_COMMIT[:7] to the kube version
-            envs['KUBE_GIT_VERSION'] = f"v{'.'.join(kube_version_fields)}+{source_full_sha[:7]}"
-            envs['KUBE_GIT_MAJOR'] = '0' if len(kube_version_fields) < 1 else kube_version_fields[0]
-            godep_kube_minor = '0' if len(kube_version_fields) < 2 else kube_version_fields[1]
-            envs['KUBE_GIT_MINOR'] = (
-                f'{godep_kube_minor}+'  # For historical reasons, append a '+' since OCP patches its vendored kube.
+            envs["KUBE_GIT_VERSION"] = f"v{'.'.join(kube_version_fields)}+{source_full_sha[:7]}"
+            envs["KUBE_GIT_MAJOR"] = "0" if len(kube_version_fields) < 1 else kube_version_fields[0]
+            godep_kube_minor = "0" if len(kube_version_fields) < 2 else kube_version_fields[1]
+            envs["KUBE_GIT_MINOR"] = (
+                f"{godep_kube_minor}+"  # For historical reasons, append a '+' since OCP patches its vendored kube.
             )
-            envs['KUBE_GIT_COMMIT'] = kube_commit_hash
-            envs['KUBE_GIT_TREE_STATE'] = 'clean'
-        elif self.name in ('openshift-enterprise-hyperkube', 'openshift', 'atomic-openshift'):
+            envs["KUBE_GIT_COMMIT"] = kube_commit_hash
+            envs["KUBE_GIT_TREE_STATE"] = "clean"
+        elif self.name in ("openshift-enterprise-hyperkube", "openshift", "atomic-openshift"):
             self.logger.critical(
-                f'Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097'
+                f"Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097"
             )
-            raise IOError(f'Unable to determine KUBE vars for {self.name}')
+            raise IOError(f"Unable to determine KUBE vars for {self.name}")
 
         return envs
 

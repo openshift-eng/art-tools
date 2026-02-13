@@ -19,17 +19,17 @@ class TestFindBuildsCli(TestCase):
     """
 
     def test_filter_out_attached_builds_inviable(self):
-        flexmock(erratalib).should_receive("get_art_release_from_erratum").and_return('4.1')
+        flexmock(erratalib).should_receive("get_art_release_from_erratum").and_return("4.1")
 
         builds = flexmock(Build(nvr="test-1.1.1", product_version="RHEL-7-OSE-4.1"))
         builds.should_receive("all_errata").and_return([{"id": 12345}])
 
         builds, advisories = _filter_out_attached_builds([builds])
         self.assertEqual([], builds)
-        self.assertEqual({12345: {'test-1.1.1'}}, advisories)
+        self.assertEqual({12345: {"test-1.1.1"}}, advisories)
 
     def test_filter_out_attached_builds_viable(self):
-        flexmock(erratalib).should_receive("get_art_release_from_erratum").and_return('4.1')
+        flexmock(erratalib).should_receive("get_art_release_from_erratum").and_return("4.1")
 
         builds = flexmock(Build(nvr="test-1.1.1", product_version="RHEL-7-OSE-4.5"))
         builds.should_receive("all_errata").and_return([{"id": 12345}])
@@ -74,7 +74,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
         actual_records = await find_builds_konflux(runtime, payload=True)
         self.assertEqual(len(actual_records), 1)
-        self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
+        self.assertEqual(actual_records[0]["nvr"], "image1-1.0.0-1.el8")
         image_meta_1.get_latest_build.assert_called_once_with(
             enforce_network_mode=True, el_target="el8", exclude_large_columns=True
         )
@@ -122,13 +122,13 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
             builds_map = await find_builds_konflux_all_types(runtime)
 
         # Assertions
-        self.assertEqual(len(builds_map['payload']), 1)
-        self.assertEqual(builds_map['payload'][0], build_1.nvr)
-        self.assertEqual(len(builds_map['non_payload']), 1)
-        self.assertEqual(builds_map['non_payload'][0], build_2.nvr)
-        self.assertEqual(len(builds_map['olm_builds']), 1)
-        self.assertEqual(builds_map['olm_builds'][0], build_3.nvr)
-        self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
+        self.assertEqual(len(builds_map["payload"]), 1)
+        self.assertEqual(builds_map["payload"][0], build_1.nvr)
+        self.assertEqual(len(builds_map["non_payload"]), 1)
+        self.assertEqual(builds_map["non_payload"][0], build_2.nvr)
+        self.assertEqual(len(builds_map["olm_builds"]), 1)
+        self.assertEqual(builds_map["olm_builds"][0], build_3.nvr)
+        self.assertEqual(len(builds_map["olm_builds_not_found"]), 0)
         image_meta_1.get_latest_build.assert_called_once_with(
             enforce_network_mode=True, el_target="el8", exclude_large_columns=True
         )

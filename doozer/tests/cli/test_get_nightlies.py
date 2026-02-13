@@ -37,7 +37,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         self.assertEqual({"aarch64"}, subject.determine_arch_list(runtime, {"x86_64"}))
         self.assertEqual({"x86_64", "aarch64"}, subject.determine_arch_list(runtime, set()))
 
-    @patch('aiohttp.client.ClientSession.get')
+    @patch("aiohttp.client.ClientSession.get")
     async def test_find_rc_nightlies(self, session_get_mock):
         data = """
         {

@@ -20,30 +20,30 @@ LOGGER = logging.getLogger(__name__)
 #
 @cli.command("tag-builds", short_help="Tag specified Brew builds into specified tag")
 @click.option(
-    '--advisory',
-    '-a',
-    'advisories',
+    "--advisory",
+    "-a",
+    "advisories",
     multiple=True,
-    metavar='ADVISORY',
+    metavar="ADVISORY",
     type=int,
-    help='Add builds on ADVISORY to tag [MULTIPLE]',
+    help="Add builds on ADVISORY to tag [MULTIPLE]",
 )
 @use_default_advisory_option
 @click.option(
-    '--product-version',
-    '--pv',
-    'product_version',
-    metavar='PRODUCT_VERSION',
+    "--product-version",
+    "--pv",
+    "product_version",
+    metavar="PRODUCT_VERSION",
     type=str,
-    help='Narrow builds with specified product version. e.g. RHEL-7-OSE-4.4, OSE-4.4-RHEL-8',
+    help="Narrow builds with specified product version. e.g. RHEL-7-OSE-4.4, OSE-4.4-RHEL-8",
 )
 @click.option(
-    '--build', '-b', 'builds', multiple=True, metavar='NVR_OR_ID', help='Add build NVR_OR_ID to tag [MULTIPLE]'
+    "--build", "-b", "builds", multiple=True, metavar="NVR_OR_ID", help="Add build NVR_OR_ID to tag [MULTIPLE]"
 )
-@click.option('--tag', '-t', metavar='TAG', required=True, help='Tag name. e.g. rhaos-4.4-rhel-8-image-build')
-@click.option('--dont-untag', '-d', is_flag=True, help="Don't untag unspecified Brew builds")
+@click.option("--tag", "-t", metavar="TAG", required=True, help="Tag name. e.g. rhaos-4.4-rhel-8-image-build")
+@click.option("--dont-untag", "-d", is_flag=True, help="Don't untag unspecified Brew builds")
 @click.option(
-    '--dry-run',
+    "--dry-run",
     is_flag=True,
     help="Don't really tag/untag any builds. Just print which builds should be tagged and untagged",
 )
@@ -73,13 +73,13 @@ def tag_builds_cli(
     $ elliott --group=openshift-4.3 tag-builds --build buildah-1.11.6-6.rhaos4.3.el8 --build openshift-4.3.23-202005230952.g1.b596217.el8 --tag rhaos-4.3-rhel-8-image-build
     """
     if advisories and builds:
-        raise click.BadParameter('Use only one of --build or --advisory/-a.')
+        raise click.BadParameter("Use only one of --build or --advisory/-a.")
     if advisories and default_advisory_type:
-        raise click.BadParameter('Use only one of --use-default-advisory or --advisory/-a.')
+        raise click.BadParameter("Use only one of --use-default-advisory or --advisory/-a.")
     if default_advisory_type and builds:
-        raise click.BadParameter('Use only one of --build or --use-default-advisory.')
+        raise click.BadParameter("Use only one of --build or --use-default-advisory.")
     if product_version and not advisories and not default_advisory_type:
-        raise click.BadParameter('--product-version should only be used with --use-default-advisory or --advisory/-a.')
+        raise click.BadParameter("--product-version should only be used with --use-default-advisory or --advisory/-a.")
 
     runtime.initialize()
     logger = LOGGER
@@ -183,10 +183,10 @@ def tag_builds_cli(
             tag_res = t.result
             logger.debug(f"Tagging task {task_id} {nvr} returned result {tag_res}")
             click.echo(f"{nvr} has been successfully tagged into {tag}")
-            if tag_res and 'faultCode' in tag_res:
+            if tag_res and "faultCode" in tag_res:
                 if "already tagged" not in tag_res["faultString"]:
                     failed_to_tag.append(nvr)
-                    logger.error(f'Failed to tag {nvr} into {tag}: {tag_res["faultString"]}')
+                    logger.error(f"Failed to tag {nvr} into {tag}: {tag_res['faultString']}")
 
     if failed_to_untag:
         red_print("The following builds were failed to untag:")

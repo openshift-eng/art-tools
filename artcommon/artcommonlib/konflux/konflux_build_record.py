@@ -20,73 +20,73 @@ class KonfluxEnum(Enum):
 
 
 class KonfluxBuildOutcome(KonfluxEnum):
-    FAILURE = 'failure'
-    SUCCESS = 'success'
-    PENDING = 'pending'
-    TIMEOUT = 'timeout'
-    CANCELLED = 'cancelled'
+    FAILURE = "failure"
+    SUCCESS = "success"
+    PENDING = "pending"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
 
     @classmethod
     def extract_from_pipelinerun_succeeded_condition(
         cls, succeeded_condition: Optional[artlib_util.KubeCondition]
     ) -> "KonfluxBuildOutcome":
         if succeeded_condition:
-            assert succeeded_condition.type == 'Succeeded'
+            assert succeeded_condition.type == "Succeeded"
             if succeeded_condition.is_status_true():
                 return cls.SUCCESS
             else:
                 reason = succeeded_condition.reason
-                if reason == 'Cancelled':
+                if reason == "Cancelled":
                     return cls.CANCELLED
-                if reason == 'Timeout':
+                if reason == "Timeout":
                     return cls.TIMEOUT
                 return cls.FAILURE
         return cls.PENDING
 
 
 class ArtifactType(KonfluxEnum):
-    RPM = 'rpm'
-    IMAGE = 'image'
+    RPM = "rpm"
+    IMAGE = "image"
 
 
 class Engine(KonfluxEnum):
-    KONFLUX = 'konflux'
-    BREW = 'brew'
+    KONFLUX = "konflux"
+    BREW = "brew"
 
 
 class KonfluxRecord:
     # These fields are excluded when computing the build ID, but are included in the build string representation
     EXCLUDED_KEYS = [
-        'record_id',
-        'build_id',
-        'nvr',
+        "record_id",
+        "build_id",
+        "nvr",
     ]
 
     TABLE_ID = None
 
     def __init__(
         self,
-        name: str = '',
-        group: str = '',
-        version: str = '',
-        release: str = '',
-        assembly: str = '',
-        source_repo: str = '',
-        commitish: str = '',
-        rebase_repo_url: str = '',
-        rebase_commitish: str = '',
+        name: str = "",
+        group: str = "",
+        version: str = "",
+        release: str = "",
+        assembly: str = "",
+        source_repo: str = "",
+        commitish: str = "",
+        rebase_repo_url: str = "",
+        rebase_commitish: str = "",
         start_time: datetime = None,
         end_time: datetime = None,
         engine: Engine = Engine.KONFLUX,
-        image_pullspec: str = '',
-        image_tag: str = '',
+        image_pullspec: str = "",
+        image_tag: str = "",
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        art_job_url: str = '',
-        build_pipeline_url: str = '',
-        pipeline_commit: str = '',
+        art_job_url: str = "",
+        build_pipeline_url: str = "",
+        pipeline_commit: str = "",
         schema_level: int = 0,
         ingestion_time: datetime = None,
-        build_component: str = '',
+        build_component: str = "",
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         """
@@ -156,7 +156,7 @@ class KonfluxRecord:
         return str(uuid.UUID(bytes=hash_bytes[:16]))
 
     def get_nvr(self):
-        self.nvr = f'{self.name}-{self.version}-{self.release}'
+        self.nvr = f"{self.name}-{self.version}-{self.release}"
         return self.nvr
 
     def __str__(self):
@@ -193,7 +193,7 @@ class KonfluxRecord:
             raise ValueError("build_pipeline_url is not set, cannot extract application name")
         plr_url = urlparse(self.build_pipeline_url)
         # Extract the namespace from the URL path
-        ns = unquote(plr_url.path.split('/')[4])
+        ns = unquote(plr_url.path.split("/")[4])
         return ns
 
     def get_konflux_component_name(self) -> str:
@@ -216,14 +216,14 @@ class KonfluxRecord:
             raise ValueError("build_pipeline_url is not set, cannot extract component name")
         plr_url = urlparse(self.build_pipeline_url)
         # Extract the last part of the URL path. e.g. openshift-4-18-helloworld-operator-bundle-prdtg
-        plr_name = unquote(plr_url.path.split('/')[-1])
+        plr_name = unquote(plr_url.path.split("/")[-1])
 
         # openshift-4-18-helloworld-operator-bundle-prdtg -> openshift-4-18-helloworld-operator-bundle
         # sometimes the component name is too long, so there is no hyphen in the end
         # first remove the last 5 chars (unique identifier)
         component_name = plr_name[:-5]
         # now check if the last char is a hyphen and if so, remove it
-        if component_name.endswith('-'):
+        if component_name.endswith("-"):
             component_name = component_name[:-1]
         return component_name
 
@@ -249,38 +249,38 @@ class KonfluxBuildRecord(KonfluxRecord):
 
     def __init__(
         self,
-        name: str = '',
-        group: str = '',
-        version: str = '',
-        release: str = '',
-        assembly: str = '',
-        el_target: str = '',
+        name: str = "",
+        group: str = "",
+        version: str = "",
+        release: str = "",
+        assembly: str = "",
+        el_target: str = "",
         arches: list = [],
         installed_packages: list = [],
         installed_rpms: list = [],
         parent_images: list = [],
-        source_repo: str = '',
-        commitish: str = '',
-        rebase_repo_url: str = '',
-        rebase_commitish: str = '',
+        source_repo: str = "",
+        commitish: str = "",
+        rebase_repo_url: str = "",
+        rebase_commitish: str = "",
         embargoed: bool = False,
         hermetic: bool = False,
         start_time: datetime = None,
         end_time: datetime = None,
         artifact_type: ArtifactType = ArtifactType.IMAGE,
         engine: Engine = Engine.KONFLUX,
-        image_pullspec: str = '',
-        image_tag: str = '',
+        image_pullspec: str = "",
+        image_tag: str = "",
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        art_job_url: str = '',
-        build_pipeline_url: str = '',
-        pipeline_commit: str = '',
+        art_job_url: str = "",
+        build_pipeline_url: str = "",
+        pipeline_commit: str = "",
         schema_level: int = 0,
         ingestion_time: datetime = None,
-        record_id: str = '',
+        record_id: str = "",
         build_id: str = None,
         nvr: str = None,
-        build_component: str = '',
+        build_component: str = "",
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
@@ -324,34 +324,34 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
 
     def __init__(
         self,
-        name: str = '',
-        group: str = '',
-        version: str = '',
-        release: str = '',
-        assembly: str = '',
-        source_repo: str = '',
-        commitish: str = '',
-        rebase_repo_url: str = '',
-        rebase_commitish: str = '',
+        name: str = "",
+        group: str = "",
+        version: str = "",
+        release: str = "",
+        assembly: str = "",
+        source_repo: str = "",
+        commitish: str = "",
+        rebase_repo_url: str = "",
+        rebase_commitish: str = "",
         start_time: datetime = None,
         end_time: datetime = None,
         engine: Engine = Engine.KONFLUX,
-        image_pullspec: str = '',
-        image_tag: str = '',
+        image_pullspec: str = "",
+        image_tag: str = "",
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        art_job_url: str = '',
-        build_pipeline_url: str = '',
-        pipeline_commit: str = '',
+        art_job_url: str = "",
+        build_pipeline_url: str = "",
+        pipeline_commit: str = "",
         schema_level: int = 0,
         ingestion_time: datetime = None,
         operand_nvrs: list = [],
-        operator_nvr: str = '',
+        operator_nvr: str = "",
         bundle_package_name: str = None,
         bundle_csv_name: str = None,
-        record_id: str = '',
+        record_id: str = "",
         build_id: str = None,
         nvr: str = None,
-        build_component: str = '',
+        build_component: str = "",
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(
@@ -390,32 +390,32 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
 
     def __init__(
         self,
-        name: str = '',
-        group: Optional[str] = '',
-        version: str = '',
-        release: str = '',
-        assembly: Union[str, None] = '',
-        source_repo: str = '',
-        commitish: str = '',
-        rebase_repo_url: str = '',
-        rebase_commitish: str = '',
+        name: str = "",
+        group: Optional[str] = "",
+        version: str = "",
+        release: str = "",
+        assembly: Union[str, None] = "",
+        source_repo: str = "",
+        commitish: str = "",
+        rebase_repo_url: str = "",
+        rebase_commitish: str = "",
         start_time: datetime = None,
         end_time: Optional[datetime] = None,
         engine: Engine = Engine.KONFLUX,
         image_pullspec: Optional[str] = None,
         image_tag: Optional[str] = None,
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        art_job_url: str = '',
-        build_pipeline_url: str = '',
-        pipeline_commit: str = '',
+        art_job_url: str = "",
+        build_pipeline_url: str = "",
+        pipeline_commit: str = "",
         schema_level: int = 0,
         ingestion_time: datetime = None,
         bundle_nvrs: List[str] = [],
         arches: List[str] = [],
-        record_id: str = '',
-        build_id: str = '',
-        nvr: str = '',
-        build_component: str = '',
+        record_id: str = "",
+        build_id: str = "",
+        nvr: str = "",
+        build_component: str = "",
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
     ):
         super().__init__(

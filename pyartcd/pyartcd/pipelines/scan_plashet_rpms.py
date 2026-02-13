@@ -26,8 +26,8 @@ class ScanPlashetRpmsPipeline:
         runtime: Runtime,
         group: str,
         data_path: str = constants.OCP_BUILD_DATA_URL,
-        data_gitref: str = '',
-        assembly: str = 'stream',
+        data_gitref: str = "",
+        assembly: str = "stream",
         repos: Optional[list[str]] = None,
     ):
         self.runtime = runtime
@@ -49,7 +49,7 @@ class ScanPlashetRpmsPipeline:
         3. Trigger plashet build if changes detected
         """
         # Load group configuration
-        self.logger.info(f'Loading group configuration for {self.group}')
+        self.logger.info(f"Loading group configuration for {self.group}")
         group_config = await util.load_group_config(
             group=self.group,
             assembly=self.assembly,
@@ -58,27 +58,27 @@ class ScanPlashetRpmsPipeline:
         )
 
         # Get PlashetConfig first to fail quickly if not configured
-        plashet_config_dict = group_config.get('plashet', {})
+        plashet_config_dict = group_config.get("plashet", {})
         if not plashet_config_dict:
-            self.logger.error('No plashet configuration found in group config')
+            self.logger.error("No plashet configuration found in group config")
             return
         plashet_config = PlashetConfig.model_validate(plashet_config_dict)
 
         # Get plashet repos (new-style only)
         plashet_repos = self._get_plashet_repos(group_config)
         if not plashet_repos:
-            self.logger.info('No plashet repos configured for this group')
+            self.logger.info("No plashet repos configured for this group")
             return
 
         # Get group arches
-        group_arches = group_config.get('arches', [])
+        group_arches = group_config.get("arches", [])
 
         # Initialize Koji client
         koji_api = koji.ClientSession(BREW_HUB)
         koji_api.gssapi_login()
 
         # Scan each plashet repo concurrently
-        self.logger.info(f'Scanning {len(plashet_repos)} plashet repos for changes...')
+        self.logger.info(f"Scanning {len(plashet_repos)} plashet repos for changes...")
         scan_tasks = [
             self._scan_repo(
                 repo=repo,
@@ -92,13 +92,13 @@ class ScanPlashetRpmsPipeline:
 
         # Trigger build if needed
         if self.repos_to_rebuild:
-            self.logger.info(f'Found {len(self.repos_to_rebuild)} repos that need rebuilding:')
+            self.logger.info(f"Found {len(self.repos_to_rebuild)} repos that need rebuilding:")
             for repo_name in self.repos_to_rebuild:
-                self.logger.info(f'  - {repo_name}: {self.rebuild_reasons[repo_name]}')
+                self.logger.info(f"  - {repo_name}: {self.rebuild_reasons[repo_name]}")
 
             await self._trigger_plashet_build()
         else:
-            self.logger.info('No changes detected in any plashet repos')
+            self.logger.info("No changes detected in any plashet repos")
 
     def _get_plashet_repos(self, group_config: dict) -> list[Repo]:
         """
@@ -107,23 +107,23 @@ class ScanPlashetRpmsPipeline:
         If self.repos is set, only returns repos with names in that list.
         """
         if "all_repos" not in group_config:
-            self.logger.warning('Group config does not have all_repos (new-style config required)')
+            self.logger.warning("Group config does not have all_repos (new-style config required)")
             return []
 
         self.logger.info("Using new-style plashet configs")
-        all_repos = group_config['all_repos']
+        all_repos = group_config["all_repos"]
         repos = [
-            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == 'plashet'
+            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == "plashet"
         ]
 
         # Filter by repo names if specified
         if self.repos:
             repos = [repo for repo in repos if repo.name in self.repos]
-            self.logger.info(f'Filtering to repos: {", ".join(self.repos)}')
+            self.logger.info(f"Filtering to repos: {', '.join(self.repos)}")
 
-        self.logger.info(f'Found {len(repos)} plashet repos')
+        self.logger.info(f"Found {len(repos)} plashet repos")
         for repo in repos:
-            self.logger.debug(f'  {repo.name}')
+            self.logger.debug(f"  {repo.name}")
 
         return repos
 
@@ -150,11 +150,11 @@ class ScanPlashetRpmsPipeline:
         Marks repo for rebuild if needed.
         """
         repo_name = repo.name
-        self.logger.info(f'Scanning repo: {repo_name}')
+        self.logger.info(f"Scanning repo: {repo_name}")
 
         # Get configured arches for this repo
         configured_arches = self._get_configured_arches(repo, plashet_config, group_arches)
-        self.logger.debug(f'  Configured arches: {configured_arches}')
+        self.logger.debug(f"  Configured arches: {configured_arches}")
 
         # Get repo slug
         slug = repo.plashet.slug or repo_name
@@ -164,40 +164,40 @@ class ScanPlashetRpmsPipeline:
             plashet_data = await self._fetch_plashet_yml(plashet_config, slug, timeout=10)
         except httpx.HTTPError as e:
             # Network/connection errors and HTTP errors - don't rebuild
-            self.logger.warning(f'  Error fetching plashet.yml, skipping rebuild: {e}')
+            self.logger.warning(f"  Error fetching plashet.yml, skipping rebuild: {e}")
             return
 
         if plashet_data is None:
             # First time - plashet doesn't exist yet
-            self.logger.info('  → First build (plashet.yml not found)')
+            self.logger.info("  → First build (plashet.yml not found)")
             self.repos_to_rebuild.append(repo_name)
-            self.rebuild_reasons[repo_name] = 'first build (plashet.yml not found)'
+            self.rebuild_reasons[repo_name] = "first build (plashet.yml not found)"
             return
 
         # Extract data from plashet.yml
-        assemble = plashet_data.get('assemble', {})
-        plashet_arches = assemble.get('arches')
+        assemble = plashet_data.get("assemble", {})
+        plashet_arches = assemble.get("arches")
 
         # Check 1: Arches changed? (only if arches field exists in plashet.yml)
         if plashet_arches is not None:
             if set(plashet_arches) != set(configured_arches):
-                self.logger.info(f'  → Arches changed: {plashet_arches} → {configured_arches}')
+                self.logger.info(f"  → Arches changed: {plashet_arches} → {configured_arches}")
                 self.repos_to_rebuild.append(repo_name)
-                self.rebuild_reasons[repo_name] = f'arches changed: {plashet_arches} → {configured_arches}'
+                self.rebuild_reasons[repo_name] = f"arches changed: {plashet_arches} → {configured_arches}"
                 return
         else:
-            self.logger.debug('  No arches field in plashet.yml, skipping arches check')
+            self.logger.debug("  No arches field in plashet.yml, skipping arches check")
 
         # Check 2: Tag changes?
-        plashet_event_id = assemble.get('brew_event', {}).get('id', 0)
+        plashet_event_id = assemble.get("brew_event", {}).get("id", 0)
         tags_changed = []
 
         # Collect tag names
         tag_names = [brew_tag.name for brew_tag in repo.plashet.source.from_tags]
         if not tag_names:
-            self.logger.debug('  No tags to check')
+            self.logger.debug("  No tags to check")
         else:
-            self.logger.debug(f'  Checking {len(tag_names)} tags: {", ".join(tag_names)}')
+            self.logger.debug(f"  Checking {len(tag_names)} tags: {', '.join(tag_names)}")
 
             # Use multicall to query all tags concurrently
             # Only fetch the most recent event to minimize data transfer
@@ -205,42 +205,42 @@ class ScanPlashetRpmsPipeline:
                 with koji_api.multicall(strict=True) as m:
                     tasks = [
                         m.queryHistory(
-                            table='tag_listing',
+                            table="tag_listing",
                             tag=tag_name,
                             afterEvent=plashet_event_id,
-                            queryOpts={'limit': 1, 'order': '-create_event'},
+                            queryOpts={"limit": 1, "order": "-create_event"},
                         )
                         for tag_name in tag_names
                     ]
                 histories = [task.result for task in tasks]
             except Exception as e:
                 self.logger.error(
-                    f'  Error querying tag history for repo {repo_name} (tags: {", ".join(tag_names)}): {e}'
+                    f"  Error querying tag history for repo {repo_name} (tags: {', '.join(tag_names)}): {e}"
                 )
                 return
 
             # Process results
             for tag_name, history in zip(tag_names, histories):
-                tag_listing = history.get('tag_listing', [])
+                tag_listing = history.get("tag_listing", [])
 
                 if not tag_listing:
-                    self.logger.debug(f'    No tag history found for {tag_name} after event {plashet_event_id}')
+                    self.logger.debug(f"    No tag history found for {tag_name} after event {plashet_event_id}")
                     continue
 
                 # If any entries exist in tag_listing, the tag has changed
                 # We only fetch the most recent event, so tag_listing has at most 1 entry
-                latest_event_id = tag_listing[0]['create_event']
+                latest_event_id = tag_listing[0]["create_event"]
                 self.logger.info(
-                    f'    → Tag {tag_name} has changed (most recent event: {latest_event_id}, after {plashet_event_id})'
+                    f"    → Tag {tag_name} has changed (most recent event: {latest_event_id}, after {plashet_event_id})"
                 )
                 tags_changed.append(tag_name)
 
         if tags_changed:
-            self.logger.info(f'  → Tags changed: {", ".join(tags_changed)}')
+            self.logger.info(f"  → Tags changed: {', '.join(tags_changed)}")
             self.repos_to_rebuild.append(repo_name)
-            self.rebuild_reasons[repo_name] = f'tags changed: {", ".join(tags_changed)}'
+            self.rebuild_reasons[repo_name] = f"tags changed: {', '.join(tags_changed)}"
         else:
-            self.logger.info('  → No changes detected')
+            self.logger.info("  → No changes detected")
 
     async def _fetch_plashet_yml(self, plashet_config: PlashetConfig, slug: str, timeout: int = 30) -> Optional[dict]:
         """
@@ -255,16 +255,16 @@ class ScanPlashetRpmsPipeline:
         # Construct URL to plashet.yml
         # Use base_url if provided, otherwise extract from download_url
         if plashet_config.base_url:
-            base_url = plashet_config.base_url.rstrip('/')
+            base_url = plashet_config.base_url.rstrip("/")
         else:
             # Fall back to extracting from download_url
             # Default base URL for ocp-artifacts
-            base_url = 'https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets'
+            base_url = "https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets"
 
         # Variables for template substitution (only $-style variables)
         vars_dict = {
-            'runtime_assembly': self.assembly,
-            'slug': slug,
+            "runtime_assembly": self.assembly,
+            "slug": slug,
         }
 
         # Substitute variables in base_dir
@@ -273,9 +273,9 @@ class ScanPlashetRpmsPipeline:
 
         # Construct the full URL
         symlink_name = plashet_config.symlink_name
-        url = f'{base_url}/{base_dir}/{symlink_name}/plashet.yml'
+        url = f"{base_url}/{base_dir}/{symlink_name}/plashet.yml"
 
-        self.logger.debug(f'  Fetching plashet.yml from: {url}')
+        self.logger.debug(f"  Fetching plashet.yml from: {url}")
 
         # Fetch plashet.yml
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -294,10 +294,10 @@ class ScanPlashetRpmsPipeline:
         Trigger a plashet build job for repos that need rebuilding.
         """
         # Generate release timestamp
-        release = datetime.now().strftime('%Y%m%d%H%M') + '.p?'
+        release = datetime.now().strftime("%Y%m%d%H%M") + ".p?"
 
-        self.logger.info(f'Triggering build-plashets for {self.group} with release {release}')
-        self.logger.info(f'Repos to rebuild: {", ".join(self.repos_to_rebuild)}')
+        self.logger.info(f"Triggering build-plashets for {self.group} with release {release}")
+        self.logger.info(f"Repos to rebuild: {', '.join(self.repos_to_rebuild)}")
 
         try:
             jenkins.init_jenkins()
@@ -306,31 +306,31 @@ class ScanPlashetRpmsPipeline:
                 release=release,
                 assembly=self.assembly,
                 repos=self.repos_to_rebuild,
-                data_path=self.data_path if self.data_path != constants.OCP_BUILD_DATA_URL else '',
+                data_path=self.data_path if self.data_path != constants.OCP_BUILD_DATA_URL else "",
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
             )
-            self.logger.info('Successfully triggered build-plashets job')
+            self.logger.info("Successfully triggered build-plashets job")
 
         except Exception as e:
-            self.logger.error(f'Failed to trigger build-plashets: {e}')
+            self.logger.error(f"Failed to trigger build-plashets: {e}")
             raise
 
 
 @cli.command("scan-plashet-rpms")
-@click.option('--group', required=True, help='OCP group to scan, e.g. openshift-4.17')
+@click.option("--group", required=True, help="OCP group to scan, e.g. openshift-4.17")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use',
+    help="ocp-build-data fork to use",
 )
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--assembly', required=False, default='stream', help='Assembly to scan (default: stream)')
+@click.option("--data-gitref", required=False, default="", help="Doozer data path git [branch / tag / sha] to use")
+@click.option("--assembly", required=False, default="stream", help="Assembly to scan (default: stream)")
 @click.option(
-    '--repos',
+    "--repos",
     multiple=True,
-    help='Limit repos to check (can specify multiple times). If not provided, scan all repos',
+    help="Limit repos to check (can specify multiple times). If not provided, scan all repos",
 )
 @pass_runtime
 @click_coroutine
@@ -383,7 +383,7 @@ async def scan_plashet_rpms_cli(
 
     if pipeline.repos_to_rebuild:
         runtime.logger.info(
-            f'✓ Detected changes in {len(pipeline.repos_to_rebuild)} plashet repos and triggered rebuild'
+            f"✓ Detected changes in {len(pipeline.repos_to_rebuild)} plashet repos and triggered rebuild"
         )
     else:
-        runtime.logger.info('✓ No changes detected in any plashet repos')
+        runtime.logger.info("✓ No changes detected in any plashet repos")

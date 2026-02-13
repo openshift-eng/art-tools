@@ -57,7 +57,7 @@ shipment:
 """
 
         # Mock file diff for testing
-        self.mock_file_diff = {'new_path': 'rpm.yaml', 'old_path': None}
+        self.mock_file_diff = {"new_path": "rpm.yaml", "old_path": None}
 
         # Mock GitLab objects
         self.mock_project = Mock()
@@ -67,8 +67,8 @@ shipment:
         self.mock_diff = Mock()
         self.mock_file_content = Mock()
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_multiple_kinds(self, mock_gitlab_class):
         """Test retrieval of multiple shipment configs by different kinds"""
         # Setup mocks
@@ -84,8 +84,8 @@ shipment:
         self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
-        mock_rpm_diff = {'new_path': 'rpm.yaml', 'old_path': None}
-        mock_image_diff = {'new_path': 'image.yml', 'old_path': None}
+        mock_rpm_diff = {"new_path": "rpm.yaml", "old_path": None}
+        mock_image_diff = {"new_path": "image.yml", "old_path": None}
         self.mock_diff.diffs = [mock_rpm_diff, mock_image_diff]
 
         # Mock file content
@@ -97,11 +97,11 @@ shipment:
 
         # Assertions
         self.assertEqual(len(result), 2)
-        self.assertIn('rpm', result)
-        self.assertIn('image', result)
+        self.assertIn("rpm", result)
+        self.assertIn("image", result)
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_no_matching_files(self, mock_gitlab_class):
         """Test when no files match the requested kinds"""
         # Setup mocks
@@ -117,7 +117,7 @@ shipment:
         self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
-        mock_non_matching_diff = {'new_path': 'unrelated.txt', 'old_path': None}
+        mock_non_matching_diff = {"new_path": "unrelated.txt", "old_path": None}
         self.mock_diff.diffs = [mock_non_matching_diff]
 
         # Execute test
@@ -126,8 +126,8 @@ shipment:
         # Assertions
         self.assertEqual(result, {})
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_duplicate_kind(self, mock_gitlab_class):
         """Test error handling when multiple configs found for same kind"""
         # Setup mocks
@@ -143,8 +143,8 @@ shipment:
         self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
-        mock_rpm_diff1 = {'new_path': 'rpm.yaml', 'old_path': None}
-        mock_rpm_diff2 = {'new_path': 'rpm-extra.yaml', 'old_path': None}
+        mock_rpm_diff1 = {"new_path": "rpm.yaml", "old_path": None}
+        mock_rpm_diff2 = {"new_path": "rpm-extra.yaml", "old_path": None}
         self.mock_diff.diffs = [mock_rpm_diff1, mock_rpm_diff2]
 
         # Mock file content
@@ -157,7 +157,7 @@ shipment:
 
         self.assertIn("Multiple shipment configs found for rpm", str(context.exception))
 
-    @patch('elliottlib.shipment_utils.get_shipment_configs_from_mr')
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
     def test_get_builds_from_mr_success(self, mock_get_configs):
         """Test successful build extraction from merge request"""
         # Setup mock shipment config
@@ -165,14 +165,14 @@ shipment:
         mock_shipment_config_rpm.shipment.snapshot.nvrs = ["test-rpm-1.0.0-1.el8"]
         mock_shipment_config_image = Mock()
         mock_shipment_config_image.shipment.snapshot.nvrs = ["test-container-v1.0.0-202312010000.p0.git12345"]
-        mock_get_configs.return_value = {'rpm': mock_shipment_config_rpm, 'image': mock_shipment_config_image}
+        mock_get_configs.return_value = {"rpm": mock_shipment_config_rpm, "image": mock_shipment_config_image}
 
         # Execute test
         result = shipment_utils.get_builds_from_mr(self.test_mr_url)
 
         # Assertions
         self.assertEqual(
-            result, {'rpm': ['test-rpm-1.0.0-1.el8'], 'image': ['test-container-v1.0.0-202312010000.p0.git12345']}
+            result, {"rpm": ["test-rpm-1.0.0-1.el8"], "image": ["test-container-v1.0.0-202312010000.p0.git12345"]}
         )
 
         # Verify the underlying function was called correctly
@@ -180,8 +180,8 @@ shipment:
 
     def test_default_kinds_parameter(self):
         """Test that default kinds parameter works correctly"""
-        with patch('artcommonlib.gitlab.gitlab.Gitlab') as mock_gitlab_class:
-            os.environ['GITLAB_TOKEN'] = self.mock_gitlab_token
+        with patch("artcommonlib.gitlab.gitlab.Gitlab") as mock_gitlab_class:
+            os.environ["GITLAB_TOKEN"] = self.mock_gitlab_token
             mock_gitlab = mock_gitlab_class.return_value
             mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
 
@@ -201,8 +201,8 @@ shipment:
             # Should not raise an error and return empty dict since no files match
             self.assertEqual(result, {})
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_invalid_yaml(self, mock_gitlab_class):
         """Test error handling when YAML content is invalid"""
         # Setup mocks
@@ -228,8 +228,8 @@ shipment:
         with self.assertRaises(Exception):
             shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_non_yaml_files(self, mock_gitlab_class):
         """Test that non-YAML files are properly ignored"""
         # Setup mocks
@@ -245,9 +245,9 @@ shipment:
         self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
-        mock_txt_diff = {'new_path': 'rpm.txt', 'old_path': None}
-        mock_json_diff = {'new_path': 'image.json', 'old_path': None}
-        mock_py_diff = {'new_path': 'script.py', 'old_path': None}
+        mock_txt_diff = {"new_path": "rpm.txt", "old_path": None}
+        mock_json_diff = {"new_path": "image.json", "old_path": None}
+        mock_py_diff = {"new_path": "script.py", "old_path": None}
         self.mock_diff.diffs = [mock_txt_diff, mock_json_diff, mock_py_diff]
 
         # Execute test
@@ -256,8 +256,8 @@ shipment:
         # Assertions - should return empty dict since no YAML files
         self.assertEqual(result, {})
 
-    @patch('artcommonlib.gitlab.gitlab.Gitlab')
-    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_get_shipment_configs_by_kind_all_default_kinds(self, mock_gitlab_class):
         """Test with files matching all default kinds"""
         # Setup mocks
@@ -274,11 +274,11 @@ shipment:
         self.mock_mr.diffs.get.return_value = self.mock_diff
 
         mock_diffs = [
-            {'new_path': 'fbc.yaml', 'old_path': None},
-            {'new_path': 'image.yml', 'old_path': None},
-            {'new_path': 'extras.yaml', 'old_path': None},
-            {'new_path': 'microshift-bootc.yml', 'old_path': None},
-            {'new_path': 'metadata.yaml', 'old_path': None},
+            {"new_path": "fbc.yaml", "old_path": None},
+            {"new_path": "image.yml", "old_path": None},
+            {"new_path": "extras.yaml", "old_path": None},
+            {"new_path": "microshift-bootc.yml", "old_path": None},
+            {"new_path": "metadata.yaml", "old_path": None},
         ]
         self.mock_diff.diffs = mock_diffs
 
@@ -294,5 +294,5 @@ shipment:
         self.assertEqual(set(result.keys()), expected_kinds)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

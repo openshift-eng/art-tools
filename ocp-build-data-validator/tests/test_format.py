@@ -29,7 +29,7 @@ class TestFormat(unittest.TestCase):
           lst: *my_list
         """
         (parsed, err) = format.validate(valid_yaml)
-        self.assertEqual(parsed, {'key': [1, '2'], 'obj': {'lst': [1, '2']}})
+        self.assertEqual(parsed, {"key": [1, "2"], "obj": {"lst": [1, "2"]}})
         self.assertIsNone(err)
 
     def test_duplicated_yaml(self):

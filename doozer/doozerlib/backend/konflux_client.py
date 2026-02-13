@@ -72,19 +72,19 @@ def parse_github_api_url(api_url: str) -> GitHubApiUrlInfo:
     """
     parsed = urlparse(api_url)
 
-    if parsed.netloc != 'api.github.com':
-        raise ValueError(f'Expected api.github.com URL, got: {parsed.netloc}')
+    if parsed.netloc != "api.github.com":
+        raise ValueError(f"Expected api.github.com URL, got: {parsed.netloc}")
 
     # Path format: /repos/{owner}/{repo}/contents/{file_path}
-    match = re.match(r'^/repos/([^/]+)/([^/]+)/contents/(.+)$', parsed.path)
+    match = re.match(r"^/repos/([^/]+)/([^/]+)/contents/(.+)$", parsed.path)
     if not match:
-        raise ValueError(f'URL path does not match expected format: {parsed.path}')
+        raise ValueError(f"URL path does not match expected format: {parsed.path}")
 
     owner, repo, file_path = match.groups()
 
     # Parse query string for ref
     query_params = parse_qs(parsed.query)
-    ref = query_params.get('ref', ['main'])[0]
+    ref = query_params.get("ref", ["main"])[0]
 
     return GitHubApiUrlInfo(owner=owner, repo=repo, file_path=file_path, ref=ref)
 
@@ -101,8 +101,8 @@ def _get_template_cache_dir() -> Path:
 
     :return: Path to the cache directory
     """
-    cache_base = os.getenv('DOOZER_CACHE_DIR') or tempfile.gettempdir()
-    cache_dir = Path(cache_base) / 'konflux-plr-templates'
+    cache_base = os.getenv("DOOZER_CACHE_DIR") or tempfile.gettempdir()
+    cache_dir = Path(cache_base) / "konflux-plr-templates"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
@@ -120,7 +120,7 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
     # Create a unique directory name based on the repo URL
     repo_hash = hashlib.sha256(git_url.encode()).hexdigest()[:12]
     # Extract repo name for readability
-    repo_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
+    repo_name = git_url.rstrip("/").split("/")[-1].replace(".git", "")
     cache_key = f"{repo_name}-{repo_hash}"
 
     with _TEMPLATE_REPO_LOCK:
@@ -130,10 +130,10 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                 LOGGER.debug(f"Using cached template repo at {repo_path}")
                 # Fetch latest and checkout the ref
                 try:
-                    exectools.cmd_assert(f'git -C {repo_path} fetch --all --prune', retries=3)
-                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                    exectools.cmd_assert(f"git -C {repo_path} fetch --all --prune", retries=3)
+                    exectools.cmd_assert(f"git -C {repo_path} checkout {ref}", retries=3)
                     # If ref is a branch, pull latest
-                    exectools.cmd_gather(f'git -C {repo_path} pull --ff-only 2>/dev/null || true')
+                    exectools.cmd_gather(f"git -C {repo_path} pull --ff-only 2>/dev/null || true")
                     return repo_path
                 except Exception as e:
                     LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
@@ -150,8 +150,8 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
             shutil.rmtree(repo_path, ignore_errors=True)
 
         LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
-        exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
-        exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+        exectools.cmd_assert(f"git clone --no-single-branch {git_url} {repo_path}", retries=3)
+        exectools.cmd_assert(f"git -C {repo_path} checkout {ref}", retries=3)
 
         _TEMPLATE_REPO_CACHE[cache_key] = repo_path
         return repo_path
@@ -563,14 +563,14 @@ class KonfluxClient:
         LOGGER.info(f"Pulling Konflux PLR template from: {template_url}")
 
         # Parse the GitHub API URL to extract components
-        if not template_url.startswith('https://api.github.com'):
-            raise ValueError('Template URL must be a GitHub API URL (https://api.github.com/...)')
+        if not template_url.startswith("https://api.github.com"):
+            raise ValueError("Template URL must be a GitHub API URL (https://api.github.com/...)")
 
         url_info = parse_github_api_url(template_url)
 
         # Construct the git URL for cloning using HTTPS
         # For private repos, git will use credentials from git credential helper or GITHUB_TOKEN
-        git_url = f'https://github.com/{url_info.owner}/{url_info.repo}.git'
+        git_url = f"https://github.com/{url_info.owner}/{url_info.repo}.git"
 
         # Clone or update the repository
         # Run the blocking git operations in a thread pool to avoid blocking the event loop
@@ -580,7 +580,7 @@ class KonfluxClient:
         # Read the template file from the local clone
         template_file = repo_path / url_info.file_path
         if not template_file.exists():
-            raise FileNotFoundError(f'Template file not found: {template_file}')
+            raise FileNotFoundError(f"Template file not found: {template_file}")
 
         LOGGER.debug(f"Reading template from local file: {template_file}")
         template_text = template_file.read_text()
@@ -920,11 +920,11 @@ class KonfluxClient:
         :param resource_dict: The resource dictionary (from PipelineRunInfo.to_dict(), ResourceInstance.to_dict(), etc).
         :return: The URL.
         """
-        kind = resource_dict.get('kind', '').lower()
-        metadata = resource_dict.get('metadata', {})
-        name = metadata.get('name', '')
-        namespace = metadata.get('namespace') or KONFLUX_DEFAULT_NAMESPACE
-        labels = metadata.get('labels', {})
+        kind = resource_dict.get("kind", "").lower()
+        metadata = resource_dict.get("metadata", {})
+        name = metadata.get("name", "")
+        namespace = metadata.get("namespace") or KONFLUX_DEFAULT_NAMESPACE
+        labels = metadata.get("labels", {})
         application = labels.get("appstudio.openshift.io/application", "unknown-application")
         return f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/{application}/{kind}s/{name}"
 
@@ -1023,7 +1023,7 @@ class KonfluxClient:
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
                         try:
-                            released_condition = art_util.KubeCondition.find_condition(obj, 'Released')
+                            released_condition = art_util.KubeCondition.find_condition(obj, "Released")
                             if released_condition:
                                 released_status = released_condition.status
                                 released_reason = released_condition.reason

@@ -1,7 +1,7 @@
 PLASHET_REMOTES = [
     {
-        'url': 'https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets',
-        'host': 'ocp-artifacts',
+        "url": "https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets",
+        "host": "ocp-artifacts",
     },
 ]
 
@@ -28,17 +28,17 @@ MIRROR_CLIENTS = {
     "operator-registry": "opm",
 }
 
-OCP_BUILD_DATA_URL = 'https://github.com/openshift-eng/ocp-build-data'
+OCP_BUILD_DATA_URL = "https://github.com/openshift-eng/ocp-build-data"
 
 # This is the URL that buildvm itself uses to resolve Jenkins
 # an alternative to JENKINS_URL env var set by Jenkins
-JENKINS_SERVER_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
+JENKINS_SERVER_URL = "https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 
 # This is the URL that humans behind a VPN use to browse Jenkins UI
 # It shall be used to print clickable logs that redirect the user to the triggered job page
-JENKINS_UI_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
+JENKINS_UI_URL = "https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 
-MIRROR_BASE_URL = 'https://mirror.openshift.com'
+MIRROR_BASE_URL = "https://mirror.openshift.com"
 
 UMB_BROKERS = {
     "prod": "stomp+ssl://umb.api.redhat.com:61612",
@@ -54,4 +54,4 @@ KONFLUX_BUNDLE_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://api.github.com/repos/{ow
 KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://api.github.com/repos/{owner}/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref={branch_name}"  # Konflux PipelineRun (PLR) template for FBC builds
 
 # OKD build triggering is enabled only for these OCP versions
-OKD_ENABLED_VERSIONS = ['4.21', '4.22', '4.23', '5.0']
+OKD_ENABLED_VERSIONS = ["4.21", "4.22", "4.23", "5.0"]

@@ -29,7 +29,7 @@ class TagRPMsPipeline:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = self.data_path
 
         major, minor = isolate_major_minor_in_group(group)
-        self.fail_count_name = f'count:tag-rpms-failure:{major}-{minor}'
+        self.fail_count_name = f"count:tag-rpms-failure:{major}-{minor}"
 
         self.slack_client = runtime.new_slack_client()
         self.slack_client.bind_channel(group)
@@ -105,7 +105,7 @@ class TagRPMsPipeline:
         if current_count is None:  # does not yet exist in Redis
             current_count = 0
         fail_count = int(current_count) + 1
-        self.logger.info('Failure count for %s: %s', self.group, fail_count)
+        self.logger.info("Failure count for %s: %s", self.group, fail_count)
 
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
@@ -120,14 +120,14 @@ class TagRPMsPipeline:
 @cli.command("tag-rpms", short_help="Tag and untag rpms for rpm delivery")
 @click.option(
     "--data-path",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.12",
 )

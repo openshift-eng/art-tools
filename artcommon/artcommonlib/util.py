@@ -106,19 +106,19 @@ def convert_remote_git_to_https(source_url: str):
     :param source_url: Git remote
     :return: Normalized https git URL
     """
-    url = source_url.strip().rstrip('/')
-    url = remove_prefixes(url, 'http://', 'https://', 'git://', 'git@', 'ssh://')
-    url = remove_suffix(url, '.git')
-    url = url.split('@', 1)[-1]  # Strip username@
+    url = source_url.strip().rstrip("/")
+    url = remove_prefixes(url, "http://", "https://", "git://", "git@", "ssh://")
+    url = remove_suffix(url, ".git")
+    url = url.split("@", 1)[-1]  # Strip username@
 
-    if url.find(':') > -1:
-        server, org_repo = url.rsplit(':', 1)
-    elif url.rfind('/') > -1:
-        server, org_repo = url.rsplit('/', 1)
+    if url.find(":") > -1:
+        server, org_repo = url.rsplit(":", 1)
+    elif url.rfind("/") > -1:
+        server, org_repo = url.rsplit("/", 1)
     else:
-        return f'https://{url}'  # weird..
+        return f"https://{url}"  # weird..
 
-    return f'https://{server}/{org_repo}'
+    return f"https://{server}/{org_repo}"
 
 
 @lru_cache(maxsize=512)
@@ -130,7 +130,7 @@ def convert_remote_git_to_ssh(url):
     :return: A url in git@server:repo.git
     """
     server, org, repo_name = split_git_url(url)
-    return f'git@{server}:{org}/{repo_name}.git'
+    return f"git@{server}:{org}/{repo_name}.git"
 
 
 def split_git_url(url) -> (str, str, str):
@@ -140,18 +140,18 @@ def split_git_url(url) -> (str, str, str):
     """
     https_normalized = convert_remote_git_to_https(url)
     url = https_normalized[8:]  # strip https://
-    server, repo = url.split('/', 1)  # e.g. 'github.com', 'openshift/origin'
-    org, repo_name = repo.split('/', 1)
+    server, repo = url.split("/", 1)  # e.g. 'github.com', 'openshift/origin'
+    org, repo_name = repo.split("/", 1)
     return server, org, repo_name
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
 async def download_file_from_github(repository, branch, path, token: str, destination, session):
     server, org, repo_name = split_git_url(repository)
-    url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
-    headers = {"Authorization": f'Bearer {token}'}
+    url = f"https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}"
+    headers = {"Authorization": f"Bearer {token}"}
 
-    LOGGER.info('Downloading %s...', url)
+    LOGGER.info("Downloading %s...", url)
     async with session.get(url, headers=headers) as resp:
         resp.raise_for_status()
         with open(str(destination), "wb") as f:
@@ -196,18 +196,18 @@ def get_assembly_release_date(assembly, group):
     """
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    response = s.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    s.post("https://pp.engineering.redhat.com/oidc/authenticate", auth=auth)
+    response = s.get(f"{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks", headers={"Accept": "application/json"})
     response.raise_for_status()
     try:
         data = response.json()
-        for release in data['all_ga_tasks']:
-            if assembly in release['name']:
+        for release in data["all_ga_tasks"]:
+            if assembly in release["name"]:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+                return datetime.strptime(release["date_start"], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
         pass
-    raise ValueError(f'Assembly release date not found for {assembly}')
+    raise ValueError(f"Assembly release date not found for {assembly}")
 
 
 async def get_assembly_release_date_async(release_name: str):
@@ -217,20 +217,20 @@ async def get_assembly_release_date_async(release_name: str):
     :raises ValueError: If the assembly release date is not found
     """
     version = VersionInfo.parse(release_name)
-    release_train = f'openshift-{version.major}.{version.minor}.z'
+    release_train = f"openshift-{version.major}.{version.minor}.z"
     async with aiohttp.ClientSession() as session:
         auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-        await session.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+        await session.post("https://pp.engineering.redhat.com/oidc/authenticate", auth=auth)
         async with session.get(
-            f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+            f"{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks", headers={"Accept": "application/json"}
         ) as response:
             response.raise_for_status()
             data = await response.json()
-            for release in data['all_ga_tasks']:
-                if release_name in release['name']:
+            for release in data["all_ga_tasks"]:
+                if release_name in release["name"]:
                     # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                    return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    raise ValueError(f'Assembly release date not found for {release_name}')
+                    return datetime.strptime(release["date_start"], "%Y-%m-%d").strftime("%Y-%b-%d")
+    raise ValueError(f"Assembly release date not found for {release_name}")
 
 
 def is_release_next_week(group):
@@ -239,12 +239,12 @@ def is_release_next_week(group):
     """
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    s.post("https://pp.engineering.redhat.com/oidc/authenticate", auth=auth)
     release_schedules = s.get(
-        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+        f"{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks", headers={"Accept": "application/json"}
     )
-    for release in release_schedules.json()['all_ga_tasks']:
-        release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
+    for release in release_schedules.json()["all_ga_tasks"]:
+        release_date = datetime.strptime(release["date_finish"], "%Y-%m-%d").date()
         if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
             return True
     return False
@@ -260,35 +260,35 @@ def get_inflight(assembly, group):
 
     # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
     if minor > 0:
-        prev_group = f'openshift-{major}.{minor - 1}'
+        prev_group = f"openshift-{major}.{minor - 1}"
         s = requests.Session()
         auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-        s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+        s.post("https://pp.engineering.redhat.com/oidc/authenticate", auth=auth)
         response = s.get(
-            f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
-            headers={'Accept': 'application/json'},
+            f"{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks",
+            headers={"Accept": "application/json"},
         )
         response.raise_for_status()
         try:
             data = response.json()
-            for release in data['all_ga_tasks']:
-                is_future = is_future_release_date(release['date_start'])
+            for release in data["all_ga_tasks"]:
+                is_future = is_future_release_date(release["date_start"])
                 if is_future:
                     days_diff = abs(
                         (
                             datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                            - datetime.strptime(release['date_start'], "%Y-%m-%d")
+                            - datetime.strptime(release["date_start"], "%Y-%m-%d")
                         ).days
                     )
                     if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                        match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                        match = re.search(r"\d+\.\d+\.\d+", release["name"])
                         if match:
                             inflight_release = match.group()
                             break
                         else:
                             raise ValueError(f"Didn't find in_inflight release in {release['name']}")
         except json.JSONDecodeError as e:
-            raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
+            raise ValueError(f"Failed to parse JSON for {prev_group}: {e}")
         except ValueError as e:
             if "time data" in str(e) or "does not match format" in str(e):
                 raise ValueError(
@@ -297,16 +297,16 @@ def get_inflight(assembly, group):
             else:
                 raise  # Re-raise other ValueErrors unchanged
         except KeyError as e:
-            raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
+            raise ValueError(f"Failed to parse release schedule data for {prev_group}: {e}")
 
         if not inflight_release:
             LOGGER.info(
-                f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
+                f"Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}"
             )
         else:
-            LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
+            LOGGER.info(f"Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}")
     else:
-        LOGGER.info(f'No previous group available for {group} (minor version is 0)')
+        LOGGER.info(f"No previous group available for {group} (minor version is 0)")
 
     return inflight_release
 
@@ -438,7 +438,7 @@ def extract_group_from_nvr(nvr: str) -> Optional[str]:
     :return: Group string like "openshift-4.13" or None if pattern not found
     """
     # Match -vMAJOR.MINOR pattern (e.g., -v4.13, -v4.18)
-    match = re.search(r'-v(\d+)\.(\d+)\.', nvr)
+    match = re.search(r"-v(\d+)\.(\d+)\.", nvr)
     if match:
         major, minor = match.groups()
         return f"openshift-{major}.{minor}"
@@ -497,19 +497,19 @@ async def _limit_concurrency(tasks: List, limit: int):
 
 class KubeCondition:
     def __init__(self, condition_obj: Dict):
-        self.type = condition_obj.get('type')
-        self.message = condition_obj.get('message')
-        self.reason = condition_obj.get('reason')
-        self.status = condition_obj.get('status')
+        self.type = condition_obj.get("type")
+        self.message = condition_obj.get("message")
+        self.reason = condition_obj.get("reason")
+        self.status = condition_obj.get("status")
         self.last_transition_time = None
-        if condition_obj.get('lastTransitionTime'):
-            self.last_transition_time = datetime.fromisoformat(condition_obj.get('lastTransitionTime').rstrip("Z"))
+        if condition_obj.get("lastTransitionTime"):
+            self.last_transition_time = datetime.fromisoformat(condition_obj.get("lastTransitionTime").rstrip("Z"))
 
     def is_status_true(self) -> bool:
-        return str(self.status).lower() == 'true'
+        return str(self.status).lower() == "true"
 
     def is_status_false(self) -> bool:
-        return str(self.status).lower() == 'false'
+        return str(self.status).lower() == "false"
 
     @staticmethod
     def find_condition(obj, condition_type: str, _default: Optional["KubeCondition"] = None) -> "KubeCondition":
@@ -518,8 +518,8 @@ class KubeCondition:
         condition entry if found. Otherwise, returns _default value.
         """
         try:
-            for condition in obj.get('status', {}).get('conditions', []):
-                if condition['type'] == condition_type:
+            for condition in obj.get("status", {}).get("conditions", []):
+                if condition["type"] == condition_type:
                     return KubeCondition(condition)
         except AttributeError:
             pass
@@ -580,7 +580,7 @@ async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_au
     :return: Downloaded data as string
     :raises ValueError: If mode is not 'attestation' or 'signature'
     """
-    if mode not in ('attestation', 'signature'):
+    if mode not in ("attestation", "signature"):
         raise ValueError(f"mode must be 'attestation' or 'signature', got: {mode}")
 
     cmd = f"cosign download {mode} {pullspec}"
@@ -606,7 +606,7 @@ async def fetch_slsa_attestation(
     """
     try:
         # Get SLSA attestation for the build
-        LOGGER.info(f'Fetching SLSA attestation for {image_pullspec}')
+        LOGGER.info(f"Fetching SLSA attestation for {image_pullspec}")
         attestation = await get_konflux_data(
             pullspec=image_pullspec,
             mode="attestation",
@@ -615,11 +615,11 @@ async def fetch_slsa_attestation(
         return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
 
     except ChildProcessError:
-        LOGGER.warning(f'Failed to fetch SLSA attestation for {build_name}')
+        LOGGER.warning(f"Failed to fetch SLSA attestation for {build_name}")
         return None
 
     except (JSONDecodeError, Exception) as e:
-        LOGGER.warning('Failed to parse SLSA attestation for %s: %s', build_name, e)
+        LOGGER.warning("Failed to parse SLSA attestation for %s: %s", build_name, e)
         return None
 
 
@@ -628,17 +628,17 @@ async def fetch_slsa_attestation(
 async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
     cmd = [
-        'oc',
-        'image',
-        'mirror',
-        '--keep-manifest-list',
+        "oc",
+        "image",
+        "mirror",
+        "--keep-manifest-list",
         source_pullspec,
         destination_repo,
     ]
 
     konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
     if konflux_registry_auth_file:
-        cmd += [f'--registry-config={konflux_registry_auth_file}']
+        cmd += [f"--registry-config={konflux_registry_auth_file}"]
 
     try:
         await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
@@ -653,15 +653,15 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     shasum = source_pullspec.split("@sha256:")[1]
     LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}")
     cmd = [
-        'oc',
-        'image',
-        'mirror',
-        '--keep-manifest-list',
+        "oc",
+        "image",
+        "mirror",
+        "--keep-manifest-list",
         f"{destination_repo}@sha256:{shasum}",
         f"{destination_repo}:sha256-{shasum}",
     ]
     if konflux_registry_auth_file:
-        cmd += [f'--registry-config={konflux_registry_auth_file}']
+        cmd += [f"--registry-config={konflux_registry_auth_file}"]
     try:
         await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
         LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
@@ -676,15 +676,15 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
         for tag in tags:
             LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}")
             cmd = [
-                'oc',
-                'image',
-                'mirror',
-                '--keep-manifest-list',
+                "oc",
+                "image",
+                "mirror",
+                "--keep-manifest-list",
                 f"{destination_repo}@sha256:{shasum}",
                 f"{destination_repo}:{tag}",
             ]
             if konflux_registry_auth_file:
-                cmd += [f'--registry-config={konflux_registry_auth_file}']
+                cmd += [f"--registry-config={konflux_registry_auth_file}"]
             try:
                 await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
                 LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
@@ -708,7 +708,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
     with tempfile.TemporaryDirectory() as temp_dir:
         # Step 1: Discover attached artifacts using ORAS
         LOGGER.info("Discovering attached artifacts...")
-        discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
+        discover_cmd = ["oras", "discover", "--format", "json", fbc_pullspec]
         rc, discover_output, discover_stderr = await cmd_gather_async(discover_cmd, cwd=temp_dir)
 
         if rc != 0:
@@ -721,28 +721,28 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         LOGGER.debug(f"ORAS discover response: {discover_data}")
 
         digest = None
-        referrers = discover_data.get('referrers', [])
+        referrers = discover_data.get("referrers", [])
         LOGGER.info(f"Found {len(referrers)} referrers")
 
         for i, referrer in enumerate(referrers):
-            artifact_type = referrer.get('artifactType')
-            annotations = referrer.get('annotations', {})
-            attached_media_type = annotations.get('attachedMediaType', '')
+            artifact_type = referrer.get("artifactType")
+            annotations = referrer.get("annotations", {})
+            attached_media_type = annotations.get("attachedMediaType", "")
             LOGGER.debug(
                 f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
             )
 
             # Look specifically for the related-images artifact
             if (
-                artifact_type == 'application/vnd.konflux-ci.attached-artifact'
-                and 'related-images' in attached_media_type
+                artifact_type == "application/vnd.konflux-ci.attached-artifact"
+                and "related-images" in attached_media_type
             ):
-                digest = referrer.get('digest')
+                digest = referrer.get("digest")
                 LOGGER.info(f"Found related-images artifact with digest: {digest}")
                 break
 
         if not digest:
-            available_types = [r.get('artifactType') for r in referrers]
+            available_types = [r.get("artifactType") for r in referrers]
             raise RuntimeError(
                 f"No attached artifact found with expected type 'application/vnd.konflux-ci.attached-artifact'. Available types: {available_types}"
             )
@@ -751,22 +751,22 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         LOGGER.info(f"Pulling attached artifact with digest: {digest}")
         # Extract the base registry and repo from the original FBC pullspec
         # We need to preserve the full repository path, only remove the tag/digest
-        if '@' in fbc_pullspec:
+        if "@" in fbc_pullspec:
             # Format: repo@digest
-            base_pullspec = fbc_pullspec.split('@')[0]
-        elif ':' in fbc_pullspec:
+            base_pullspec = fbc_pullspec.split("@")[0]
+        elif ":" in fbc_pullspec:
             # Format: repo:tag - need to find the last : that separates tag
             # Split by : and rejoin all but the last part (which is the tag)
-            parts = fbc_pullspec.split(':')
+            parts = fbc_pullspec.split(":")
             if len(parts) > 2:  # registry:port/repo:tag format
                 # Find the tag part (everything after the last / and :)
-                base_pullspec = ':'.join(parts[:-1])
+                base_pullspec = ":".join(parts[:-1])
             else:
                 base_pullspec = parts[0]
         else:
             base_pullspec = fbc_pullspec
         artifact_pullspec = f"{base_pullspec}@{digest}"
-        pull_cmd = ['oras', 'pull', artifact_pullspec]
+        pull_cmd = ["oras", "pull", artifact_pullspec]
         LOGGER.info(f"Pulling from: {artifact_pullspec}")
         rc, pull_output, pull_stderr = await cmd_gather_async(pull_cmd, cwd=temp_dir)
 
@@ -781,9 +781,9 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
         # Debug: Show the contents of each file for analysis
         for file in pulled_files:
-            if file.endswith('.json'):
+            if file.endswith(".json"):
                 LOGGER.debug(f"Contents of {file}:")
-                with open(os.path.join(temp_dir, file), 'r') as f:
+                with open(os.path.join(temp_dir, file), "r") as f:
                     content = f.read()
                     LOGGER.debug(f"{file}: {content[:200]}...")  # First 200 chars
 
@@ -796,29 +796,29 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         # Map product names to registry namespaces
         # OCP uses 'openshift4' namespace in registry.redhat.io
         product_to_namespace = {
-            'ocp': 'openshift4',
+            "ocp": "openshift4",
         }
         registry_namespace = product_to_namespace.get(product, product)
         LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
 
-        registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
+        registry_transform_pattern = rf"registry\.redhat\.io/{registry_namespace}/[^@]*"
 
         related_images = []
-        related_images_path = os.path.join(temp_dir, 'related-images.json')
+        related_images_path = os.path.join(temp_dir, "related-images.json")
         if os.path.exists(related_images_path):
             LOGGER.info("Reading related-images.json...")
-            with open(related_images_path, 'r') as f:
+            with open(related_images_path, "r") as f:
                 raw_images = json.load(f)
 
             LOGGER.info(f"Found {len(raw_images)} images in related-images.json")
 
             for img_url in raw_images:
                 # Check if the URL matches the registry namespace pattern
-                if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                if f"registry.redhat.io/{registry_namespace}/" in img_url:
                     # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                     transformed_url = re.sub(
                         registry_transform_pattern,
-                        'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                        "quay.io/redhat-user-workloads/ocp-art-tenant/art-images",
                         img_url,
                     )
                     related_images.append(transformed_url)
@@ -836,12 +836,12 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             LOGGER.info("=== END TRANSFORMED PULL SPECS ===")
 
         else:
-            catalog_json_path = os.path.join(temp_dir, 'catalog.json')
+            catalog_json_path = os.path.join(temp_dir, "catalog.json")
             if os.path.exists(catalog_json_path):
                 LOGGER.warning(
                     "related-images.json not found, falling back to catalog.json (this may extract many images)"
                 )
-                with open(catalog_json_path, 'r') as f:
+                with open(catalog_json_path, "r") as f:
                     catalog_content = f.read()
 
                 registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
@@ -851,10 +851,10 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 for img_url in found_images:
                     img_url = img_url.rstrip('",')
                     # Check if the URL matches the registry namespace pattern
-                    if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                    if f"registry.redhat.io/{registry_namespace}/" in img_url:
                         transformed_url = re.sub(
                             registry_transform_pattern,
-                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images",
                             img_url,
                         )
                         related_images.append(transformed_url)
@@ -923,13 +923,13 @@ def normalize_group_name_for_k8s(group_name: str) -> str:
     normalized = group_name.lower()
 
     # Replace dots and any non-alphanumeric characters (except '-') with '-'
-    normalized = re.sub(r'[^a-z0-9\-]', '-', normalized)
+    normalized = re.sub(r"[^a-z0-9\-]", "-", normalized)
 
     # Collapse consecutive '-' into a single '-'
-    normalized = re.sub(r'-+', '-', normalized)
+    normalized = re.sub(r"-+", "-", normalized)
 
     # Trim leading/trailing non-alphanumeric characters (including '-')
-    normalized = re.sub(r'^[^a-z0-9]+|[^a-z0-9]+$', '', normalized)
+    normalized = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", normalized)
 
     # Truncate to 63 characters if needed (leave room for timestamp suffix)
     # Reserve space for timestamp format like "-20251031141128-1" (18 chars)
@@ -937,7 +937,7 @@ def normalize_group_name_for_k8s(group_name: str) -> str:
     if len(normalized) > max_group_length:
         normalized = normalized[:max_group_length]
         # Ensure we don't end with a dash after truncation
-        normalized = normalized.rstrip('-')
+        normalized = normalized.rstrip("-")
 
     return normalized
 

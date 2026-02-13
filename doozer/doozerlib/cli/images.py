@@ -29,7 +29,7 @@ from doozerlib.source_resolver import SourceResolver
 
 
 @cli.command("images:clone", help="Clone a group's image distgit repos locally.")
-@click.option('--clone-upstreams', default=False, is_flag=True, help='Also clone upstream sources.')
+@click.option("--clone-upstreams", default=False, is_flag=True, help="Also clone upstream sources.")
 @pass_runtime
 def images_clone(runtime, clone_upstreams):
     runtime.initialize(clone_distgits=True, clone_source=clone_upstreams)
@@ -100,19 +100,19 @@ def images_push_distgit(runtime):
     default="unsigned",
     help="Repo group type to use for version autodetection scan (e.g. signed, unsigned).",
 )
-@click.option('--preserve-builder-images', default=False, is_flag=True, help='Reuse any previous builder images')
+@click.option("--preserve-builder-images", default=False, is_flag=True, help="Reuse any previous builder images")
 @click.option(
-    '--force-analysis',
+    "--force-analysis",
     default=False,
     is_flag=True,
-    help='Even if an existing analysis is present for a given hash, re-run',
+    help="Even if an existing analysis is present for a given hash, re-run",
 )
 @click.option(
-    '--ignore-waived', default=False, is_flag=True, help='Ignore any previously detected waived results (all=diff)'
+    "--ignore-waived", default=False, is_flag=True, help="Ignore any previously detected waived results (all=diff)"
 )
-@click.option('--https-proxy', default='', help='HTTPS proxy to be used during image builds')
-@click.option('--podman-sudo', is_flag=True, help="Run podman with sudo")
-@click.option("--podman-tmpdir", help='Set the temporary storage location of downloaded container images for podman')
+@click.option("--https-proxy", default="", help="HTTPS proxy to be used during image builds")
+@click.option("--podman-sudo", is_flag=True, help="Run podman with sudo")
+@click.option("--podman-tmpdir", help="Set the temporary storage location of downloaded container images for podman")
 @pass_runtime
 def images_covscan(
     runtime: Runtime,
@@ -232,21 +232,21 @@ def images_covscan(
         """
         podman_cmd = "sudo podman" if podman_sudo else "podman"
         rc, image_list, stderr = exectools.cmd_gather(
-            f'{podman_cmd} images -q --filter label={key}={value}', strip=True
+            f"{podman_cmd} images -q --filter label={key}={value}", strip=True
         )
         if not image_list:
-            runtime.logger.info(f'No images found with {key}={value} label exist: {stderr}')
+            runtime.logger.info(f"No images found with {key}={value} label exist: {stderr}")
             return
         targets = " ".join(image_list.split())
-        rc, _, _ = exectools.cmd_gather(f'{podman_cmd} rmi {targets}')
+        rc, _, _ = exectools.cmd_gather(f"{podman_cmd} rmi {targets}")
         if rc != 0:
-            runtime.logger.warning(f'Unable to remove all images with {key}={value}')
+            runtime.logger.warning(f"Unable to remove all images with {key}={value}")
 
     # Clean up any old runner images to keep image storage under control.
-    delete_images('DOOZER_COVSCAN_RUNNER', runtime.group_config.name)
+    delete_images("DOOZER_COVSCAN_RUNNER", runtime.group_config.name)
 
     if not preserve_builder_images:
-        delete_images('DOOZER_COVSCAN_PARENT', runtime.group_config.name)
+        delete_images("DOOZER_COVSCAN_PARENT", runtime.group_config.name)
 
     successes = []
     failures = []
@@ -278,20 +278,20 @@ def images_covscan(
                 failures.append(image.distgit_key)
 
     # Clean up runner images
-    delete_images('DOOZER_COVSCAN_RUNNER', runtime.group_config.name)
+    delete_images("DOOZER_COVSCAN_RUNNER", runtime.group_config.name)
 
-    print(yaml.safe_dump({'success': successes, 'failure': failures}))
+    print(yaml.safe_dump({"success": successes, "failure": failures}))
 
 
 @cli.command("images:rebase", short_help="Refresh a group's distgit content from source content.")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     default=None,
     callback=validate_semver_major_minor_patch,
-    help="Version string to populate in Dockerfiles. \"auto\" gets version from atomic-openshift RPM",
+    help='Version string to populate in Dockerfiles. "auto" gets version from atomic-openshift RPM',
 )
-@click.option("--release", metavar='RELEASE', default=None, help="Release string to populate in Dockerfiles.")
+@click.option("--release", metavar="RELEASE", default=None, help="Release string to populate in Dockerfiles.")
 @click.option(
     "--embargoed",
     is_flag=True,
@@ -308,7 +308,7 @@ def images_covscan(
     "--force-yum-updates",
     is_flag=True,
     default=False,
-    help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.",
+    help='Inject "yum update -y" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.',
 )
 @option_commit_message
 @option_push
@@ -368,7 +368,7 @@ def images_rebase(
 
     runtime.clone_distgits()
     metas = runtime.ordered_image_metas()
-    lstate['total'] = len(metas)
+    lstate["total"] = len(metas)
 
     def dgr_rebase(image_meta, terminate_event):
         try:
@@ -419,21 +419,21 @@ def images_rebase(
     state.record_image_finish(lstate)
 
     failed = []
-    for img, status in lstate['images'].items():
+    for img, status in lstate["images"].items():
         if status is not True:  # anything other than true is fail
             failed.append(img)
 
     if failed:
-        msg = "The following non-critical images failed to rebase:\n{}".format('\n'.join(failed))
+        msg = "The following non-critical images failed to rebase:\n{}".format("\n".join(failed))
         yellow_print(msg)
 
-    if lstate['status'] == state.STATE_FAIL or lstate['success'] == 0:
-        raise DoozerFatalError('One or more images failed. See state.yaml')
+    if lstate["status"] == state.STATE_FAIL or lstate["success"] == 0:
+        raise DoozerFatalError("One or more images failed. See state.yaml")
 
 
 @cli.command("images:foreach", short_help="Run a command relative to each distgit dir.")
 @click.argument("cmd", nargs=-1)
-@click.option("--message", "-m", metavar='MSG', help="Commit message for dist-git.", required=False)
+@click.option("--message", "-m", metavar="MSG", help="Commit message for dist-git.", required=False)
 @option_push
 @pass_runtime
 def images_foreach(runtime, cmd, message, push):
@@ -504,7 +504,7 @@ def images_foreach(runtime, cmd, message, push):
 
 @cli.command("images:revert", help="Revert a fixed number of commits in each distgit.")
 @click.argument("count", nargs=1)
-@click.option("--message", "-m", metavar='MSG', help="Commit message for dist-git.", default=None, required=False)
+@click.option("--message", "-m", metavar="MSG", help="Commit message for dist-git.", default=None, required=False)
 @option_push
 @pass_runtime
 def images_revert(runtime, count, message, push):
@@ -552,10 +552,10 @@ def images_revert(runtime, count, message, push):
 @cli.command("images:merge-branch", help="Copy content of source branch to target.")
 @click.option("--target", metavar="TARGET_BRANCH", help="Branch to populate from source branch.")
 @click.option(
-    '--allow-overwrite',
+    "--allow-overwrite",
     default=False,
     is_flag=True,
-    help='Merge in source branch even if Dockerfile already exists in distgit',
+    help="Merge in source branch even if Dockerfile already exists in distgit",
 )
 @option_push
 @pass_runtime
@@ -608,11 +608,11 @@ def print_build_metrics(runtime):
         runtime.logger.debug("Watch task info:\n {}\n\n".format(info))
         # Error unless all true
         if not (
-            'id' in info
-            and koji.TASK_STATES[info['state']] == 'CLOSED'
-            and _taskinfo_has_timestamp(info, 'create_ts')
-            and _taskinfo_has_timestamp(info, 'start_ts')
-            and _taskinfo_has_timestamp(info, 'completion_ts')
+            "id" in info
+            and koji.TASK_STATES[info["state"]] == "CLOSED"
+            and _taskinfo_has_timestamp(info, "create_ts")
+            and _taskinfo_has_timestamp(info, "start_ts")
+            and _taskinfo_has_timestamp(info, "completion_ts")
         ):
             runtime.logger.error("Discarding incomplete/error task info: {}".format(info))
             del watch_task_info[task_id]
@@ -632,16 +632,16 @@ def print_build_metrics(runtime):
 
     # Will be populated with earliest creation timestamp found in all the koji tasks; initialize with
     # infinity to support min() logic.
-    min_create_ts = float('inf')
+    min_create_ts = float("inf")
 
     # Will be populated with the latest completion timestamp found in all the koji tasks
     max_completion_ts = 0
 
     # Loop through all koji task infos and calculate min
     for task_id, info in watch_task_info.items():
-        create_ts = info['create_ts']
-        completion_ts = info['completion_ts']
-        start_ts = info['start_ts']
+        create_ts = info["create_ts"]
+        completion_ts = info["completion_ts"]
+        start_ts = info["start_ts"]
         min_create_ts = min(create_ts, min_create_ts)
         max_completion_ts = max(completion_ts, max_completion_ts)
         build_secs = completion_ts - start_ts
@@ -650,12 +650,12 @@ def print_build_metrics(runtime):
         aggregate_wait_secs += wait_secs
 
         runtime.logger.info(
-            'Task {} took {:.1f}m of active build and was waiting to start for {:.1f}m'.format(
+            "Task {} took {:.1f}m of active build and was waiting to start for {:.1f}m".format(
                 task_id, build_secs / 60.0, wait_secs / 60.0
             )
         )
-    runtime.logger.info('Aggregate time all builds spent building {:.1f}m'.format(aggregate_build_secs / 60.0))
-    runtime.logger.info('Aggregate time all builds spent waiting {:.1f}m'.format(aggregate_wait_secs / 60.0))
+    runtime.logger.info("Aggregate time all builds spent building {:.1f}m".format(aggregate_build_secs / 60.0))
+    runtime.logger.info("Aggregate time all builds spent waiting {:.1f}m".format(aggregate_wait_secs / 60.0))
 
     # If we successfully found timestamps in completed builds
     if watch_task_info:
@@ -667,8 +667,8 @@ def print_build_metrics(runtime):
         for ts in range(int(min_create_ts), int(max_completion_ts), 60):
             # See if any of the tasks were created but not started during this minute
             for info in watch_task_info.values():
-                create_ts = int(info['create_ts'])
-                start_ts = int(info['start_ts'])
+                create_ts = int(info["create_ts"])
+                start_ts = int(info["start_ts"])
                 # Was the build waiting to start during this minute?
                 if create_ts <= ts <= start_ts:
                     # Increment and exit; we don't want to count overlapping wait periods
@@ -690,7 +690,7 @@ def print_build_metrics(runtime):
             task_count=len(watch_task_info),
         )
     else:
-        runtime.logger.info('Unable to determine timestamps from collected info: {}'.format(watch_task_info))
+        runtime.logger.info("Unable to determine timestamps from collected info: {}".format(watch_task_info))
 
 
 @cli.command("images:build", short_help="Build images for the group.")
@@ -698,7 +698,7 @@ def print_build_metrics(runtime):
     "--repo-type",
     metavar="REPO_TYPE",
     envvar="OIT_IMAGES_REPO_TYPE",
-    default='',
+    default="",
     help="Repo type (e.g. signed, unsigned).",
 )
 @click.option(
@@ -709,7 +709,7 @@ def print_build_metrics(runtime):
     help="Custom repo URL to supply to brew build. If specified, defaults from --repo-type will be ignored.",
 )
 @click.option(
-    '--push-to-defaults', default=False, is_flag=True, help='Push to default registries when build completes.'
+    "--push-to-defaults", default=False, is_flag=True, help="Push to default registries when build completes."
 )
 @click.option(
     "--push-to",
@@ -718,7 +718,7 @@ def print_build_metrics(runtime):
     multiple=True,
     help="Specific registries to push to when image build completes.  [multiple]",
 )
-@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
+@click.option("--scratch", default=False, is_flag=True, help="Perform a scratch build.")
 @click.option(
     "--threads",
     default=1,
@@ -728,9 +728,9 @@ def print_build_metrics(runtime):
 @click.option(
     "--filter-by-os", default=None, metavar="ARCH", help="Specify an exact arch to push (golang name e.g. 'amd64')."
 )
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--build-retries', type=int, default=1, help='Number of build attempts for an osbs build')
-@click.option('--comment-on-pr', default=False, is_flag=True, help='Comment on PR after a build, if flag is enabled')
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
+@click.option("--build-retries", type=int, default=1, help="Number of build attempts for an osbs build")
+@click.option("--comment-on-pr", default=False, is_flag=True, help="Comment on PR after a build, if flag is enabled")
 @pass_runtime
 def images_build_image(
     runtime,
@@ -767,7 +767,7 @@ def images_build_image(
     # clarity in the logs.
     runtime.initialize(clone_distgits=True)
 
-    if runtime.assembly not in ['stream', 'test'] and comment_on_pr:
+    if runtime.assembly not in ["stream", "test"] and comment_on_pr:
         runtime.logger.warning("Commenting on PRs is only supported for stream/test assemblies")
         comment_on_pr = False
 
@@ -779,14 +779,14 @@ def images_build_image(
     lstate = runtime.state[cmd]  # get local convenience copy
 
     pre_step = None
-    if 'images:rebase' in runtime.state:
-        pre_step = runtime.state['images:rebase']
+    if "images:rebase" in runtime.state:
+        pre_step = runtime.state["images:rebase"]
 
     required = []
     failed = []
 
     if pre_step:
-        for img, status in pre_step['images'].items():
+        for img, status in pre_step["images"].items():
             if status is not True:  # anything other than true is fail
                 img_obj = runtime.image_map.get(img, Model())
                 failed.append(img)
@@ -795,23 +795,23 @@ def images_build_image(
 
     items = [m.distgit_repo() for m in runtime.ordered_image_metas()]
 
-    lstate['total'] = len(items)
+    lstate["total"] = len(items)
 
     if not items:
         runtime.logger.info("No images found. Check the arguments.")
         exit(1)
 
     if required:
-        msg = 'The following images failed during the previous step and are required:\n{}'.format('\n'.join(required))
-        lstate['status'] = state.STATE_FAIL
-        lstate['msg'] = msg
+        msg = "The following images failed during the previous step and are required:\n{}".format("\n".join(required))
+        lstate["status"] = state.STATE_FAIL
+        lstate["msg"] = msg
         raise DoozerFatalError(msg)
     elif failed:
         # filter out failed images and their children
         failed = runtime.filter_failed_image_trees(failed)
         yellow_print(
-            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format(
-                '\n'.join(failed)
+            "The following images failed the last step (or are children of failed images) and will be skipped:\n{}".format(
+                "\n".join(failed)
             )
         )
         # reload after fail filtered
@@ -894,11 +894,11 @@ def images_build_image(
 
 @cli.command("images:push", short_help="Push the most recently built images to mirrors.")
 @click.option(
-    '--tag',
+    "--tag",
     default=[],
     metavar="PUSH_TAG",
     multiple=True,
-    help='Push to registry using these tags instead of default set.',
+    help="Push to registry using these tags instead of default set.",
 )
 @click.option(
     "--version-release",
@@ -906,8 +906,8 @@ def images_build_image(
     metavar="VERSION-RELEASE",
     help="Specify an exact version to pull/push (e.g. 'v3.9.31-1' ; default is latest built).",
 )
-@click.option('--to-defaults', default=False, is_flag=True, help='Push to default registries.')
-@click.option('--late-only', default=False, is_flag=True, help='Push only "late" images.')
+@click.option("--to-defaults", default=False, is_flag=True, help="Push to default registries.")
+@click.option("--late-only", default=False, is_flag=True, help='Push only "late" images.')
 @click.option(
     "--to",
     default=[],
@@ -919,7 +919,7 @@ def images_build_image(
     "--filter-by-os", default=None, metavar="ARCH", help="Specify an exact arch to push (golang name e.g. 'amd64')."
 )
 @click.option(
-    '--dry-run', default=False, is_flag=True, help='Only print tag/push operations which would have occurred.'
+    "--dry-run", default=False, is_flag=True, help="Only print tag/push operations which would have occurred."
 )
 @pass_runtime
 def images_push(runtime, tag, version_release, to_defaults, late_only, to, filter_by_os, dry_run):
@@ -947,13 +947,13 @@ def images_push(runtime, tag, version_release, to_defaults, late_only, to, filte
     runtime.state[cmd] = dict(state.TEMPLATE_IMAGE)
     lstate = runtime.state[cmd]  # get local convenience copy
 
-    pre_step = runtime.state.get('images:build', None)
+    pre_step = runtime.state.get("images:build", None)
 
     required = []
     pre_failed = []
 
     if pre_step:
-        for img, status in pre_step['images'].items():
+        for img, status in pre_step["images"].items():
             if status is not True:  # anything other than true is fail
                 img_obj = runtime.image_map[img]
                 pre_failed.append(img)
@@ -963,24 +963,24 @@ def images_push(runtime, tag, version_release, to_defaults, late_only, to, filte
     version_release_tuple = None
 
     if version_release:
-        version_release_tuple = version_release.split('-')
+        version_release_tuple = version_release.split("-")
         click.echo(
-            'Setting up to push: version={} release={}'.format(version_release_tuple[0], version_release_tuple[1])
+            "Setting up to push: version={} release={}".format(version_release_tuple[0], version_release_tuple[1])
         )
 
     items = runtime.image_metas()
 
     if required:
-        msg = 'The following images failed during the previous step and are required:\n{}'.format('\n'.join(required))
-        lstate['status'] = state.STATE_FAIL
-        lstate['msg'] = msg
+        msg = "The following images failed during the previous step and are required:\n{}".format("\n".join(required))
+        lstate["status"] = state.STATE_FAIL
+        lstate["msg"] = msg
         raise DoozerFatalError(msg)
     elif pre_failed:
         # filter out failed images and their children
         failed = runtime.filter_failed_image_trees(pre_failed)
         yellow_print(
-            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format(
-                '\n'.join(failed)
+            "The following images failed the last step (or are children of failed images) and will be skipped:\n{}".format(
+                "\n".join(failed)
             )
         )
         # reload after fail filtered
@@ -1067,13 +1067,13 @@ def images_show_tree(runtime, imagename, yml):
 
     images = list(runtime.image_metas())
 
-    print_colors = ['green', 'cyan', 'blue', 'yellow', 'magenta']
+    print_colors = ["green", "cyan", "blue", "yellow", "magenta"]
 
     def name(image):
         return image.image_name if imagename else image.distgit_key
 
     if yml:
-        color_print(yaml.safe_dump(runtime.image_tree, indent=2, default_flow_style=False), 'cyan')
+        color_print(yaml.safe_dump(runtime.image_tree, indent=2, default_flow_style=False), "cyan")
     else:
 
         def print_branch(image, indent=0):
@@ -1081,12 +1081,12 @@ def images_show_tree(runtime, imagename, yml):
             for i in range(num_child):
                 child = image.children[i]
                 if i == (num_child - 1):
-                    tree_char = '└─'
+                    tree_char = "└─"
                 else:
-                    tree_char = '├─'
-                tree_char += '┐' if len(child.children) else ' '
+                    tree_char = "├─"
+                tree_char += "┐" if len(child.children) else " "
 
-                line = '{} {} {}'.format(('  ' * indent), tree_char, name(child))
+                line = "{} {} {}".format(("  " * indent), tree_char, name(child))
                 color_print(line, print_colors[(indent + 1) % len(print_colors)])
                 print_branch(child, indent + 1)
 
@@ -1111,7 +1111,7 @@ def images_show_ancestors(runtime, image_names):
     runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     all_ancestors = set()
-    image_name_list = [name.strip() for name in image_names.split(',')]
+    image_name_list = [name.strip() for name in image_names.split(",")]
 
     # Build a map of stream name -> image metadata
     stream_provided_by = {}
@@ -1144,16 +1144,16 @@ def images_show_ancestors(runtime, image_names):
             images_to_process.append(parent)
 
         # 2. Get parent from `from.image`
-        if current_image.config['from'].image is not Missing:
-            parent_image_name = current_image.config['from'].image
+        if current_image.config["from"].image is not Missing:
+            parent_image_name = current_image.config["from"].image
             parent_meta = image_name_map.get(parent_image_name)
             if parent_meta:
                 all_ancestors.add(parent_meta.distgit_key)
                 images_to_process.append(parent_meta)
 
         # 3. Get parents from `from.builder`
-        if current_image.config['from'].builder is not Missing:
-            for builder in current_image.config['from'].builder:
+        if current_image.config["from"].builder is not Missing:
+            for builder in current_image.config["from"].builder:
                 builder_meta = None
                 if builder.member:
                     builder_meta = runtime.image_map.get(builder.member)
@@ -1174,11 +1174,11 @@ def images_show_ancestors(runtime, image_names):
 @cli.command("images:print", short_help="Print data for each image metadata")
 @click.option("--short", default=False, is_flag=True, help="Suppress all output other than the data itself")
 @click.option(
-    '--show-non-release', default=False, is_flag=True, help='Include images which have been marked as non-release.'
+    "--show-non-release", default=False, is_flag=True, help="Include images which have been marked as non-release."
 )
-@click.option('--show-base', default=False, is_flag=True, help='Include images which have been marked as base images.')
+@click.option("--show-base", default=False, is_flag=True, help="Include images which have been marked as base images.")
 @click.option(
-    '--only-for-payload', default=False, is_flag=True, help='Filter out images that do not have "for_payload: true".'
+    "--only-for-payload", default=False, is_flag=True, help='Filter out images that do not have "for_payload: true".'
 )
 @click.option("--output", "-o", default=None, help="Write data to FILE instead of STDOUT")
 @click.option("--label", "-l", default=None, help="The label you want to print if it exists. Empty string if n/a")
@@ -1280,38 +1280,38 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         s = s.replace("{component}", image.get_component_name())
 
         source_url = image.config.content.source.git.url
-        s = s.replace("{upstream}", source_url or 'None')
+        s = s.replace("{upstream}", source_url or "None")
         if source_url:
             public_url = SourceResolver.get_public_upstream(source_url, runtime.group_config.public_upstreams)[0]
         else:
             public_url = None
-        s = s.replace("{upstream_public}", public_url or 'None')
+        s = s.replace("{upstream_public}", public_url or "None")
 
-        if '{jira_' in s:
+        if "{jira_" in s:
             jira_project, jira_component = image.get_jira_info()
-            s = s.replace('{jira_info}', 'jira[project={jira_project} component={jira_component}]')
-            s = s.replace('{jira_project}', jira_project)
-            s = s.replace('{jira_component}', jira_component)
+            s = s.replace("{jira_info}", "jira[project={jira_project} component={jira_component}]")
+            s = s.replace("{jira_project}", jira_project)
+            s = s.replace("{jira_component}", jira_component)
 
-        if '{owners}' in s:
+        if "{owners}" in s:
             owners = []
             if image.config.owners is not Missing:
                 owners = image.config.owners
-            s = s.replace("{owners}", 'owners[' + ' '.join(owners) + ']')
+            s = s.replace("{owners}", "owners[" + " ".join(owners) + "]")
 
-        if '{image}' in s:
+        if "{image}" in s:
             s = s.replace("{image}", get_dfp().labels["name"])
 
         if label is not None:
-            s = s.replace("{label}", get_dfp().labels.get(label, ''))
+            s = s.replace("{label}", get_dfp().labels.get(label, ""))
         s = s.replace("{lf}", "\n")
 
-        release_query_needed = '{release}' in s or '{pushes}' in s
-        version_query_needed = '{version}' in s or '{pushes}' in s
+        release_query_needed = "{release}" in s or "{pushes}" in s
+        version_query_needed = "{version}" in s or "{pushes}" in s
 
         # Since querying nvr takes time, check before executing replace
-        version = ''
-        release = ''
+        version = ""
+        release = ""
         if release_query_needed or version_query_needed:
             try:
                 _, version, release = image.get_latest_build_info()
@@ -1326,16 +1326,16 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         s = s.replace("{version}", version)
         s = s.replace("{release}", release)
 
-        pushes_formatted = ''
+        pushes_formatted = ""
         for push_name in image.get_default_push_names():
-            pushes_formatted += '\t{} : [{}]\n'.format(
-                push_name, ', '.join(image.get_default_push_tags(version, release))
+            pushes_formatted += "\t{} : [{}]\n".format(
+                push_name, ", ".join(image.get_default_push_tags(version, release))
             )
 
         if not pushes_formatted:
             pushes_formatted = "(None)"
 
-        s = s.replace("{pushes}", '{}\n'.format(pushes_formatted))
+        s = s.replace("{pushes}", "{}\n".format(pushes_formatted))
 
         if "{" in s:
             raise IOError("Unrecognized fields remaining in pattern: %s" % s)
@@ -1345,7 +1345,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
             click.echo(s)
         else:
             # Write to a file
-            with io.open(output, 'a', encoding="utf-8") as out_file:
+            with io.open(output, "a", encoding="utf-8") as out_file:
                 out_file.write("{}\n".format(s))
 
         count += 1
@@ -1393,7 +1393,7 @@ def distgit_config_template(url):
         "repo": {
             "type": type,
         },
-        "name": dfp.labels['name'],
+        "name": dfp.labels["name"],
         "from": {
             "image": dfp.baseimage,
         },
@@ -1412,12 +1412,12 @@ def distgit_config_template(url):
         config["repo"]["component"] = component
 
     managed_labels = [
-        'vendor',
-        'License',
-        'architecture',
-        'io.k8s.display-name',
-        'io.k8s.description',
-        'io.openshift.tags',
+        "vendor",
+        "License",
+        "architecture",
+        "io.k8s.display-name",
+        "io.k8s.description",
+        "io.openshift.tags",
     ]
 
     for ml in managed_labels:

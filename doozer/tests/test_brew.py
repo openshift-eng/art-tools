@@ -283,20 +283,20 @@ class TestBrew(unittest.TestCase):
         # all tasks are finished successfully
         MockWatcher.return_value.is_done.return_value = True
         MockWatcher.return_value.is_success.return_value = True
-        MockWatcher.return_value.info = {"state": koji.TASK_STATES['CLOSED']}
+        MockWatcher.return_value.info = {"state": koji.TASK_STATES["CLOSED"]}
         errors = brew.watch_tasks(brew_session, log_func, tasks, terminate_event)
         self.assertFalse(any(errors.values()))
 
         # all tasks fails with "some reason"
         MockWatcher.return_value.is_success.return_value = False
         MockWatcher.return_value.get_failure.return_value = "some reason"
-        MockWatcher.return_value.info = {"state": koji.TASK_STATES['FAILED']}
+        MockWatcher.return_value.info = {"state": koji.TASK_STATES["FAILED"]}
         errors = brew.watch_tasks(brew_session, log_func, tasks, terminate_event)
         self.assertTrue(all(map(lambda failure: failure == "some reason", errors.values())))
 
         # interrupted
         MockWatcher.return_value.is_done.return_value = False
-        MockWatcher.return_value.info = {"state": koji.TASK_STATES['OPEN']}
+        MockWatcher.return_value.info = {"state": koji.TASK_STATES["OPEN"]}
         terminate_event.wait.return_value = True
         brew_session.cancelTask.return_value = True
         errors = brew.watch_tasks(brew_session, log_func, tasks, terminate_event)

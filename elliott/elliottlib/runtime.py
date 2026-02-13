@@ -62,11 +62,11 @@ class Runtime(GroupRuntime):
         self.disable_gssapi = False
         self._logger = None
         self.use_jira = True
-        if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
+        if str(os.environ.get("USEJIRA")).lower() in ["false", "0"]:
             self.use_jira = False
         self._bug_trackers = {}
         self.brew_event: Optional[int] = None
-        self.assembly: Optional[str] = 'stream'
+        self.assembly: Optional[str] = "stream"
         self.assembly_basis_event: Optional[int] = None
         self.releases_config: Optional[Model] = None
         self.assembly_type = AssemblyTypes.STREAM
@@ -101,8 +101,8 @@ class Runtime(GroupRuntime):
         """
         Returns: (int(MAJOR), int(MINOR)) if the vars are defined in the group config.
         """
-        major = int(self.group_config.vars['MAJOR'])
-        minor = int(self.group_config.vars['MINOR'])
+        major = int(self.group_config.vars["MAJOR"])
+        minor = int(self.group_config.vars["MINOR"])
         return major, minor
 
     def get_major_minor_patch(self):
@@ -122,7 +122,7 @@ class Runtime(GroupRuntime):
             )
 
     def get_default_advisories(self):
-        return self.group_config.get('advisories', {})
+        return self.group_config.get("advisories", {})
 
     @property
     def group_config(self):
@@ -135,7 +135,7 @@ class Runtime(GroupRuntime):
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+            replace_vars["runtime_assembly"] = self.assembly
         return replace_vars
 
     def get_group_config(self):
@@ -147,7 +147,7 @@ class Runtime(GroupRuntime):
 
     def initialize(
         self,
-        mode='none',
+        mode="none",
         no_group=False,
         disabled=None,
         build_system: str = None,
@@ -186,8 +186,8 @@ class Runtime(GroupRuntime):
         if no_group:
             return  # nothing past here should be run without a group
 
-        if '@' in self.group:
-            self.group, self.group_commitish = self.group.split('@', 1)
+        if "@" in self.group:
+            self.group, self.group_commitish = self.group.split("@", 1)
         elif self.group_commitish is None:
             self.group_commitish = self.group
 
@@ -205,9 +205,9 @@ class Runtime(GroupRuntime):
         self.resolve_shipment_metadata(strict=with_shipment)
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
-            if re.fullmatch(r'[\w.]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
+            if re.fullmatch(r"[\w.]+", self.assembly) is None or self.assembly[0] == "." or self.assembly[-1] == ".":
                 raise ValueError(
-                    'Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).'
+                    "Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.)."
                 )
         else:
             # If assemblies are not enabled for the group,
@@ -232,18 +232,18 @@ class Runtime(GroupRuntime):
             # split csv values
             result = []
             for n in names:
-                result.append([x for x in n.replace(' ', ',').split(',') if x != ''])
+                result.append([x for x in n.replace(" ", ",").split(",") if x != ""])
             # flatten result and remove dupes
             return list(set([y for x in result for y in x]))
 
         def filter_wip(n, d):
-            return d.get('mode', 'enabled') in ['wip', 'enabled']
+            return d.get("mode", "enabled") in ["wip", "enabled"]
 
         def filter_enabled(n, d):
-            return d.get('mode', 'enabled') == 'enabled'
+            return d.get("mode", "enabled") == "enabled"
 
         def filter_disabled(n, d):
-            return d.get('mode', 'enabled') in ['enabled', 'disabled']
+            return d.get("mode", "enabled") in ["enabled", "disabled"]
 
         exclude_keys = flatten_list(self.exclude)
         image_ex = list(exclude_keys)
@@ -263,15 +263,15 @@ class Runtime(GroupRuntime):
 
         replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
         if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+            replace_vars["runtime_assembly"] = self.assembly
         # release_name variable is currently only used in microshift rpm config to allow Doozer to pass release name to a modification script.
         # Elliott doesn't need to care about it. Set an arbitrary value until it becomes necessary.
-        replace_vars['release_name'] = '(irrelevant)'
+        replace_vars["release_name"] = "(irrelevant)"
 
         image_data = {}
-        if mode in ['images', 'both']:
+        if mode in ["images", "both"]:
             image_data = self.gitdata.load_data(
-                path='images',
+                path="images",
                 keys=image_keys,
                 exclude=image_ex,
                 filter_funcs=None if len(image_keys) else filter_func,
@@ -284,9 +284,9 @@ class Runtime(GroupRuntime):
                     "No image metadata directories found for given options within: {}".format(self.group_dir)
                 )
 
-        if mode in ['rpms', 'both']:
+        if mode in ["rpms", "both"]:
             rpm_data = self.gitdata.load_data(
-                path='rpms',
+                path="rpms",
                 keys=rpm_keys,
                 exclude=rpm_ex,
                 replace_vars=replace_vars,
@@ -303,14 +303,14 @@ class Runtime(GroupRuntime):
         missed_include = set(image_keys) - set(image_data.keys())
         if len(missed_include) > 0:
             raise ElliottFatalError(
-                'The following images or rpms were either missing or filtered out: {}'.format(', '.join(missed_include))
+                "The following images or rpms were either missing or filtered out: {}".format(", ".join(missed_include))
             )
 
         strict_mode = True
         if (
             not self.assembly
-            or self.assembly in ['stream', 'test', 'microshift']
-            or not self.group.startswith('openshift-')
+            or self.assembly in ["stream", "test", "microshift"]
+            or not self.group.startswith("openshift-")
         ):
             strict_mode = False
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
@@ -320,7 +320,7 @@ class Runtime(GroupRuntime):
         if self.assembly_basis_event:
             if self.brew_event:
                 raise ElliottFatalError(
-                    f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
+                    f"Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time."
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
             if isinstance(self.assembly_basis_event, int):
@@ -330,11 +330,11 @@ class Runtime(GroupRuntime):
             else:
                 # The assembly basis event for Konflux is a timestamp, e.g. 2025-04-15 13:28:09
                 # Use koji.getLatestEvent() to get the latest Brew event that came before the assembly Konflux event
-                self._logger.info('Computed assembly basis event: %s', self.assembly_basis_event)
+                self._logger.info("Computed assembly basis event: %s", self.assembly_basis_event)
                 with self.shared_koji_client_session() as koji_api:
                     self.brew_event = brew_event_from_datetime(self.assembly_basis_event, koji_api)
 
-            self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
+            self._logger.info(f"Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}")
 
         self.initialized = True
 
@@ -347,9 +347,9 @@ class Runtime(GroupRuntime):
     def get_bug_tracker(self, bug_tracker_type) -> BugTracker:
         if bug_tracker_type in self._bug_trackers:
             return self._bug_trackers[bug_tracker_type]
-        if bug_tracker_type == 'bugzilla':
+        if bug_tracker_type == "bugzilla":
             bug_tracker_cls = BugzillaBugTracker
-        elif bug_tracker_type == 'jira':
+        elif bug_tracker_type == "jira":
             bug_tracker_cls = JIRABugTracker
         self._bug_trackers[bug_tracker_type] = bug_tracker_cls(bug_tracker_cls.get_config(self))
         return self._bug_trackers[bug_tracker_type]
@@ -381,10 +381,10 @@ class Runtime(GroupRuntime):
         if not data_obj:
             replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
             if self.assembly:
-                replace_vars['runtime_assembly'] = self.assembly
-            data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
+                replace_vars["runtime_assembly"] = self.assembly
+            data_obj = self.gitdata.load_data(path="images", key=distgit_name, replace_vars=replace_vars)
             if not data_obj:
-                raise ElliottFatalError('Unable to resovle image metadata for {}'.format(distgit_name))
+                raise ElliottFatalError("Unable to resovle image metadata for {}".format(distgit_name))
 
         meta = ImageMetadata(self, data_obj)
         if add:
@@ -437,8 +437,8 @@ class Runtime(GroupRuntime):
 
         if self.shipment_path:
             shipment_path, commitish = self.shipment_path, "main"
-            if '@' in self.shipment_path:
-                shipment_path, commitish = self.shipment_path.split('@')
+            if "@" in self.shipment_path:
+                shipment_path, commitish = self.shipment_path.split("@")
 
             try:
                 self.shipment_gitdata = gitdata.GitData(
@@ -454,15 +454,15 @@ class Runtime(GroupRuntime):
 
     def get_errata_config(self):
         replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='erratatool', default={}, replace_vars=replace_vars)
+        return self._build_data_loader.load_config(key="erratatool", default={}, replace_vars=replace_vars)
 
     def get_bug_config(self):
         replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='bug', default={}, replace_vars=replace_vars)
+        return self._build_data_loader.load_config(key="bug", default={}, replace_vars=replace_vars)
 
     def get_streams_config(self):
         replace_vars = self.get_replace_vars(self.group_config)
-        return self._build_data_loader.load_config(key='streams', default={}, replace_vars=replace_vars)
+        return self._build_data_loader.load_config(key="streams", default={}, replace_vars=replace_vars)
 
     def is_version_in_lifecycle_phase(self, phase: str, version: str = None) -> bool:
         """
@@ -473,9 +473,9 @@ class Runtime(GroupRuntime):
         """
         major, minor = self.get_major_minor()
         if version and version != f"{major}.{minor}":
-            out = self.get_file_from_branch(f"openshift-{version}", 'group.yml')
+            out = self.get_file_from_branch(f"openshift-{version}", "group.yml")
             next_group_config = yaml.safe_load(out)
-            actual_phase = next_group_config.get('software_lifecycle', {}).get('phase', None)
+            actual_phase = next_group_config.get("software_lifecycle", {}).get("phase", None)
         else:
             actual_phase = self.group_config.software_lifecycle.phase
         return actual_phase == phase

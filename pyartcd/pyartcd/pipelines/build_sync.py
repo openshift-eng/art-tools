@@ -24,7 +24,7 @@ from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
 
 TRACER = trace.get_tracer(__name__)
-GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
+GEN_PAYLOAD_ARTIFACTS_OUT_DIR = "gen-payload-artifacts"
 
 
 class BuildSyncPipeline:
@@ -59,7 +59,7 @@ class BuildSyncPipeline:
     ):
         self.runtime = runtime
         self.version = version
-        self.group = f'openshift-{version}'
+        self.group = f"openshift-{version}"
         self.assembly = assembly
         self.publish = publish
         self.data_path = data_path
@@ -67,25 +67,25 @@ class BuildSyncPipeline:
         self.retrigger_current_nightly = retrigger_current_nightly
         self.doozer_data_gitref = doozer_data_gitref
         self.images = images
-        self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
+        self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(",", " ").split()
         self.supported_arches = []
         self.skip_multiarch_payload = skip_multiarch_payload
         self.embargo_permit_ack = embargo_permit_ack
         self.build_system = build_system
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
-        self.fail_count_name = f'count:build-sync-failure:{build_system}:{assembly}:{version}'
+        self.fail_count_name = f"count:build-sync-failure:{build_system}:{assembly}:{version}"
         self.job_run = get_build_url()
 
         self.slack_client = self.runtime.new_slack_client()
-        self.slack_client.bind_channel(f'openshift-{self.version}')
+        self.slack_client.bind_channel(f"openshift-{self.version}")
 
         # Imagestream name for Brew builds is 4.y-art-latest
         # For konflux, it is 4.y-konflux-art-latest
         self.is_base_name = (
-            f'{self.version}-art-latest'
-            if build_system == 'brew' or uses_konflux_imagestream_override(self.version)
-            else f'{self.version}-konflux-art-latest'
+            f"{self.version}-art-latest"
+            if build_system == "brew" or uses_konflux_imagestream_override(self.version)
+            else f"{self.version}-konflux-art-latest"
         )
 
     @start_as_current_span_async(TRACER, "build-sync.comment-on-assembly-pr")
@@ -101,7 +101,7 @@ class BuildSyncPipeline:
         try:
             _, _, repository = split_git_url(self.data_path)
             branch = self.doozer_data_gitref
-            token = os.environ.get('GITHUB_TOKEN')
+            token = os.environ.get("GITHUB_TOKEN")
 
             pattern = r"github\.com/([^/]+)/"
             match = re.search(pattern, self.data_path)
@@ -154,19 +154,19 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.build_system", self.build_system)
 
         self.supported_arches = await branch_arches(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
             build_system=self.build_system,
             data_path=self.data_path,
             doozer_data_gitref=self.doozer_data_gitref,
         )
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
-        self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
+        self.logger.info("Supported arches for this build: %s", ", ".join(self.supported_arches))
 
-        if self.build_system == 'konflux':
-            jenkins.update_title(' [KONFLUX]')
+        if self.build_system == "konflux":
+            jenkins.update_title(" [KONFLUX]")
 
-        if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
+        if self.assembly not in ("stream", "test") and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
@@ -180,11 +180,11 @@ class BuildSyncPipeline:
             return
 
         # Backup imagestreams
-        self.logger.info('Backup all imagestreams...')
+        self.logger.info("Backup all imagestreams...")
         await self._backup_all_imagestreams()
 
         # Update nightly imagestreams
-        self.logger.info('Update nightly imagestreams...')
+        self.logger.info("Update nightly imagestreams...")
         await self._update_nightly_imagestreams()
 
     @start_as_current_span_async(TRACER, "build-sync.handle-success")
@@ -193,7 +193,7 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.assembly", self.assembly)
         current_span.set_attribute("build-sync.build_system", self.build_system)
 
-        if self.assembly != 'stream':
+        if self.assembly != "stream":
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
@@ -202,7 +202,7 @@ class BuildSyncPipeline:
             )
 
         #  All good: delete fail counter
-        if self.assembly == 'stream' and not self.runtime.dry_run:
+        if self.assembly == "stream" and not self.runtime.dry_run:
             current_count = await redis.get_value(self.fail_count_name)
             if current_count and int(current_count) > 1:
                 await self.slack_client.say(
@@ -224,11 +224,11 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.version", self.version)
         current_span.set_attribute("build-sync.assembly", self.assembly)
 
-        if self.assembly != 'stream':
-            raise RuntimeError('Cannot use with assembly other than stream. Exiting.')
+        if self.assembly != "stream":
+            raise RuntimeError("Cannot use with assembly other than stream. Exiting.")
 
         if self.runtime.dry_run:
-            self.logger.info('Would have triggered new release cut in release controllers.')
+            self.logger.info("Would have triggered new release cut in release controllers.")
             return
 
         major, minor = map(int, self.version.split(".", maxsplit=1))
@@ -240,33 +240,33 @@ class BuildSyncPipeline:
 
         async def _retrigger_arch(arch: str):
             self.logger.info(
-                'Triggering %s release controller to cut new release using previously synced builds...', arch
+                "Triggering %s release controller to cut new release using previously synced builds...", arch
             )
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi9 '
-                f'{self.is_base_name}{suffix}:trigger-release-controller --import-mode=PreserveOriginal'
+                f"oc --kubeconfig {os.environ['KUBECONFIG']} -n ocp{suffix} tag registry.access.redhat.com/ubi9 "
+                f"{self.is_base_name}{suffix}:trigger-release-controller --import-mode=PreserveOriginal"
             )
             (
                 _,
                 out,
                 _,
             ) = await exectools.cmd_gather_async(cmd)
-            self.logger.info('oc output: %s', out)
+            self.logger.info("oc output: %s", out)
 
-            self.logger.info('Sleeping so that release controller has time to react...')
+            self.logger.info("Sleeping so that release controller has time to react...")
             await asyncio.sleep(120)
 
             cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag '
-                f'{self.is_base_name}{suffix}:trigger-release-controller -d'
+                f"oc --kubeconfig {os.environ['KUBECONFIG']} -n ocp{suffix} tag "
+                f"{self.is_base_name}{suffix}:trigger-release-controller -d"
             )
             (
                 _,
                 out,
                 _,
             ) = await exectools.cmd_gather_async(cmd)
-            self.logger.info('oc output: %s', out)
+            self.logger.info("oc output: %s", out)
 
         await asyncio.gather(*(_retrigger_arch(arch) for arch in arches))
 
@@ -283,33 +283,33 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
 
         if self.runtime.dry_run:
-            self.logger.info('Would have backed up all imagestreams.')
+            self.logger.info("Would have backed up all imagestreams.")
             return
 
         @limit_concurrency(500)
         async def backup_namespace(ns):
-            self.logger.info('Running backup for namespace %s', ns)
+            self.logger.info("Running backup for namespace %s", ns)
 
             # Backup the imagestream
             _, stdout, _ = await exectools.cmd_gather_async(
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get is -n {ns} -o yaml'
+                f"oc --kubeconfig {os.environ['KUBECONFIG']} get is -n {ns} -o yaml"
             )
-            with open(f'{ns}.backup.yaml', 'w') as f:
+            with open(f"{ns}.backup.yaml", "w") as f:
                 f.write(stdout)
 
             # Backup the upgrade graph for the releases
             _, stdout, _ = await exectools.cmd_gather_async(
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get secret/release-upgrade-graph -n {ns} -o yaml'
+                f"oc --kubeconfig {os.environ['KUBECONFIG']} get secret/release-upgrade-graph -n {ns} -o yaml"
             )
-            with open(f'{ns}.release-upgrade-graph.backup.yaml', 'w') as f:
+            with open(f"{ns}.release-upgrade-graph.backup.yaml", "w") as f:
                 f.write(stdout)
 
-            self.logger.info('Backup completed for namespace %s', ns)
+            self.logger.info("Backup completed for namespace %s", ns)
 
         namespaces = []
         for arch in self.supported_arches:
-            namespaces.append(f'ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}')
-            namespaces.append(f'ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}-priv')
+            namespaces.append(f"ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}")
+            namespaces.append(f"ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}-priv")
 
         tasks = []
         for namespace in namespaces:
@@ -317,16 +317,16 @@ class BuildSyncPipeline:
         await asyncio.gather(*tasks)
 
         # Create tar archive
-        self.logger.info('Creating backup archives')
-        await exectools.cmd_assert_async("lzma -9 " + " ".join(glob.glob('*.backup.yaml')))
-        cmd = ['tar', 'cvf', 'app.ci-backup.tgz', '--lzma']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
+        self.logger.info("Creating backup archives")
+        await exectools.cmd_assert_async("lzma -9 " + " ".join(glob.glob("*.backup.yaml")))
+        cmd = ["tar", "cvf", "app.ci-backup.tgz", "--lzma"]
+        cmd.extend(glob.glob("*.backup.yaml.lzma"))
         await exectools.cmd_assert_async(cmd)
 
         # Remove *.yaml
-        self.logger.debug('Removing yaml files')
-        cmd = ['rm']
-        cmd.extend(glob.glob('*.backup.yaml.lzma'))
+        self.logger.debug("Removing yaml files")
+        cmd = ["rm"]
+        cmd.extend(glob.glob("*.backup.yaml.lzma"))
         await exectools.cmd_assert_async(cmd)
 
     @start_as_current_span_async(TRACER, "build-sync.tag-into-ci-imagestream")
@@ -340,17 +340,17 @@ class BuildSyncPipeline:
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
         cmd = (
-            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
-            f'get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
+            f"oc --kubeconfig {os.environ['KUBECONFIG']} -n ocp{arch_suffix} "
+            f"get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json"
         )
         _, out, _ = await exectools.cmd_gather_async(cmd)
-        tag_pullspec = json.loads(out)['tag']['from']['name']
+        tag_pullspec = json.loads(out)["tag"]["from"]["name"]
 
         # tag the pull spec into the CI imagestream (is/4.x) with the same tag name.
-        self.logger.info('Tagging ocp%s/%s:%s with %s', arch_suffix, self.version, tag, tag_pullspec)
+        self.logger.info("Tagging ocp%s/%s:%s with %s", arch_suffix, self.version, tag, tag_pullspec)
         cmd = (
-            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
-            f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
+            f"oc --kubeconfig {os.environ['KUBECONFIG']} -n ocp{arch_suffix} "
+            f"tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal"
         )
 
         if self.runtime.dry_run:
@@ -360,10 +360,10 @@ class BuildSyncPipeline:
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
-            self.logger.info('Tagging ocp-private/%s-priv:%s with %s', self.version, tag, tag_pullspec)
+            self.logger.info("Tagging ocp-private/%s-priv:%s with %s", self.version, tag, tag_pullspec)
             cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private '
-                f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
+                f"oc --kubeconfig {os.environ['KUBECONFIG']} -n ocp-private "
+                f"tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal"
             )
 
             if self.runtime.dry_run:
@@ -385,12 +385,12 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.supported_arches_count", len(self.supported_arches))
 
         # Only for applicable versions
-        major, minor = [int(n) for n in self.version.split('.')]
+        major, minor = [int(n) for n in self.version.split(".")]
         if major <= 4 and minor < 12:
             return
 
         # Only for stream assembly and openshift-{MAJOR}.{MINOR} branches
-        if not self.assembly == 'stream' or self.doozer_data_gitref:
+        if not self.assembly == "stream" or self.doozer_data_gitref:
             return
 
         try:
@@ -404,7 +404,7 @@ class BuildSyncPipeline:
             await asyncio.gather(*tasks)
 
         except (ChildProcessError, KeyError) as e:
-            await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
+            await self.slack_client.say(f"Unable to mirror CoreOS images to CI for {self.version}: {e}")
 
     @start_as_current_span_async(TRACER, "build-sync.update-nightly-imagestreams")
     async def _update_nightly_imagestreams(self):
@@ -420,41 +420,41 @@ class BuildSyncPipeline:
 
         jenkins.init_jenkins()
 
-        self.logger.info('Generating and applying imagestream updates')
-        mirror_working = 'MIRROR_working'
+        self.logger.info("Generating and applying imagestream updates")
+        mirror_working = "MIRROR_working"
 
         # Run release:gen-payload
-        cmd = ['doozer', f'--assembly={self.assembly}']
+        cmd = ["doozer", f"--assembly={self.assembly}"]
         if self.images:
-            cmd.append(f'--images={self.images}')
+            cmd.append(f"--images={self.images}")
         cmd.extend(
             [
-                f'--working-dir={mirror_working}',
-                f'--data-path={self.data_path}',
+                f"--working-dir={mirror_working}",
+                f"--data-path={self.data_path}",
             ]
         )
-        group_param = f'--group=openshift-{self.version}'
+        group_param = f"--group=openshift-{self.version}"
         if self.doozer_data_gitref:
-            group_param += f'@{self.doozer_data_gitref}'
+            group_param += f"@{self.doozer_data_gitref}"
         cmd.append(group_param)
-        cmd.append(f'--build-system={self.build_system}')
+        cmd.append(f"--build-system={self.build_system}")
         cmd.extend(
             [
-                'release:gen-payload',
-                f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
-                '--apply',
+                "release:gen-payload",
+                f"--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}",
+                "--apply",
             ]
         )
         if self.emergency_ignore_issues:
-            cmd.append('--emergency-ignore-issues')
+            cmd.append("--emergency-ignore-issues")
         if self.embargo_permit_ack:
-            cmd.append('--embargo-permit-ack')
+            cmd.append("--embargo-permit-ack")
         if not self.skip_multiarch_payload:
-            cmd.append('--apply-multi-arch')
+            cmd.append("--apply-multi-arch")
         if self.exclude_arches:
-            cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
+            cmd.extend([f"--exclude-arch={arch}" for arch in self.exclude_arches])
         if self.runtime.dry_run:
-            cmd.extend(['--skip-gc-tagging', '--moist-run'])
+            cmd.extend(["--skip-gc-tagging", "--moist-run"])
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
         # Populate CI imagestreams
@@ -463,7 +463,7 @@ class BuildSyncPipeline:
         if self.publish:
             # Run 'oc adm release new' in parallel
             tasks = []
-            for filename in glob.glob(f'{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/updated-tags-for.*.yaml'):
+            for filename in glob.glob(f"{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/updated-tags-for.*.yaml"):
                 tasks.append(self._publish(filename))
             await asyncio.gather(*tasks)
 
@@ -476,34 +476,34 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.filename", filename)
 
         with open(filename) as f:
-            meta = yaml.safe_load(f.read())['metadata']
-            namespace = meta['namespace']
-            reponame = namespace.replace('ocp', 'release')
-            name = f'{self.version}.0-{self.assembly}'  # must be semver
-            image = f'registry.ci.openshift.org/{namespace}/{reponame}:{name}'
+            meta = yaml.safe_load(f.read())["metadata"]
+            namespace = meta["namespace"]
+            reponame = namespace.replace("ocp", "release")
+            name = f"{self.version}.0-{self.assembly}"  # must be semver
+            image = f"registry.ci.openshift.org/{namespace}/{reponame}:{name}"
             current_span.set_attribute("build-sync.namespace", namespace)
             current_span.set_attribute("build-sync.image", image)
 
             # Build new Openshift release image
             cmd = (
-                f'oc adm release new --to-image={image} --name {name} '
-                f'--reference-mode=source -n {namespace} --from-image-stream {meta["name"]}'
+                f"oc adm release new --to-image={image} --name {name} "
+                f"--reference-mode=source -n {namespace} --from-image-stream {meta['name']}"
             )
 
             if self.runtime.dry_run:
-                self.logger.info('Would have created the release image as follows: %s', cmd)
+                self.logger.info("Would have created the release image as follows: %s", cmd)
                 return
 
             # Retry up to 3 times, to get past flakes
             for attempt in range(3):
                 try:
                     await exectools.cmd_assert_async(cmd)
-                    self.logger.info('Published image %s', image)
+                    self.logger.info("Published image %s", image)
                     break  # command succeeded
                 except ChildProcessError as e:
                     if attempt == 2:
                         raise
-                    self.logger.info('Command failed: retrying, %s', e)
+                    self.logger.info("Command failed: retrying, %s", e)
                     await asyncio.sleep(5)
 
     def get_unpermissable_assembly_issues(self) -> dict[str, dict[any, any]]:
@@ -512,19 +512,19 @@ class BuildSyncPipeline:
         """
 
         # path to local assembly_report.yml
-        file_path = f'{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml'
+        file_path = f"{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml"
 
         # Open and load the YAML file
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             data = yaml.safe_load(file)
 
-        filtered_issues = {'assembly_issues': {}}
+        filtered_issues = {"assembly_issues": {}}
 
-        if 'assembly_issues' in data:
-            for component, issues in data['assembly_issues'].items():
-                filtered_data = [issue for issue in issues if not issue.get('permitted', False)]
+        if "assembly_issues" in data:
+            for component, issues in data["assembly_issues"].items():
+                filtered_data = [issue for issue in issues if not issue.get("permitted", False)]
                 if filtered_data:  # Add component only if there are valid issues
-                    filtered_issues['assembly_issues'][component] = filtered_data
+                    filtered_issues["assembly_issues"][component] = filtered_data
 
             return filtered_issues
 
@@ -535,7 +535,7 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.build_system", self.build_system)
         current_span.set_attribute("build-sync.version", self.version)
 
-        if self.assembly != 'stream':
+        if self.assembly != "stream":
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
                 f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> "
@@ -547,21 +547,21 @@ class BuildSyncPipeline:
         if current_count is None:  # does not yet exist in Redis
             current_count = 0
         fail_count = int(current_count) + 1
-        self.runtime.logger.info('Failure count for %s: %s', self.version, fail_count)
+        self.runtime.logger.info("Failure count for %s: %s", self.version, fail_count)
 
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
 
         unpermissable_issues = self.get_unpermissable_assembly_issues()
-        if unpermissable_issues['assembly_issues']:
+        if unpermissable_issues["assembly_issues"]:
             report = yaml.safe_dump(unpermissable_issues)
-            jenkins.update_title(' [UNVIABLE]')
+            jenkins.update_title(" [UNVIABLE]")
         else:
             report = "Unknown Failure. Please investigate"
-            jenkins.update_title(' [FAILURE]')
+            jenkins.update_title(" [FAILURE]")
 
         # Less than 2 failures, assembly != stream: just break the build
-        if fail_count < 2 or self.assembly != 'stream':
+        if fail_count < 2 or self.assembly != "stream":
             raise
 
         # More than 2 failures: we need to notify ART and #forum-release before breaking the build
@@ -585,14 +585,14 @@ class BuildSyncPipeline:
 
         # Spam ourselves a little more often than forum-ocp-release
         if fail_count % art_notify_frequency == 0:
-            await self.notify_failures(f'openshift-{self.version}', report, fail_count)
+            await self.notify_failures(f"openshift-{self.version}", report, fail_count)
 
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
-            phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
-            if phase == SoftwareLifecyclePhase.RELEASE and self.build_system == 'brew':
+            phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config["software_lifecycle"]["phase"])
+            if phase == SoftwareLifecyclePhase.RELEASE and self.build_system == "brew":
                 # TODO 'brew' condition must be removed once Konflux is the primary build system
-                await self.notify_failures('#forum-ocp-release', report, fail_count)
+                await self.notify_failures("#forum-ocp-release", report, fail_count)
 
     @start_as_current_span_async(TRACER, "build-sync.notify-failures")
     async def notify_failures(self, channel, assembly_report, fail_count):
@@ -604,16 +604,16 @@ class BuildSyncPipeline:
         current_span.set_attribute("build-sync.build_system", self.build_system)
 
         msg = (
-            f'Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} '
-            f'(assembly `{self.assembly}`) {fail_count} times.'
+            f"Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} "
+            f"(assembly `{self.assembly}`) {fail_count} times."
         )
         self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
-        await self.slack_client.say(f'```{assembly_report}```', slack_thread)
+        await self.slack_client.say(f"```{assembly_report}```", slack_thread)
 
 
-@cli.command('build-sync')
+@cli.command("build-sync")
 @click.option("--version", required=True, help="The OCP version to sync")
 @click.option("--assembly", required=True, default="stream", help="The name of an assembly to sync")
 @click.option("--publish", is_flag=True, help="Publish release image(s) directly to registry.ci for testing")
@@ -657,7 +657,7 @@ class BuildSyncPipeline:
     help="To permit embargoed builds to be promoted after embargo lift",
 )
 @click.option(
-    "--build-system", required=False, default='brew', help="Whether a Brew payload or a Konflux one has to be produced"
+    "--build-system", required=False, default="brew", help="Whether a Brew payload or a Konflux one has to be produced"
 )
 @pass_runtime
 @click_coroutine
@@ -694,14 +694,14 @@ async def build_sync(
         build_system=build_system,
     )
 
-    if build_system == 'brew':
+    if build_system == "brew":
         lock = locks.Lock.BUILD_SYNC
         lock_name = locks.Lock.BUILD_SYNC.value.format(version=version)
-    elif build_system == 'konflux':
+    elif build_system == "konflux":
         lock = locks.Lock.BUILD_SYNC_KONFLUX
         lock_name = locks.Lock.BUILD_SYNC_KONFLUX.value.format(version=version)
     else:
-        raise ValueError(f'Invalid build system: {build_system}')
+        raise ValueError(f"Invalid build system: {build_system}")
 
     span = trace.get_current_span()
     span.set_attributes(
@@ -713,11 +713,11 @@ async def build_sync(
     )
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
-        if assembly == 'stream':
+        if assembly == "stream":
             # https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
             # will return job/aos-cd-builds/job/build%252Fbuild-sync/40333
-            lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
-            runtime.logger.info('Lock identifier: %s', lock_identifier)
+            lock_identifier = get_build_url().replace(f"{constants.JENKINS_UI_URL}/", "")
+            runtime.logger.info("Lock identifier: %s", lock_identifier)
 
             await locks.run_with_lock(
                 coro=pipeline.run(),
@@ -733,12 +733,12 @@ async def build_sync(
 
     except (RuntimeError, ChildProcessError):
         # Only for 'stream' assembly, track failure to enable future notifications
-        if assembly == 'stream' and not runtime.dry_run:
+        if assembly == "stream" and not runtime.dry_run:
             await pipeline.handle_failure()
 
         # Re-reise the exception to make the job as failed
         raise
 
     except RedisError as e:
-        runtime.logger.error('Encountered error when updating the fail counter: %s', e)
+        runtime.logger.error("Encountered error when updating the fail counter: %s", e)
         raise

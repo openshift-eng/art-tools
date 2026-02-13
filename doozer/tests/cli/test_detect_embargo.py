@@ -127,7 +127,7 @@ class TestDetectEmbargoCli(TestCase):
         self.assertListEqual(actual, expected)
 
     @patch("builtins.exit")
-    @patch('sys.stdout', new_callable=io.StringIO)
+    @patch("sys.stdout", new_callable=io.StringIO)
     def test_print_result_and_exit(self, mock_stdout, mock_exit):
         embargoed_builds = [{"id": 1}, {"id": 2}]
         embargoed_pullspecs = ["a", "b"]

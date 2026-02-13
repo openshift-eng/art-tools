@@ -88,7 +88,7 @@ class AssemblyIssue:
         :param code: A code that that classifies the issue. Assembly definitions can optionally permit some of these codes.
         """
         self.msg: str = msg
-        self.component: str = component or 'general'
+        self.component: str = component or "general"
         self.code = code
 
     def __str__(self):
@@ -113,12 +113,12 @@ def assembly_type(releases_config: Model, assembly: typing.Optional[str]) -> Ass
     if not target_assembly:
         return AssemblyTypes.STREAM
 
-    str_type = assembly_config_struct(releases_config, assembly, 'type', 'standard')
+    str_type = assembly_config_struct(releases_config, assembly, "type", "standard")
     for assem_type in AssemblyTypes:
         if str_type == assem_type.value:
             return assem_type
 
-    raise ValueError(f'Unknown assembly type: {str_type}')
+    raise ValueError(f"Unknown assembly type: {str_type}")
 
 
 def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str], key: str, default):
@@ -138,7 +138,7 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
     elif isinstance(default, (bool, int, float, str, bytes, type(None))):
         return key_struct
     else:
-        raise ValueError(f'Unknown how to derive for default type: {type(default)}')
+        raise ValueError(f"Unknown how to derive for default type: {type(default)}")
 
 
 def _check_recursion(releases_config: dict, assembly: str):
@@ -151,7 +151,7 @@ def _check_recursion(releases_config: dict, assembly: str):
     next_assembly = assembly
     while next_assembly and next_assembly in releases:
         if next_assembly in found:
-            raise ValueError(f'Infinite recursion in {assembly} detected; {next_assembly} detected twice in chain')
+            raise ValueError(f"Infinite recursion in {assembly} detected; {next_assembly} detected twice in chain")
         found.add(next_assembly)
         target_assembly = releases.get(next_assembly, {}).get("assembly")
         next_assembly = target_assembly.get("basis", {}).get("assembly")
@@ -194,14 +194,14 @@ def _merger(a, b):
         if not isinstance(c, dict):
             return a
         for k, v in a.items():
-            if k.endswith('!'):  # full dominant key
+            if k.endswith("!"):  # full dominant key
                 k = k[:-1]
                 c[k] = v
-            elif k.endswith('?'):  # default value key
+            elif k.endswith("?"):  # default value key
                 k = k[:-1]
                 if k not in c:
                     c[k] = v
-            elif k.endswith('-'):  # remove key entirely
+            elif k.endswith("-"):  # remove key entirely
                 k = k[:-1]
                 c.pop(k, None)
             else:
@@ -211,7 +211,7 @@ def _merger(a, b):
                     c[k] = a[k]
         return c
 
-    raise TypeError(f'Unexpected value type: {type(a)}: {a}')
+    raise TypeError(f"Unexpected value type: {type(a)}: {a}")
 
 
 def assembly_permits(releases_config: Model, group_config: Model, assembly: typing.Optional[str]) -> ListModel:
@@ -224,18 +224,18 @@ def assembly_permits(releases_config: Model, group_config: Model, assembly: typi
     """
 
     phase = group_config.software_lifecycle.phase
-    if phase is not Missing and phase == 'pre-release':
-        defined_permits = assembly_config_struct(releases_config, assembly, 'prerelease_permits', [])
+    if phase is not Missing and phase == "pre-release":
+        defined_permits = assembly_config_struct(releases_config, assembly, "prerelease_permits", [])
         if not defined_permits:
-            defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
+            defined_permits = assembly_config_struct(releases_config, assembly, "permits", [])
     else:
-        defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
+        defined_permits = assembly_config_struct(releases_config, assembly, "permits", [])
 
     for permit in defined_permits:
         if permit.code == AssemblyIssueCode.IMPERMISSIBLE.name:
-            raise ValueError(f'IMPERMISSIBLE cannot be permitted in any assembly (assembly: {assembly})')
-        if permit.code not in ['*', *[aic.name for aic in AssemblyIssueCode]]:
-            raise ValueError(f'Undefined permit code in assembly {assembly}: {permit.code}')
+            raise ValueError(f"IMPERMISSIBLE cannot be permitted in any assembly (assembly: {assembly})")
+        if permit.code not in ["*", *[aic.name for aic in AssemblyIssueCode]]:
+            raise ValueError(f"Undefined permit code in assembly {assembly}: {permit.code}")
     return defined_permits
 
 
@@ -245,7 +245,7 @@ def assembly_rhcos_config(releases_config: Model, assembly: str) -> Model:
     :param assembly: The name of the assembly to assess
     Returns the computed rhcos config model for a given assembly.
     """
-    return assembly_config_struct(releases_config, assembly, 'rhcos', {})
+    return assembly_config_struct(releases_config, assembly, "rhcos", {})
 
 
 def assembly_field(releases_config: dict, assembly: typing.Optional[str], key: str, default: typing.Any) -> typing.Any:
@@ -272,8 +272,8 @@ def assembly_field(releases_config: dict, assembly: typing.Optional[str], key: s
     if not isinstance(releases_config, dict):
         raise TypeError("releases_config must be a dict or None")
     _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.get('releases', {}).get(assembly, {}).get('assembly', {})
-    if basis_assembly := target_assembly.get('basis', {}).get('assembly'):
+    target_assembly = releases_config.get("releases", {}).get(assembly, {}).get("assembly", {})
+    if basis_assembly := target_assembly.get("basis", {}).get("assembly"):
         # Recursive apply ancestor assemblies
         parent_val = assembly_field(releases_config, basis_assembly, key, default)
         val = _merger(target_assembly[key], parent_val) if key in target_assembly else parent_val
@@ -283,7 +283,7 @@ def assembly_field(releases_config: dict, assembly: typing.Optional[str], key: s
 
 
 def assembly_basis_event(
-    releases_config: Model, assembly: str, strict: bool = False, build_system: str = 'brew'
+    releases_config: Model, assembly: str, strict: bool = False, build_system: str = "brew"
 ) -> typing.Optional[typing.Union[int, datetime]]:
     """
     :param releases_config: The content of releases.yml in Model form.
@@ -319,8 +319,8 @@ def assembly_basis_event(
         if not isinstance(time_str, str):
             raise ValueError(f"Invalid time format for assembly {assembly}: {time_str}")
         # Handle 'Z' suffix for UTC which is not supported in Python 3.10's fromisoformat
-        if time_str.endswith('Z'):
-            time_str = time_str[:-1] + '+00:00'
+        if time_str.endswith("Z"):
+            time_str = time_str[:-1] + "+00:00"
         dt = datetime.fromisoformat(time_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
@@ -331,12 +331,12 @@ def assembly_basis_event(
     # - (new interop) --build-system=brew and basis.time defined. In this case, brew event is automatically calculated from the time
     # - (new default) --build-system=konflux and basis.time defined
     # * do not support --build-system=konflux and no basis.time defined
-    if build_system == 'brew':
+    if build_system == "brew":
         if target_assembly.basis.brew_event:
             return _basis_brew_event()
         elif target_assembly.basis.time:
             return _basis_time()
-    elif build_system == 'konflux':
+    elif build_system == "konflux":
         if not target_assembly.basis.time:
             raise ValueError(f"Assembly {assembly} has no basis.time defined")
         return _basis_time()
@@ -352,8 +352,8 @@ def assembly_group_config(releases_config: Model, assembly: typing.Optional[str]
     :param assembly: The name of the assembly
     :param group_config: The group config to merge into a new group config (original Model will not be altered)
     """
-    raw_group_config = group_config.primitive() if hasattr(group_config, 'primitive') else group_config
-    return assembly_config_struct(releases_config, assembly, 'group', raw_group_config)
+    raw_group_config = group_config.primitive() if hasattr(group_config, "primitive") else group_config
+    return assembly_config_struct(releases_config, assembly, "group", raw_group_config)
 
 
 def assembly_basis(releases_config: Model, assembly: typing.Optional[str]) -> Model:
@@ -363,7 +363,7 @@ def assembly_basis(releases_config: Model, assembly: typing.Optional[str]) -> Mo
     Returns the basis dict for a given assembly. If the assembly has no basis,
     Model({}) is returned.
     """
-    return assembly_config_struct(releases_config, assembly, 'basis', {})
+    return assembly_config_struct(releases_config, assembly, "basis", {})
 
 
 def assembly_issues_config(releases_config: Model, assembly: str) -> Model:
@@ -372,7 +372,7 @@ def assembly_issues_config(releases_config: Model, assembly: str) -> Model:
     :param assembly: The name of the assembly to assess
     Returns the a computed issues config model for a given assembly.
     """
-    return assembly_config_struct(releases_config, assembly, 'issues', {})
+    return assembly_config_struct(releases_config, assembly, "issues", {})
 
 
 def assembly_streams_config(releases_config: Model, assembly: typing.Optional[str], streams_config: Model) -> Model:
@@ -383,7 +383,7 @@ def assembly_streams_config(releases_config: Model, assembly: typing.Optional[st
     :param assembly: The name of the assembly
     :param streams_config: The streams config to merge into a new streams config (original Model will not be altered)
     """
-    val = assembly_config_struct(releases_config, assembly, 'streams', streams_config.primitive())
+    val = assembly_config_struct(releases_config, assembly, "streams", streams_config.primitive())
     return Model(dict_to_model=val)
 
 
@@ -414,10 +414,10 @@ def assembly_metadata_config(
 
     config_dict = meta_config.primitive()
 
-    component_list = target_assembly.members[f'{meta_type}s']
+    component_list = target_assembly.members[f"{meta_type}s"]
     for component_entry in component_list:
         if (
-            component_entry.distgit_key == '*'
+            component_entry.distgit_key == "*"
             or component_entry.distgit_key == distgit_key
             and component_entry.metadata
         ):

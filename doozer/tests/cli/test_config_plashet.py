@@ -224,7 +224,7 @@ class TestCompareNvrOpenshiftAware(unittest.TestCase):
                 result = compare_nvr_openshift_aware(obj1, obj2)
                 self.assertEqual(result, expected, f"Failed: {description}")
 
-    @patch('doozerlib.cli.config_plashet._rpmvercmp')
+    @patch("doozerlib.cli.config_plashet._rpmvercmp")
     def test_fallback_to_rpmvercmp_called(self, mock_rpmvercmp):
         """Test that _rpmvercmp is called for fallback cases."""
         mock_rpmvercmp.return_value = 1
@@ -239,7 +239,7 @@ class TestCompareNvrOpenshiftAware(unittest.TestCase):
         mock_rpmvercmp.assert_called_once_with("3.rhaos4.21.el9", "2.rhaos4.21.el9")
         self.assertEqual(result, 1)
 
-    @patch('doozerlib.cli.config_plashet._rpmvercmp')
+    @patch("doozerlib.cli.config_plashet._rpmvercmp")
     def test_fallback_to_rpmvercmp_called_no_openshift_versions(self, mock_rpmvercmp):
         """Test that _rpmvercmp is called when no OpenShift versions are present."""
         mock_rpmvercmp.return_value = -1
@@ -323,5 +323,5 @@ class TestCompareNvrOpenshiftAwareWithTarget(unittest.TestCase):
         self.assertEqual(result, 1, "rhaos4.21 should beat rhaos4.22 when target is (4, 21)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

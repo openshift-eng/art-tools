@@ -33,17 +33,17 @@ def initialize_telemetry():
         }
     )
 
-    otel_exporter_otlp_endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', constants.OTEL_EXPORTER_OTLP_ENDPOINT)
-    otel_exporter_otlp_headers = os.environ.get('OTEL_EXPORTER_OTLP_HEADERS')
+    otel_exporter_otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", constants.OTEL_EXPORTER_OTLP_ENDPOINT)
+    otel_exporter_otlp_headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
 
     exporter = OTLPSpanExporter(endpoint=otel_exporter_otlp_endpoint, headers=otel_exporter_otlp_headers)
 
     tp = new_tracker_provider(resource, exporter)
     trace.set_tracer_provider(tp)
     # TRACEPARENT env var is used to propagate trace context
-    traceparent = os.environ.get('TRACEPARENT')
+    traceparent = os.environ.get("TRACEPARENT")
     if traceparent:
-        carrier = {'traceparent': traceparent}
+        carrier = {"traceparent": traceparent}
         ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
         context.attach(ctx)
         print(f"Use TRACEPARENT {traceparent} for telemetry", file=sys.stderr)

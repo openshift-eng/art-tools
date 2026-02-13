@@ -19,7 +19,7 @@ from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
 
 TRACER = trace.get_tracer(__name__)
-GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
+GEN_PAYLOAD_ARTIFACTS_OUT_DIR = "gen-payload-artifacts"
 
 
 class BuildSyncMultiPipeline:
@@ -50,25 +50,25 @@ class BuildSyncMultiPipeline:
     ):
         self.runtime = runtime
         self.version = version
-        self.group = f'openshift-{version}'
+        self.group = f"openshift-{version}"
         self.assembly = assembly
         self.data_path = data_path
         self.emergency_ignore_issues = emergency_ignore_issues
         self.doozer_data_gitref = doozer_data_gitref
         self.multi_model = multi_model
-        self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
+        self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(",", " ").split()
         self.supported_arches = []
         self.embargo_permit_ack = embargo_permit_ack
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
-        self.fail_count_name = f'count:build-sync-multi-failure:{assembly}:{version}'
+        self.fail_count_name = f"count:build-sync-multi-failure:{assembly}:{version}"
         self.job_run = get_build_url()
 
         self.slack_client = self.runtime.new_slack_client()
-        self.slack_client.bind_channel(f'openshift-{self.version}')
+        self.slack_client.bind_channel(f"openshift-{self.version}")
 
         # Multi-model payloads always use the multi imagestream naming convention
-        self.is_base_name = f'{self.version}-art-latest'
+        self.is_base_name = f"{self.version}-art-latest"
 
     @start_as_current_span_async(TRACER, "build-sync-multi.comment-on-assembly-pr")
     async def comment_on_assembly_pr(self, text_body):
@@ -82,7 +82,7 @@ class BuildSyncMultiPipeline:
         try:
             _, _, repository = split_git_url(self.data_path)
             branch = self.doozer_data_gitref
-            token = os.environ.get('GITHUB_TOKEN')
+            token = os.environ.get("GITHUB_TOKEN")
 
             pattern = r"github\.com/([^/]+)/"
             match = re.search(pattern, self.data_path)
@@ -136,18 +136,18 @@ class BuildSyncMultiPipeline:
 
         # For multi-model, we determine arches from the Konflux configuration
         self.supported_arches = await branch_arches(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
-            build_system='konflux',  # Multi-model always uses Konflux
+            build_system="konflux",  # Multi-model always uses Konflux
             data_path=self.data_path,
             doozer_data_gitref=self.doozer_data_gitref,
         )
         current_span.set_attribute("build-sync-multi.supported_arches_count", len(self.supported_arches))
-        self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
+        self.logger.info("Supported arches for this build: %s", ", ".join(self.supported_arches))
 
-        jenkins.update_title(' [MULTI-MODEL]')
+        jenkins.update_title(" [MULTI-MODEL]")
 
-        if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
+        if self.assembly not in ("stream", "test") and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Multi-model build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
@@ -156,7 +156,7 @@ class BuildSyncMultiPipeline:
         await registry_login()
 
         # Generate multi-model nightly imagestream
-        self.logger.info('Generate multi-model nightly imagestream...')
+        self.logger.info("Generate multi-model nightly imagestream...")
         await self._generate_multi_model_imagestream()
 
     @start_as_current_span_async(TRACER, "build-sync-multi.handle-success")
@@ -164,7 +164,7 @@ class BuildSyncMultiPipeline:
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync-multi.assembly", self.assembly)
 
-        if self.assembly != 'stream':
+        if self.assembly != "stream":
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Multi-model build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
@@ -172,7 +172,7 @@ class BuildSyncMultiPipeline:
             )
 
         #  All good: delete fail counter
-        if self.assembly == 'stream' and not self.runtime.dry_run:
+        if self.assembly == "stream" and not self.runtime.dry_run:
             current_count = await redis.get_value(self.fail_count_name)
             if current_count and int(current_count) > 1:
                 await self.slack_client.say(f"<{self.job_run}|Multi-model build-sync> succeeded!")
@@ -193,38 +193,38 @@ class BuildSyncMultiPipeline:
 
         jenkins.init_jenkins()
 
-        self.logger.info('Generating multi-model payload')
-        mirror_working = 'MIRROR_working'
+        self.logger.info("Generating multi-model payload")
+        mirror_working = "MIRROR_working"
 
         # Run release:gen-payload with --multi-model
-        cmd = ['doozer', f'--assembly={self.assembly}']
+        cmd = ["doozer", f"--assembly={self.assembly}"]
         cmd.extend(
             [
-                f'--working-dir={mirror_working}',
-                f'--data-path={self.data_path}',
+                f"--working-dir={mirror_working}",
+                f"--data-path={self.data_path}",
             ]
         )
-        group_param = f'--group=openshift-{self.version}'
+        group_param = f"--group=openshift-{self.version}"
         if self.doozer_data_gitref:
-            group_param += f'@{self.doozer_data_gitref}'
+            group_param += f"@{self.doozer_data_gitref}"
         cmd.append(group_param)
         cmd.extend(
             [
-                'release:gen-payload',
-                f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
-                f'--multi-model={self.multi_model}',
-                '--apply',
-                '--apply-multi-arch',
+                "release:gen-payload",
+                f"--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}",
+                f"--multi-model={self.multi_model}",
+                "--apply",
+                "--apply-multi-arch",
             ]
         )
         if self.emergency_ignore_issues:
-            cmd.append('--emergency-ignore-issues')
+            cmd.append("--emergency-ignore-issues")
         if self.embargo_permit_ack:
-            cmd.append('--embargo-permit-ack')
+            cmd.append("--embargo-permit-ack")
         if self.exclude_arches:
-            cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
+            cmd.extend([f"--exclude-arch={arch}" for arch in self.exclude_arches])
         if self.runtime.dry_run:
-            cmd.extend(['--skip-gc-tagging', '--moist-run'])
+            cmd.extend(["--skip-gc-tagging", "--moist-run"])
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
     def get_unpermissable_assembly_issues(self) -> dict[str, dict[any, any]]:
@@ -233,19 +233,19 @@ class BuildSyncMultiPipeline:
         """
 
         # path to local assembly_report.yml
-        file_path = f'{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml'
+        file_path = f"{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml"
 
         # Open and load the YAML file
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             data = yaml.safe_load(file)
 
-        filtered_issues = {'assembly_issues': {}}
+        filtered_issues = {"assembly_issues": {}}
 
-        if 'assembly_issues' in data:
-            for component, issues in data['assembly_issues'].items():
-                filtered_data = [issue for issue in issues if not issue.get('permitted', False)]
+        if "assembly_issues" in data:
+            for component, issues in data["assembly_issues"].items():
+                filtered_data = [issue for issue in issues if not issue.get("permitted", False)]
                 if filtered_data:  # Add component only if there are valid issues
-                    filtered_issues['assembly_issues'][component] = filtered_data
+                    filtered_issues["assembly_issues"][component] = filtered_data
 
             return filtered_issues
 
@@ -255,7 +255,7 @@ class BuildSyncMultiPipeline:
         current_span.set_attribute("build-sync-multi.assembly", self.assembly)
         current_span.set_attribute("build-sync-multi.version", self.version)
 
-        if self.assembly != 'stream':
+        if self.assembly != "stream":
             await self.comment_on_assembly_pr(f"Multi-model build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
                 f"@release-artists Multi-model <{self.job_run}|build-sync> for assembly {self.assembly} failed!"
@@ -266,21 +266,21 @@ class BuildSyncMultiPipeline:
         if current_count is None:  # does not yet exist in Redis
             current_count = 0
         fail_count = int(current_count) + 1
-        self.runtime.logger.info('Failure count for multi-model %s: %s', self.version, fail_count)
+        self.runtime.logger.info("Failure count for multi-model %s: %s", self.version, fail_count)
 
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
 
         unpermissable_issues = self.get_unpermissable_assembly_issues()
-        if unpermissable_issues['assembly_issues']:
+        if unpermissable_issues["assembly_issues"]:
             report = yaml.safe_dump(unpermissable_issues)
-            jenkins.update_title(' [UNVIABLE]')
+            jenkins.update_title(" [UNVIABLE]")
         else:
             report = "Unknown Failure. Please investigate"
-            jenkins.update_title(' [FAILURE]')
+            jenkins.update_title(" [FAILURE]")
 
         # Less than 2 failures, assembly != stream: just break the build
-        if fail_count < 2 or self.assembly != 'stream':
+        if fail_count < 2 or self.assembly != "stream":
             raise
 
         # More than 2 failures: we need to notify ART and #forum-release before breaking the build
@@ -303,13 +303,13 @@ class BuildSyncMultiPipeline:
 
         # Spam ourselves a little more often than forum-ocp-release
         if fail_count % art_notify_frequency == 0:
-            await self.notify_failures(f'openshift-{self.version}', report, fail_count)
+            await self.notify_failures(f"openshift-{self.version}", report, fail_count)
 
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
-            phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
+            phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config["software_lifecycle"]["phase"])
             if phase == SoftwareLifecyclePhase.RELEASE:
-                await self.notify_failures('#forum-ocp-release', report, fail_count)
+                await self.notify_failures("#forum-ocp-release", report, fail_count)
 
     @start_as_current_span_async(TRACER, "build-sync-multi.notify-failures")
     async def notify_failures(self, channel, assembly_report, fail_count):
@@ -320,16 +320,16 @@ class BuildSyncMultiPipeline:
         current_span.set_attribute("build-sync-multi.assembly", self.assembly)
 
         msg = (
-            f'Pipeline has failed to assemble multi-model release payload for {self.version} '
-            f'(assembly `{self.assembly}`) {fail_count} times.'
+            f"Pipeline has failed to assemble multi-model release payload for {self.version} "
+            f"(assembly `{self.assembly}`) {fail_count} times."
         )
         self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
-        await self.slack_client.say(f'```{assembly_report}```', slack_thread)
+        await self.slack_client.say(f"```{assembly_report}```", slack_thread)
 
 
-@cli.command('build-sync-multi')
+@cli.command("build-sync-multi")
 @click.option("--version", required=True, help="The OCP version to sync")
 @click.option("--assembly", required=True, default="stream", help="The name of an assembly to sync")
 @click.option(
@@ -404,9 +404,9 @@ async def build_sync_multi(
     )
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
-        if assembly == 'stream':
-            lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
-            runtime.logger.info('Lock identifier: %s', lock_identifier)
+        if assembly == "stream":
+            lock_identifier = get_build_url().replace(f"{constants.JENKINS_UI_URL}/", "")
+            runtime.logger.info("Lock identifier: %s", lock_identifier)
 
             await locks.run_with_lock(
                 coro=pipeline.run(),
@@ -422,12 +422,12 @@ async def build_sync_multi(
 
     except (RuntimeError, ChildProcessError):
         # Only for 'stream' assembly, track failure to enable future notifications
-        if assembly == 'stream' and not runtime.dry_run:
+        if assembly == "stream" and not runtime.dry_run:
             await pipeline.handle_failure()
 
         # Re-raise the exception to mark the job as failed
         raise
 
     except RedisError as e:
-        runtime.logger.error('Encountered error when updating the fail counter: %s', e)
+        runtime.logger.error("Encountered error when updating the fail counter: %s", e)
         raise

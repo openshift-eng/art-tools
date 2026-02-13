@@ -37,10 +37,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BuildStrategy(Enum):
-    ALL = 'all'
-    ONLY = 'only'
-    EXCEPT = 'except'
-    NONE = 'none'
+    ALL = "all"
+    ONLY = "only"
+    EXCEPT = "except"
+    NONE = "none"
 
     def __str__(self):
         return self.value
@@ -112,22 +112,22 @@ class KonfluxOcpPipeline:
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
 
-        group_param = f'--group=openshift-{version}'
+        group_param = f"--group=openshift-{version}"
         if data_gitref:
-            group_param += f'@{data_gitref}'
+            group_param += f"@{data_gitref}"
 
         self._doozer_base_command = [
-            'doozer',
-            f'--assembly={assembly}',
-            f'--working-dir={self.runtime.doozer_working}',
-            f'--data-path={data_path}',
-            '--build-system=konflux',
+            "doozer",
+            f"--assembly={assembly}",
+            f"--working-dir={self.runtime.doozer_working}",
+            f"--data-path={data_path}",
+            "--build-system=konflux",
             group_param,
         ]
 
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy), BuildStrategy(rpm_build_strategy))
-        self.image_list = [image.strip() for image in image_list.split(',')] if image_list else []
-        self.rpm_list = [rpm.strip() for rpm in rpm_list.split(',')] if rpm_list else []
+        self.image_list = [image.strip() for image in image_list.split(",")] if image_list else []
+        self.rpm_list = [rpm.strip() for rpm in rpm_list.split(",")] if rpm_list else []
 
         self.group_images = []
         self.rebase_failures = []
@@ -141,10 +141,10 @@ class KonfluxOcpPipeline:
         Returns the include/exclude parameters for the Doozer command based on the build strategy.
         """
 
-        if kind not in ['rpms', 'images']:
+        if kind not in ["rpms", "images"]:
             raise ValueError('Kind must be one in ["rpms", "images"]')
 
-        if kind == 'images':
+        if kind == "images":
             build_strategy = self.build_plan.image_build_strategy
             includes = self.build_plan.images_included
             excludes = self.build_plan.images_excluded
@@ -158,13 +158,13 @@ class KonfluxOcpPipeline:
             return []
 
         elif build_strategy == BuildStrategy.ONLY:
-            return [f'--{kind}={",".join(includes)}']
+            return [f"--{kind}={','.join(includes)}"]
 
         elif build_strategy == BuildStrategy.EXCEPT:
-            return [f'--{kind}=', f'--exclude={",".join(excludes)}']
+            return [f"--{kind}=", f"--exclude={','.join(excludes)}"]
 
     async def update_rebase_fail_counters(self, failed_images):
-        if self.assembly == 'test':
+        if self.assembly == "test":
             # Ignore for test assembly
             return
 
@@ -185,13 +185,13 @@ class KonfluxOcpPipeline:
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
                 )
         await asyncio.gather(
-            *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in successful_images]
+            *[reset_rebase_fail_counter(image, self.version, "konflux") for image in successful_images]
         )
 
         # Increment fail counters for failing images
-        job_url = os.getenv('BUILD_URL')
+        job_url = os.getenv("BUILD_URL")
         await asyncio.gather(
-            *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url=job_url) for image in failed_images]
+            *[increment_rebase_fail_counter(image, self.version, "konflux", job_url=job_url) for image in failed_images]
         )
 
     def building_images(self):
@@ -219,7 +219,7 @@ class KonfluxOcpPipeline:
 
         # If no images are being built, skip the rebase step
         if not self.building_images():
-            LOGGER.warning('No images will be rebased')
+            LOGGER.warning("No images will be rebased")
             return
 
         LOGGER.info(f"Rebasing images for OCP {self.version} with release {self.release}")
@@ -229,34 +229,34 @@ class KonfluxOcpPipeline:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
 
-        cmd.append('--latest-parent-version')
-        cmd.extend(self.include_exclude_param(kind='images'))
+        cmd.append("--latest-parent-version")
+        cmd.extend(self.include_exclude_param(kind="images"))
         cmd.extend(
             [
-                'beta:images:konflux:rebase',
-                f'--version={version}',
-                f'--release={input_release}',
+                "beta:images:konflux:rebase",
+                f"--version={version}",
+                f"--release={input_release}",
                 f"--message='Updating Dockerfile version and release {version}-{input_release}'",
             ]
         )
         if self.network_mode:
-            cmd.extend(['--network-mode', self.network_mode])
+            cmd.extend(["--network-mode", self.network_mode])
         if not self.runtime.dry_run:
-            cmd.append('--push')
+            cmd.append("--push")
 
         try:
             await exectools.cmd_assert_async(cmd)
             await self.update_rebase_fail_counters([])
 
         except ChildProcessError:
-            with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
+            with open(f"{self.runtime.doozer_working}/state.yaml") as state_yaml:
                 state = yaml.safe_load(state_yaml)
-            failed_images = state['images:konflux:rebase'].get('failed-images', [])
+            failed_images = state["images:konflux:rebase"].get("failed-images", [])
             if not failed_images:
                 raise  # Something else went wrong
 
             # Some images failed to rebase: log them, and track them in Redis
-            LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
+            LOGGER.warning(f"Following images failed to rebase and won't be built: {','.join(failed_images)}")
             await self.update_rebase_fail_counters(failed_images)
 
             # Exclude images that failed to rebase from the build step
@@ -278,7 +278,7 @@ class KonfluxOcpPipeline:
 
     async def build_images(self):
         if not self.building_images():
-            LOGGER.warning('No images will be built')
+            LOGGER.warning("No images will be built")
             return
 
         LOGGER.info(f"Building images for OCP {self.version} with release {self.release}")
@@ -288,18 +288,18 @@ class KonfluxOcpPipeline:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
 
-        cmd.append('--latest-parent-version')
-        cmd.extend(self.include_exclude_param(kind='images'))
+        cmd.append("--latest-parent-version")
+        cmd.extend(self.include_exclude_param(kind="images"))
         cmd.extend(
             [
-                'beta:images:konflux:build',
+                "beta:images:konflux:build",
                 "--konflux-namespace=ocp-art-tenant",
             ]
         )
         if self.network_mode:
-            cmd.extend(['--network-mode', self.network_mode])
+            cmd.extend(["--network-mode", self.network_mode])
         if self.kubeconfig:
-            cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
+            cmd.extend(["--konflux-kubeconfig", self.kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -307,13 +307,13 @@ class KonfluxOcpPipeline:
             plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
                 owner=plr_template_owner, branch_name=plr_template_branch
             )
-            cmd.extend(['--plr-template', plr_template_url])
+            cmd.extend(["--plr-template", plr_template_url])
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         # Add build priority. Can be a str between "1" (highest priority) - "10" or "auto"
         LOGGER.info(f"Using build priority: {self.build_priority}")
-        cmd.extend(['--build-priority', self.build_priority])
+        cmd.extend(["--build-priority", self.build_priority])
 
         await exectools.cmd_assert_async(cmd)
 
@@ -321,36 +321,36 @@ class KonfluxOcpPipeline:
 
     async def sync_images(self):
         if not self.building_images():
-            LOGGER.warning('No images will be synced')
+            LOGGER.warning("No images will be synced")
             return
 
         if self.runtime.dry_run:
-            LOGGER.info('Not syncing images in dry run mode')
+            LOGGER.info("Not syncing images in dry run mode")
             return
 
-        LOGGER.info('Syncing images...')
+        LOGGER.info("Syncing images...")
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.error('record.log not found!')
+            LOGGER.error("record.log not found!")
             return
 
         built_images = [
-            entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
+            entry["name"] for entry in record_log.get("image_build_konflux", []) if not int(entry["status"])
         ]
-        failed_images = [entry['name'] for entry in record_log.get('image_build_konflux', []) if int(entry['status'])]
+        failed_images = [entry["name"] for entry in record_log.get("image_build_konflux", []) if int(entry["status"])]
         if 1 <= len(failed_images) <= 10:
-            jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
+            jenkins.update_description(f"Failed images: {', '.join(failed_images)}<br/>")
         elif len(failed_images) > 10:
-            jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
+            jenkins.update_description(f"{len(failed_images)} images failed. Check record.log for details<br/>")
 
         if not built_images:
             # Nothing to do, skipping build-sync
-            LOGGER.info('All image builds failed, nothing to sync')
+            LOGGER.info("All image builds failed, nothing to sync")
             return
 
-        if self.assembly == 'test':
-            self.runtime.logger.warning('Skipping build-sync job for test assembly')
+        if self.assembly == "test":
+            self.runtime.logger.warning("Skipping build-sync job for test assembly")
             return
 
         # Determine arches to be excluded as the difference between the group configured arches,
@@ -361,7 +361,7 @@ class KonfluxOcpPipeline:
 
         else:
             _, out, _ = await exectools.cmd_gather_async(
-                [*self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml']
+                [*self._doozer_base_command.copy(), "config:read-group", "arches", "--yaml"]
             )
             exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
             for arch in self.arches:
@@ -372,7 +372,7 @@ class KonfluxOcpPipeline:
             assembly=self.assembly,
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
-            build_system='konflux',
+            build_system="konflux",
             exclude_arches=exclude_arches,
             SKIP_MULTI_ARCH_PAYLOAD="auto",
         )
@@ -384,14 +384,14 @@ class KonfluxOcpPipeline:
         # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.warning('record.log not found, skipping CI mirroring check')
+            LOGGER.warning("record.log not found, skipping CI mirroring check")
             return
 
         built_images = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
+            entry["name"]: entry for entry in record_log.get("image_build_konflux", []) if not int(entry["status"])
         }
-        if built_images.get('ose-openshift-apiserver', None):
-            LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
+        if built_images.get("ose-openshift-apiserver", None):
+            LOGGER.warning("apiserver rebuilt: mirroring streams to CI...")
 
             # Make sure our api.ci token is fresh
             await oc.registry_login()
@@ -401,7 +401,7 @@ class KonfluxOcpPipeline:
 
             # Mirror out ART equivalent images to CI
             cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror'])
+            cmd.extend(["images:streams", "mirror"])
             await exectools.cmd_assert_async(cmd)
 
     async def sweep_bugs(self):
@@ -409,17 +409,17 @@ class KonfluxOcpPipeline:
         Find MODIFIED bugs for the target-releases, and set them to ON_QA
         """
 
-        if self.assembly != 'stream':
-            self.runtime.logger.info('Not setting bugs to ON_QA since assembly is not stream')
+        if self.assembly != "stream":
+            self.runtime.logger.info("Not setting bugs to ON_QA since assembly is not stream")
             return
 
         cmd = [
-            'elliott',
-            f'--group=openshift-{self.version}',
+            "elliott",
+            f"--group=openshift-{self.version}",
             "find-bugs:qe",
         ]
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         try:
             await exectools.cmd_assert_async(cmd)
@@ -428,29 +428,29 @@ class KonfluxOcpPipeline:
             if self.runtime.dry_run:
                 return
 
-            self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(f'Bug sweep failed for {self.version}. Please investigate')
+            self.slack_client.bind_channel(f"openshift-{self.version}")
+            await self.slack_client.say(f"Bug sweep failed for {self.version}. Please investigate")
 
     async def sweep_golang_bugs(self):
         # find-bugs:golang only modifies bug state after verifying
         # that the bug is fixed in the builds found in latest nightly / rpms in candidate tag
         # therefore we do not need to check which builds are successful to run this
-        if self.assembly != 'stream':
-            self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
+        if self.assembly != "stream":
+            self.runtime.logger.info("Not setting golang bugs to ON_QA since assembly is not stream")
             return
 
         cmd = [
-            'elliott',
-            '--assembly',
-            'stream',
-            f'--group=openshift-{self.version}',
+            "elliott",
+            "--assembly",
+            "stream",
+            f"--group=openshift-{self.version}",
             "find-bugs:golang",
             "--analyze",
             "--update-tracker",
         ]
 
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         try:
             await exectools.cmd_assert_async(cmd)
@@ -458,16 +458,16 @@ class KonfluxOcpPipeline:
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
-            self.slack_client.bind_channel(f'openshift-{self.version}')
-            await self.slack_client.say(f'Golang bug sweep failed for {self.version}. Please investigate')
+            self.slack_client.bind_channel(f"openshift-{self.version}")
+            await self.slack_client.say(f"Golang bug sweep failed for {self.version}. Please investigate")
 
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         self.group_images = await get_group_images(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
-            build_system='konflux',
+            build_system="konflux",
             working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
@@ -476,7 +476,7 @@ class KonfluxOcpPipeline:
 
         # Get the number of RPMs in the current group (microshift is excluded by default)
         group_rpms = await get_group_rpms(
-            group=f'openshift-{self.version}',
+            group=f"openshift-{self.version}",
             assembly=self.assembly,
             working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
@@ -489,18 +489,18 @@ class KonfluxOcpPipeline:
         self.check_building_rpms()
 
         # Log the initial build plan
-        self.runtime.logger.info('Initial build plan:\n%s', self.build_plan)
+        self.runtime.logger.info("Initial build plan:\n%s", self.build_plan)
 
     def check_building_images(self):
         if self.build_plan.image_build_strategy == BuildStrategy.NONE:
-            jenkins.update_title('[NO IMAGES]')
+            jenkins.update_title("[NO IMAGES]")
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ALL:
             self.build_plan.images_included = []
             self.build_plan.images_excluded = []
             self.mass_rebuild = True
-            jenkins.update_title('[mass rebuild]')
-            jenkins.update_description(f'Images: building {self.build_plan.active_image_count} images.<br/>')
+            jenkins.update_title("[mass rebuild]")
+            jenkins.update_description(f"Images: building {self.build_plan.active_image_count} images.<br/>")
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
             self.build_plan.images_included = self.image_list
@@ -508,14 +508,14 @@ class KonfluxOcpPipeline:
 
             n_images = len(self.build_plan.images_included)
             if n_images == 1:
-                jenkins.update_title(f'[{self.build_plan.images_included[0]}]')
+                jenkins.update_title(f"[{self.build_plan.images_included[0]}]")
             else:
-                jenkins.update_title(f'[{n_images} images]')
+                jenkins.update_title(f"[{n_images} images]")
 
             if n_images <= 10:
-                jenkins.update_description(f'Images: building {", ".join(self.build_plan.images_included)}.<br/>')
+                jenkins.update_description(f"Images: building {', '.join(self.build_plan.images_included)}.<br/>")
             else:
-                jenkins.update_description(f'Images: building {n_images} images.<br/>')
+                jenkins.update_description(f"Images: building {n_images} images.<br/>")
 
             # It's a mass rebuild if we included more than half of all active images in the group
             if n_images > self.build_plan.active_image_count / 2:
@@ -526,38 +526,38 @@ class KonfluxOcpPipeline:
             self.build_plan.images_excluded = self.image_list
 
             n_images = self.build_plan.active_image_count - len(self.build_plan.images_excluded)
-            jenkins.update_title(f'[{n_images} images]')
+            jenkins.update_title(f"[{n_images} images]")
             if len(self.build_plan.images_excluded) <= 10:
                 jenkins.update_description(
-                    f'Images: building all images except {",".join(self.build_plan.images_excluded)}.<br/>'
+                    f"Images: building all images except {','.join(self.build_plan.images_excluded)}.<br/>"
                 )
             else:
-                jenkins.update_description(f'Images: building {n_images} images.<br/>')
+                jenkins.update_description(f"Images: building {n_images} images.<br/>")
 
             # It's a mass rebuild if we excluded less than half of all active images in the group
             if n_images < self.build_plan.active_image_count / 2:
                 self.mass_rebuild = True
 
         if self.mass_rebuild:
-            jenkins.update_title(' [MASS REBUILD]')
+            jenkins.update_title(" [MASS REBUILD]")
 
     def check_building_rpms(self):
         # If the version is not in the override list, skip the RPM rebase and build
         # TODO this can be removed once all versions are handled by ocp4-konflux
         if not uses_konflux_imagestream_override(self.version):
             self.runtime.logger.info(
-                'Skipping RPM rebase and build for %s since it is being handled by ocp4', {self.version}
+                "Skipping RPM rebase and build for %s since it is being handled by ocp4", {self.version}
             )
             self.build_plan.rpm_build_strategy = BuildStrategy.NONE
 
         if self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
-            jenkins.update_title('[NO RPMs]')
+            jenkins.update_title("[NO RPMs]")
 
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ALL:
             self.build_plan.rpms_included = []
             self.build_plan.rpms_excluded = []
-            jenkins.update_description('Building all RPMs.<br/>')
-            jenkins.update_title('[All RPMs]')
+            jenkins.update_description("Building all RPMs.<br/>")
+            jenkins.update_title("[All RPMs]")
 
         elif self.build_plan.rpm_build_strategy == BuildStrategy.ONLY:
             self.build_plan.rpms_included = self.rpm_list
@@ -565,43 +565,43 @@ class KonfluxOcpPipeline:
 
             n_rpms = len(self.build_plan.rpms_included)
             if n_rpms == 1:
-                jenkins.update_title(f'[{self.build_plan.rpms_included[0]}]')
+                jenkins.update_title(f"[{self.build_plan.rpms_included[0]}]")
             else:
-                jenkins.update_title(f'[{n_rpms} RPMs]')
+                jenkins.update_title(f"[{n_rpms} RPMs]")
 
             if n_rpms <= 10:
-                jenkins.update_description(f'RPMs: building {", ".join(self.build_plan.rpms_included)}.<br/>')
+                jenkins.update_description(f"RPMs: building {', '.join(self.build_plan.rpms_included)}.<br/>")
             else:
-                jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
+                jenkins.update_description(f"RPMs: building {n_rpms} RPMs.<br/>")
 
         else:  # build_plan.rpm_build_strategy == BuildStrategy.EXCEPT
             self.build_plan.rpms_included = []
             self.build_plan.rpms_excluded = self.rpm_list
 
             n_rpms = self.build_plan.active_rpm_count - len(self.build_plan.rpms_excluded)
-            jenkins.update_title(f'[{n_rpms} RPMs]')
+            jenkins.update_title(f"[{n_rpms} RPMs]")
             if len(self.build_plan.images_excluded) <= 10:
-                jenkins.update_description(f'Building all RPMs except {",".join(self.build_plan.rpms_excluded)}.<br/>')
+                jenkins.update_description(f"Building all RPMs except {','.join(self.build_plan.rpms_excluded)}.<br/>")
             else:
-                jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
+                jenkins.update_description(f"RPMs: building {n_rpms} RPMs.<br/>")
 
     async def initialize(self):
         jenkins.init_jenkins()
-        jenkins.update_title(f' - {self.version} [{self.assembly}] ')
+        jenkins.update_title(f" - {self.version} [{self.assembly}] ")
         await self.init_build_plan()
 
     async def clean_up(self):
-        LOGGER.info('Cleaning up Doozer source dirs')
+        LOGGER.info("Cleaning up Doozer source dirs")
         await asyncio.gather(
             *[
-                self.runtime.cleanup_sources('sources'),
-                self.runtime.cleanup_sources('konflux_build_sources'),
+                self.runtime.cleanup_sources("sources"),
+                self.runtime.cleanup_sources("konflux_build_sources"),
             ]
         )
 
         # If any image failed to rebase, raise an exception to make the pipeline unstable
         if self.rebase_failures:
-            raise RuntimeError(f'Following images failed to rebase: {",".join(self.rebase_failures)}')
+            raise RuntimeError(f"Following images failed to rebase: {','.join(self.rebase_failures)}")
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
@@ -610,44 +610,44 @@ class KonfluxOcpPipeline:
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.warning('record.log not found, skipping bundle build')
+            LOGGER.warning("record.log not found, skipping bundle build")
             return
 
         try:
-            records = record_log.get('image_build_konflux', [])
+            records = record_log.get("image_build_konflux", [])
             operator_nvrs = []
             for record in records:
-                if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
-                    operator_nvrs.append(record['nvrs'].split(',')[0])
+                if record["has_olm_bundle"] == "1" and record["status"] == "0" and record.get("nvrs", None):
+                    operator_nvrs.append(record["nvrs"].split(",")[0])
             if operator_nvrs:
                 jenkins.start_olm_bundle_konflux(
                     build_version=self.version,
                     assembly=self.assembly,
                     operator_nvrs=operator_nvrs,
-                    doozer_data_path=self.data_path or '',
-                    doozer_data_gitref=self.data_gitref or '',
+                    doozer_data_path=self.data_path or "",
+                    doozer_data_gitref=self.data_gitref or "",
                 )
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
     def parse_record_log(self) -> Optional[dict]:
-        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        record_log_path = Path(self.runtime.doozer_working, "record.log")
         if not record_log_path.exists():
             return None
 
-        with record_log_path.open('r') as file:
+        with record_log_path.open("r") as file:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
 
     async def request_mass_rebuild(self):
         await self.slack_client.say(
-            f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:'
+            f":konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:"
         )
 
         queue = locks.Keys.KONFLUX_MASS_REBUILD_QUEUE.value
         mapping = {self.version: mass_rebuild_score(self.version)}
-        await redis.call('zadd', queue, mapping, nx=True)
-        self.runtime.logger.info('Queued in for mass rebuild lock')
+        await redis.call("zadd", queue, mapping, nx=True)
+        self.runtime.logger.info("Queued in for mass rebuild lock")
 
         return await locks.enqueue_for_lock(
             coro=self.rebase_and_build_images(),
@@ -661,14 +661,14 @@ class KonfluxOcpPipeline:
     async def rebase_and_build_images(self):
         if self.mass_rebuild:
             await self.slack_client.say(
-                f':construction: Starting image builds for {self.version} mass rebuild :construction:'
+                f":construction: Starting image builds for {self.version} mass rebuild :construction:"
             )
 
         await self.rebase_images(f"v{self.version}.0", self.release)
         await self.build_images()
 
         if self.mass_rebuild:
-            await self.slack_client.say(f':done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
+            await self.slack_client.say(f":done_it_is: Mass rebuild for {self.version} complete :done_it_is:")
 
     async def mirror_images(self):
         """
@@ -676,22 +676,22 @@ class KonfluxOcpPipeline:
         """
 
         if not self.building_images():
-            LOGGER.warning('No images will be mirrored')
+            LOGGER.warning("No images will be mirrored")
             return
 
         if self.runtime.dry_run:
-            LOGGER.info('Not mirroring images in dry run mode')
+            LOGGER.info("Not mirroring images in dry run mode")
             return
 
-        LOGGER.info(f'Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...')
+        LOGGER.info(f"Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...")
 
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.error('record.log not found!')
+            LOGGER.error("record.log not found!")
             return
 
         # Get the list of successful builds
-        builds_to_mirror = [entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])]
+        builds_to_mirror = [entry for entry in record_log.get("image_build_konflux", []) if not int(entry["status"])]
 
         async def sync_build(build):
             release = build["nvrs"].split("-")[-1]
@@ -706,7 +706,7 @@ class KonfluxOcpPipeline:
                 return
 
             image_tag = build["image_tag"]
-            latest_tag = f'{build["name"]}-{self.version}'
+            latest_tag = f"{build['name']}-{self.version}"
             await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE, [image_tag, latest_tag])
 
         await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
@@ -747,7 +747,7 @@ class KonfluxOcpPipeline:
                 await self.sweep_golang_bugs()
             else:
                 LOGGER.info(
-                    f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
+                    f"Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4"
                 )
 
             self.trigger_bundle_build()
@@ -767,24 +767,24 @@ class KonfluxOcpPipeline:
         if (
             self.build_plan.rpm_build_strategy == BuildStrategy.ONLY and not self.build_plan.rpms_included
         ) or self.build_plan.rpm_build_strategy == BuildStrategy.NONE:
-            LOGGER.warning('No RPMs will be built')
+            LOGGER.warning("No RPMs will be built")
             return
 
         cmd = self._doozer_base_command.copy()
-        cmd.extend(self.include_exclude_param('rpms'))
+        cmd.extend(self.include_exclude_param("rpms"))
         cmd.extend(
             [
-                'rpms:rebase-and-build',
-                f'--version={self.version}',
-                f'--release={input_release}',
+                "rpms:rebase-and-build",
+                f"--version={self.version}",
+                f"--release={input_release}",
             ]
         )
 
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         # Rebase and build RPMs
-        self.runtime.logger.info('Building RPMs')
+        self.runtime.logger.info("Building RPMs")
         try:
             await exectools.cmd_assert_async(cmd)
 
@@ -798,56 +798,56 @@ class KonfluxOcpPipeline:
 
         record_log = self.parse_record_log()
         if not record_log:
-            raise RuntimeError('record.log not found!')
+            raise RuntimeError("record.log not found!")
 
         failed_map = record_util.get_failed_rpms(record_log)
         if not failed_map:
             # failed so badly we don't know what failed; give up
-            raise RuntimeError('No failed RPMs found in record.log!')
+            raise RuntimeError("No failed RPMs found in record.log!")
 
         failed_rpms = list(failed_map.keys())
-        self.runtime.logger.warning('Following rpms failed to rebase or build: %s', ', '.join(failed_rpms))
-        jenkins.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
+        self.runtime.logger.warning("Following rpms failed to rebase or build: %s", ", ".join(failed_rpms))
+        jenkins.update_description(f"Failed rpms: {', '.join(failed_rpms)}<br/>")
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")
 @click.option(
-    '--image-build-strategy',
+    "--image-build-strategy",
     required=True,
-    type=click.Choice(['all', 'none', 'only', 'except'], case_sensitive=False),
+    type=click.Choice(["all", "none", "only", "except"], case_sensitive=False),
     help='Which images are candidates for building? "only/except" refer to the --image-list param',
 )
 @click.option(
-    '--image-list',
+    "--image-list",
     required=True,
-    help='Comma/space-separated list to include/exclude per --image-build-strategy (e.g. logging-kibana5,openshift-jenkins-2)',
+    help="Comma/space-separated list to include/exclude per --image-build-strategy (e.g. logging-kibana5,openshift-jenkins-2)",
 )
 @click.option(
-    '--rpm-build-strategy',
+    "--rpm-build-strategy",
     required=True,
-    type=click.Choice(['all', 'none', 'only', 'except'], case_sensitive=False),
+    type=click.Choice(["all", "none", "only", "except"], case_sensitive=False),
     help='Which RPMs are candidates for building? "only/except" refer to the --rpm-list param',
 )
 @click.option(
-    '--rpm-list',
+    "--rpm-list",
     required=True,
-    help='Comma/space-separated list to include/exclude per --rpm-build-strategy (e.g. openshift-ansible,openshift-clients)',
+    help="Comma/space-separated list to include/exclude per --rpm-build-strategy (e.g. openshift-ansible,openshift-clients)",
 )
-@click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
+@click.option("--assembly", required=True, help="The name of an assembly to rebase & build for")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
-@click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option("--version", required=True, help="OCP version to scan, e.g. 4.14")
+@click.option("--data-gitref", required=False, default="", help="Doozer data path git [branch / tag / sha] to use")
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
-    '--ignore-locks',
+    "--ignore-locks",
     is_flag=True,
     default=False,
-    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+    help="Do not wait for other builds in this version to complete (use only if you know they will not conflict)",
 )
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
@@ -855,35 +855,35 @@ class KonfluxOcpPipeline:
     "--arch", "arches", metavar="TAG", multiple=True, help="(Optional) [MULTIPLE] Limit included arches to this list"
 )
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
-    default='',
-    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+    default="",
+    help="Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>",
 )
 @click.option(
-    '--skip-plashets',
+    "--skip-plashets",
     is_flag=True,
     default=False,
-    help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
+    help="Do not build plashets (for example to save time when running multiple builds against test assembly)",
 )
 @click.option(
-    '--build-priority',
+    "--build-priority",
     type=str,
-    metavar='PRIORITY',
-    default='auto',
+    metavar="PRIORITY",
+    default="auto",
     required=True,
     help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
 )
 @click.option(
-    '--use-mass-rebuild-locks',
+    "--use-mass-rebuild-locks",
     is_flag=True,
     default=False,
-    help='Use legacy mass rebuild locks instead of Kueue priorities (for fallback/revert scenarios).',
+    help="Use legacy mass rebuild locks instead of Kueue priorities (for fallback/revert scenarios).",
 )
 @click.option(
-    '--network-mode',
-    type=click.Choice(['hermetic', 'internal-only', 'open']),
-    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+    "--network-mode",
+    type=click.Choice(["hermetic", "internal-only", "open"]),
+    help="Override network mode for Konflux builds. Takes precedence over image and group config settings.",
 )
 @pass_runtime
 @click_coroutine
@@ -909,11 +909,11 @@ async def ocp4(
     network_mode: Optional[str],
 ):
     if not kubeconfig:
-        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
 
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+        runtime.logger.warning("Env var BUILD_URL has not been defined: a random identifier will be used for the locks")
 
     pipeline = KonfluxOcpPipeline(
         runtime=runtime,

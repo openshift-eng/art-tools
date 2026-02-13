@@ -132,7 +132,7 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
                     continue
                 info = tarfile.TarInfo(prefix + full_name)
                 info.mtime = git_commit.committer.time
-                info.uname = info.gname = 'root'  # Git does this!
+                info.uname = info.gname = "root"  # Git does this!
                 if entry.type_str == "commit":
                     info.type = tarfile.DIRTYPE
                     archive.addfile(info)

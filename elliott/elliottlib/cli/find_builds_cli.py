@@ -36,14 +36,14 @@ LOGGER = logutil.get_logger(__name__)
 pass_runtime = click.make_pass_decorator(Runtime)
 
 
-@cli.command('find-builds', short_help='Find or attach builds to ADVISORY')
+@cli.command("find-builds", short_help="Find or attach builds to ADVISORY")
 @click.option(
-    '--attach',
-    '-a',
-    'advisory_id',
+    "--attach",
+    "-a",
+    "advisory_id",
     type=int,
-    metavar='ADVISORY',
-    help='Attach the builds to ADVISORY (by default only a list of builds are displayed)',
+    metavar="ADVISORY",
+    help="Attach the builds to ADVISORY (by default only a list of builds are displayed)",
 )
 @use_default_advisory_option
 @click.option(
@@ -54,38 +54,38 @@ pass_runtime = click.make_pass_decorator(Runtime)
     type=click.File("rt"),
 )
 @click.option(
-    '--build', '-b', 'builds', multiple=True, metavar='NVR_OR_ID', help='Add build NVR_OR_ID to ADVISORY [MULTIPLE]'
+    "--build", "-b", "builds", multiple=True, metavar="NVR_OR_ID", help="Add build NVR_OR_ID to ADVISORY [MULTIPLE]"
 )
 @click.option(
-    '--kind',
-    '-k',
-    metavar='KIND',
+    "--kind",
+    "-k",
+    metavar="KIND",
     required=True,
-    type=click.Choice(['rpm', 'image']),
-    help='Find builds of the given KIND [rpm, image]',
+    type=click.Choice(["rpm", "image"]),
+    help="Find builds of the given KIND [rpm, image]",
 )
 @click.option(
-    '--json', 'as_json', metavar='FILE_NAME', help='Dump new builds as JSON array to a file (or "-" for stdout)'
+    "--json", "as_json", metavar="FILE_NAME", help='Dump new builds as JSON array to a file (or "-" for stdout)'
 )
 @click.option(
-    '--no-cdn-repos',
+    "--no-cdn-repos",
     required=False,
     is_flag=True,
-    help='Do not configure CDN repos after attaching images (default to False)',
+    help="Do not configure CDN repos after attaching images (default to False)",
 )
-@click.option('--payload', required=False, is_flag=True, help='Only attach payload images')
-@click.option('--non-payload', required=False, is_flag=True, help='Only attach non-payload images')
-@click.option('--only-rhcos', required=False, is_flag=True, help='Only attach RHCOS images')
-@click.option('--include-shipped', required=False, is_flag=True, help='Do not filter out shipped builds')
-@click.option('--all-image-types', required=False, is_flag=True, help='Find all types of builds')
-@click.option('--member-only', is_flag=True, help='(For rpms) Only sweep member rpms')
+@click.option("--payload", required=False, is_flag=True, help="Only attach payload images")
+@click.option("--non-payload", required=False, is_flag=True, help="Only attach non-payload images")
+@click.option("--only-rhcos", required=False, is_flag=True, help="Only attach RHCOS images")
+@click.option("--include-shipped", required=False, is_flag=True, help="Do not filter out shipped builds")
+@click.option("--all-image-types", required=False, is_flag=True, help="Find all types of builds")
+@click.option("--member-only", is_flag=True, help="(For rpms) Only sweep member rpms")
 @click.option(
-    '--clean',
+    "--clean",
     is_flag=True,
-    help='Remove builds from advisory that were not found in build sweep. Cannot be used with -b or -f',
+    help="Remove builds from advisory that were not found in build sweep. Cannot be used with -b or -f",
 )
 @click.option(
-    '--dry-run', '--noop', is_flag=True, help='Do not attach/remove builds from advisory, only show what would be done'
+    "--dry-run", "--noop", is_flag=True, help="Do not attach/remove builds from advisory, only show what would be done"
 )
 @click_coroutine
 @pass_runtime
@@ -149,25 +149,25 @@ async def find_builds_cli(
 
     advisory_id_provided = advisory_id is not None
     if advisory_id_provided and default_advisory_type:
-        raise click.BadParameter('Use only one of --use-default-advisory or --attach')
+        raise click.BadParameter("Use only one of --use-default-advisory or --attach")
     if sum([payload, non_payload, only_rhcos]) > 1:
-        raise click.BadParameter('Use only one of --payload, --non-payload, or --rhcos.')
+        raise click.BadParameter("Use only one of --payload, --non-payload, or --rhcos.")
     if builds and builds_file:
-        raise click.BadParameter('Use only one of --build or --builds-file.')
+        raise click.BadParameter("Use only one of --build or --builds-file.")
     if clean:
         if not (advisory_id_provided or default_advisory_type):
-            raise click.BadParameter('Cannot use --clean without --attach or --use-default-advisory.')
+            raise click.BadParameter("Cannot use --clean without --attach or --use-default-advisory.")
         if builds or builds_file:
-            raise click.BadParameter('Cannot use --clean with --build or --builds-file.')
+            raise click.BadParameter("Cannot use --clean with --build or --builds-file.")
 
     if builds_file:
         if builds_file == "-":
             builds_file = sys.stdin
         builds = [line.strip() for line in builds_file.readlines()]
 
-    runtime.initialize(mode='images' if kind == 'image' else 'rpms')
+    runtime.initialize(mode="images" if kind == "image" else "rpms")
 
-    if runtime.build_system == 'konflux':
+    if runtime.build_system == "konflux":
         if any(
             [
                 builds,
@@ -181,10 +181,10 @@ async def find_builds_cli(
             ]
         ):
             raise click.BadParameter(
-                'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
+                "Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options."
             )
-        if kind != 'image':
-            raise click.BadParameter('Konflux only supports --kind image.')
+        if kind != "image":
+            raise click.BadParameter("Konflux only supports --kind image.")
         if all_image_types:
             data = await find_builds_konflux_all_types(runtime)
         else:
@@ -197,7 +197,7 @@ async def find_builds_cli(
         return
 
     et_data = runtime.get_errata_config()
-    tag_pv_map = et_data.get('brew_tag_product_version_mapping')
+    tag_pv_map = et_data.get("brew_tag_product_version_mapping")
 
     if default_advisory_type is not None:
         advisory_id = find_default_advisory(runtime, default_advisory_type)
@@ -214,7 +214,7 @@ async def find_builds_cli(
             builds, tag_pv_map, include_shipped=include_shipped, brew_session=brew_session
         )
     else:
-        if kind == 'image':
+        if kind == "image":
             if not only_rhcos:
                 nvrps = await _fetch_builds_by_kind_image(
                     runtime, tag_pv_map, brew_session, payload, non_payload, include_shipped
@@ -225,13 +225,13 @@ async def find_builds_cli(
                     rhcos_nvrs, tag_pv_map, include_shipped=include_shipped, brew_session=brew_session
                 )
                 nvrps.extend(rhcos_nvrps)
-        elif kind == 'rpm':
+        elif kind == "rpm":
             nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
-    LOGGER.info('Fetching info for builds from Errata')
+    LOGGER.info("Fetching info for builds from Errata")
     builds: list[brew.Build] = parallel_results_with_progress(
         nvrps,
-        lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}', nvrp[3], session=requests.Session()),
+        lambda nvrp: errata.get_brew_build(f"{nvrp[0]}-{nvrp[1]}-{nvrp[2]}", nvrp[3], session=requests.Session()),
     )
 
     if as_json:
@@ -247,18 +247,18 @@ async def find_builds_cli(
         if len(builds) != previous:
             for attached_ad_id, nvrs in attached_to_advisories.items():
                 if attached_ad_id == advisory_id:
-                    LOGGER.info(f'{len(nvrs)} builds are already attached to given advisory')
+                    LOGGER.info(f"{len(nvrs)} builds are already attached to given advisory")
                 else:
                     LOGGER.warning(
-                        f'Cannot attach {len(nvrs)} build(s), since they are already attached to '
-                        f'ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory '
-                        'and then try again.'
+                        f"Cannot attach {len(nvrs)} build(s), since they are already attached to "
+                        f"ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory "
+                        "and then try again."
                     )
 
     if not advisory_id:
-        LOGGER.info(f'Found {len(builds)} builds')
+        LOGGER.info(f"Found {len(builds)} builds")
         for b in sorted(builds):
-            click.echo(' ' + b.nvr)
+            click.echo(" " + b.nvr)
         return
 
     try:
@@ -277,7 +277,7 @@ async def find_builds_cli(
             yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
             yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}")
         else:
-            erratum.ensure_state('NEW_FILES')
+            erratum.ensure_state("NEW_FILES")
             erratum.attach_builds(builds, kind)
 
         if clean:
@@ -288,33 +288,33 @@ async def find_builds_cli(
             valid_package_els = set()
             for n in canonical_nvrs:
                 parsed_n = parse_nvr(n)
-                n_el = isolate_el_version_in_release(parsed_n['release'])
-                valid_package_els.add((parsed_n['name'], n_el))
+                n_el = isolate_el_version_in_release(parsed_n["release"])
+                valid_package_els.add((parsed_n["name"], n_el))
 
             temp = []
             for n in nvrs_to_remove:
                 parsed_n = parse_nvr(n)
-                n_el = isolate_el_version_in_release(parsed_n['release'])
-                if (parsed_n['name'], n_el) in valid_package_els:
+                n_el = isolate_el_version_in_release(parsed_n["release"])
+                if (parsed_n["name"], n_el) in valid_package_els:
                     temp.append(n)
 
             nvrs_to_remove = nvrs_to_remove - set(temp)
             if nvrs_to_remove:
                 LOGGER.info(f"Removing builds from advisory that were not found in build sweep: {len(nvrs_to_remove)}")
                 for b in sorted(nvrs_to_remove):
-                    click.echo(' ' + b)
+                    click.echo(" " + b)
                 if dry_run:
                     yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
                     yellow_print(f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}")
                 else:
-                    erratum.ensure_state('NEW_FILES')
+                    erratum.ensure_state("NEW_FILES")
                     erratum.remove_builds(list(nvrs_to_remove))
 
         if not builds:
             return
 
-        cdn_repos = et_data.get('cdn_repos')
-        if kind == 'image':
+        cdn_repos = et_data.get("cdn_repos")
+        if kind == "image":
             if dry_run:
                 yellow_print("[dry-run] Would've ensured RHCOS file metadata is set")
             else:
@@ -324,7 +324,7 @@ async def find_builds_cli(
                     yellow_print(f"[dry-run] Would've enabled CDN repos: {cdn_repos}")
                 else:
                     cdn_repos = set(cdn_repos)
-                    available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
+                    available_repos = set([i["repo"]["name"] for i in erratum.metadataCdnRepos()])
                     not_available_repos = cdn_repos - available_repos
                     repos_to_enable = cdn_repos & available_repos
                     if repos_to_enable:
@@ -336,7 +336,7 @@ async def find_builds_cli(
                             "be created."
                         )
     except ErrataException as e:
-        red_print(f'Cannot change advisory {advisory_id}: {e}')
+        red_print(f"Cannot change advisory {advisory_id}: {e}")
         exit(1)
 
 
@@ -348,14 +348,14 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
     # Keys under rhcos_config are not necessary payload tags. One exception is `dependencies`
     # make sure we only process payload tags
     # Exclude rhcos_payload_tags that are in COREOS_RHEL10_STREAMS
-    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime) if c['name'] not in COREOS_RHEL10_STREAMS]
+    rhcos_payload_tags = [c["name"] for c in get_container_configs(runtime) if c["name"] not in COREOS_RHEL10_STREAMS]
     for key, config in rhcos_config.items():
         if key not in rhcos_payload_tags:
             continue
         if key in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
             continue
 
-        for arch, pullspec in config['images'].items():
+        for arch, pullspec in config["images"].items():
             build_id = get_build_id_from_rhcos_pullspec(pullspec)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
@@ -363,12 +363,12 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
 
     for arch, builds in build_ids_by_arch.items():
         for build_id in builds:
-            nvr = f'rhcos-{arch}-{build_id}'
+            nvr = f"rhcos-{arch}-{build_id}"
             if brew_session.getBuild(nvr):
-                LOGGER.info(f'Found rhcos nvr: {nvr}')
+                LOGGER.info(f"Found rhcos nvr: {nvr}")
                 nvrs.append(nvr)
             else:
-                LOGGER.warning(f'rhcos nvr not found: {nvr}')
+                LOGGER.warning(f"rhcos nvr not found: {nvr}")
     return nvrs
 
 
@@ -385,15 +385,15 @@ def ensure_rhcos_file_meta(advisory_id):
         # title will be None if it isn't set
         # skip if it is set
         # skip if it is not an rhcos file
-        if f['title'] or 'rhcos' not in f['file']['path']:
+        if f["title"] or "rhcos" not in f["file"]["path"]:
             continue
 
-        arch = next((a for a in BREW_ARCHES if a in f['file']['path']), None)
+        arch = next((a for a in BREW_ARCHES if a in f["file"]["path"]), None)
         if not arch:
-            raise ValueError(f'Unable to determine arch from rhcos file path: {f["file"]["path"]}. Please investigate.')
+            raise ValueError(f"Unable to determine arch from rhcos file path: {f['file']['path']}. Please investigate.")
 
-        title = f'RHCOS Image metadata ({arch})'
-        rhcos_file_meta.append({'file': f['file']['id'], 'title': title})
+        title = f"RHCOS Image metadata ({arch})"
+        rhcos_file_meta.append({"file": f["file"]["id"], "title": title})
     if rhcos_file_meta:
         errata.put_file_meta(advisory_id, rhcos_file_meta)
 
@@ -420,7 +420,7 @@ def _fetch_nvrps_by_nvr_or_id(
         LOGGER.info("Filtering out shipped builds")
         shipped = _find_shipped_builds([b["id"] for b in builds], brew_session)
     unshipped = [b for b in builds if b["id"] not in shipped]
-    LOGGER.info(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
+    LOGGER.info(f"Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.")
 
     nvrps = []
     if ignore_product_version:
@@ -440,7 +440,7 @@ def _fetch_nvrps_by_nvr_or_id(
 
 def _gen_nvrp_tuples(builds: list[dict], tag_pv_map: dict[str, str]):
     """Returns a list of (name, version, release, product_version) tuples of each build"""
-    nvrps = [(b['name'], b['version'], b['release'], tag_pv_map[b['tag_name']]) for b in builds]
+    nvrps = [(b["name"], b["version"], b["release"], tag_pv_map[b["tag_name"]]) for b in builds]
     return nvrps
 
 
@@ -450,10 +450,10 @@ def _json_dump(as_json: str, data: dict):
     :param data: data to dump as JSON
     """
 
-    if as_json == '-':
+    if as_json == "-":
         click.echo(json.dumps(data, indent=4, sort_keys=True))
     else:
-        with open(as_json, 'w') as json_file:
+        with open(as_json, "w") as json_file:
             json.dump(data, json_file, indent=4, sort_keys=True)
 
 
@@ -491,7 +491,7 @@ async def _fetch_builds_by_kind_image(
         image_metas.append(image)
 
     pbar_header(
-        'Generating list of images: ', f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...'
+        "Generating list of images: ", f"Hold on a moment, fetching Brew builds for {len(image_metas)} components..."
     )
 
     tasks = [
@@ -506,7 +506,7 @@ async def _fetch_builds_by_kind_image(
         click.echo("Filtering out shipped builds...")
         shipped = _find_shipped_builds([b["id"] for b in brew_latest_builds], brew_session)
     unshipped = [b for b in brew_latest_builds if b["id"] not in shipped]
-    click.echo(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
+    click.echo(f"Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.")
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     return nvrps
 
@@ -521,9 +521,9 @@ def _ensure_accepted_tags(
     """
     builds = [b for b in builds if "tag_name" not in b]  # filters out builds whose accepted tag is already set
     unknown_tags_builds = [b for b in builds if "_tags" not in b]  # finds builds whose tags are not cached
-    build_tag_lists = brew.get_builds_tags([b['nvr'] for b in unknown_tags_builds], brew_session)
+    build_tag_lists = brew.get_builds_tags([b["nvr"] for b in unknown_tags_builds], brew_session)
     for build, tags in zip(unknown_tags_builds, build_tag_lists):
-        build["_tags"] = {tag['name'] for tag in tags}
+        build["_tags"] = {tag["name"] for tag in tags}
     # Finds and sets the accepted tag (rhaos-x.y-rhel-z-[candidate|hotfix]) for each build
     for build in builds:
         accepted_tag = next(filter(lambda tag: tag in tag_pv_map, build["_tags"]), None)
@@ -547,16 +547,16 @@ async def _fetch_builds_by_kind_rpm(
     assembly = runtime.assembly
     if runtime.assembly_basis_event:
         LOGGER.info(
-            f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}'
+            f"Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}"
         )
         # If an assembly has a basis event, its latest rpms can only be sourced from
         # "is:" or the stream assembly.
-        assembly = 'stream'
+        assembly = "stream"
 
         # ensures the runtime assembly doesn't include any image member specific or rhcos specific dependencies
         image_configs = [
             assembly_metadata_config(
-                runtime.get_releases_config(), runtime.assembly, 'image', image.distgit_key, image.config
+                runtime.get_releases_config(), runtime.assembly, "image", image.distgit_key, image.config
             )
             for _, image in runtime.image_map.items()
         ]
@@ -607,7 +607,7 @@ async def _fetch_builds_by_kind_rpm(
                 )
                 if pinned_by_is:
                     _ensure_accepted_tags(pinned_by_is.values(), brew_session, tag_pv_map)
-                    pinned_nvrs.update([b['nvr'] for b in pinned_by_is.values()])
+                    pinned_nvrs.update([b["nvr"] for b in pinned_by_is.values()])
 
                     # Builds pinned by "is" should take precedence over every build from tag
                     for component, pinned_build in pinned_by_is.items():
@@ -633,7 +633,7 @@ async def _fetch_builds_by_kind_rpm(
                             dep_build["nvr"],
                         )
                 component_builds.update(group_deps)
-                pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
+                pinned_nvrs.update([b["nvr"] for b in group_deps.values()])
             builds.extend(component_builds.values())
 
     LOGGER.info(f"Found {len(builds)} qualified rpm builds")
@@ -657,7 +657,7 @@ async def _fetch_builds_by_kind_rpm(
         LOGGER.info("Filtering out shipped builds - except the ones that have been pinned in the assembly")
         shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
-    LOGGER.info(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are qualified.')
+    LOGGER.info(f"Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are qualified.")
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     nvrps = sorted(set(nvrps))  # remove duplicates
     return nvrps
@@ -676,13 +676,13 @@ def _filter_out_attached_builds(
         # check if build is attached to any existing advisory for this version
         in_same_version = False
         for errata_info in b.all_errata:
-            eid = errata_info['id']
+            eid = errata_info["id"]
             if eid not in errata_version_cache:
                 release = errata.get_art_release_from_erratum(eid)
                 if not release:
                     # Does not contain ART metadata; consider it unversioned
                     LOGGER.warning("Errata {} Does not contain ART metadata\n".format(eid))
-                    errata_version_cache[eid] = ''
+                    errata_version_cache[eid] = ""
                     continue
                 errata_version_cache[eid] = release
             if errata_version_cache[eid] == get_release_version(b.product_version):
@@ -691,7 +691,7 @@ def _filter_out_attached_builds(
                 # builds that have shipped before in preGA advisory, in the GA advisory.
                 # Errata does not allow attaching a build to 2 pending advisories at the same time
                 # So filter if advisory is pending otherwise skip if advisory is shipped
-                if include_shipped and errata_info['status'] == "SHIPPED_LIVE":
+                if include_shipped and errata_info["status"] == "SHIPPED_LIVE":
                     continue
                 in_same_version = True
                 if eid not in attached_to_advisories:
@@ -818,9 +818,9 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     olm_records = [record for record in olm_records if record is not None]
 
     builds_tuple = {
-        'payload': sorted([record.nvr for _, is_payload, record in records_with_olm if is_payload]),
-        'non_payload': sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
-        'olm_builds': sorted([b.nvr for b in olm_records]),
-        'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+        "payload": sorted([record.nvr for _, is_payload, record in records_with_olm if is_payload]),
+        "non_payload": sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
+        "olm_builds": sorted([b.nvr for b in olm_records]),
+        "olm_builds_not_found": sorted([b.nvr for b in olm_records_not_found]),
     }
     return builds_tuple

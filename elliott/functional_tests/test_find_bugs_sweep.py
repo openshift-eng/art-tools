@@ -18,5 +18,5 @@ class FindBugsSweepTestCase(unittest.TestCase):
         self.assertRegex(result.stdout.decode(), "Found \\d+ bugs")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

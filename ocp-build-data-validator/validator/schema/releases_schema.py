@@ -39,8 +39,8 @@ def _demerge(data):
 
 
 def validate(_, data):
-    for assembly_name, assembly in data.get('releases', {}).items():
-        if "group!" in assembly.get('assembly', {}).keys():
+    for assembly_name, assembly in data.get("releases", {}).items():
+        if "group!" in assembly.get("assembly", {}).keys():
             return f"Found forbidden key 'group!' in release '{assembly_name}'"
 
     # Load Json schemas
@@ -56,4 +56,4 @@ def validate(_, data):
         validator.validate(demerged_data)
     except ValidationError:
         errors = validator.iter_errors(demerged_data)
-        return '\n'.join([f"{e.json_path}: {e.message}" for e in errors])
+        return "\n".join([f"{e.json_path}: {e.message}" for e in errors])

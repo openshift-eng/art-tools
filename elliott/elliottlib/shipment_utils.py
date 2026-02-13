@@ -41,18 +41,18 @@ def get_shipment_configs_from_mr(
     diff_info = mr.diffs.list(all=True)[0]
     diff = mr.diffs.get(diff_info.id)
     for file_diff in diff.diffs:
-        file_path = file_diff.get('new_path') or file_diff.get('old_path')
-        if not file_path or not file_path.endswith(('.yaml', '.yml')):
+        file_path = file_diff.get("new_path") or file_diff.get("old_path")
+        if not file_path or not file_path.endswith((".yaml", ".yml")):
             continue
 
-        filename = file_path.split('/')[-1]
-        parts = filename.replace('.yaml', '').replace('.yml', '')
+        filename = file_path.split("/")[-1]
+        parts = filename.replace(".yaml", "").replace(".yml", "")
         kind = next((k for k in kinds if k in parts), None)
         if not kind:
             continue
 
         file_content = source_project.files.get(file_path, mr.source_branch)
-        content = file_content.decode().decode('utf-8')
+        content = file_content.decode().decode("utf-8")
 
         # Convert CommentedMap to regular Python objects before creating Pydantic model
         yaml_data = Model(yaml.load(content)).primitive()

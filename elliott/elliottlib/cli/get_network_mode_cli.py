@@ -21,20 +21,20 @@ class GetNetworkModeCli:
     async def get_results(self):
         # Use provided query_group to override the group for querying builds, or use runtime group
         # This allows querying builds stored with different group names (e.g., okd-4.21)
-        assembly_to_use = self.runtime.assembly or 'stream'
+        assembly_to_use = self.runtime.assembly or "stream"
 
         self.konflux_db.bind(KonfluxBuildRecord)
         image_metas = self.runtime.image_metas()
 
         if not image_metas:
-            self.logger.warning('No images found matching the specified criteria')
+            self.logger.warning("No images found matching the specified criteria")
             if self.as_json:
-                click.echo('[]')
+                click.echo("[]")
             return
 
         self.logger.info(
-            f'Querying network mode for {len(image_metas)} images in group={self.runtime.group}, '
-            f'assembly={assembly_to_use}'
+            f"Querying network mode for {len(image_metas)} images in group={self.runtime.group}, "
+            f"assembly={assembly_to_use}"
         )
 
         # Get latest builds for all images
@@ -59,10 +59,10 @@ class GetNetworkModeCli:
         # Create a map of name to build record
         results = [
             {
-                'name': build.name,
-                'nvr': build.nvr,
-                'network_mode': 'hermetic' if build.hermetic else 'open',
-                'pullspec': build.image_pullspec,
+                "name": build.name,
+                "nvr": build.nvr,
+                "network_mode": "hermetic" if build.hermetic else "open",
+                "pullspec": build.image_pullspec,
             }
             for build in builds
         ]
@@ -78,38 +78,38 @@ class GetNetworkModeCli:
         else:
             # Table output (default)
             click.echo(f"{'Image':<30} {'Network Mode':<15} {'NVR':<100}")
-            click.echo('-' * 155)
+            click.echo("-" * 155)
             for result in results:
-                network_mode_str = result['network_mode'] or 'N/A'
-                nvr_str = result['nvr'] or 'N/A'
+                network_mode_str = result["network_mode"] or "N/A"
+                nvr_str = result["nvr"] or "N/A"
                 click.echo(f"{result['name']:<30} {network_mode_str:<15} {nvr_str:<100} ")
 
 
-@cli.command('get-network-mode', short_help='Get network mode of latest builds for image components')
+@cli.command("get-network-mode", short_help="Get network mode of latest builds for image components")
 @click.option(
-    '--json',
-    'as_json',
+    "--json",
+    "as_json",
     is_flag=True,
     default=False,
-    help='Output results in JSON format',
+    help="Output results in JSON format",
 )
 @click.option(
-    '--disable-cache',
+    "--disable-cache",
     is_flag=True,
     default=False,
-    help='Disable Konflux DB cache',
+    help="Disable Konflux DB cache",
 )
 @click.option(
-    '--only-hermetic',
+    "--only-hermetic",
     is_flag=True,
     default=False,
-    help='Only returns hermetic network mode builds',
+    help="Only returns hermetic network mode builds",
 )
 @click.option(
-    '--only-open',
+    "--only-open",
     is_flag=True,
     default=False,
-    help='Only returns open network mode builds',
+    help="Only returns open network mode builds",
 )
 @pass_runtime
 @click_coroutine
@@ -148,11 +148,11 @@ async def get_network_mode_cli(
     """
 
     if only_open and only_hermetic:
-        raise click.BadParameter('Use only one of --only-open and --only-hermetic')
+        raise click.BadParameter("Use only one of --only-open and --only-hermetic")
 
-    runtime.initialize(mode='images', disable_konflux_db_cache=disable_cache)
+    runtime.initialize(mode="images", disable_konflux_db_cache=disable_cache)
 
     if runtime.konflux_db is None:
-        raise RuntimeError('Must run Elliott with Konflux DB initialized')
+        raise RuntimeError("Must run Elliott with Konflux DB initialized")
 
     await GetNetworkModeCli(runtime, as_json, only_hermetic, only_open).run()

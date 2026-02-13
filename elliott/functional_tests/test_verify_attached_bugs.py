@@ -140,11 +140,11 @@ class VerifyBugs(unittest.TestCase):
         out = subprocess.run(
             constants.ELLIOTT_CMD + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
             capture_output=True,
-            encoding='utf-8',
+            encoding="utf-8",
         )
         self.assertIn("bug 1856529 target release ['4.5.z'] is not in", out.stdout)
         self.assertEqual(1, out.returncode)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

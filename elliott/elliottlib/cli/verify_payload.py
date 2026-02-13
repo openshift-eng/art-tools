@@ -31,7 +31,7 @@ class VerifyPayloadPipeline:
         self.assembly_group_config = assembly_config_struct(releases_config, self.runtime.assembly, "group", {})
 
         # Get rhcos images from the assembly group config
-        rhcos_images = {c['name'] for c in rhcos.get_container_configs(self.runtime)}
+        rhcos_images = {c["name"] for c in rhcos.get_container_configs(self.runtime)}
 
         # Get the payload or imagestream NVRs
         self.all_payload_nvrs = await get_nvrs_from_release(self.payload_or_imagestream, rhcos_images, self.logger)
@@ -54,7 +54,7 @@ class VerifyPayloadPipeline:
         Get the image advisory ID from the assembly definition.
         """
 
-        return self.assembly_group_config.get('advisories', {}).get('image', None)
+        return self.assembly_group_config.get("advisories", {}).get("image", None)
 
     async def check_brew_payload(self):
         # Get the advisory ID from the assembly definition
@@ -70,8 +70,8 @@ class VerifyPayloadPipeline:
         in_pending_advisory = []
         in_shipped_advisory = []
         results = {
-            'missing_in_advisory': missing_in_errata,
-            'payload_advisory_mismatch': payload_doesnt_match_errata,
+            "missing_in_advisory": missing_in_errata,
+            "payload_advisory_mismatch": payload_doesnt_match_errata,
             "in_pending_advisory": in_pending_advisory,
             "in_shipped_advisory": in_shipped_advisory,
         }
@@ -97,13 +97,13 @@ class VerifyPayloadPipeline:
                 missing_in_errata[image] = imagevr
                 self.logger.warning(f"{imagevr} in payload not found in advisory")
 
-            elif image in self.all_advisory_nvrs and vr != self.all_advisory_nvrs[image].replace(f'{image}-', ''):
+            elif image in self.all_advisory_nvrs and vr != self.all_advisory_nvrs[image].replace(f"{image}-", ""):
                 self.logger.warning(
                     f"{image} from payload has version {vr} which does not match {self.all_advisory_nvrs[image]} from advisory"
                 )
                 payload_doesnt_match_errata[image] = {
-                    'payload': vr,
-                    'errata': self.all_advisory_nvrs[image],
+                    "payload": vr,
+                    "errata": self.all_advisory_nvrs[image],
                 }
 
     def _populate_missing_in_errata(self, missing_in_errata, in_shipped_advisory, in_pending_advisory):
@@ -164,7 +164,7 @@ class VerifyPayloadPipeline:
             raise click.UsageError("Shipment block does not contain a 'url' field for the merge request")
 
         builds_by_kind = get_builds_from_mr(mr_url)
-        return {parse_nvr(nvr)['name']: nvr for nvr in builds_by_kind['image']}
+        return {parse_nvr(nvr)["name"]: nvr for nvr in builds_by_kind["image"]}
 
     async def check_konflux_payload(self):
         self.all_advisory_nvrs = await self.get_shipment_nvrs()
@@ -173,8 +173,8 @@ class VerifyPayloadPipeline:
         missing_in_errata = {}
         payload_doesnt_match_errata = {}
         results = {
-            'missing_in_advisory': missing_in_errata,
-            'payload_advisory_mismatch': payload_doesnt_match_errata,
+            "missing_in_advisory": missing_in_errata,
+            "payload_advisory_mismatch": payload_doesnt_match_errata,
         }
 
         self.logger.info("Analyzing %s images to consider from payload", len(self.all_payload_nvrs))

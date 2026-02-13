@@ -28,5 +28,5 @@ class GetTestCase(unittest.TestCase):
         self.assertIn(constants.ERRATA_TOOL_URL, result.stdout.decode())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

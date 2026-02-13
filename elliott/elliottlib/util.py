@@ -31,7 +31,7 @@ from elliottlib.exceptions import BrewBuildException
 # -----------------------------------------------------------------------------
 default_release_date = datetime.datetime(1970, 1, 1, 0, 0)
 now = datetime.datetime.now()
-YMD = '%Y-%b-%d'
+YMD = "%Y-%b-%d"
 LOGGER = get_logger(__name__)
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
@@ -71,20 +71,20 @@ def validate_release_date(ctx, param, value):
             click.echo("{} - Validated".format(release_date.strftime(YMD)))
         return value
     except ValueError:
-        raise click.BadParameter('Release date (--date) must be in YYYY-Mon-DD format')
+        raise click.BadParameter("Release date (--date) must be in YYYY-Mon-DD format")
 
 
 def validate_email_address(ctx, param, value):
     """Ensure that email addresses provided are valid email strings"""
     # Really just check to match /^[^@]+@[^@]+\.[^@]+$/
-    email_re = re.compile(r'^[^@ ]+@[^@ ]+\.[^@ ]+$')
+    email_re = re.compile(r"^[^@ ]+@[^@ ]+\.[^@ ]+$")
     if not email_re.match(value):
         raise click.BadParameter("Invalid email address for {}: {}".format(param, value))
 
     return value
 
 
-def pbar_header(msg_prefix='', msg='', seq=[], char='*', file=None):
+def pbar_header(msg_prefix="", msg="", seq=[], char="*", file=None):
     """Generate a progress bar header for a given iterable or
     sequence. The given sequence must have a countable length. A bar of
     `char` characters is printed between square brackets.
@@ -117,7 +117,7 @@ def pbar_header(msg_prefix='', msg='', seq=[], char='*', file=None):
     click.echo("[" + (char * len(seq)) + "]", file=file)
 
 
-def progress_func(func, char='*', file=None):
+def progress_func(func, char="*", file=None):
     """Use to wrap functions called in parallel. Prints a character for
     each function call.
 
@@ -130,7 +130,7 @@ def progress_func(func, char='*', file=None):
         Usage examples:
           * See find-builds command
     """
-    click.secho(char, fg='green', nl=False, file=file)
+    click.secho(char, fg="green", nl=False, file=file)
     return func()
 
 
@@ -152,14 +152,14 @@ def parallel_results_with_progress(inputs, func, file=None):
     [****************]
 
     """
-    click.secho('[', nl=False, file=file)
+    click.secho("[", nl=False, file=file)
     pool = ThreadPool(cpu_count())
     results = pool.map(lambda it: progress_func(lambda: func(it), file=file), inputs)
 
     # Wait for results
     pool.close()
     pool.join()
-    click.echo(']', file=file)
+    click.echo("]", file=file)
 
     return results
 
@@ -173,7 +173,7 @@ def get_release_version(pv):
 
     this will break and need fixing if we introduce more.
     """
-    return re.search(r'OSE-(IRONIC-)?(\d+\.\d+)', pv).groups()[1]
+    return re.search(r"OSE-(IRONIC-)?(\d+\.\d+)", pv).groups()[1]
 
 
 def convert_remote_git_to_https(source):
@@ -186,11 +186,11 @@ def convert_remote_git_to_https(source):
     :return: Normalized https git URL
     """
     url = re.sub(
-        pattern=r'[^@]+@([^:/]+)[:/]([^\.]+)',
-        repl='https://\\1/\\2',
+        pattern=r"[^@]+@([^:/]+)[:/]([^\.]+)",
+        repl="https://\\1/\\2",
         string=source.strip(),
     )
-    return re.sub(string=url, pattern=r'\.git$', repl='').rstrip('/')
+    return re.sub(string=url, pattern=r"\.git$", repl="").rstrip("/")
 
 
 def minor_version_tuple(bz_target):
@@ -201,10 +201,10 @@ def minor_version_tuple(bz_target):
     :param bz_target: Target version string like "4.5.0"
     :return: A tuple like (4, 5)
     """
-    if bz_target == '---':
+    if bz_target == "---":
         return 0, 0
 
-    match = re.match(r'^(\d+).(\d+)(.0|.z)?$', bz_target)
+    match = re.match(r"^(\d+).(\d+)(.0|.z)?$", bz_target)
     return int(match.groups()[0]), int(match.groups()[1])
 
 
@@ -230,7 +230,7 @@ def get_golang_version_from_build_log(log):
     # Based on below greps:
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang-(bin-|))[0-9]+.[0-9]+.[0-9]+[^ ]*' ./3.11/*.log | sed 's/:.*\([0-9]\+\.[0-9]\+\.[0-9]\+.*\)/: \1/'
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang.*module[^ ]*).*[0-9]+.[0-9]+.[0-9]+[^ ]*' ./4.5/*.log | sed 's/\:.*\([^a-z][0-9]\+\.[0-9]\+\.[0-9]\+[^ ]*\)/:\ \1/'
-    m = re.search(r'(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*', log)
+    m = re.search(r"(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*", log)
     s = m.group(0).split()
 
     # if we get a result like:
@@ -242,7 +242,7 @@ def get_golang_version_from_build_log(log):
         #   "go-toolset-1.14-golang-1.14.9-2.el7.x86_64"
         go_version = s[0]
         # extract version and release
-        m = re.search(r'[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$', s[0])
+        m = re.search(r"[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$", s[0])
         s = m.group(0).split()
         if len(s) == 1:
             go_version = s[0]
@@ -326,9 +326,9 @@ def to_nvre(build_record: Dict):
     From a build record object (such as an entry returned by listTagged),
     returns the full nvre in the form n-v-r:E.
     """
-    nvr = build_record['nvr']
-    if 'epoch' in build_record and build_record["epoch"] and build_record["epoch"] != 'None':
-        return f'{nvr}:{build_record["epoch"]}'
+    nvr = build_record["nvr"]
+    if "epoch" in build_record and build_record["epoch"] and build_record["epoch"] != "None":
+        return f"{nvr}:{build_record['epoch']}"
     return nvr
 
 
@@ -337,7 +337,7 @@ def strip_epoch(nvr: str):
     If an NVR string is N-V-R:E, returns only the NVR portion. Otherwise
     returns NVR exactly as-is.
     """
-    return nvr.split(':')[0]
+    return nvr.split(":")[0]
 
 
 # https://code.activestate.com/recipes/577504/
@@ -416,16 +416,16 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     for nvr in nvrs:
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
-        nvr_build_system = get_build_system(nvr[2].split('.')[1])
+        nvr_build_system = get_build_system(nvr[2].split(".")[1])
         if build_system is not None:
             assert build_system == nvr_build_system, (
-                f'Build system mismatch for {nvr}: {build_system} != {nvr_build_system}'
+                f"Build system mismatch for {nvr}: {build_system} != {nvr_build_system}"
             )
         else:
             build_system = nvr_build_system
-    if build_system == 'brew':
+    if build_system == "brew":
         return get_golang_container_nvrs_brew(nvrs, logger)
-    elif build_system == 'konflux':
+    elif build_system == "konflux":
         return get_golang_container_nvrs_konflux(nvrs, logger)
 
 
@@ -436,41 +436,41 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> 
 
     :return: a dict mapping go version string to a list of nvrs built from that go version
     """
-    all_build_objs = brew.get_build_objects(['{}-{}-{}'.format(*n) for n in nvrs])
+    all_build_objs = brew.get_build_objects(["{}-{}-{}".format(*n) for n in nvrs])
     go_nvr_map = {}
     for build, nvr_param in zip(all_build_objs, nvrs):
         if not build:
-            raise ValueError(f'Brew build object not found for {"-".join(nvr_param)}.')
+            raise ValueError(f"Brew build object not found for {'-'.join(nvr_param)}.")
         go_version = None
         try:
-            nvr = (build['name'], build['version'], build['release'])
+            nvr = (build["name"], build["version"], build["release"])
         except TypeError:
-            logger.error(f'Error parsing {build}')
+            logger.error(f"Error parsing {build}")
             raise
         name = nvr[0]
-        if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
+        if name == "openshift-golang-builder-container" or "go-toolset" in name:
             go_version = golang_builder_version(nvr, logger)
             if not go_version:
-                raise ValueError(f'Cannot find go version for {name}')
+                raise ValueError(f"Cannot find go version for {name}")
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
             continue
 
         try:
-            parents = build['extra']['image']['parent_image_builds']
+            parents = build["extra"]["image"]["parent_image_builds"]
         except KeyError:
-            logger.debug(f'Could not find parent build image for {nvr}')
+            logger.debug(f"Could not find parent build image for {nvr}")
             continue
 
         for p, pinfo in parents.items():
             # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.20.10-202310161945.el9.gbbb66ea
-            if 'openshift-golang-builder' in p or 'go-toolset' in p:
-                go_version = pinfo.get('nvr')
+            if "openshift-golang-builder" in p or "go-toolset" in p:
+                go_version = pinfo.get("nvr")
                 break
 
         if not go_version:
-            logger.debug(f'Could not find parent Go builder image for {nvr}')
+            logger.debug(f"Could not find parent Go builder image for {nvr}")
             continue
 
         if go_version not in go_nvr_map:
@@ -489,11 +489,11 @@ def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) 
     konflux_db = KonfluxDb()
     konflux_db.bind(KonfluxBuildRecord)
 
-    logger.info(f'Getting build records for {len(nvrs)} nvrs from KonfluxDB')
+    logger.info(f"Getting build records for {len(nvrs)} nvrs from KonfluxDB")
 
     # Need installed_packages column for golang builder image detection
     all_build_objs = _executor.submit(
-        lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
+        lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(["{}-{}-{}".format(*n) for n in nvrs]))
     ).result()
 
     return get_golang_container_nvrs_for_konflux_record(cast(list[KonfluxBuildRecord], all_build_objs), logger)
@@ -511,7 +511,7 @@ def get_golang_container_nvrs_for_konflux_record(
     go_nvr_map: dict[str, set[tuple[str, str, str]]] = {}
     for build in build_objs:
         nvr_dict = parse_nvr(build.nvr)
-        nvr = (nvr_dict['name'], nvr_dict['version'], nvr_dict['release'])
+        nvr = (nvr_dict["name"], nvr_dict["version"], nvr_dict["release"])
         go_version = None
         # The golang-builder container needs special handling,
         # because we need to look at included golang rpms instead of parent images.
@@ -522,12 +522,12 @@ def get_golang_container_nvrs_for_konflux_record(
                 (
                     pkg_nvr
                     for pkg in build.installed_packages
-                    if (pkg_nvr := parse_nvr(pkg))['name'] == GOLANG_RPM_PACKAGE_NAME
+                    if (pkg_nvr := parse_nvr(pkg))["name"] == GOLANG_RPM_PACKAGE_NAME
                 ),
                 None,
             )
             if not go_package:
-                raise ValueError(f'Cannot find go version for {build.nvr}')
+                raise ValueError(f"Cannot find go version for {build.nvr}")
             go_version = f"{go_package['version']}-{go_package['release']}"
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
@@ -538,31 +538,31 @@ def get_golang_container_nvrs_for_konflux_record(
         for p in parents:
             # parent_images contains NVRs, or pullspecs for external images where NVR couldn't be determined.
             # NVRs never contain '/', so we can distinguish them from pullspecs.
-            if '/' not in p:
+            if "/" not in p:
                 # This is an NVR - look for golang builder (e.g. openshift-golang-builder-container-v1.24.4-...)
-                if p.startswith(f'{constants.GOLANG_BUILDER_CVE_COMPONENT}-'):
+                if p.startswith(f"{constants.GOLANG_BUILDER_CVE_COMPONENT}-"):
                     go_version = p
                     break
             else:
                 # This is a pullspec (NVR extraction failed) - parse it to construct NVR
-                spec = p.split('/')[-1]
-                if spec.startswith('openshift-golang-builder:'):
-                    go_version = spec.replace(':', '-container-')
+                spec = p.split("/")[-1]
+                if spec.startswith("openshift-golang-builder:"):
+                    go_version = spec.replace(":", "-container-")
                     break
-                elif spec.startswith('art-images:golang-builder-'):
+                elif spec.startswith("art-images:golang-builder-"):
                     go_version = spec.replace(
-                        'art-images:golang-builder-', f'{constants.GOLANG_BUILDER_CVE_COMPONENT}-'
+                        "art-images:golang-builder-", f"{constants.GOLANG_BUILDER_CVE_COMPONENT}-"
                     )
                     break
 
         if not go_version:
-            logger.debug(f'Could not find parent Go builder image for {nvr}')
+            logger.debug(f"Could not find parent Go builder image for {nvr}")
             continue
 
         if go_version not in go_nvr_map:
             go_nvr_map[go_version] = set()
         go_nvr_map[go_version].add(nvr)
-    logger.info(f'Found {len(go_nvr_map)} golang builder nvrs: {sorted(go_nvr_map.keys())}')
+    logger.info(f"Found {len(go_nvr_map)} golang builder nvrs: {sorted(go_nvr_map.keys())}")
     return go_nvr_map
 
 
@@ -571,12 +571,12 @@ def golang_builder_version(nvr, logger):
     try:
         build_log = brew.get_nvr_arch_log(*nvr)
     except BrewBuildException:
-        logger.debug(f'Could not brew log for {nvr}')
+        logger.debug(f"Could not brew log for {nvr}")
     else:
         try:
             go_version = get_golang_version_from_build_log(build_log)
         except AttributeError:
-            logger.debug(f'Could not find Go version in build log for {nvr}')
+            logger.debug(f"Could not find Go version in build log for {nvr}")
     return go_version
 
 
@@ -586,19 +586,19 @@ def get_golang_rpm_nvrs(nvrs, logger):
         go_version = None
         # what we build in brew as openshift
         # is called openshift-hyperkube in rhcos
-        if nvr[0] == 'openshift-hyperkube':
-            n = 'openshift'
+        if nvr[0] == "openshift-hyperkube":
+            n = "openshift"
             nvr = (n, nvr[1], nvr[2])
 
         try:
             root_log = brew.get_nvr_root_log(*nvr)
         except BrewBuildException:
-            logger.debug(f'Could not find brew log for {nvr}')
+            logger.debug(f"Could not find brew log for {nvr}")
         else:
             try:
                 go_version = get_golang_version_from_build_log(root_log)
             except AttributeError:
-                logger.debug(f'Could not find go version in root log for {nvr}')
+                logger.debug(f"Could not find go version in root log for {nvr}")
 
         if not go_version:
             continue
@@ -613,11 +613,11 @@ def pretty_print_nvrs_go(go_nvr_map, report=False):
     for go_version in sorted(go_nvr_map.keys()):
         nvrs = go_nvr_map[go_version]
         if report:
-            green_print(f'Builds built with {go_version}: {len(nvrs)}')
+            green_print(f"Builds built with {go_version}: {len(nvrs)}")
         else:
-            green_print(f'* Following nvrs ({len(nvrs)}) are built with {go_version}:')
+            green_print(f"* Following nvrs ({len(nvrs)}) are built with {go_version}:")
             for nvr in sorted(nvrs):
-                pretty_nvr = '-'.join(nvr)
+                pretty_nvr = "-".join(nvr)
                 print(pretty_nvr)
 
 
@@ -627,13 +627,13 @@ def pretty_print_nvrs_go_json(go_nvr_map, report=False):
         if report:
             out.append({"builder_nvr": go_nvr, "building_count": len(go_nvr_map[go_nvr])})
         else:
-            nvrs = ['-'.join(n) for n in sorted(go_nvr_map[go_nvr])]
+            nvrs = ["-".join(n) for n in sorted(go_nvr_map[go_nvr])]
             out.append({"builder_nvr": go_nvr, "building_nvrs": nvrs})
     # sort
     if report:
-        out = sorted(out, key=lambda x: x['building_count'], reverse=True)
+        out = sorted(out, key=lambda x: x["building_count"], reverse=True)
     else:
-        out = sorted(out, key=lambda x: len(x['building_nvrs']), reverse=True)
+        out = sorted(out, key=lambda x: len(x["building_nvrs"]), reverse=True)
     print(json.dumps(out, indent=4))
 
 
@@ -660,7 +660,7 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
 
     # a pullspec looks like this: quay.io/openshift-release-dev/ocp-release:4.17.14-x86_64
     # an imagestream looks like this: 4.17-art-assembly-4.17.14
-    if '@' in pullspec_or_imagestream or ':' in pullspec_or_imagestream:
+    if "@" in pullspec_or_imagestream or ":" in pullspec_or_imagestream:
         is_pullspec = True
     else:
         is_pullspec = False
@@ -669,26 +669,26 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     log("Fetching release info...")
     if is_pullspec:
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}'
+            f"oc adm release info -o json -n ocp {pullspec_or_imagestream}"
         )
-        tags = json.loads(stdout)['references']['spec']['tags']
+        tags = json.loads(stdout)["references"]["spec"]["tags"]
     else:  # it is an imagestream
         # get image_stream and name_space out of pullspec_or_imagestream
         image_stream = pullspec_or_imagestream.split("/")[-1]  # Get the part after /
         name_space = pullspec_or_imagestream.split("/")[0]  # Get the part before /
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(f'oc -o json -n {name_space} get is/{image_stream}')
-        tags = json.loads(stdout)['spec']['tags']
+        rc, stdout, stderr = await exectools.cmd_gather_async(f"oc -o json -n {name_space} get is/{image_stream}")
+        tags = json.loads(stdout)["spec"]["tags"]
 
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
-    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in tags]
+    cmds = [["oc", "image", "info", "-o", "json", tag["from"]["name"]] for tag in tags]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
 
     for image, cmd, cmd_result in zip(tags, cmds, cmd_results):
-        image_name = image['name']
+        image_name = image["name"]
         rc, stdout, stderr = cmd_result
         if rc != 0:
             # Probably no point in continuing.. can't contact brew?
@@ -696,19 +696,19 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
             raise RuntimeError(msg)
 
         image_info = json.loads(stdout)
-        labels = image_info['config']['config']['Labels']
+        labels = image_info["config"]["config"]["Labels"]
 
         # RHCOS images are not built in brew, so skip them
         if image_name in rhcos_images:
             log(f"Skipping rhcos image {image_name}")
             continue
 
-        if not labels or any(i not in labels for i in ['version', 'release', 'com.redhat.component']):
+        if not labels or any(i not in labels for i in ["version", "release", "com.redhat.component"]):
             msg = f"For image {image_name} expected labels don't exist"
             raise ValueError(msg)
-        component = labels['com.redhat.component']
-        v = labels['version']
-        r = labels['release']
+        component = labels["com.redhat.component"]
+        v = labels["version"]
+        r = labels["release"]
         all_payload_nvrs[component] = (v, r)
     return all_payload_nvrs
 
@@ -769,21 +769,21 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
         """Extract NVR from a single image. Returns (image_url, nvr_or_empty, error_msg_or_empty)"""
         try:
             logger.debug(f"Running oc image info for: {image_url}")
-            oc_cmd = ['oc', 'image', 'info', image_url, '--filter-by-os', 'amd64', '-o', 'json']
+            oc_cmd = ["oc", "image", "info", image_url, "--filter-by-os", "amd64", "-o", "json"]
 
             # Add registry config for authentication if available
             konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
             if konflux_art_images_auth_file:
-                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+                oc_cmd.extend(["--registry-config", konflux_art_images_auth_file])
 
             _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd)
             image_info = json.loads(image_info_output)
 
             # Extract labels
-            labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
-            component = labels.get('com.redhat.component')
-            version = labels.get('version')
-            release = labels.get('release')
+            labels = image_info.get("config", {}).get("config", {}).get("Labels", {})
+            component = labels.get("com.redhat.component")
+            version = labels.get("version")
+            release = labels.get("release")
 
             logger.debug(
                 f"Image labels for {image_url} - component: {component}, version: {version}, release: {release}"
@@ -796,11 +796,11 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
             else:
                 missing_labels = []
                 if not component:
-                    missing_labels.append('com.redhat.component')
+                    missing_labels.append("com.redhat.component")
                 if not version:
-                    missing_labels.append('version')
+                    missing_labels.append("version")
                 if not release:
-                    missing_labels.append('release')
+                    missing_labels.append("release")
                 error_msg = f"Missing required labels: {', '.join(missing_labels)}"
                 logger.debug(f"✗ {error_msg} for {image_url}")
                 return (image_url, "", error_msg)

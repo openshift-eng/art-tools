@@ -13,9 +13,9 @@ class TestCommentOnPr(unittest.TestCase):
         self.build_id = "build_id"
         self.distgit_name = "distgit_name"
         self.comment = (
-            '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build '
-            '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n'
-            'All builds following this will include this PR.'
+            "**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build "
+            "[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n"
+            "All builds following this will include this PR."
         )
 
     def test_list_comments(self):
@@ -23,7 +23,7 @@ class TestCommentOnPr(unittest.TestCase):
         api_mock = MagicMock()
         api_mock.issues.list_comments.return_value = [{"body": "test comment"}]
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
-        comment_on_pr.pr = {'number': pr_no}
+        comment_on_pr.pr = {"number": pr_no}
         comment_on_pr.gh_client = api_mock
         result = comment_on_pr.list_comments()
         api_mock.issues.list_comments.assert_called_once_with(issue_number=pr_no, per_page=100)
@@ -53,7 +53,7 @@ class TestCommentOnPr(unittest.TestCase):
         api_mock = MagicMock()
         mock_check_if_comment_exist.return_value = False
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
-        comment_on_pr.pr = {'number': pr_no}
+        comment_on_pr.pr = {"number": pr_no}
         comment_on_pr.gh_client = api_mock
         _ = comment_on_pr.post_comment()
         api_mock.issues.create_comment.assert_called_once_with(issue_number=pr_no, body=self.comment)
@@ -64,8 +64,8 @@ class TestCommentOnPr(unittest.TestCase):
         comment_on_pr.gh_client = api_mock
         api_mock.repos.list_pull_requests_associated_with_commit.return_value = [{"html_url": "test_url", "number": 1}]
         comment_on_pr.set_pr_from_commit()
-        self.assertEqual(comment_on_pr.pr['html_url'], 'test_url')
-        self.assertEqual(comment_on_pr.pr['number'], 1)
+        self.assertEqual(comment_on_pr.pr["html_url"], "test_url")
+        self.assertEqual(comment_on_pr.pr["number"], 1)
 
     def test_multiple_prs_for_merge_commit(self):
         api_mock = MagicMock()
@@ -86,7 +86,7 @@ class TestCommentOnPr(unittest.TestCase):
         comment_on_pr.set_github_client()
         self.assertIsNotNone(comment_on_pr.gh_client)
 
-    @patch('doozerlib.comment_on_pr.DockerfileParser')
+    @patch("doozerlib.comment_on_pr.DockerfileParser")
     def test_get_source_details(self, mock_parser):
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
         # Mocking the labels dictionary of the DockerfileParser object
@@ -98,6 +98,6 @@ class TestCommentOnPr(unittest.TestCase):
         comment_on_pr.set_repo_details()
 
         # Asserting that the owner, commit, and repo attributes are set correctly
-        self.assertEqual(comment_on_pr.owner, 'openshift')
-        self.assertEqual(comment_on_pr.commit, '660e0c785a2c9b1fd5fad33cbcffd77a6d84ccb5')
-        self.assertEqual(comment_on_pr.repo, 'origin')
+        self.assertEqual(comment_on_pr.owner, "openshift")
+        self.assertEqual(comment_on_pr.commit, "660e0c785a2c9b1fd5fad33cbcffd77a6d84ccb5")
+        self.assertEqual(comment_on_pr.repo, "origin")

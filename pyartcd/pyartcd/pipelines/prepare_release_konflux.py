@@ -83,7 +83,7 @@ class PrepareReleaseKonfluxPipeline:
         self._build_data_repo_dir = self.working_dir / "ocp-build-data-push"
         self._shipment_data_repo_dir = self.working_dir / "shipment-data-push"
         self.dry_run = self.runtime.dry_run
-        self.product = 'ocp'  # assume that product is ocp for now
+        self.product = "ocp"  # assume that product is ocp for now
 
         # Have clear pull and push targets for both the build and shipment repos
         self.build_data_repo_pull_url, self.build_data_gitref, self.build_data_push_url = self._build_data_repo_vars(
@@ -110,34 +110,34 @@ class PrepareReleaseKonfluxPipeline:
         self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
         self.fbc_build_errors = []  # Track FBC build errors for UNSTABLE marking
 
-        group_param = f'--group={group}'
+        group_param = f"--group={group}"
         if self.build_data_gitref:
-            group_param += f'@{self.build_data_gitref}'
+            group_param += f"@{self.build_data_gitref}"
 
         self._elliott_base_command = [
-            'elliott',
+            "elliott",
             group_param,
-            f'--assembly={self.assembly}',
-            '--build-system=konflux',
-            f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={self.build_data_repo_pull_url}',
+            f"--assembly={self.assembly}",
+            "--build-system=konflux",
+            f"--working-dir={self.elliott_working_dir}",
+            f"--data-path={self.build_data_repo_pull_url}",
         ]
 
         self._elliott_base_command_for_brew = [
-            'elliott',
+            "elliott",
             group_param,
-            f'--assembly={self.assembly}',
-            '--build-system=brew',
-            f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={self.build_data_repo_pull_url}',
+            f"--assembly={self.assembly}",
+            "--build-system=brew",
+            f"--working-dir={self.elliott_working_dir}",
+            f"--data-path={self.build_data_repo_pull_url}",
         ]
 
         self._doozer_base_command = [
-            'doozer',
+            "doozer",
             group_param,
-            '--build-system=konflux',
-            f'--working-dir={self.doozer_working_dir}',
-            f'--data-path={self.build_data_repo_pull_url}',
+            "--build-system=konflux",
+            f"--working-dir={self.doozer_working_dir}",
+            f"--data-path={self.build_data_repo_pull_url}",
         ]
 
     @staticmethod
@@ -148,7 +148,7 @@ class PrepareReleaseKonfluxPipeline:
         # the assumption here is that username can be anything
         # so we use oauth2 as a placeholder username
         # and the token as the password
-        return f'https://oauth2:{token}@{rest_of_the_url}'
+        return f"https://oauth2:{token}@{rest_of_the_url}"
 
     def _build_data_repo_vars(self, build_data_repo_url: Optional[str]):
         build_data_repo_pull_url = (
@@ -250,7 +250,7 @@ class PrepareReleaseKonfluxPipeline:
             sys.exit(2)
 
     def check_env_vars(self):
-        github_token = os.getenv('GITHUB_TOKEN')
+        github_token = os.getenv("GITHUB_TOKEN")
         if not github_token:
             raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
         self.github_token = github_token
@@ -266,7 +266,7 @@ class PrepareReleaseKonfluxPipeline:
         self.jira_token = jira_token
 
         # Get the Jenkins job URL from environment variable
-        self.job_url = os.getenv('BUILD_URL')
+        self.job_url = os.getenv("BUILD_URL")
 
     def setup_working_dir(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -373,7 +373,7 @@ class PrepareReleaseKonfluxPipeline:
         await self.create_update_build_data_pr()
 
         # Sweep builds
-        base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
+        base_command = [item for item in self._elliott_base_command if item != "--build-system=konflux"]
         for impetus, advisory_num in impetus_advisories.items():
             if advisory_num <= 0:
                 raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
@@ -403,12 +403,12 @@ class PrepareReleaseKonfluxPipeline:
 
         # Find bugs
         self.logger.info("Finding %s bugs...", impetus)
-        impetus_bugs = await self.find_bugs(build_system='brew')
+        impetus_bugs = await self.find_bugs(build_system="brew")
 
         # Process bugs
         for impetus, advisory_num in impetus_advisories.items():
             # microshift advisory is special, and it will not be ready at this time
-            if impetus == 'microshift':
+            if impetus == "microshift":
                 continue
             bug_ids = impetus_bugs.get(impetus)
             if not bug_ids:
@@ -600,11 +600,11 @@ class PrepareReleaseKonfluxPipeline:
                         attached image builds.
         """
         self.logger.info("Verify_attached_operators ...")
-        olm_builds = kind_to_builds.get('metadata')
+        olm_builds = kind_to_builds.get("metadata")
         if not olm_builds:
             # No metadata builds to verify, so the check passes.
             return
-        image_builds = kind_to_builds['image'] + kind_to_builds['extras']
+        image_builds = kind_to_builds["image"] + kind_to_builds["extras"]
         kdb = KonfluxDb()
         kdb.bind(KonfluxBundleBuildRecord)
         tasks = [
@@ -666,13 +666,13 @@ class PrepareReleaseKonfluxPipeline:
         """
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
 
-        major, minor = self.release_name.split('.')[:2]
+        major, minor = self.release_name.split(".")[:2]
         version = f"{major}.{minor}"
-        release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        release_str = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         message = f"Rebase FBC segment with release {release_str}"
 
         cmd = self._doozer_base_command + [
-            f'--assembly={self.assembly}',
+            f"--assembly={self.assembly}",
             "beta:fbc:rebase-and-build",
             f"--version={version}",
             f"--release={release_str}",
@@ -737,9 +737,9 @@ class PrepareReleaseKonfluxPipeline:
         if not kubeconfig:
             raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build bundle image")
         cmd = self._doozer_base_command + [
-            '--assembly=stream',
+            "--assembly=stream",
             "beta:images:konflux:bundle",
-            f'--konflux-kubeconfig={kubeconfig}',
+            f"--konflux-kubeconfig={kubeconfig}",
             "--output=json",
         ]
         if self.dry_run:
@@ -790,8 +790,8 @@ class PrepareReleaseKonfluxPipeline:
 
         # Parse the shipment URL to extract project and MR details
         parsed_url = urlparse(shipment_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
+        mr_id = parsed_url.path.split("/")[-1]
 
         # Load the existing MR
         project = self._gitlab.get_project(target_project_path)
@@ -849,7 +849,7 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         create_cmd = self._elliott_base_command + [
-            f'--shipment-path={self.shipment_data_repo_pull_url}',
+            f"--shipment-path={self.shipment_data_repo_pull_url}",
             "shipment",
             "init",
             kind,
@@ -861,7 +861,7 @@ class PrepareReleaseKonfluxPipeline:
 
         if self.inject_build_data_repo:
             # inject the build repo into the shipment config
-            repo_username = self.build_data_repo_pull_url.split('/')[-2]
+            repo_username = self.build_data_repo_pull_url.split("/")[-2]
             build_commit = self.build_data_gitref or self.group
             if not shipment.shipment.tools:
                 shipment.shipment.tools = Tools()
@@ -886,7 +886,7 @@ class PrepareReleaseKonfluxPipeline:
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             for nvr in builds:
                 temp_file.write(nvr.encode())
-                temp_file.write(b'\n')
+                temp_file.write(b"\n")
             temp_file.flush()
             temp_file_path = temp_file.name
 
@@ -958,7 +958,7 @@ class PrepareReleaseKonfluxPipeline:
     @a.functools.lru_cache
     async def find_bugs(
         self,
-        build_system='konflux',
+        build_system="konflux",
         permissive: bool | None = None,
         exclude_trackers: bool | None = None,
     ) -> Dict[str, List[str]]:
@@ -970,9 +970,9 @@ class PrepareReleaseKonfluxPipeline:
         :return: A dictionary mapping advisory kinds to lists of bug IDs
         """
         match build_system:
-            case 'konflux':
+            case "konflux":
                 base_command = self._elliott_base_command
-            case 'brew':
+            case "brew":
                 base_command = self._elliott_base_command_for_brew
             case _:
                 raise ValueError(f"Unsupported build system: {build_system}")
@@ -998,13 +998,13 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         attach_cve_flaws_command = self._elliott_base_command + [
-            'attach-cve-flaws',
-            f'--use-default-advisory={kind}',
-            '--reconcile',
-            '--output=yaml',
+            "attach-cve-flaws",
+            f"--use-default-advisory={kind}",
+            "--reconcile",
+            "--output=yaml",
         ]
 
-        self.logger.info('Running elliott attach-cve-flaws for %s ...', kind)
+        self.logger.info("Running elliott attach-cve-flaws for %s ...", kind)
         stdout = await self.execute_command_with_logging(attach_cve_flaws_command)
         if stdout:
             shipment.shipment.data.releaseNotes = ReleaseNotes(**Model(yaml.load(stdout)).primitive())
@@ -1019,7 +1019,7 @@ class PrepareReleaseKonfluxPipeline:
         self.logger.info("Creating shipment MR...")
 
         # Create branch name
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         source_branch = f"prepare-shipment-{self.assembly}-{timestamp}"
         target_branch = "main"
 
@@ -1035,7 +1035,7 @@ class PrepareReleaseKonfluxPipeline:
 
         def _get_project(url):
             parsed_url = urlparse(url)
-            project_path = parsed_url.path.strip('/').removesuffix('.git')
+            project_path = parsed_url.path.strip("/").removesuffix(".git")
             return self._gitlab.get_project(project_path)
 
         source_project = _get_project(self.shipment_data_repo_push_url)
@@ -1054,12 +1054,12 @@ class PrepareReleaseKonfluxPipeline:
         else:
             mr = source_project.mergerequests.create(
                 {
-                    'source_branch': source_branch,
-                    'target_project_id': target_project.id,
-                    'target_branch': target_branch,
-                    'title': mr_title,
-                    'description': mr_description,
-                    'remove_source_branch': True,
+                    "source_branch": source_branch,
+                    "target_project_id": target_project.id,
+                    "target_branch": target_branch,
+                    "title": mr_title,
+                    "description": mr_description,
+                    "remove_source_branch": True,
                 }
             )
             mr_url = mr.web_url
@@ -1083,8 +1083,8 @@ class PrepareReleaseKonfluxPipeline:
 
         # Parse the shipment URL to extract project and MR details
         parsed_url = urlparse(shipment_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
+        mr_id = parsed_url.path.split("/")[-1]
 
         # Load the existing MR
         project = self._gitlab.get_project(target_project_path)
@@ -1194,9 +1194,9 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info("No changes in assembly config. PR will not be created or updated.")
             return False
 
-        target_repo = self.build_data_repo_pull_url.split('/')[-1].replace('.git', '')
-        source_owner = self.build_data_push_url.split('/')[-2]
-        target_owner = self.build_data_repo_pull_url.split('/')[-2]
+        target_repo = self.build_data_repo_pull_url.split("/")[-1].replace(".git", "")
+        source_owner = self.build_data_push_url.split("/")[-2]
+        target_owner = self.build_data_repo_pull_url.split("/")[-2]
 
         head = f"{source_owner}:{branch}"
         base = self.build_data_gitref or self.group
@@ -1299,10 +1299,10 @@ class PrepareReleaseKonfluxPipeline:
         :return: True if the changes were committed and pushed successfully, False otherwise.
         """
         if await self.build_data_repo.does_branch_exist_on_remote(branch, remote="origin"):
-            self.logger.info('Fetching and switching to existing branch %s', branch)
+            self.logger.info("Fetching and switching to existing branch %s", branch)
             await self.build_data_repo.fetch_switch_branch(branch, remote="origin")
         else:
-            self.logger.info('Creating new branch %s', branch)
+            self.logger.info("Creating new branch %s", branch)
             await self.build_data_repo.create_branch(branch)
 
         new_releases_config = self.releases_config.copy()
@@ -1338,20 +1338,20 @@ class PrepareReleaseKonfluxPipeline:
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
         async def _verify(imagestream):
             # Create base path if it does not exist
-            base_path = self.elliott_working_dir / 'verify_payload' / imagestream
+            base_path = self.elliott_working_dir / "verify_payload" / imagestream
             base_path.mkdir(parents=True, exist_ok=True)
 
             self.logger.info("Verifying payload against imagestream %s", imagestream)
             with TemporaryDirectory(prefix=str(base_path)) as elliott_working:
                 # Replace the elliott working dir to allow concurrent commands execution
                 verify_payload_command = [
-                    arg if not arg.startswith('--working-dir=') else f'--working-dir={elliott_working}'
+                    arg if not arg.startswith("--working-dir=") else f"--working-dir={elliott_working}"
                     for arg in self._elliott_base_command
                 ]
-                verify_payload_command += ['verify-payload', imagestream]
+                verify_payload_command += ["verify-payload", imagestream]
 
                 if self.dry_run:
-                    self.logger.info("[DRY-RUN] Would have run command: %s", ' '.join(verify_payload_command))
+                    self.logger.info("[DRY-RUN] Would have run command: %s", " ".join(verify_payload_command))
                     return
 
                 _, stdout, _ = await exectools.cmd_gather_async(verify_payload_command)
@@ -1365,18 +1365,18 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("Payload verification succeeded for imagestream %s", imagestream)
 
                 # Move debug.log to elliott working directory to allow Jenkins archive it
-                debug_log_path = Path(self.elliott_working_dir) / 'verify-payload'  # destination dir
+                debug_log_path = Path(self.elliott_working_dir) / "verify-payload"  # destination dir
                 debug_log_path.mkdir(parents=True, exist_ok=True)
                 shutil.move(
-                    f'{elliott_working}/debug.log',
-                    f'{debug_log_path}/verify-payload-{imagestream.split("/")[-1]}-debug.log',
+                    f"{elliott_working}/debug.log",
+                    f"{debug_log_path}/verify-payload-{imagestream.split('/')[-1]}-debug.log",
                 )
 
-        major, minor = self.release_name.split('.')[:2]
-        image_stream_version = f'{major}.{minor}'
+        major, minor = self.release_name.split(".")[:2]
+        image_stream_version = f"{major}.{minor}"
 
         assembly_is_base_name = assembly_imagestream_base_name_generic(
-            image_stream_version, self.assembly, self.assembly_type, build_system='konflux'
+            image_stream_version, self.assembly, self.assembly_type, build_system="konflux"
         )
         arches = self.group_config.get("arches", [])
         imagestreams_per_arch = [
@@ -1422,8 +1422,8 @@ class PrepareReleaseKonfluxPipeline:
             "y": self.release_version[1],
             "z": self.release_version[2],
             "release_date": self.release_date,
-            "rhcos_advisory": self.updated_assembly_group_config.advisories['rhcos'],
-            "rpm_advisory": self.updated_assembly_group_config.advisories['rpm'],
+            "rhcos_advisory": self.updated_assembly_group_config.advisories["rhcos"],
+            "rpm_advisory": self.updated_assembly_group_config.advisories["rpm"],
             "shipment_url": self.updated_assembly_group_config.shipment.url,
             "candidate_nightlies": candidate_nightlies,
         }
@@ -1479,7 +1479,7 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.warning("Would have updated JIRA ticket %s with summary %s", issue.key, fields["summary"])
 
         else:
-            self.logger.info('Jira unchanged, not updating issue')
+            self.logger.info("Jira unchanged, not updating issue")
 
         return jira_changed
 
@@ -1555,7 +1555,7 @@ class PrepareReleaseKonfluxPipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group to operate on e.g. openshift-4.18",
 )
@@ -1566,8 +1566,8 @@ class PrepareReleaseKonfluxPipeline:
     help="The assembly to operate on e.g. 4.18.5",
 )
 @click.option(
-    '--build-data-repo-url',
-    help='ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch',
+    "--build-data-repo-url",
+    help="ocp-build-data repo to use. Defaults to group branch - to use a different branch/commit use repo@branch",
 )
 @click.option(
     "--inject-build-data-repo",
@@ -1575,8 +1575,8 @@ class PrepareReleaseKonfluxPipeline:
     help="Inject build-data repo/commit given by --build-data-repo-url into the shipment config",
 )
 @click.option(
-    '--shipment-data-repo-url',
-    help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
+    "--shipment-data-repo-url",
+    help="shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com",
 )
 @pass_runtime
 @click_coroutine

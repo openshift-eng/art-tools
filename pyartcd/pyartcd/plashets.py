@@ -17,7 +17,7 @@ from pyartcd.constants import PLASHET_REMOTES
 
 working_dir = "plashet-working"
 
-logger = logging.getLogger('pyartcd')
+logger = logging.getLogger("pyartcd")
 
 previous_packages = [
     "conmon",
@@ -179,11 +179,11 @@ def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
 async def build_plashets(
     group: str,
     release: str,
-    assembly: str = 'stream',
+    assembly: str = "stream",
     repos: Sequence[str] = (),
-    doozer_working: str = 'doozer-working',
+    doozer_working: str = "doozer-working",
     data_path: str = constants.OCP_BUILD_DATA_URL,
-    data_gitref: str = '',
+    data_gitref: str = "",
     copy_links: bool = False,
     dry_run: bool = False,
 ) -> dict:
@@ -219,7 +219,7 @@ async def build_plashets(
     """
 
     # major, minor = stream.split('.')  # e.g. ('4', '14') from '4.14'
-    revision = release.replace('.p?', '')  # e.g. '202304181947' from '202304181947.p?'
+    revision = release.replace(".p?", "")  # e.g. '202304181947' from '202304181947.p?'
 
     # Load group config
     group_config = await util.load_group_config(
@@ -227,8 +227,8 @@ async def build_plashets(
     )
 
     # Check if assemblies are enabled for current group
-    if not group_config.get('assemblies', {}).get('enabled'):
-        assembly = 'stream'
+    if not group_config.get("assemblies", {}).get("enabled"):
+        assembly = "stream"
         logger.warning("Assembly name reset to 'stream' because assemblies are not enabled in ocp-build-data.")
 
     # Get plashet repo configs
@@ -238,16 +238,16 @@ async def build_plashets(
         # and each repo has its own config file.
         # Those repo definitions are stored in the "all_repos" key of the group config.
         logger.info("Using new-style plashet configs")
-        all_repos = group_config['all_repos']
+        all_repos = group_config["all_repos"]
         plashet_repos = [
-            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == 'plashet'
+            repo for repo in RepoList.model_validate(all_repos).root if not repo.disabled and repo.type == "plashet"
         ]
         if repos:
             repo_set = set(repos)
             plashet_repos = [repo for repo in plashet_repos if repo.name in repo_set]
         group_vars = group_config.get("vars", {})
         major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
-        plashet_config = PlashetConfig.model_validate(group_config.get('plashet', {}))
+        plashet_config = PlashetConfig.model_validate(group_config.get("plashet", {}))
 
     else:  # Fall back to old-style config
         # old-style config only supports openshift-x.y groups
@@ -255,7 +255,7 @@ async def build_plashets(
         if major is None:
             raise ValueError("Old-style plashet config only supports openshift-x.y groups")
         logger.info("Using old-style plashet configs in group.yml")
-        group_repos = group_config.get('repos', {}).keys()
+        group_repos = group_config.get("repos", {}).keys()
         if repos:
             logger.info(f"Filtering plashet repos to only the given ones: {repos}")
             group_repos = [repo for repo in group_repos if repo in repos]
@@ -268,9 +268,9 @@ async def build_plashets(
             base_dir=f"{major}.{minor}/$runtime_assembly/$slug",
             plashet_dir="$yyyy-$MM/$revision",
             create_symlinks=True,
-            symlink_name='latest',
+            symlink_name="latest",
             create_repo_subdirs=True,
-            repo_subdir='os',
+            repo_subdir="os",
             download_url="https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets/{MAJOR}.{MINOR}/$runtime_assembly/$slug/latest/$arch/os/",
         )
 
@@ -285,31 +285,31 @@ async def build_plashets(
     # Build plashet repos one by one.
 
     plashets_built = {}  # hold the information of all built plashet repos
-    timestamp = datetime.strptime(revision, '%Y%m%d%H%M%S')
-    signing_advisory = group_config.get('signing_advisory', '0')
-    arches = plashet_config.arches or group_config['arches']
+    timestamp = datetime.strptime(revision, "%Y%m%d%H%M%S")
+    signing_advisory = group_config.get("signing_advisory", "0")
+    arches = plashet_config.arches or group_config["arches"]
     group_param = group
     if data_gitref:
-        group_param += f'@{data_gitref}'
+        group_param += f"@{data_gitref}"
 
     for repo in plashet_repos:
-        logger.info('Building plashet repo for %s', repo.name)
+        logger.info("Building plashet repo for %s", repo.name)
         assert repo.type == "plashet" and repo.plashet is not None
         config = repo.plashet
         slug = config.slug or repo.name
         # name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
         variables = {
-            'runtime_assembly': assembly,
-            'slug': slug,
-            'yyyy': f'{timestamp.year:04}',
-            'MM': f'{timestamp.month:02}',
-            'dd': f'{timestamp.day:02}',
-            'hh': f'{timestamp.hour:02}',
-            'mm': f'{timestamp.minute:02}',
-            'ss': f'{timestamp.second:02}',
-            'revision': revision,
-            'MAJOR': major,
-            'MINOR': minor,
+            "runtime_assembly": assembly,
+            "slug": slug,
+            "yyyy": f"{timestamp.year:04}",
+            "MM": f"{timestamp.month:02}",
+            "dd": f"{timestamp.day:02}",
+            "hh": f"{timestamp.hour:02}",
+            "mm": f"{timestamp.minute:02}",
+            "ss": f"{timestamp.second:02}",
+            "revision": revision,
+            "MAJOR": major,
+            "MINOR": minor,
         }
         base_dir_template = string.Template(plashet_config.base_dir)
         base_dir_name = base_dir_template.substitute(**variables)
@@ -335,28 +335,28 @@ async def build_plashets(
             doozer_working=doozer_working,
         )
 
-        logger.info('Plashet repo for %s created: %s', repo.name, local_path)
+        logger.info("Plashet repo for %s created: %s", repo.name, local_path)
         if plashet_config.create_symlinks:
             symlink_path = create_latest_symlink(
                 base_dir=local_base_dir, plashet_name=plashet_name, symlink_name=plashet_config.symlink_name
             )
-            logger.info('Symlink for %s created: %s', repo.name, symlink_path)
+            logger.info("Symlink for %s created: %s", repo.name, symlink_path)
 
         remote_base_dir = Path("/mnt/data/pub/RHOCP/plashets", base_dir_name)
-        logger.info('Copying %s to remote host...', remote_base_dir)
+        logger.info("Copying %s to remote host...", remote_base_dir)
 
         await asyncio.gather(
             *[
                 copy_to_remote(
-                    plashet_remote['host'], local_base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
+                    plashet_remote["host"], local_base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
                 )
                 for plashet_remote in PLASHET_REMOTES
             ]
         )
 
         plashets_built[repo.name] = {
-            'plashetDirName': revision,
-            'localPlashetPath': str(local_path),
+            "plashetDirName": revision,
+            "localPlashetPath": str(local_path),
         }
 
     return plashets_built
@@ -374,10 +374,10 @@ async def build_plashet_from_tags(
     tag_pvs: Sequence[Tuple[str, str]],
     embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
-    repo_subdir: str | None = 'os',
+    repo_subdir: str | None = "os",
     poll_for: int = 0,
     data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_working: str = 'doozer-working',
+    doozer_working: str = "doozer-working",
     dry_run: bool = False,
 ):
     """
@@ -389,7 +389,7 @@ async def build_plashet_from_tags(
         shutil.rmtree(repo_path)
     cmd = [
         "doozer",
-        f'--data-path={data_path}',
+        f"--data-path={data_path}",
         "--working-dir",
         doozer_working,
         "--group",
@@ -476,15 +476,15 @@ async def copy_to_remote(
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)
     else:
-        logger.info("Executing %s", ' '.join(cmd))
+        logger.info("Executing %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
     # Copy local dir to remote
     cmd = ["rsync", "-av"]
     if copy_links:
-        cmd.append('--copy-links')
+        cmd.append("--copy-links")
     else:
-        cmd.append('--links')
+        cmd.append("--links")
     cmd.extend(
         [
             "--progress",
@@ -502,5 +502,5 @@ async def copy_to_remote(
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)
     else:
-        logger.info("Executing %s", ' '.join(cmd))
+        logger.info("Executing %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())

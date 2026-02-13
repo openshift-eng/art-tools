@@ -120,23 +120,23 @@ class PrepareReleasePipeline:
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
 
-        group_param = f'--group={group}'
+        group_param = f"--group={group}"
         if self.data_gitref:
-            group_param += f'@{self.data_gitref}'
+            group_param += f"@{self.data_gitref}"
 
         self._doozer_base_command = [
-            'doozer',
+            "doozer",
             group_param,
-            f'--assembly={self.assembly}',
-            f'--working-dir={self.doozer_working_dir}',
-            f'--data-path={self.data_path}',
+            f"--assembly={self.assembly}",
+            f"--working-dir={self.doozer_working_dir}",
+            f"--data-path={self.data_path}",
         ]
         self._elliott_base_command = [
-            'elliott',
+            "elliott",
             group_param,
-            f'--assembly={self.assembly}',
-            f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={self.data_path}',
+            f"--assembly={self.assembly}",
+            f"--working-dir={self.elliott_working_dir}",
+            f"--data-path={self.data_path}",
         ]
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
 
@@ -202,7 +202,7 @@ class PrepareReleasePipeline:
                 batch_name = f"OCP {self.release_name}"
                 errata_config = await self.load_errata_config()
                 batch = await self._ensure_batch(
-                    self._errata_api, errata_config['release'], batch_name, self.release_date, dry_run=self.dry_run
+                    self._errata_api, errata_config["release"], batch_name, self.release_date, dry_run=self.dry_run
                 )
 
             is_ga = self.release_version[2] == 0
@@ -290,7 +290,7 @@ class PrepareReleasePipeline:
         if batch:
             # Update batch with advisories
             advisories_for_main_batch = [
-                ad for ad_type, ad in advisories.items() if ad > 0 and ad_type not in {'advance', 'microshift'}
+                ad for ad_type, ad in advisories.items() if ad > 0 and ad_type not in {"advance", "microshift"}
             ]
             await self._ensure_batch_advisories(self._errata_api, batch, advisories_for_main_batch, self.dry_run)
 
@@ -353,10 +353,10 @@ class PrepareReleasePipeline:
             gather_dependencies = self.advance_release or self.pre_release
             advisory_args = []
             if self.advance_release:
-                advisory_args = [advisories['advance']]
+                advisory_args = [advisories["advance"]]
             elif self.pre_release:
-                advisory_args = [advisories['prerelease']]
-            elif 'metadata' in advisories:
+                advisory_args = [advisories["prerelease"]]
+            elif "metadata" in advisories:
                 advisory_args = [advisories["metadata"], advisories["extras"], advisories["image"]]
 
             try:
@@ -393,11 +393,11 @@ class PrepareReleasePipeline:
             _LOGGER.info("Don't verify payloads for OCP3 releases")
         else:
             _LOGGER.info("Verify the swept builds match the imagestreams that were updated during build-sync...")
-            image_stream_version = f'{self.release_version[0]}.{self.release_version[1]}'
+            image_stream_version = f"{self.release_version[0]}.{self.release_version[1]}"
 
             # the prepare-release job is only meant to run for brew
             assembly_is_base_name = assembly_imagestream_base_name_generic(
-                image_stream_version, self.assembly, assembly_type, build_system='brew'
+                image_stream_version, self.assembly, assembly_type, build_system="brew"
             )
             arches = group_config.get("arches", [])
             imagestreams_per_arch = [
@@ -422,9 +422,9 @@ class PrepareReleasePipeline:
         # Move advisories to QE
         for impetus, advisory in advisories.items():
             # microshift advisory is special, and it will not be ready at this time
-            if impetus == 'microshift':
+            if impetus == "microshift":
                 continue
-            if impetus == 'metadata' and (self.advance_release or self.pre_release):
+            if impetus == "metadata" and (self.advance_release or self.pre_release):
                 # We don't need to move emtpy metadata advisory if it's an advance release
                 _LOGGER.info("Not moving metadata advisory to QE since prerelease/advance release detected")
                 continue
@@ -595,7 +595,7 @@ class PrepareReleasePipeline:
         if self.runtime.dry_run:
             _LOGGER.warning("[DRY RUN] Would have run %s", cmd)
             return
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         result = subprocess.run(
             cmd, stdout=PIPE, stderr=PIPE, check=False, universal_newlines=True, cwd=self.working_dir
         )
@@ -626,7 +626,7 @@ class PrepareReleasePipeline:
             create_cmd.append(f"--date={release_date}")
         if not self.dry_run:
             create_cmd.append("--yes")
-        _LOGGER.info("Running command: %s", ' '.join(create_cmd))
+        _LOGGER.info("Running command: %s", " ".join(create_cmd))
         result = subprocess.run(
             create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self.working_dir
         )
@@ -747,7 +747,7 @@ class PrepareReleasePipeline:
             cmd.append("--advance-release")
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -758,7 +758,7 @@ class PrepareReleasePipeline:
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -795,7 +795,7 @@ class PrepareReleasePipeline:
         cmd.append("--clean")
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     async def change_advisory_state_qe(self, advisory: int):
@@ -810,7 +810,7 @@ class PrepareReleasePipeline:
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -822,7 +822,7 @@ class PrepareReleasePipeline:
         if self.dry_run:
             _LOGGER.info("Would have run: %s", cmd)
             return
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         results = json.loads(out)
         _LOGGER.info("Summary results for %s:\n%s", pullspec_or_imagestream, json.dumps(results, indent=4))
@@ -858,9 +858,9 @@ class PrepareReleasePipeline:
     async def set_advisory_dependencies(self, advisories):
         # dict keys should ship after values.
         blocked_by = {
-            'rpm': {'image', 'extras'},
-            'metadata': {'image', 'extras'},
-            'microshift': {'rpm', 'image'},
+            "rpm": {"image", "extras"},
+            "metadata": {"image", "extras"},
+            "microshift": {"rpm", "image"},
         }
         for target_kind in blocked_by.keys():
             target_advisory_id = advisories.get(target_kind, 0)
@@ -936,7 +936,7 @@ class PrepareReleasePipeline:
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
         # parse record.log
         with open(self.doozer_working_dir / "record.log", "r") as file:
@@ -956,7 +956,7 @@ class PrepareReleasePipeline:
         if not self.dry_run and metadata_advisory:
             cmd.append("--attach")
             cmd.append(f"{metadata_advisory}")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -969,7 +969,7 @@ class PrepareReleasePipeline:
         cmd.append("--")
         for advisory in advisories:
             cmd.append(f"{advisory}")
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     async def remove_builds_all(self, advisory_id):
@@ -985,7 +985,7 @@ class PrepareReleasePipeline:
         if self.dry_run:
             cmd.append("--dry-run")
 
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
+        _LOGGER.info("Running command: %s", " ".join(cmd))
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     async def check_advisory_stage_policy(self, assembly_type: AssemblyTypes):
@@ -1059,7 +1059,7 @@ class PrepareReleasePipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
@@ -1071,14 +1071,14 @@ class PrepareReleasePipeline:
     help="The name of an assembly to rebase & build for. e.g. 4.9.1",
 )
 @click.option(
-    '--data-path', required=False, help='ocp-build-data fork to use (e.g. assembly definition in your own fork)'
+    "--data-path", required=False, help="ocp-build-data fork to use (e.g. assembly definition in your own fork)"
 )
-@click.option('--data-gitref', required=False, help='Doozer data path git [branch / tag / sha] to use')
+@click.option("--data-gitref", required=False, help="Doozer data path git [branch / tag / sha] to use")
 @click.option("--name", metavar="RELEASE_NAME", help="release name (e.g. 4.6.42)")
 @click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
 @click.option(
     "--package-owner",
-    metavar='EMAIL',
+    metavar="EMAIL",
     help="Advisory package owner; Must be an individual email address; May be anyone who wants random advisory spam",
 )
 @click.option("--nightly", "nightlies", metavar="TAG", multiple=True, help="[MULTIPLE] Candidate nightly")

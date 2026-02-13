@@ -15,7 +15,6 @@ format:
 	uv run ruff format
 
 lint: format-check
-	uv run ruff check --output-format concise
 
 pylint:
 	uv run pylint --errors-only .

@@ -3,7 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import cast
 
 if sys.version_info < (3, 11):
-    sys.exit('Sorry, Python < 3.11 is not supported.')
+    sys.exit("Sorry, Python < 3.11 is not supported.")
 
 from doozerlib.runtime import Runtime
 

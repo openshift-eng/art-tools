@@ -90,11 +90,11 @@ class ReleaseFromFbcPipeline:
 
         # Base elliott command template
         self._elliott_base_command = [
-            'elliott',
-            f'--group={group}',
-            f'--assembly={assembly}',
-            '--build-system=konflux',
-            f'--working-dir={self.elliott_working_dir}',
+            "elliott",
+            f"--group={group}",
+            f"--assembly={assembly}",
+            "--build-system=konflux",
+            f"--working-dir={self.elliott_working_dir}",
         ]
 
     def _shipment_data_repo_vars(self, shipment_data_repo_url: Optional[str]):
@@ -137,7 +137,7 @@ class ReleaseFromFbcPipeline:
 
         rest_of_url = "".join(url_parts)
         # Use oauth2 as placeholder username and token as password
-        return f'{scheme}://oauth2:{token}@{netloc}{rest_of_url}'
+        return f"{scheme}://oauth2:{token}@{netloc}{rest_of_url}"
 
     @cached_property
     def _gitlab(self) -> GitLabClient:
@@ -151,7 +151,7 @@ class ReleaseFromFbcPipeline:
         Get GitLab project from URL.
         """
         parsed_url = urlparse(url)
-        project_path = parsed_url.path.strip('/').removesuffix('.git')
+        project_path = parsed_url.path.strip("/").removesuffix(".git")
         return self._gitlab.get_project(project_path)
 
     def check_env_vars(self):
@@ -197,13 +197,13 @@ class ReleaseFromFbcPipeline:
         """
         try:
             # Use doozer command to read group config product field
-            doozer_cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'product']
+            doozer_cmd = ["doozer", f"--group={self.group}", "config:read-group", "product"]
 
             _, product_output, _ = await exectools.cmd_gather_async(doozer_cmd)
             # Clean up the output - remove all whitespace (including newlines)
             product = product_output.strip()
 
-            if product and product != 'None' and product != 'null':
+            if product and product != "None" and product != "null":
                 self.logger.info(f"Loaded product from group config: {product}")
                 return product
             else:
@@ -213,7 +213,7 @@ class ReleaseFromFbcPipeline:
             self.logger.warning(f"Failed to load product from group config: {e}")
 
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
-        product = self.group.split('-')[0]
+        product = self.group.split("-")[0]
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
@@ -224,19 +224,19 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Extracting FBC NVR from FBC pullspec: {fbc_pullspec}")
 
         try:
-            oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
+            oc_cmd = ["oc", "image", "info", fbc_pullspec, "--filter-by-os", "amd64", "-o", "json"]
 
             # Add registry config for authentication if available
             konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
             if konflux_art_images_auth_file:
-                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+                oc_cmd.extend(["--registry-config", konflux_art_images_auth_file])
 
             image_info_output, _ = exectools.cmd_assert(oc_cmd)
             image_info = json.loads(image_info_output)
 
             # Extract labels
-            labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
-            nvr = labels.get('com.redhat.art.nvr')
+            labels = image_info.get("config", {}).get("config", {}).get("Labels", {})
+            nvr = labels.get("com.redhat.art.nvr")
 
             if nvr:
                 self.logger.info(f"✓ Extracted FBC NVR: {nvr}")
@@ -259,9 +259,9 @@ class ReleaseFromFbcPipeline:
 
         for nvr in nvrs:
             nvr_dict = parse_nvr(nvr)
-            component_name = nvr_dict['name']
+            component_name = nvr_dict["name"]
 
-            if component_name.endswith('-fbc'):
+            if component_name.endswith("-fbc"):
                 categorized["fbc"].append(nvr)
             else:
                 # All other builds are considered image builds for simplicity
@@ -284,9 +284,9 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Creating Konflux snapshot for {len(builds)} builds...")
 
         # store builds in a temporary file, each nvr string in a new line
-        with tempfile.NamedTemporaryFile(delete=False, mode='w') as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, mode="w") as temp_file:
             for nvr in builds:
-                temp_file.write(nvr + '\n')
+                temp_file.write(nvr + "\n")
             temp_file.flush()
             temp_file_path = temp_file.name
 
@@ -340,18 +340,18 @@ class ReleaseFromFbcPipeline:
             application=snapshot.spec.application if snapshot else "default-app",
             group=self.group,
             assembly=self.assembly,
-            fbc=kind == 'fbc',  # Only True for FBC catalog files, False for image shipments
+            fbc=kind == "fbc",  # Only True for FBC catalog files, False for image shipments
         )
 
         # Create environments - read from shipment repo config if available
         stage_rpa = "n/a"
         prod_rpa = "n/a"
 
-        if hasattr(self, 'shipment_data_repo') and self.shipment_data_repo:
+        if hasattr(self, "shipment_data_repo") and self.shipment_data_repo:
             try:
                 config_path = self.shipment_data_repo._directory / "config.yaml"
                 if config_path.exists():
-                    with open(config_path, 'r') as f:
+                    with open(config_path, "r") as f:
                         # Use yaml.safe_load from stdlib for reading config
                         shipment_config = stdlib_yaml.safe_load(f) or {}
 
@@ -384,7 +384,7 @@ class ReleaseFromFbcPipeline:
         self.logger.info("Creating shipment MR...")
 
         # Create branch name
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         source_branch = f"prepare-shipment-{self.assembly}-{timestamp}"
         target_branch = "main"
 
@@ -410,12 +410,12 @@ class ReleaseFromFbcPipeline:
         else:
             mr = source_project.mergerequests.create(
                 {
-                    'source_branch': source_branch,
-                    'target_project_id': target_project.id,
-                    'target_branch': target_branch,
-                    'title': mr_title,
-                    'description': mr_description,
-                    'remove_source_branch': True,
+                    "source_branch": source_branch,
+                    "target_project_id": target_project.id,
+                    "target_branch": target_branch,
+                    "title": mr_title,
+                    "description": mr_description,
+                    "remove_source_branch": True,
                 }
             )
             mr_url = mr.web_url
@@ -453,7 +453,7 @@ class ReleaseFromFbcPipeline:
         Returns the filepath where the file was written.
         """
         # Use improved naming: for FBC shipments use counter format, for image use simple format
-        if advisory_kind.startswith('fbc'):
+        if advisory_kind.startswith("fbc"):
             # Extract counter from advisory_kind (e.g., 'fbc01' -> '01')
             counter = advisory_kind[3:]  # Remove 'fbc' prefix
             filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
@@ -513,9 +513,9 @@ class ReleaseFromFbcPipeline:
                 only_in_current = set(current_images) - set(reference_images)
                 mismatches.append(
                     {
-                        'fbc': fbc_pullspec,
-                        'only_in_reference': sorted(only_in_reference),
-                        'only_in_current': sorted(only_in_current),
+                        "fbc": fbc_pullspec,
+                        "only_in_reference": sorted(only_in_reference),
+                        "only_in_current": sorted(only_in_current),
                     }
                 )
 
@@ -523,9 +523,9 @@ class ReleaseFromFbcPipeline:
             error_msg = f"FBC builds do not have matching related images.\nReference FBC: {reference_fbc}\n"
             for mismatch in mismatches:
                 error_msg += f"\nMismatch with: {mismatch['fbc']}\n"
-                if mismatch['only_in_reference']:
+                if mismatch["only_in_reference"]:
                     error_msg += f"  Only in reference: {mismatch['only_in_reference']}\n"
-                if mismatch['only_in_current']:
+                if mismatch["only_in_current"]:
                     error_msg += f"  Only in current: {mismatch['only_in_current']}\n"
 
             self.logger.error(error_msg)
@@ -578,8 +578,8 @@ class ReleaseFromFbcPipeline:
 
         # Create snapshots for image builds (only once since they're shared)
         image_snapshot = None
-        if categorized_nvrs.get('image'):
-            image_snapshot = await self.create_snapshot(categorized_nvrs['image'])
+        if categorized_nvrs.get("image"):
+            image_snapshot = await self.create_snapshot(categorized_nvrs["image"])
 
         # Create separate FBC snapshots for each FBC build
         fbc_snapshots = {}
@@ -587,19 +587,19 @@ class ReleaseFromFbcPipeline:
             fbc_snapshots[fbc_nvr] = await self.create_snapshot([fbc_nvr])
 
         # Create shipment configurations
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         shipments_by_kind = {}
 
         # Create image shipment (shared for all FBC builds)
         if image_snapshot:
-            shipment_config = self.create_shipment_config('image', image_snapshot)
-            shipments_by_kind['image'] = shipment_config
+            shipment_config = self.create_shipment_config("image", image_snapshot)
+            shipments_by_kind["image"] = shipment_config
 
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
         for _, fbc_snapshot in fbc_snapshots.items():
             if fbc_snapshot:
-                shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
+                shipment_config = self.create_shipment_config("fbc", fbc_snapshot)
                 # Use counter-based key for unique naming
                 shipment_kind = f"fbc{fbc_counter:02d}"
                 shipments_by_kind[shipment_kind] = shipment_config
@@ -632,7 +632,7 @@ class ReleaseFromFbcPipeline:
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group to operate on e.g. oadp-1.5, mta-7.0, mtc-1.8, logging-5.9 (NOTE: This command is intended for non-OpenShift products)",
 )
@@ -654,12 +654,12 @@ class ReleaseFromFbcPipeline:
     help="Create a merge request in the shipment data repository (requires GITLAB_TOKEN environment variable)",
 )
 @click.option(
-    '--shipment-data-repo-url',
-    help='Shipment data repository URL for MR creation. If not provided, will use default based on configuration.',
+    "--shipment-data-repo-url",
+    help="Shipment data repository URL for MR creation. If not provided, will use default based on configuration.",
 )
 @click.option(
-    '--shipment-path',
-    help='Path to shipment data repository for elliott commands. If not provided, defaults to the OCP shipment data repository URL.',
+    "--shipment-path",
+    help="Path to shipment data repository for elliott commands. If not provided, defaults to the OCP shipment data repository URL.",
 )
 @pass_runtime
 @click_coroutine
@@ -705,7 +705,7 @@ async def release_from_fbc(
         --create-mr
     """
     # Parse comma-separated FBC pullspecs
-    fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
+    fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(",") if spec.strip()]
     if not fbc_pullspecs_list:
         raise click.ClickException("At least one FBC pullspec must be provided")
 

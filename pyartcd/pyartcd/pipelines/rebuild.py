@@ -244,7 +244,7 @@ class RebuildPipeline:
         else:
             await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-        remote_url = self.plashet_remote['url'] + f"/{major}.{minor}"
+        remote_url = self.plashet_remote["url"] + f"/{major}.{minor}"
         if el_version >= 8:
             remote_url += f"-el{el_version}"
         remote_url += f"/{self.assembly}/{directory_name}"
@@ -315,7 +315,7 @@ class RebuildPipeline:
             await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
         major, minor = self._ocp_version
-        remote_url = self.plashet_remote['url'] + f"/{major}.{minor}"
+        remote_url = self.plashet_remote["url"] + f"/{major}.{minor}"
         if el_version >= 8:
             remote_url += f"-el{el_version}"
         remote_url += f"/{self.assembly}/{directory_name}"
@@ -333,7 +333,7 @@ class RebuildPipeline:
         remote_dir += f"/{self.assembly}"
         cmd = [
             "ssh",
-            self.plashet_remote['host'],
+            self.plashet_remote["host"],
             "--",
             "mkdir",
             "-p",
@@ -369,7 +369,7 @@ class RebuildPipeline:
             # Make a symlink
             cmd = [
                 "ssh",
-                self.plashet_remote['host'],
+                self.plashet_remote["host"],
                 "--",
                 "ln",
                 "-sfn",
@@ -691,7 +691,7 @@ class RebuildPipeline:
 @cli.command("rebuild")
 @click.option(
     "--ocp-build-data-url",
-    metavar='BUILD_DATA',
+    metavar="BUILD_DATA",
     default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
@@ -716,10 +716,10 @@ class RebuildPipeline:
     help="The name of a component to rebase & build for. e.g. openshift-enterprise-cli",
 )
 @click.option(
-    '--ignore-locks',
+    "--ignore-locks",
     is_flag=True,
     default=False,
-    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+    help="Do not wait for other builds in this version to complete (use only if you know they will not conflict)",
 )
 @pass_runtime
 @click_coroutine
@@ -739,7 +739,7 @@ async def rebuild(
     pipelines = [
         RebuildPipeline(
             runtime,
-            group=f'openshift-{version}',
+            group=f"openshift-{version}",
             assembly=assembly,
             plashet_remote=remote,
             type=RebuildType[type.upper()],
@@ -758,7 +758,7 @@ async def rebuild(
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
             runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+                "Env var BUILD_URL has not been defined: a random identifier will be used for the locks"
             )
 
         await asyncio.gather(

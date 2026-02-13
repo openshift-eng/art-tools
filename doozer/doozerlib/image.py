@@ -49,14 +49,14 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
 
     try:
         # Try to extract versions from the tag (fast path)
-        if ':' in pullspec:
-            tag = pullspec.split(':')[-1]
+        if ":" in pullspec:
+            tag = pullspec.split(":")[-1]
             # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
-            match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', tag)
+            match = re.search(r"(?:rhel|ubi|centos)-?(\d+)", tag)
             if match:
                 rhel_version = int(match.group(1))
                 # Try to extract golang version from tag (e.g., golang-1.21 or golang-1.21.3)
-                golang_match = re.search(r'golang-?(\d+)\.(\d+)', tag)
+                golang_match = re.search(r"golang-?(\d+)\.(\d+)", tag)
                 if golang_match:
                     golang_version = (int(golang_match.group(1)), int(golang_match.group(2)))
                     # Got both values from tag parsing - return immediately
@@ -64,17 +64,17 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
 
         # At this point, we're missing at least one value - fall back to inspecting image labels
         image_info = cast(Dict, util.oc_image_info_for_arch__caching(pullspec))
-        labels = image_info['config']['config']['Labels']
+        labels = image_info["config"]["config"]["Labels"]
 
         # Extract RHEL version from release label if we don't have it yet
         if not rhel_version:
-            release_label = labels.get('release')
+            release_label = labels.get("release")
             if release_label:
                 rhel_version = isolate_el_version_in_release(release_label)
 
         # Extract golang version from version label if we don't have it yet
         if not golang_version:
-            version_label = labels.get('version')
+            version_label = labels.get("version")
             if version_label:
                 version_fields = util.extract_version_fields(version_label, at_least=2)
                 golang_version = (version_fields[0], version_fields[1])
@@ -96,12 +96,12 @@ class ImageMetadata(Metadata):
         prevent_cloning: Optional[bool] = False,
         process_dependents: Optional[bool] = True,
     ):
-        super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
-        self.required = self.config.get('required', False)
+        super(ImageMetadata, self).__init__("image", runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
+        self.required = self.config.get("required", False)
         self.parent = None
         self.children = []  # list of ImageMetadata which use this image as a parent.
         self.dependencies: Set[str] = set()
-        dependents = self.config.get('dependents', [])
+        dependents = self.config.get("dependents", [])
 
         # Only process dependents if this image is being added to image_map for building.
         # When loading an image just to query its latest build (process_dependents=False),
@@ -128,15 +128,15 @@ class ImageMetadata(Metadata):
         if self.canonical_builders_enabled:
             if prevent_cloning:
                 self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
-                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
+                    "[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. "
+                    "Skipping upstream RHEL version detection; alternative_upstream config will not be applied.",
                     self.distgit_key,
                 )
             else:
                 if not clone_source:
                     self.logger.warning(
-                        '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
-                        'Source will be cloned anyway to determine upstream RHEL version.',
+                        "[%s] canonical_builders_from_upstream is enabled but clone_source=False. "
+                        "Source will be cloned anyway to determine upstream RHEL version.",
                         self.distgit_key,
                     )
                 # When canonical_builders_from_upstream is enabled, we need to determine
@@ -155,12 +155,12 @@ class ImageMetadata(Metadata):
 
     @property
     def image_name_short(self):
-        return self.config.name.split('/')[-1]
+        return self.config.name.split("/")[-1]
 
     @property
     def is_olm_operator(self):
         """Returns whether this image is an OLM operator."""
-        return self.config['update-csv'] is not Missing
+        return self.config["update-csv"] is not Missing
 
     def get_olm_bundle_brew_component_name(self):
         """Returns the Brew component name of the OLM bundle for this OLM operator.
@@ -172,7 +172,7 @@ class ImageMetadata(Metadata):
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
         return str(
             self.config.distgit.bundle_component
-            or self.get_component_name().replace('-container', '-metadata-container')
+            or self.get_component_name().replace("-container", "-metadata-container")
         )
 
     def get_olm_bundle_short_name(self):
@@ -198,8 +198,8 @@ class ImageMetadata(Metadata):
         product = self.runtime.group_config.product if self.runtime.group_config.product else "openshift"
 
         # Only add "ose-" prefix for OpenShift products
-        if product == "openshift" and not short_name.startswith('ose-'):
-            short_name = 'ose-' + short_name
+        if product == "openshift" and not short_name.startswith("ose-"):
+            short_name = "ose-" + short_name
 
         return f"{product}/{short_name}"
 
@@ -232,21 +232,21 @@ class ImageMetadata(Metadata):
         """
         direct_member_deps: Dict[str, str] = dict()  # Map package_name -> nvr
         aggregate_deps: Dict[str, str] = dict()  # Map package_name -> nvr
-        eltag = f'el{el_ver}'
+        eltag = f"el{el_ver}"
         group_deps = self.runtime.get_group_config().dependencies.rpms or []
         member_deps = self.config.dependencies.rpms or []
 
         for rpm_entry in group_deps:
             if eltag in rpm_entry:  # This entry has something for the requested RHEL version
                 nvr = rpm_entry[eltag]
-                package_name = parse_nvr(nvr)['name']
+                package_name = parse_nvr(nvr)["name"]
                 aggregate_deps[package_name] = nvr
 
         # Perform the same process, but only for dependencies directly listed for the member
         for rpm_entry in member_deps:
             if eltag in rpm_entry:  # This entry has something for the requested RHEL version
                 nvr = rpm_entry[eltag]
-                package_name = parse_nvr(nvr)['name']
+                package_name = parse_nvr(nvr)["name"]
                 direct_member_deps[package_name] = nvr
                 aggregate_deps[package_name] = nvr  # Override anything at the group level
 
@@ -283,9 +283,9 @@ class ImageMetadata(Metadata):
         """
         :return: Resolves and returns imagemeta.parent attribute for this image's parent image OR None if no parent is defined.
         """
-        if 'from' in self.config:
-            if 'member' in self.config['from']:
-                base = self.config['from']['member']
+        if "from" in self.config:
+            if "member" in self.config["from"]:
+                base = self.config["from"]["member"]
                 try:
                     self.parent = self.runtime.resolve_image(base)
                 except:
@@ -313,16 +313,16 @@ class ImageMetadata(Metadata):
 
     @property
     def is_payload(self):
-        val = self.config.get('for_payload', False)
+        val = self.config.get("for_payload", False)
         if val and self.base_only:
-            raise ValueError(f'{self.distgit_key} claims to be for_payload and base_only')
+            raise ValueError(f"{self.distgit_key} claims to be for_payload and base_only")
         return val
 
     @property
     def for_release(self):
-        val = self.config.get('for_release', True)
+        val = self.config.get("for_release", True)
         if val and self.base_only:
-            raise ValueError(f'{self.distgit_key} claims to be for_release and base_only')
+            raise ValueError(f"{self.distgit_key} claims to be for_release and base_only")
         return val
 
     def get_payload_tag_info(self) -> Tuple[str, bool]:
@@ -334,7 +334,7 @@ class ImageMetadata(Metadata):
                 image metadata. See https://issues.redhat.com/browse/ART-2823 . i.e. (tag_name, explicitly_declared)
         """
         if not self.is_payload:
-            raise ValueError('Attempted to derive payload name for non-payload image: ' + self.distgit_key)
+            raise ValueError("Attempted to derive payload name for non-payload image: " + self.distgit_key)
 
         payload_name = self.config.get("payload_name")
         if payload_name:
@@ -356,9 +356,9 @@ class ImageMetadata(Metadata):
         Returns the pullspec from Konflux if build_system is 'konflux',
         otherwise returns the Brew pullspec.
         """
-        if self.runtime.build_system == 'konflux':
+        if self.runtime.build_system == "konflux":
             # Bind Konflux DB if not already bound
-            if not hasattr(self.runtime, '_konflux_db_bound'):
+            if not hasattr(self.runtime, "_konflux_db_bound"):
                 self.runtime.konflux_db.bind(KonfluxBuildRecord)
                 self.runtime._konflux_db_bound = True
 
@@ -376,7 +376,7 @@ class ImageMetadata(Metadata):
 
             build = asyncio.run(get_latest_konflux_build())
             if not build:
-                raise IOError(f'No Konflux build found for {self.distgit_key} in group {self.runtime.group}')
+                raise IOError(f"No Konflux build found for {self.distgit_key} in group {self.runtime.group}")
             return build.image_pullspec
         else:
             # Brew build system (existing behavior)
@@ -387,7 +387,7 @@ class ImageMetadata(Metadata):
             # we need to pull images from proxy if 'brew_image_namespace' is enabled:
             # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
             if self.runtime.group_config.urls.brew_image_namespace is not Missing:
-                name = self.runtime.group_config.urls.brew_image_namespace + '/' + self.config.name.replace('/', '-')
+                name = self.runtime.group_config.urls.brew_image_namespace + "/" + self.config.name.replace("/", "-")
             else:
                 name = self.config.name
 
@@ -453,10 +453,10 @@ class ImageMetadata(Metadata):
         for registry in default_registries:
             registry = registry.rstrip("/")  # Remove any trailing slash to avoid mistaking it for a namespace
             for repo in default_repos:
-                namespace, repo_name = repo.split('/')
-                if '/' in registry:  # If registry overrides namespace
-                    registry, namespace = registry.split('/')
-                push_names.append('{}/{}/{}'.format(registry, namespace, repo_name))
+                namespace, repo_name = repo.split("/")
+                if "/" in registry:  # If registry overrides namespace
+                    registry, namespace = registry.split("/")
+                push_names.append("{}/{}/{}".format(registry, namespace, repo_name))
 
         # image config can contain fully qualified image names to push to (registry/ns/repo)
         if self.config.push.also is not Missing:
@@ -481,10 +481,10 @@ class ImageMetadata(Metadata):
         for registry in additional_registries:
             registry = registry.rstrip("/")  # Remove any trailing slash to avoid mistaking it for a namespace
             for repo in default_repos:
-                namespace, repo_name = repo.split('/')
-                if '/' in registry:  # If registry overrides namespace
-                    registry, namespace = registry.split('/')
-                push_names.append('{}/{}/{}'.format(registry, namespace, repo_name))
+                namespace, repo_name = repo.split("/")
+                if "/" in registry:  # If registry overrides namespace
+                    registry, namespace = registry.split("/")
+                push_names.append("{}/{}/{}".format(registry, namespace, repo_name))
 
         return push_names
 
@@ -515,16 +515,16 @@ class ImageMetadata(Metadata):
         runtime = self.runtime
 
         with runtime.pooled_koji_client_session() as koji_api:
-            image_build = self.get_latest_brew_build(default='')
+            image_build = self.get_latest_brew_build(default="")
             if not image_build:
                 # Seems this have never been built. Mark it as needing change.
-                return self, RebuildHint(RebuildHintCode.NO_LATEST_BUILD, 'Image has never been built before')
+                return self, RebuildHint(RebuildHintCode.NO_LATEST_BUILD, "Image has never been built before")
 
-            image_nvr = image_build['nvr']
-            self.logger.debug(f'Image {dgk} latest is {image_nvr}')
+            image_nvr = image_build["nvr"]
+            self.logger.debug(f"Image {dgk} latest is {image_nvr}")
 
-            image_build_event_id = image_build['creation_event_id']  # the brew event that created this build
-            self.logger.info(f'Running a change assessment on {image_nvr} built at event {image_build_event_id}')
+            image_build_event_id = image_build["creation_event_id"]  # the brew event that created this build
+            self.logger.info(f"Running a change assessment on {image_nvr} built at event {image_build_event_id}")
 
             # Very rarely, an image might need to pull a package that is not actually installed in the
             # builder image or in the final image.
@@ -537,31 +537,31 @@ class ImageMetadata(Metadata):
                     extra_package_brew_tag = package_details.tag
                     # Example of queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
                     extra_latest_tagging_infos = koji_api.queryHistory(
-                        table='tag_listing', tag=extra_package_brew_tag, package=extra_package_name, active=True
-                    )['tag_listing']
+                        table="tag_listing", tag=extra_package_brew_tag, package=extra_package_name, active=True
+                    )["tag_listing"]
 
                     if extra_latest_tagging_infos:
-                        extra_latest_tagging_infos.sort(key=lambda event: event['create_event'])
+                        extra_latest_tagging_infos.sort(key=lambda event: event["create_event"])
                         # We have information about the most recent time this package was tagged into the
                         # relevant tag. Why the tagging event and not the build time? Well, the build could have been
                         # made long ago, but only tagged into the relevant tag recently.
-                        extra_latest_tagging_event = extra_latest_tagging_infos[-1]['create_event']
+                        extra_latest_tagging_event = extra_latest_tagging_infos[-1]["create_event"]
                         self.logger.debug(
-                            f'Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}'
+                            f"Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}"
                         )
                         if extra_latest_tagging_event > image_build_event_id:
                             return self, RebuildHint(
                                 RebuildHintCode.PACKAGE_CHANGE,
-                                f'Image {dgk} is sensitive to extra_packages {extra_package_name} which changed at event {extra_latest_tagging_event}',
+                                f"Image {dgk} is sensitive to extra_packages {extra_package_name} which changed at event {extra_latest_tagging_event}",
                             )
                     else:
                         self.logger.warning(
-                            f'{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.'
+                            f"{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error."
                         )
 
             # Collect build times from any parent/builder images used to create this image
-            builders = list(self.config['from'].builder) or []
-            builders.append(self.config['from'])  # Add the parent image to the builders
+            builders = list(self.config["from"].builder) or []
+            builders.append(self.config["from"])  # Add the parent image to the builders
             for builder in builders:
                 if builder.member:
                     # We can't determine if images are about to change. Defer to scan-sources.
@@ -572,9 +572,9 @@ class ImageMetadata(Metadata):
                 elif builder.stream:
                     builder_image_name = runtime.resolve_stream(builder.stream).image
                 else:
-                    raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
+                    raise IOError(f"Unable to determine builder or parent image pullspec from {builder}")
 
-                if "." in builder_image_name.split('/', 2)[0]:
+                if "." in builder_image_name.split("/", 2)[0]:
                     # looks like full pullspec with domain name; e.g. "registry.redhat.io/ubi8/nodejs-12:1-45"
                     builder_image_url = builder_image_name
                 else:
@@ -587,26 +587,26 @@ class ImageMetadata(Metadata):
                     latest_builder_image_info = Model(util.oc_image_info_for_arch__caching(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [
-                        builder_info_labels['com.redhat.component'],
-                        builder_info_labels['version'],
-                        builder_info_labels['release'],
+                        builder_info_labels["com.redhat.component"],
+                        builder_info_labels["version"],
+                        builder_info_labels["release"],
                     ]
 
                     if not all(builder_nvr_list):
-                        raise IOError(f'Unable to find nvr in {builder_info_labels}')
+                        raise IOError(f"Unable to find nvr in {builder_info_labels}")
 
-                    builder_image_nvr = '-'.join(builder_nvr_list)
+                    builder_image_nvr = "-".join(builder_nvr_list)
                     builder_brew_build = koji_api.getBuild(builder_image_nvr)
                     ImageMetadata.builder_image_builds[builder_image_url] = builder_brew_build
                     self.logger.debug(
-                        f'Found that builder or parent image {builder_image_url} has event {builder_brew_build["creation_event_id"]}'
+                        f"Found that builder or parent image {builder_image_url} has event {builder_brew_build['creation_event_id']}"
                     )
 
-                if image_build_event_id < builder_brew_build['creation_event_id']:
-                    self.logger.info(f'will be rebuilt because a builder or parent image changed: {builder_image_name}')
+                if image_build_event_id < builder_brew_build["creation_event_id"]:
+                    self.logger.info(f"will be rebuilt because a builder or parent image changed: {builder_image_name}")
                     return self, RebuildHint(
                         RebuildHintCode.BUILDER_CHANGING,
-                        f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built',
+                        f"A builder or parent image {builder_image_name} has changed since {image_nvr} was built",
                     )
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
@@ -619,7 +619,7 @@ class ImageMetadata(Metadata):
                 # The latest brew build does not exactly match the required arches as specified in group.yml
                 return self, RebuildHint(
                     RebuildHintCode.ARCHES_CHANGE,
-                    f'Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}',
+                    f"Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}",
                 )
 
             # Build up a map of RPMs built by this group. It is the 'latest' builds of these RPMs
@@ -630,7 +630,7 @@ class ImageMetadata(Metadata):
             for rpm_meta in self.runtime.rpm_metas():
                 latest_rpm_build = rpm_meta.get_latest_brew_build(default=None)
                 if latest_rpm_build:
-                    group_rpm_builds_nvrs[rpm_meta.get_package_name()] = latest_rpm_build['nvr']
+                    group_rpm_builds_nvrs[rpm_meta.get_package_name()] = latest_rpm_build["nvr"]
 
             # Populate all rpms contained in the image build
             arch_rpms: Dict[str, List[Dict]] = {}  # arch => list of rpm dicts to check for updates in configured repos
@@ -644,21 +644,21 @@ class ImageMetadata(Metadata):
                         self.logger.info(f"{to_nevra(rpm_entry)} is exempt from rpm change detection by '{pattern}'")
                         continue
 
-                    build_id = rpm_entry['build_id']
+                    build_id = rpm_entry["build_id"]
                     build = koji_api.getBuild(build_id, brew.KojiWrapperOpts(caching=True))
-                    package_name = build['package_name']
+                    package_name = build["package_name"]
                     if package_name in changing_rpm_packages:
                         return self, RebuildHint(
                             RebuildHintCode.PACKAGE_CHANGE,
-                            f'Image includes {package_name} which is also about to change',
+                            f"Image includes {package_name} which is also about to change",
                         )
 
                     latest_assembly_build_nvr = group_rpm_builds_nvrs.get(package_name, None)
-                    if latest_assembly_build_nvr and latest_assembly_build_nvr == build['nvr']:
+                    if latest_assembly_build_nvr and latest_assembly_build_nvr == build["nvr"]:
                         # The latest RPM build for this assembly is already installed and we know the RPM
                         # is not about to change. Ignore the installed package.
                         self.logger.debug(
-                            f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur'
+                            f"Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur"
                         )
                         continue
                     # Add this rpm_entry to arch_rpms in order to chech whether it is latest in repos
@@ -667,7 +667,7 @@ class ImageMetadata(Metadata):
                     arch_rpms[arch].append(rpm_entry)
 
         if arch_rpms:
-            self.logger.info('Checking whether any of the installed rpms is outdated')
+            self.logger.info("Checking whether any of the installed rpms is outdated")
             non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms)
             rebuild_hints = [
                 f"Outdated RPM {installed_rpm} installed in {image_nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
@@ -679,17 +679,17 @@ class ImageMetadata(Metadata):
                     RebuildHintCode.PACKAGE_CHANGE,
                     ";\n".join(rebuild_hints),
                 )
-        return self, RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, 'No change detected')
+        return self, RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, "No change detected")
 
     def covscan(self, cc: coverity.CoverityContext) -> bool:
-        self.logger.info('Setting up for coverity scan')
+        self.logger.info("Setting up for coverity scan")
         dgr = self.distgit_repo()
         with Dir(dgr.distgit_dir):
             if coverity.run_covscan(cc):
                 cc.mark_results_done()
                 return True
             else:
-                self.logger.error('Error computing coverity results for this image')
+                self.logger.error("Error computing coverity results for this image")
                 return False
 
     def calculate_config_digest(self, group_config, streams):
@@ -741,7 +741,7 @@ class ImageMetadata(Metadata):
             referred_streams.add(from_stream)
         if referred_streams:
             message["streams"] = {
-                stream: self.runtime.resolve_stream(stream).get('image') for stream in referred_streams
+                stream: self.runtime.resolve_stream(stream).get("image") for stream in referred_streams
             }
 
         # Avoid non serializable objects. Known to occur for PosixPath objects in content.source.modifications.
@@ -784,8 +784,8 @@ class ImageMetadata(Metadata):
         # Check if this image has upstream source
         if not self.has_source():
             raise IOError(
-                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but image does not have '
-                'upstream source. Cannot determine upstream RHEL version.'
+                f"[{self.distgit_key}] canonical_builders_from_upstream is enabled but image does not have "
+                "upstream source. Cannot determine upstream RHEL version."
             )
 
         # Determine ART intended RHEL version using branch_el_target()
@@ -795,8 +795,8 @@ class ImageMetadata(Metadata):
         source_resolution = self.runtime.source_resolver.resolve_source(self)
         if not source_resolution:
             raise IOError(
-                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but source could not be resolved. '
-                'Cannot determine upstream RHEL version.'
+                f"[{self.distgit_key}] canonical_builders_from_upstream is enabled but source could not be resolved. "
+                "Cannot determine upstream RHEL version."
             )
 
         # Get the source directory
@@ -807,14 +807,14 @@ class ImageMetadata(Metadata):
 
         if not upstream_intended_el_version:
             raise IOError(
-                f'[{self.distgit_key}] Could not determine upstream RHEL version. '
-                'Cannot apply alternative_upstream config.'
+                f"[{self.distgit_key}] Could not determine upstream RHEL version. "
+                "Cannot apply alternative_upstream config."
             )
 
         # If ART and upstream RHEL versions match, no config merge needed
         if upstream_intended_el_version == art_intended_el_version:
             self.logger.info(
-                '[%s] ART and upstream intended RHEL versions match (el%s). No alternative config merge needed.',
+                "[%s] ART and upstream intended RHEL versions match (el%s). No alternative config merge needed.",
                 self.distgit_key,
                 art_intended_el_version,
             )
@@ -824,9 +824,9 @@ class ImageMetadata(Metadata):
         alt_configs = self.config.alternative_upstream
         matched = False
         for alt_config in alt_configs or []:
-            if alt_config['when'] == f'el{upstream_intended_el_version}':
+            if alt_config["when"] == f"el{upstream_intended_el_version}":
                 self.logger.info(
-                    '[%s] Merging rhel%s alternative_upstream config to match upstream',
+                    "[%s] Merging rhel%s alternative_upstream config to match upstream",
                     self.distgit_key,
                     upstream_intended_el_version,
                 )
@@ -837,8 +837,8 @@ class ImageMetadata(Metadata):
 
         if not matched:
             raise IOError(
-                f'[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses '
-                f'el{art_intended_el_version}, and no matching alternative_upstream config was found. '
+                f"[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses "
+                f"el{art_intended_el_version}, and no matching alternative_upstream config was found. "
                 f'Please add an alternative_upstream config with "when: el{upstream_intended_el_version}".'
             )
 
@@ -863,7 +863,7 @@ class ImageMetadata(Metadata):
         """
         df_name = self.config.content.source.dockerfile
         if not df_name:
-            df_name = 'Dockerfile'
+            df_name = "Dockerfile"
 
         df_path = source_dir.joinpath(df_name)
         rhel_version = None
@@ -882,12 +882,12 @@ class ImageMetadata(Metadata):
 
         except Exception as e:
             # Log the exception but don't raise - caller will decide how to handle None return
-            self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
+            self.logger.warning("[%s] Failed determining upstream builder info: %s", self.distgit_key, e)
 
         if not rhel_version:
-            self.logger.warning('[%s] Could not determine rhel version from upstream', self.distgit_key)
+            self.logger.warning("[%s] Could not determine rhel version from upstream", self.distgit_key)
         if not golang_version:
-            self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
+            self.logger.debug("[%s] Could not determine golang version from upstream", self.distgit_key)
 
         return rhel_version, golang_version
 
@@ -904,7 +904,7 @@ class ImageMetadata(Metadata):
         If a parent is not loaded, its value will be None.
         """
         parent_members = OrderedDict()
-        image_from = self.config.get('from', {})
+        image_from = self.config.get("from", {})
         for parent in image_from.get("builder", []) + [image_from]:
             member_name = parent.get("member")
             if not member_name:
@@ -1056,18 +1056,18 @@ class ImageMetadata(Metadata):
             set[str]: Source RPM package names - full set if inspect_parent=False,
                      otherwise difference between this image's packages and parent packages
         """
-        if hasattr(self, 'installed_rpms') and self.installed_rpms is not None:
+        if hasattr(self, "installed_rpms") and self.installed_rpms is not None:
             self.logger.debug(f"Using cached installed_rpms for {self.distgit_key}: {len(self.installed_rpms)} RPMs")
             return set(self.installed_rpms)
 
         try:
             base_search_params = {
-                'group': self.runtime.group,
-                'outcome': "success",
-                'engine': self.runtime.build_system,
+                "group": self.runtime.group,
+                "outcome": "success",
+                "engine": self.runtime.build_system,
             }
 
-            base_search_params['name'] = self.distgit_key
+            base_search_params["name"] = self.distgit_key
             # Need installed_rpms column for this operation, so don't exclude any columns
             build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
             if not build:
@@ -1113,11 +1113,11 @@ class ImageMetadata(Metadata):
 
         # Get RPMs from lockfile config
         rpms_from_config = set()
-        lockfile_rpms = self.config.konflux.cachi2.lockfile.get('rpms', [])
+        lockfile_rpms = self.config.konflux.cachi2.lockfile.get("rpms", [])
         if lockfile_rpms not in [Missing, None]:
             rpms_from_config = set(lockfile_rpms)
             if rpms_from_config:  # Only log if there are actually RPMs
-                self.logger.info(f'{self.distgit_key} adding {len(rpms_from_config)} RPMs from lockfile config')
+                self.logger.info(f"{self.distgit_key} adding {len(rpms_from_config)} RPMs from lockfile config")
 
         # Return union of both sources
         return rpms_from_build.union(rpms_from_config)
@@ -1133,12 +1133,12 @@ class ImageMetadata(Metadata):
             set[str]: Module names specified in lockfile configuration
         """
         modules_from_config = set()
-        lockfile_modules = self.config.konflux.cachi2.lockfile.get('modules', [])
+        lockfile_modules = self.config.konflux.cachi2.lockfile.get("modules", [])
 
         if lockfile_modules not in [Missing, None]:
             modules_from_config = set(lockfile_modules)
             if modules_from_config:
-                self.logger.info(f'{self.distgit_key} adding {len(modules_from_config)} modules from lockfile config')
+                self.logger.info(f"{self.distgit_key} adding {len(modules_from_config)} modules from lockfile config")
 
         return modules_from_config
 

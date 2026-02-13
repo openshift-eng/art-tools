@@ -174,7 +174,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
 
         await self.importer._update_dir(build_repo, package_name, catalog_blobs, logger)
 
-        self.assertEqual(mock_org_catalog_file.getvalue(), '---\nname: test-package\nschema: olm.package\n')
+        self.assertEqual(mock_org_catalog_file.getvalue(), "---\nname: test-package\nschema: olm.package\n")
         mock_mkdir.assert_has_calls(
             [
                 call(parents=True, exist_ok=True),
@@ -187,7 +187,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
         mock_render.assert_called_once_with(
-            "test-index-image-pullspec", migrate_level="none", auth=OpmRegistryAuth(path='/path/to/auth.json')
+            "test-index-image-pullspec", migrate_level="none", auth=OpmRegistryAuth(path="/path/to/auth.json")
         )
 
     def test_filter_catalog_blobs(self):
@@ -576,9 +576,9 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_path_unlink.assert_called_once_with()
         mock_generate_dockerfile.assert_awaited_once_with(
             build_repo.local_dir,
-            'catalog',
-            base_image='registry.redhat.io/openshift4/ose-operator-registry:v1.1',
-            builder_image='registry.redhat.io/openshift4/ose-operator-registry:v1.1',
+            "catalog",
+            base_image="registry.redhat.io/openshift4/ose-operator-registry:v1.1",
+            builder_image="registry.redhat.io/openshift4/ose-operator-registry:v1.1",
         )
 
     def test_generate_image_digest_mirror_set(self):
@@ -770,22 +770,22 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             revision=build_repo.branch,
         )
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
-            generate_name='fbc-test-group-foo-',
-            namespace='test-namespace',
-            application_name='fbc-test-group',
-            component_name='fbc-test-group-foo',
-            git_url='https://example.com/foo.git',
+            generate_name="fbc-test-group-foo-",
+            namespace="test-namespace",
+            application_name="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            git_url="https://example.com/foo.git",
             commit_sha="deadbeef",
-            target_branch='test-branch',
-            output_image='test-image-pullspec',
+            target_branch="test-branch",
+            output_image="test-image-pullspec",
             vm_override={},
-            building_arches=['x86_64', 's390x'],
+            building_arches=["x86_64", "s390x"],
             additional_tags=[],
             skip_checks=False,
             hermetic=True,
-            dockerfile='catalog.Dockerfile',
-            pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            dockerfile="catalog.Dockerfile",
+            pipelinerun_template_url="https://example.com/template.yaml",
+            build_priority="2",
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -823,22 +823,22 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             revision=build_repo.branch,
         )
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
-            generate_name='fbc-test-group-foo-',
-            namespace='test-namespace',
-            application_name='fbc-test-group',
-            component_name='fbc-test-group-foo',
-            git_url='https://example.com/foo.git',
+            generate_name="fbc-test-group-foo-",
+            namespace="test-namespace",
+            application_name="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            git_url="https://example.com/foo.git",
             commit_sha="deadbeef",
-            target_branch='test-branch',
-            output_image='test-image-pullspec',
+            target_branch="test-branch",
+            output_image="test-image-pullspec",
             vm_override={},
-            building_arches=['x86_64', 's390x'],
+            building_arches=["x86_64", "s390x"],
             additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
             skip_checks=False,
             hermetic=True,
-            dockerfile='catalog.Dockerfile',
-            pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            dockerfile="catalog.Dockerfile",
+            pipelinerun_template_url="https://example.com/template.yaml",
+            build_priority="2",
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -884,8 +884,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
         }
         mock_dfp.labels = {
-            'com.redhat.art.name': 'test-distgit-key-fbc',
-            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
+            "com.redhat.art.name": "test-distgit-key-fbc",
+            "com.redhat.art.nvr": "test-distgit-key-fbc-1.0.0-1",
         }
 
         await self.builder.build(metadata)
@@ -925,12 +925,12 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key-fbc',
-            message='Success',
-            task_id='test-pipelinerun-name',
-            task_url='https://example.com/pipeline',
-            fbc_nvr='test-distgit-key-fbc-1.0.0-1',
-            bundle_nvrs='foo-bundle-1.0.0-1',
+            name="test-distgit-key-fbc",
+            message="Success",
+            task_id="test-pipelinerun-name",
+            task_url="https://example.com/pipeline",
+            fbc_nvr="test-distgit-key-fbc-1.0.0-1",
+            bundle_nvrs="foo-bundle-1.0.0-1",
         )
         MockBuildRepo.from_local_dir.assert_not_called()
 
@@ -976,8 +976,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
         }
         mock_dfp.labels = {
-            'com.redhat.art.name': 'test-distgit-key-fbc',
-            'com.redhat.art.nvr': 'test-distgit-key-fbc-1.0.0-1',
+            "com.redhat.art.name": "test-distgit-key-fbc",
+            "com.redhat.art.nvr": "test-distgit-key-fbc-1.0.0-1",
         }
 
         await self.builder.build(metadata)
@@ -1011,12 +1011,12 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
             status=0,
-            name='test-distgit-key-fbc',
-            message='Success',
-            task_id='test-pipelinerun-name',
-            task_url='https://example.com/pipeline',
-            fbc_nvr='test-distgit-key-fbc-1.0.0-1',
-            bundle_nvrs='foo-bundle-1.0.0-1',
+            name="test-distgit-key-fbc",
+            message="Success",
+            task_id="test-pipelinerun-name",
+            task_url="https://example.com/pipeline",
+            fbc_nvr="test-distgit-key-fbc-1.0.0-1",
+            bundle_nvrs="foo-bundle-1.0.0-1",
         )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)
 
@@ -1099,22 +1099,22 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         ]
 
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
-            generate_name='fbc-test-group-foo-',
-            namespace='test-namespace',
-            application_name='fbc-test-group',
-            component_name='fbc-test-group-foo',
-            git_url='https://example.com/foo.git',
+            generate_name="fbc-test-group-foo-",
+            namespace="test-namespace",
+            application_name="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            git_url="https://example.com/foo.git",
             commit_sha="deadbeef",
-            target_branch='test-branch',
-            output_image='test-image-pullspec',
+            target_branch="test-branch",
+            output_image="test-image-pullspec",
             vm_override={},
-            building_arches=['x86_64', 's390x'],
+            building_arches=["x86_64", "s390x"],
             additional_tags=expected_additional_tags,
             skip_checks=False,
             hermetic=True,
-            dockerfile='catalog.Dockerfile',
-            pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            dockerfile="catalog.Dockerfile",
+            pipelinerun_template_url="https://example.com/template.yaml",
+            build_priority="2",
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -1152,22 +1152,22 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         expected_additional_tags = ["ocp__4.15__cluster-nfd-operator", "ocp__4.15__cluster-nfd-operator-bundle"]
 
         kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
-            generate_name='fbc-test-group-foo-',
-            namespace='test-namespace',
-            application_name='fbc-test-group',
-            component_name='fbc-test-group-foo',
-            git_url='https://example.com/foo.git',
+            generate_name="fbc-test-group-foo-",
+            namespace="test-namespace",
+            application_name="fbc-test-group",
+            component_name="fbc-test-group-foo",
+            git_url="https://example.com/foo.git",
             commit_sha="deadbeef",
-            target_branch='test-branch',
-            output_image='test-image-pullspec',
+            target_branch="test-branch",
+            output_image="test-image-pullspec",
             vm_override={},
-            building_arches=['x86_64', 's390x'],
+            building_arches=["x86_64", "s390x"],
             additional_tags=expected_additional_tags,
             skip_checks=False,
             hermetic=True,
-            dockerfile='catalog.Dockerfile',
-            pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            dockerfile="catalog.Dockerfile",
+            pipelinerun_template_url="https://example.com/template.yaml",
+            build_priority="2",
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -1241,17 +1241,17 @@ spec:
         }
 
         expected = {
-            'apiVersion': 'config.openshift.io/v1',
-            'kind': 'ImageDigestMirrorSet',
-            'metadata': {'name': 'art-stage-mirror-set', 'namespace': 'openshift-marketplace'},
-            'spec': {
-                'imageDigestMirrors': [
-                    {'source': 'example.com/source-a0', 'mirrors': ['example.com/mirror-a0']},
-                    {'source': 'example.com/source-a1', 'mirrors': ['example.com/mirror-a1']},
-                    {'source': 'example.com/source-a2', 'mirrors': ['example.com/mirror-a2']},
-                    {'source': 'example.com/source-b0', 'mirrors': ['example.com/mirror-b0']},
-                    {'source': 'example.com/source-b1', 'mirrors': ['example.com/mirror-b1']},
-                    {'source': 'example.com/source-b2', 'mirrors': ['example.com/mirror-b2']},
+            "apiVersion": "config.openshift.io/v1",
+            "kind": "ImageDigestMirrorSet",
+            "metadata": {"name": "art-stage-mirror-set", "namespace": "openshift-marketplace"},
+            "spec": {
+                "imageDigestMirrors": [
+                    {"source": "example.com/source-a0", "mirrors": ["example.com/mirror-a0"]},
+                    {"source": "example.com/source-a1", "mirrors": ["example.com/mirror-a1"]},
+                    {"source": "example.com/source-a2", "mirrors": ["example.com/mirror-a2"]},
+                    {"source": "example.com/source-b0", "mirrors": ["example.com/mirror-b0"]},
+                    {"source": "example.com/source-b1", "mirrors": ["example.com/mirror-b1"]},
+                    {"source": "example.com/source-b2", "mirrors": ["example.com/mirror-b2"]},
                 ]
             },
         }

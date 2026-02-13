@@ -11,30 +11,30 @@ from pyartcd import constants
 
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
-    OLM_BUNDLE = 'lock:olm-bundle:{version}'
-    OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
-    MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
-    PLASHET = 'lock:compose:{assembly}:{group}'
-    BUILD = 'lock:build:{version}'
-    BUILD_KONFLUX = 'lock:build-konflux:{version}'
-    MASS_REBUILD = 'lock:mass-rebuild-serializer'
-    KONFLUX_MASS_REBUILD = 'lock:konflux-mass-rebuild-serializer'
-    SIGNING = 'lock:signing:{signing_env}'
-    BUILD_SYNC = 'lock:build-sync:{version}'
-    BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
-    BUILD_SYNC_MULTI = 'lock:build-sync-multi:{version}'
-    SCAN = 'lock:scan:{version}'
-    SCAN_KONFLUX = 'lock:scan-konflux:{version}'
-    FBC_BUILD = 'lock:fbc-build:{group}'
-    OADP_BUILD = 'lock:oadp-build:{group}'
-    OADP_SCAN = 'lock:oadp-scan:{group}'
-    BUILD_OKD = 'lock:build-okd:{version}'
-    SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
+    OLM_BUNDLE = "lock:olm-bundle:{version}"
+    OLM_BUNDLE_KONFLUX = "lock:olm-bundle-konflux:{version}"
+    MIRRORING_RPMS = "lock:mirroring-rpms:{version}"
+    PLASHET = "lock:compose:{assembly}:{group}"
+    BUILD = "lock:build:{version}"
+    BUILD_KONFLUX = "lock:build-konflux:{version}"
+    MASS_REBUILD = "lock:mass-rebuild-serializer"
+    KONFLUX_MASS_REBUILD = "lock:konflux-mass-rebuild-serializer"
+    SIGNING = "lock:signing:{signing_env}"
+    BUILD_SYNC = "lock:build-sync:{version}"
+    BUILD_SYNC_KONFLUX = "lock:build-sync-konflux:{version}"
+    BUILD_SYNC_MULTI = "lock:build-sync-multi:{version}"
+    SCAN = "lock:scan:{version}"
+    SCAN_KONFLUX = "lock:scan-konflux:{version}"
+    FBC_BUILD = "lock:fbc-build:{group}"
+    OADP_BUILD = "lock:oadp-build:{group}"
+    OADP_SCAN = "lock:oadp-scan:{group}"
+    BUILD_OKD = "lock:build-okd:{version}"
+    SCAN_PLASHET_RPMS = "lock:scan-plashet-rpms:{assembly}:{group}"
 
 
 class Keys(enum.Enum):
-    BREW_MASS_REBUILD_QUEUE = 'appdata:brew:mass-rebuild-queue'
-    KONFLUX_MASS_REBUILD_QUEUE = 'appdata:konflux:mass-rebuild-queue'
+    BREW_MASS_REBUILD_QUEUE = "appdata:brew:mass-rebuild-queue"
+    KONFLUX_MASS_REBUILD_QUEUE = "appdata:konflux:mass-rebuild-queue"
 
 
 # Use a BIG timeout value so that locks do not silently expire.
@@ -49,99 +49,99 @@ DEFAULT_LOCK_TIMEOUT = 60 * 60 * 96  # 96 hours
 # - a timeout, after which the lock will expire and clear itself
 LOCK_POLICY = {
     Lock.OLM_BUNDLE: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OLM_BUNDLE_KONFLUX: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MIRRORING_RPMS: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.PLASHET: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD: {
-        'retry_count': 36000 * 1,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000 * 1,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_KONFLUX: {
-        'retry_count': 36000 * 1,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000 * 1,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MASS_REBUILD: {
-        'retry_count': 36000 * 8,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000 * 8,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.KONFLUX_MASS_REBUILD: {
-        'retry_count': 36000 * 8,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000 * 8,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SIGNING: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.4,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.4,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC_KONFLUX: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC_MULTI: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.FBC_BUILD: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OADP_BUILD: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OADP_SCAN: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_OKD: {
-        'retry_count': 36000 * 1,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000 * 1,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_PLASHET_RPMS: {
-        'retry_count': 36000,
-        'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+        "retry_count": 36000,
+        "retry_delay_min": 0.1,
+        "lock_timeout": DEFAULT_LOCK_TIMEOUT,
     },
 }
 
@@ -149,7 +149,7 @@ LOCK_POLICY = {
 class LockManager(Aioredlock):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.logger = logging.getLogger('pyartcd')
+        self.logger = logging.getLogger("pyartcd")
 
     @staticmethod
     def from_lock(lock: Lock, use_ssl=True):
@@ -182,18 +182,18 @@ class LockManager(Aioredlock):
         lock_policy = LOCK_POLICY[lock]
         return LockManager(
             [redis.redis_url(use_ssl)],
-            internal_lock_timeout=lock_policy['lock_timeout'],
-            retry_count=lock_policy['retry_count'],
-            retry_delay_min=lock_policy['retry_delay_min'],
+            internal_lock_timeout=lock_policy["lock_timeout"],
+            retry_count=lock_policy["retry_count"],
+            retry_delay_min=lock_policy["retry_delay_min"],
         )
 
     async def lock(self, resource, *args, **kwargs):
-        self.logger.info('Trying to acquire lock %s', resource)
+        self.logger.info("Trying to acquire lock %s", resource)
         try:
             lock = await super().lock(resource, *args, **kwargs)
-            self.logger.info('Acquired lock %s', resource)
+            self.logger.info("Acquired lock %s", resource)
         except LockError:
-            self.logger.error('Failed acquiring lock %s', resource)
+            self.logger.error("Failed acquiring lock %s", resource)
             raise
         return lock
 
@@ -201,13 +201,13 @@ class LockManager(Aioredlock):
         self.logger.info('Releasing lock "%s"', lock.resource)
         try:
             await super().unlock(lock)
-            self.logger.info('Lock released')
+            self.logger.info("Lock released")
         except LockError:
-            self.logger.error('Failed releasing lock %s', lock.resource)
+            self.logger.error("Failed releasing lock %s", lock.resource)
             raise
 
     async def get_lock_id(self, resource) -> str:
-        self.logger.debug('Retrieving identifier for lock %s', resource)
+        self.logger.debug("Retrieving identifier for lock %s", resource)
         return await redis.get_value(resource)
 
     async def get_locks(self, version: str = None):
@@ -218,9 +218,9 @@ class LockManager(Aioredlock):
         """
 
         if version:
-            pattern = f'lock:*:{version}'
+            pattern = f"lock:*:{version}"
         else:
-            pattern = 'lock:*'
+            pattern = "lock:*"
 
         self.logger.info('Retrieving locks matching pattern "%s"', pattern)
         return await redis.get_keys(pattern)
@@ -244,12 +244,12 @@ async def _enqueue_for_lock(
     if not await lock_manager.is_locked(lock_name):
         # TODO: use a redis tx here
         # fetch the first element in the reverse sorted set by score (item with the max score)
-        result = await redis.call('zrange', version_queue_name, 0, 0, desc=True)
+        result = await redis.call("zrange", version_queue_name, 0, 0, desc=True)
         # there should be at least 1 entry, if not error out
         version_on_top = result[0]
         if version_on_top == ocp_version:
             # remove yourself from the queue
-            await redis.call('zpopmax', version_queue_name)
+            await redis.call("zpopmax", version_queue_name)
             return await run_with_lock(coro, lock, lock_name, lock_id)
         else:
             lock_manager.logger.info(f"Do not have priority for {lock_name} as {version_on_top} is ahead. Waiting ..")
@@ -273,9 +273,9 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
     try:
         if skip_if_locked and await lock_manager.is_locked(lock_name):
             blocked_on_build_path = await lock_manager.get_lock_id(lock_name)
-            blocked_on_build_url = f'{constants.JENKINS_UI_URL}/{blocked_on_build_path}'
+            blocked_on_build_url = f"{constants.JENKINS_UI_URL}/{blocked_on_build_path}"
             lock_manager.logger.info(
-                f'Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- skipping'
+                f"Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- skipping"
             )
             coro.close()
             return

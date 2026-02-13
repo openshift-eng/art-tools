@@ -7,7 +7,7 @@ class RecordLogger:
     """
 
     def __init__(self, path: str) -> None:
-        self._record_log = open(path, "a", encoding='utf-8')
+        self._record_log = open(path, "a", encoding="utf-8")
         self._log_lock = threading.Lock()
 
     def close(self):

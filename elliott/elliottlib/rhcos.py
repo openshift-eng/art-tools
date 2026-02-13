@@ -90,7 +90,7 @@ def get_build_from_payload(runtime, payload_pullspec):
     arch = json.loads(out)["config"]["architecture"]
     rhcos_tag = get_primary_container_name(runtime)
     out, _ = exectools.cmd_assert(["oc", "adm", "release", "info", "--image-for", rhcos_tag, "--", payload_pullspec])
-    rhcos_pullspec = out.split('\n')[0]
+    rhcos_pullspec = out.split("\n")[0]
     build_id = get_build_id_from_rhcos_pullspec(rhcos_pullspec)
     return build_id, arch
 
@@ -103,7 +103,7 @@ def get_build_from_pullspec(rhcos_pullspec):
     return build_id, arch
 
 
-def get_rpms(runtime, build_id, version, arch, private=''):
+def get_rpms(runtime, build_id, version, arch, private=""):
     commitmeta = get_build_meta(runtime, build_id, version, arch, private, meta_type="commitmeta")
     rpm_list = commitmeta.get("rpmostree.rpmdb.pkglist")
 
@@ -111,24 +111,24 @@ def get_rpms(runtime, build_id, version, arch, private=''):
     # metadata, so we need to add them in separately.
     commitmeta = get_build_meta(runtime, build_id, version, arch, private, meta_type="meta")
     try:
-        extensions = commitmeta['extensions']['manifest']
+        extensions = commitmeta["extensions"]["manifest"]
     except KeyError:
         extensions = dict()  # no extensions before 4.8; ignore missing
     for name, vra in extensions.items():
         # e.g. "kernel-rt-core": "4.18.0-372.32.1.rt7.189.el8_6.x86_64"
         # or "qemu-img": "15:6.2.0-11.module+el8.6.0+16538+01ea313d.6.x86_64"
-        version, ra = vra.rsplit('-', 1)
+        version, ra = vra.rsplit("-", 1)
         # if epoch is not specified, just use 0. for some reason it's included in the version in
         # RHCOS metadata as "epoch:version"; but if we query brew for it that way, it does not
         # like the format, so we separate it out from the version.
-        epoch, version = version.split(':', 1) if ':' in version else ('0', version)
-        release, arch = ra.rsplit('.', 1)
+        epoch, version = version.split(":", 1) if ":" in version else ("0", version)
+        release, arch = ra.rsplit(".", 1)
         rpm_list.append([name, epoch, version, release, arch])
 
     return rpm_list
 
 
-def get_rpm_nvrs(runtime, build_id, version, arch, private=''):
+def get_rpm_nvrs(runtime, build_id, version, arch, private=""):
     stream_name = f"{arch}{'-priv' if private else ''}"
     try:
         rpm_list = get_rpms(runtime, build_id, version, arch, private)

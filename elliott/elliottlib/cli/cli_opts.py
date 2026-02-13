@@ -1,21 +1,21 @@
 CLI_OPTS = {
-    'data_path': {
-        'env': 'ELLIOTT_DATA_PATH',
-        'help': 'Git URL or File Path to build data',
+    "data_path": {
+        "env": "ELLIOTT_DATA_PATH",
+        "help": "Git URL or File Path to build data",
     },
-    'group': {
-        'env': 'ELLIOTT_GROUP',
-        'help': 'Sub-group directory or branch to pull build data',
+    "group": {
+        "env": "ELLIOTT_GROUP",
+        "help": "Sub-group directory or branch to pull build data",
     },
-    'working_dir': {
-        'env': 'ELLIOTT_WORKING_DIR',
-        'help': 'Persistent working directory to use',
+    "working_dir": {
+        "env": "ELLIOTT_WORKING_DIR",
+        "help": "Persistent working directory to use",
     },
 }
 
-CLI_ENV_VARS = {k: v['env'] for (k, v) in CLI_OPTS.items()}
+CLI_ENV_VARS = {k: v["env"] for (k, v) in CLI_OPTS.items()}
 
-CLI_CONFIG_TEMPLATE = '\n'.join(['#{}\n{}:\n'.format(v['help'], k) for (k, v) in CLI_OPTS.items()])
+CLI_CONFIG_TEMPLATE = "\n".join(["#{}\n{}:\n".format(v["help"], k) for (k, v) in CLI_OPTS.items()])
 
 
 def id_convert_str(ids):
@@ -26,8 +26,8 @@ def id_convert_str(ids):
         # id = "1234,42345,1234,"
         if isinstance(id, int):
             id_str.append(id)
-        elif ',' in id:
-            for k in [c.strip() for c in id.split(',')]:
+        elif "," in id:
+            for k in [c.strip() for c in id.split(",")]:
                 id_str.append(k)
         # id = 123  no ','
         else:

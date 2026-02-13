@@ -46,9 +46,9 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         os.environ.pop("GITHUB_TOKEN", None)
         os.environ.pop("GITLAB_TOKEN", None)
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.ShipmentConfig')
-    @patch('pyartcd.pipelines.build_microshift_bootc.KonfluxImageBuilder.get_application_name')
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
+    @patch("pyartcd.pipelines.build_microshift_bootc.ShipmentConfig")
+    @patch("pyartcd.pipelines.build_microshift_bootc.KonfluxImageBuilder.get_application_name")
+    @patch("pyartcd.pipelines.build_microshift_bootc.Github")
     async def test_load_existing_shipment_config_extracts_timestamp(
         self, mock_github, mock_get_app_name, mock_shipment_config_class
     ):
@@ -107,7 +107,7 @@ shipment:
         self.assertIsNotNone(shipment_config)
         self.assertEqual(pipeline.existing_shipment_timestamp, existing_timestamp)
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
+    @patch("pyartcd.pipelines.build_microshift_bootc.Github")
     async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_github):
         """
         Test that when updating an existing MR, the existing timestamp is reused
@@ -156,7 +156,7 @@ shipment:
         pipeline._gitlab = mock_gitlab_client
 
         # when
-        with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
+        with patch("pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly", return_value="4.21.0"):
             _ = await pipeline._create_shipment_mr(mock_shipment_config)
 
         # then
@@ -166,7 +166,7 @@ shipment:
 
         self.assertTrue(str(written_filepath).endswith(expected_filename))
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
+    @patch("pyartcd.pipelines.build_microshift_bootc.Github")
     async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_github):
         """
         Test that when creating a new MR (no existing shipment), a new timestamp is generated
@@ -213,7 +213,7 @@ shipment:
         pipeline._gitlab = mock_gitlab_client
 
         # when
-        with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.18.1"):
+        with patch("pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly", return_value="4.18.1"):
             _ = await pipeline._create_shipment_mr(mock_shipment_config)
 
         # then

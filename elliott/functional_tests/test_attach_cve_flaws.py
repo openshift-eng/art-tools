@@ -19,5 +19,5 @@ class FindBugsSweepTestCase(unittest.TestCase):
         self.assertIn(out.decode("utf-8"), "Found \\d+ bugzilla tracker bugs attached")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

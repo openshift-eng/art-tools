@@ -4,7 +4,7 @@ import re
 
 class EntityLoggingAdapter(logging.LoggerAdapter):
     def process(self, msg, kwargs):
-        return '[%s] %s' % (self.extra['entity'], msg), kwargs
+        return "[%s] %s" % (self.extra["entity"], msg), kwargs
 
 
 class RedactingFilter(logging.Filter):
@@ -13,8 +13,8 @@ class RedactingFilter(logging.Filter):
     """
 
     PATTERNS = {
-        'requests_gssapi.gssapi_': [
-            (re.compile(r'Authorization header:(.+)', re.IGNORECASE), 'Authorization header: <redacted>'),
+        "requests_gssapi.gssapi_": [
+            (re.compile(r"Authorization header:(.+)", re.IGNORECASE), "Authorization header: <redacted>"),
         ],
     }
 
@@ -51,7 +51,7 @@ def setup_logging(log_level: int, debug_log_path: str):
     # set up the root logger to log messages with levels of DEBUG and higher to debug.log
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s %(name)-12s %(levelname)s (%(thread)d) %(message)s',
+        format="%(asctime)s %(name)-12s %(levelname)s (%(thread)d) %(message)s",
         filename=debug_log_path,
         force=True,
     )
@@ -61,7 +61,7 @@ def setup_logging(log_level: int, debug_log_path: str):
     # define a Handler which writes $log_level messages or higher to the sys.stderr
     console = logging.StreamHandler()
     console.setLevel(log_level)
-    formatter = logging.Formatter('%(asctime)s %(name)-12s %(levelname)s %(message)s')
+    formatter = logging.Formatter("%(asctime)s %(name)-12s %(levelname)s %(message)s")
     console.setFormatter(formatter)
 
     # add the handler to the root logger
@@ -84,9 +84,9 @@ def get_logger(module_name=None):
     Modules should request a logger using their __name__
     """
 
-    logger_name = 'art_tools'
+    logger_name = "art_tools"
 
     if module_name:
-        logger_name = '{}.{}'.format(logger_name, module_name)
+        logger_name = "{}.{}".format(logger_name, module_name)
 
     return logging.getLogger(logger_name)

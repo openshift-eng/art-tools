@@ -37,7 +37,7 @@ class TestImageDistGit(TestDistgit):
                 urls=flexmock(brew_image_host="brew-img-host", brew_image_namespace="brew-img-ns"),
                 insecure_source=False,
             ),
-            resolve_brew_image_url=lambda *_, **__: '',
+            resolve_brew_image_url=lambda *_, **__: "",
             working_dir="my-working-dir",
             branch="some-branch",
             command="some-command",
@@ -324,7 +324,7 @@ class TestImageDistGit(TestDistgit):
         test_file = """
             from foo
             label "{}"="spam"
-        """.format(distgit.ImageDistGitRepo.source_labels['now']['sha'])
+        """.format(distgit.ImageDistGitRepo.source_labels["now"]["sha"])
         flexmock(self.md).should_receive("fetch_cgit_file").and_return(test_file)
         flexmock(self.img_dg).should_receive("_built_or_recent").and_return(None)  # hit this on match
 
@@ -353,7 +353,7 @@ class TestImageDistGit(TestDistgit):
         test_file = """
             from foo
             label "{}"="spam"
-        """.format(distgit.ImageDistGitRepo.source_labels['now']['sha'])
+        """.format(distgit.ImageDistGitRepo.source_labels["now"]["sha"])
         flexmock(self.md).should_receive("fetch_cgit_file").and_return(test_file)
         flexmock(self.img_dg).should_receive("_built_or_recent").and_return(None)  # hit this on match
         flexmock(self.img_dg.runtime).should_receive("detect_remote_source_branch").and_return(("branch", "spam"))
@@ -370,9 +370,9 @@ class TestImageDistGit(TestDistgit):
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "enabled_repos": ["repo-a", "repo-b"],
                     },
                 }
@@ -407,9 +407,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-7'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-7"},
                         "enabled_repos": ["repo-a", "repo-b"],
                         "final_stage_user": 1002,
                     },
@@ -449,9 +449,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "enabled_repos": ["repo-a", "repo-b"],
                     },
                 }
@@ -494,9 +494,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "enabled_repos": [],
                     },
                 }
@@ -540,9 +540,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
                 }
@@ -555,7 +555,7 @@ COPY --from=builder /some/path/a /some/path/b
         runtime.assembly = None
         container_yaml = dg._generate_osbs_image_config("v4.10.0")
         self.assertEqual(
-            sorted(container_yaml["tags"]), sorted(['v4.10.0.123456', 'v4.10', 'v4.10.0', 'tag_a', 'tag_b'])
+            sorted(container_yaml["tags"]), sorted(["v4.10.0.123456", "v4.10", "v4.10.0", "tag_a", "tag_b"])
         )
 
         # assembly is enabled
@@ -563,7 +563,7 @@ COPY --from=builder /some/path/a /some/path/b
         container_yaml = dg._generate_osbs_image_config("v4.10.0")
         self.assertEqual(
             sorted(container_yaml["tags"]),
-            sorted(['assembly.art3109', 'v4.10.0.123456', 'v4.10', 'v4.10.0', 'tag_a', 'tag_b']),
+            sorted(["assembly.art3109", "v4.10.0.123456", "v4.10", "v4.10.0", "tag_a", "tag_b"]),
         )
 
     def test_detect_package_manangers_without_git_clone(self):
@@ -574,9 +574,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
                 }
@@ -598,9 +598,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
                 }
@@ -625,9 +625,9 @@ COPY --from=builder /some/path/a /some/path/b
             Model(
                 {
                     "key": "foo",
-                    'data': {
-                        'name': 'openshift/foo',
-                        'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "data": {
+                        "name": "openshift/foo",
+                        "distgit": {"branch": "fake-branch-rhel-8"},
                         "additional_tags": ["tag_a", "tag_b"],
                         "content": {
                             "source": {
@@ -662,28 +662,28 @@ COPY --from=builder /some/path/a /some/path/b
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
             {
-                'canonical_builders_from_upstream': True,
-                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+                "canonical_builders_from_upstream": True,
+                "distgit": {"branch": "rhaos-4.16-rhel-9"},
+                "alternative_upstream": [{"when": "el8", "distgit": {"branch": "rhaos-4.16-rhel-8"}}],
             }
         )
-        self.img_dg.upstream_intended_el_version = '8'
+        self.img_dg.upstream_intended_el_version = "8"
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+        self.assertEqual(self.img_dg.config["distgit"]["branch"], "rhaos-4.16-rhel-8")
 
         # no 'when' clause matching upstream rhel version: do not match upstream
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
             {
-                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+                "distgit": {"branch": "rhaos-4.16-rhel-9"},
+                "alternative_upstream": [{"when": "el7", "distgit": {"branch": "rhaos-4.16-rhel-8"}}],
             }
         )
         self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
         self.img_dg._update_image_config()
         self.assertFalse(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
+        self.assertEqual(self.img_dg.config["distgit"]["branch"], "rhaos-4.16-rhel-9")
 
 
 if __name__ == "__main__":

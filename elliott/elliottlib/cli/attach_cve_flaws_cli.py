@@ -127,16 +127,16 @@ def _image_uses_builder(image_meta, logger) -> bool:
 
         # Check in the from.builder section for streams containing "golang"
         from_streams = []
-        if 'from' in config and 'builder' in config['from']:
-            for builder_config in config['from']['builder']:
-                if isinstance(builder_config, dict) and 'stream' in builder_config:
-                    stream_name = builder_config['stream']
+        if "from" in config and "builder" in config["from"]:
+            for builder_config in config["from"]["builder"]:
+                if isinstance(builder_config, dict) and "stream" in builder_config:
+                    stream_name = builder_config["stream"]
                     from_streams.append(stream_name)
                     # Check if the stream name contains "golang"
                     if "golang" in stream_name:
                         # Check if this image should be included based on for_release field
                         # Include if for_release is not explicitly false
-                        for_release = config.get('for_release', True)  # Default to True if not specified
+                        for_release = config.get("for_release", True)  # Default to True if not specified
                         if for_release is not False:
                             logger.debug(
                                 f"Image '{image_name}' uses golang builder via from.builder stream: '{stream_name}' (for_release: {for_release})"
@@ -150,7 +150,7 @@ def _image_uses_builder(image_meta, logger) -> bool:
         # Log debug info if no matches found
         if from_streams:
             logger.debug(f"Image '{image_name}' has streams {from_streams} but none contain 'golang'")
-        elif 'from' in config:
+        elif "from" in config:
             logger.debug(f"Image '{image_name}' has from section but no valid builder streams")
         else:
             logger.debug(f"Image '{image_name}' has no from section in config")
@@ -200,7 +200,7 @@ class AttachCveFlaws:
             self._replace_vars.update({"RPM_ADVISORY": live_id})
 
     async def run(self):
-        if self.runtime.build_system == 'konflux':
+        if self.runtime.build_system == "konflux":
             if self.into_default_advisories or self.advisory_id:
                 raise click.UsageError(
                     "Konflux does not yet support --into-default-advisories or --advisory options, "
@@ -212,14 +212,14 @@ class AttachCveFlaws:
                 self.logger.info("No changes made, exiting.")
                 sys.exit(0)
 
-            if self.output == 'json':
+            if self.output == "json":
                 click.echo(
-                    json.dumps(release_notes.model_dump(mode='json', exclude_unset=True, exclude_none=True), indent=4)
+                    json.dumps(release_notes.model_dump(mode="json", exclude_unset=True, exclude_none=True), indent=4)
                 )
             else:
-                YAML.dump(release_notes.model_dump(mode='python', exclude_unset=True, exclude_none=True), sys.stdout)
+                YAML.dump(release_notes.model_dump(mode="python", exclude_unset=True, exclude_none=True), sys.stdout)
 
-        elif self.runtime.build_system == 'brew':
+        elif self.runtime.build_system == "brew":
             if self.reconcile:
                 raise click.UsageError("Reconciliation is not supported for Brew")
             await self.handle_brew_cve_flaws()
@@ -272,7 +272,7 @@ class AttachCveFlaws:
         self.logger.info(f"Found {len(bug_ids)} bugs in shipment")
 
         # Get tracker bugs
-        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker('jira')) if bug_ids else []
+        tracker_bugs = self.get_attached_trackers(bug_ids, self.runtime.get_bug_tracker("jira")) if bug_ids else []
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
         # Get flaw bugs
@@ -334,12 +334,12 @@ class AttachCveFlaws:
 
         attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(bugs_ids)
         if not attached_tracker_bugs:
-            self.logger.info(f'Found 0 {bug_tracker.type} tracker bugs attached')
+            self.logger.info(f"Found 0 {bug_tracker.type} tracker bugs attached")
             return []
 
         self.logger.info(
-            f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
-            f'{sorted([b.id for b in attached_tracker_bugs])}'
+            f"Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: "
+            f"{sorted([b.id for b in attached_tracker_bugs])}"
         )
         return attached_tracker_bugs
 
@@ -356,10 +356,10 @@ class AttachCveFlaws:
         """
         formatter = SafeFormatter()
         if flaw_bugs:
-            if release_notes.type != 'RHSA':
+            if release_notes.type != "RHSA":
                 # Set the release notes type to RHSA
                 self.logger.info("Converting release notes to RHSA type.")
-                release_notes.type = 'RHSA'
+                release_notes.type = "RHSA"
 
             # Add the CVE component mapping to the cve field
             cve_component_mapping = AttachCveFlaws.get_cve_component_mapping(
@@ -385,37 +385,37 @@ class AttachCveFlaws:
                 runtime=self.runtime,
                 et_data=self.errata_config,
                 art_advisory_key=self.advisory_kind,
-                errata_type='RHSA',
+                errata_type="RHSA",
             )
             highest_impact = get_highest_security_impact(flaw_bugs)
             self._replace_vars["IMPACT"] = highest_impact
-            formatted_cve_list = '\n'.join(
-                [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+            formatted_cve_list = "\n".join(
+                [f"* {b.summary.replace(b.alias[0], '').strip()} ({b.alias[0]})" for b in flaw_bugs]
             )
-            self._replace_vars['CVES'] = formatted_cve_list
-            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **self._replace_vars)
-            release_notes.topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
+            self._replace_vars["CVES"] = formatted_cve_list
+            release_notes.synopsis = formatter.format(cve_boilerplate["synopsis"], **self._replace_vars)
+            release_notes.topic = formatter.format(cve_boilerplate["topic"], **self._replace_vars)
 
             # Preserve existing solution if it contains real values (not placeholders)
             # This prevents reverting payload SHAs and advisory URLs that were already populated by promote
             if release_notes.solution and not self._contains_placeholders(release_notes.solution):
                 self.logger.info("Preserving existing solution (contains real values, not placeholders)")
             else:
-                release_notes.solution = formatter.format(cve_boilerplate['solution'], **self._replace_vars)
+                release_notes.solution = formatter.format(cve_boilerplate["solution"], **self._replace_vars)
             # Preserve existing description if it contains real values (not placeholders)
             if release_notes.description and not self._contains_placeholders(release_notes.description):
                 self.logger.info("Preserving existing description (contains real values, not placeholders)")
             else:
-                release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
+                release_notes.description = formatter.format(cve_boilerplate["description"], **self._replace_vars)
 
         elif self.reconcile:
             # Convert RHSA back to RHBA
-            if release_notes.type == 'RHBA':
+            if release_notes.type == "RHBA":
                 self.logger.info("Advisory is already RHBA, skipping reconciliation")
                 return
 
             self.logger.info("Converting RHSA back to RHBA")
-            release_notes.type = 'RHBA'
+            release_notes.type = "RHBA"
 
             # Remove CVE associations
             self.logger.info("Removing CVE associations")
@@ -430,22 +430,22 @@ class AttachCveFlaws:
                 runtime=self.runtime,
                 et_data=self.errata_config,
                 art_advisory_key=self.advisory_kind,
-                errata_type='RHBA',
+                errata_type="RHBA",
             )
-            release_notes.synopsis = formatter.format(boilerplate['synopsis'], **self._replace_vars)
-            release_notes.topic = formatter.format(boilerplate['topic'], **self._replace_vars)
+            release_notes.synopsis = formatter.format(boilerplate["synopsis"], **self._replace_vars)
+            release_notes.topic = formatter.format(boilerplate["topic"], **self._replace_vars)
 
             # Preserve existing solution/description if they contain real values (not placeholders)
             # This prevents reverting payload SHAs and advisory URLs during reconciliation
             if release_notes.solution and not self._contains_placeholders(release_notes.solution):
                 self.logger.info("Preserving existing solution during reconciliation (contains real values)")
             else:
-                release_notes.solution = formatter.format(boilerplate['solution'], **self._replace_vars)
+                release_notes.solution = formatter.format(boilerplate["solution"], **self._replace_vars)
             # Preserve existing description if it contains real values (not placeholders)
             if release_notes.description and not self._contains_placeholders(release_notes.description):
                 self.logger.info("Preserving existing description during reconciliation (contains real values)")
             else:
-                release_notes.description = formatter.format(boilerplate['description'], **self._replace_vars)
+                release_notes.description = formatter.format(boilerplate["description"], **self._replace_vars)
 
     async def handle_brew_cve_flaws(self):
         """
@@ -460,7 +460,7 @@ class AttachCveFlaws:
             advisories = [self.advisory_id]
 
         exit_code = 0
-        flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
+        flaw_bug_tracker = self.runtime.get_bug_tracker("bugzilla")
         self.errata_api = AsyncErrataAPI(self.errata_config.get("server", constants.errata_url))
 
         for advisory_id in advisories:
@@ -468,7 +468,7 @@ class AttachCveFlaws:
             advisory = Erratum(errata_id=advisory_id)
 
             attached_trackers = []
-            for bug_tracker in [self.runtime.get_bug_tracker('jira'), self.runtime.get_bug_tracker('bugzilla')]:
+            for bug_tracker in [self.runtime.get_bug_tracker("jira"), self.runtime.get_bug_tracker("bugzilla")]:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
@@ -479,13 +479,13 @@ class AttachCveFlaws:
                 if flaw_bugs:
                     self.update_advisory_brew(advisory, self.advisory_kind, flaw_bugs, flaw_bug_tracker, self.noop)
                     # Associate builds with CVEs
-                    self.logger.info('Associating CVEs with builds')
+                    self.logger.info("Associating CVEs with builds")
                     await self.associate_builds_with_cves(advisory, flaw_bugs, attached_trackers, tracker_flaws)
                 else:
                     pass  # TODO: convert RHSA back to RHBA
             except Exception as e:
                 self.logger.error(traceback.format_exc())
-                self.logger.error(f'Exception: {e}')
+                self.logger.error(f"Exception: {e}")
                 exit_code = 1
 
         await self.errata_api.close()
@@ -496,7 +496,7 @@ class AttachCveFlaws:
         errata_config = self.runtime.get_errata_config()
 
         cve_boilerplate = get_advisory_boilerplate(
-            runtime=self.runtime, et_data=errata_config, art_advisory_key=advisory_kind, errata_type='RHSA'
+            runtime=self.runtime, et_data=errata_config, art_advisory_key=advisory_kind, errata_type="RHSA"
         )
 
         advisory, updated = self.get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
@@ -506,7 +506,7 @@ class AttachCveFlaws:
             advisory.commit()
 
         flaw_ids = [flaw_bug.id for flaw_bug in flaw_bugs]
-        self.logger.info(f'Attaching {len(flaw_ids)} flaw bugs')
+        self.logger.info(f"Attaching {len(flaw_ids)} flaw bugs")
         bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
     @staticmethod
@@ -585,7 +585,7 @@ class AttachCveFlaws:
             for flaw_id in tracker_flaws[tracker.id]:
                 if flaw_id not in flaw_id_bugs:
                     continue  # non-first-fix
-                alias = [k for k in flaw_id_bugs[flaw_id].alias if k.startswith('CVE-')]
+                alias = [k for k in flaw_id_bugs[flaw_id].alias if k.startswith("CVE-")]
                 if len(alias) != 1:
                     raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
                 cve = alias[0]
@@ -631,58 +631,58 @@ class AttachCveFlaws:
         updated = False
         formatter = SafeFormatter()
         if not is_security_advisory(advisory):
-            self.logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
+            self.logger.info("Advisory type is {}, converting it to RHSA".format(advisory.errata_type))
             updated = True
-            low_impact = 'Low'
-            self._replace_vars['IMPACT'] = low_impact
+            low_impact = "Low"
+            self._replace_vars["IMPACT"] = low_impact
             advisory.update(
-                errata_type='RHSA',
-                security_reviewer=cve_boilerplate['security_reviewer'],
-                synopsis=formatter.format(cve_boilerplate['synopsis'], **self._replace_vars),
-                topic=formatter.format(cve_boilerplate['topic'], **self._replace_vars),
-                solution=formatter.format(cve_boilerplate['solution'], **self._replace_vars),
+                errata_type="RHSA",
+                security_reviewer=cve_boilerplate["security_reviewer"],
+                synopsis=formatter.format(cve_boilerplate["synopsis"], **self._replace_vars),
+                topic=formatter.format(cve_boilerplate["topic"], **self._replace_vars),
+                solution=formatter.format(cve_boilerplate["solution"], **self._replace_vars),
                 security_impact=low_impact,
             )
 
         flaw_bugs = sort_cve_bugs(flaw_bugs)
         cve_names = [b.alias[0] for b in flaw_bugs]
-        cve_str = ' '.join(cve_names)
+        cve_str = " ".join(cve_names)
         if advisory.cve_names != cve_str:
             advisory.update(cve_names=cve_str)
             updated = True
 
         if updated:
-            formatted_cve_list = '\n'.join(
-                [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+            formatted_cve_list = "\n".join(
+                [f"* {b.summary.replace(b.alias[0], '').strip()} ({b.alias[0]})" for b in flaw_bugs]
             )
-            self._replace_vars['CVES'] = formatted_cve_list
-            formatted_description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
+            self._replace_vars["CVES"] = formatted_cve_list
+            formatted_description = formatter.format(cve_boilerplate["description"], **self._replace_vars)
             advisory.update(description=formatted_description)
 
         highest_impact = get_highest_security_impact(flaw_bugs)
         if highest_impact != advisory.security_impact:
             if constants.security_impact_map[advisory.security_impact] < constants.security_impact_map[highest_impact]:
                 self.logger.info(
-                    f'Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}'
+                    f"Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}"
                 )
-                self._replace_vars['IMPACT'] = highest_impact
+                self._replace_vars["IMPACT"] = highest_impact
                 advisory.update(security_impact=highest_impact)
                 updated = True
             else:
                 self.logger.info(
-                    f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust'
+                    f"Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust"
                 )
-                self._replace_vars['IMPACT'] = highest_impact = advisory.security_impact
+                self._replace_vars["IMPACT"] = highest_impact = advisory.security_impact
         if highest_impact not in advisory.topic:
-            topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
-            self.logger.info('Topic updated to include impact of {}'.format(highest_impact))
+            topic = formatter.format(cve_boilerplate["topic"], **self._replace_vars)
+            self.logger.info("Topic updated to include impact of {}".format(highest_impact))
             advisory.update(topic=topic)
 
         return advisory, updated
 
 
-@cli.command('attach-cve-flaws', short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)')
-@click.option('--advisory', '-a', 'advisory_id', type=int, help='Find tracker bugs in given advisory')
+@cli.command("attach-cve-flaws", short_help="Attach corresponding flaw bugs for trackers in advisory (first-fix only)")
+@click.option("--advisory", "-a", "advisory_id", type=int, help="Find tracker bugs in given advisory")
 @click.option(
     "--noop",
     "--dry-run",
@@ -693,12 +693,12 @@ class AttachCveFlaws:
 )
 @use_default_advisory_option
 @click.option(
-    "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
+    "--into-default-advisories", is_flag=True, help="Run for all advisories values defined in [group|releases].yml"
 )
 @click.option(
-    "--reconcile", is_flag=True, help='Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable'
+    "--reconcile", is_flag=True, help="Converts RHSA back to RHBA, removes flaw bugs and CVE associations if applicable"
 )
-@click.option('--output', default='json', type=click.Choice(['yaml', 'json']), help='Output format')
+@click.option("--output", default="json", type=click.Choice(["yaml", "json"]), help="Output format")
 @click.pass_obj
 @click_coroutine
 async def attach_cve_flaws_cli(

@@ -35,7 +35,7 @@ class PackageRpmFinder:
 
         # Query Brew to fetch RPMs included in packages not yet cached
         with self._runtime.shared_koji_client_session() as session:
-            self._logger.debug('Caching RPM build info for package NVRs %s', ', '.join(caching_packages))
+            self._logger.debug("Caching RPM build info for package NVRs %s", ", ".join(caching_packages))
 
             # Get package build IDs from package names
             with session.multicall(strict=True) as multicall:
@@ -46,8 +46,8 @@ class PackageRpmFinder:
             not_found_packages = [pkg for pkg, build in zip(caching_packages, builds) if not build]
             if not_found_packages:
                 self._logger.warning(
-                    'The following packages could not be found in Brew and will be excluded from the check: %s',
-                    ', '.join(not_found_packages),
+                    "The following packages could not be found in Brew and will be excluded from the check: %s",
+                    ", ".join(not_found_packages),
                 )
 
                 # Remove missing builds from packages in need for caching
@@ -56,7 +56,7 @@ class PackageRpmFinder:
                 builds = [build for build in builds if build]
 
             # Get RPM list from package build IDs using koji_api.listBuildRPMs
-            build_ids = [build['build_id'] for build in builds]
+            build_ids = [build["build_id"] for build in builds]
             results: List[List[Dict]] = brew.list_build_rpms(build_ids, session)
 
             # Cache retrieved RPM builds for package
@@ -85,7 +85,7 @@ class PackageRpmFinder:
         installed_packages = [pkg for pkg in installed_packages if pkg not in self._not_found_packages]
         self._cache_packages(installed_packages)
         return {
-            self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
+            self._packages_build_dicts[package_nvr]["name"]: self._packages_build_dicts[package_nvr]
             for package_nvr in installed_packages
             if package_nvr not in self._not_found_packages
         }

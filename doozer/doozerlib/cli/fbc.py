@@ -143,21 +143,21 @@ class FbcImportCli:
 @cli.command("beta:fbc:import", short_help="Create FBC by importing from the provided index image")
 @click.option(
     "--from-index",
-    metavar='INDEX_IMAGE',
+    metavar="INDEX_IMAGE",
     help="The index image to import from. If not set, the production index image will be used.",
 )
 @click.option("--push", is_flag=True, help="Push the generated FBC to the git repository.")
 @click.option(
-    "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
+    "--fbc-repo", metavar="FBC_REPO", help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
 )
-@click.option("--registry-auth", metavar='AUTH', help="The registry authentication file to use for the index image.")
+@click.option("--registry-auth", metavar="AUTH", help="The registry authentication file to use for the index image.")
 @click.option(
     "--major-minor",
-    metavar='MAJOR.MINOR',
+    metavar="MAJOR.MINOR",
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
 @option_commit_message
-@click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
+@click.argument("dest_dir", metavar="DEST_DIR", required=False, default=None)
 @pass_runtime
 @click_coroutine
 async def fbc_import(
@@ -241,7 +241,7 @@ class FbcMergeCli:
     async def run(self):
         # Initialize runtime if not already initialized
         runtime = self.runtime
-        if not getattr(runtime, 'initialized', False) or getattr(runtime, 'mode', None) != 'images':
+        if not getattr(runtime, "initialized", False) or getattr(runtime, "mode", None) != "images":
             runtime.initialize(mode="images", clone_distgits=False, build_system="konflux", config_only=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if self.major_minor:
@@ -284,7 +284,7 @@ class FbcMergeCli:
             operators_with_bundles = [
                 image.get_component_name()
                 for image in runtime.ordered_image_metas()
-                if image.enabled and image.config.get('update-csv') is not Missing
+                if image.enabled and image.config.get("update-csv") is not Missing
             ]
 
             if operators_with_bundles:
@@ -335,56 +335,56 @@ class FbcMergeCli:
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
 @pass_runtime
 @click.option(
-    "--message", "-m", metavar='MSG', help="Commit message. If not provided, a default generated message will be used."
+    "--message", "-m", metavar="MSG", help="Commit message. If not provided, a default generated message will be used."
 )
 @click.option("--dry-run", is_flag=True, default=False, help="Perform a dry run without pushing changes.")
 @click.option(
-    "--dest-dir", metavar='DEST_DIR', default=None, help="The destination directory for the merged FBC fragments."
+    "--dest-dir", metavar="DEST_DIR", default=None, help="The destination directory for the merged FBC fragments."
 )
-@click.option("--registry-auth", metavar='REGISTRY_AUTH', default=None, help="Path to the registry auth file.")
+@click.option("--registry-auth", metavar="REGISTRY_AUTH", default=None, help="Path to the registry auth file.")
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
-)
-@click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-kubeconfig", metavar="PATH", help="Path to the kubeconfig file to use for Konflux cluster connections."
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
-    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--fbc-repo',
-    metavar='FBC_REPO',
-    help='The git repository to push the FBC to. Use FBC_GIT_USERNAME and FBC_GIT_PASSWORD environment variables to set credentials.',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
+    help="The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).",
+)
+@click.option(
+    "--fbc-repo",
+    metavar="FBC_REPO",
+    help="The git repository to push the FBC to. Use FBC_GIT_USERNAME and FBC_GIT_PASSWORD environment variables to set credentials.",
     default=constants.ART_FBC_GIT_REPO,
 )
 @click.option(
-    '--fbc-branch',
-    metavar='FBC_BRANCH',
+    "--fbc-branch",
+    metavar="FBC_BRANCH",
     default=None,
-    help='The branch to push the FBC to. Defaults to art-<group>-fbc-stage',
+    help="The branch to push the FBC to. Defaults to art-<group>-fbc-stage",
 )
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
     default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
-    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+    help="Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template",
 )
-@click.option('--skip-checks', is_flag=True, default=False, help='Skip all post build checks')
-@click.option('--skip-fips-check', is_flag=True, default=False, help='Skip the FIPS compliance check task')
+@click.option("--skip-checks", is_flag=True, default=False, help="Skip all post build checks")
+@click.option("--skip-fips-check", is_flag=True, default=False, help="Skip the FIPS compliance check task")
 @click.option(
-    '--target-index',
-    metavar='TARGET_INDEX',
+    "--target-index",
+    metavar="TARGET_INDEX",
     default=None,
-    help='The target index image to merge fragments into. If not specified, a default index will be used.',
+    help="The target index image to merge fragments into. If not specified, a default index will be used.",
 )
 @click.option(
     "--major-minor",
-    metavar='MAJOR.MINOR',
+    metavar="MAJOR.MINOR",
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
 @click.argument("fragments", nargs=-1, required=False)
@@ -413,7 +413,7 @@ async def fbc_merge(
     If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
     # Initialize runtime to populate runtime.product before using resolver functions
-    runtime.initialize(build_system='konflux', config_only=True)
+    runtime.initialize(build_system="konflux", config_only=True)
 
     # Resolve kubeconfig and namespace using product-based utility functions
     resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
@@ -505,14 +505,14 @@ class FbcRebaseAndBuildCli:
                 dgk_records[record.name] = record
             # Load image metas for the given operators
             self.runtime.images = list(dgk_records.keys())
-            self.runtime.initialize(mode='images', clone_distgits=False)
+            self.runtime.initialize(mode="images", clone_distgits=False)
             for dgk in dgk_records.keys():
                 metadata = self.runtime.image_map[dgk]
                 if not metadata.is_olm_operator:
                     raise IOError(f"Operator {dgk} does not have 'update-csv' config")
         else:
             # Get latest build records for all specified operators
-            self.runtime.initialize(mode='images', clone_distgits=False)
+            self.runtime.initialize(mode="images", clone_distgits=False)
             LOGGER.info("Fetching latest operator builds from Konflux DB...")
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in self.runtime.ordered_image_metas() if operator_meta.is_olm_operator
@@ -738,7 +738,7 @@ class FbcRebaseAndBuildCli:
         for dgk, result in zip(dgk_bundle_builds, results):
             if isinstance(result, Exception):
                 failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                stack_trace = "".join(traceback.TracebackException.from_exception(result).format())
                 error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
                 error_details = {
                     "operator": dgk,
@@ -752,7 +752,7 @@ class FbcRebaseAndBuildCli:
             else:
                 successful_nvrs.append(result)
 
-        if self.output == 'json':
+        if self.output == "json":
             output_data = {
                 "nvrs": successful_nvrs,
                 "errors": errors,
@@ -772,71 +772,71 @@ class FbcRebaseAndBuildCli:
 @cli.command("beta:fbc:rebase-and-build", short_help="Rebase FBC source content and then build it")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     required=True,
     callback=validate_semver_major_minor_patch,
     help="Version string to populate in Dockerfiles.",
 )
-@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@click.option("--release", metavar="RELEASE", required=True, help="Release string to populate in Dockerfiles.")
 @option_commit_message
 @click.option(
-    "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
+    "--fbc-repo", metavar="FBC_REPO", help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
 )
 @click.option(
-    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+    "--konflux-kubeconfig", metavar="PATH", help="Path to the kubeconfig file to use for Konflux cluster connections."
 )
 @click.option(
-    '--konflux-context',
-    metavar='CONTEXT',
-    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+    "--konflux-context",
+    metavar="CONTEXT",
+    help="The name of the kubeconfig context to use for Konflux cluster connections.",
 )
 @click.option(
-    '--konflux-namespace',
-    metavar='NAMESPACE',
+    "--konflux-namespace",
+    metavar="NAMESPACE",
     default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help="The namespace to use for Konflux cluster connections.",
 )
-@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
-@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option("--image-repo", default=constants.KONFLUX_DEFAULT_FBC_REPO, help="Push images to the specified repo.")
+@click.option("--skip-checks", default=False, is_flag=True, help="Skip all post build checks")
+@click.option("--dry-run", default=False, is_flag=True, help="Do not build anything, but only print build operations.")
 @click.option(
-    '--force',
+    "--force",
     default=False,
     is_flag=True,
-    help='Force rebuild even if an FBC build already exists for the given bundle builds.',
+    help="Force rebuild even if an FBC build already exists for the given bundle builds.",
 )
 @click.option(
-    '--plr-template',
+    "--plr-template",
     required=False,
     default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
-    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+    help="Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template",
 )
 @click.option(
-    '--output',
-    '-o',
-    type=click.Choice(['json'], case_sensitive=False),
-    default='json',
-    help='Output format for the build records.',
+    "--output",
+    "-o",
+    type=click.Choice(["json"], case_sensitive=False),
+    default="json",
+    help="Output format for the build records.",
 )
 @click.option(
-    '--reset-to-prod/--no-reset-to-prod',
+    "--reset-to-prod/--no-reset-to-prod",
     default=True,
     is_flag=True,
-    help='Reset the FBC source content to the production index image before rebasing.',
+    help="Reset the FBC source content to the production index image before rebasing.",
 )
 @click.option(
     "--prod-registry-auth",
-    metavar='PATH',
+    metavar="PATH",
     help="The registry authentication file to use for the index image."
     " This might be needed if --reset-to-prod is used and the production index image requires authentication."
     " If not set, the KONFLUX_OPERATOR_INDEX_AUTH_FILE environment variable will be used if set.",
 )
 @click.option(
     "--major-minor",
-    metavar='MAJOR.MINOR',
+    metavar="MAJOR.MINOR",
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
-@click.argument('operator_nvrs', nargs=-1, required=False)
+@click.argument("operator_nvrs", nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
 async def fbc_rebase_and_build(
@@ -867,7 +867,7 @@ async def fbc_rebase_and_build(
     assembly, then proceed to build the FBC source content.
     """
     if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        konflux_kubeconfig = os.environ.get("KONFLUX_SA_KUBECONFIG")
 
     if not konflux_kubeconfig:
         LOGGER.info(
@@ -875,7 +875,7 @@ async def fbc_rebase_and_build(
         )
 
     if reset_to_prod and not prod_registry_auth:
-        prod_registry_auth = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        prod_registry_auth = os.environ.get("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
 
     cli = FbcRebaseAndBuildCli(
         runtime=runtime,

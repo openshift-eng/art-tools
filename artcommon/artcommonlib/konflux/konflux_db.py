@@ -28,7 +28,7 @@ EXPONENTIAL_SEARCH_WINDOWS = [7, 14, 28, 56, 112, 224, 448]
 BUILDER_BASE_IMAGE_GROUP = "builder_base_image"
 
 # Large columns that can be excluded from queries to reduce cost and latency
-LARGE_COLUMNS = ['installed_rpms', 'installed_packages']
+LARGE_COLUMNS = ["installed_rpms", "installed_packages"]
 
 
 class CacheRecordsType(Enum):
@@ -48,7 +48,7 @@ class CacheRecordsType(Enum):
     @property
     def display_name(self):
         """Return capitalized display name for logging."""
-        return self.value.replace('_', ' ').title()
+        return self.value.replace("_", " ").title()
 
 
 @dataclass
@@ -156,34 +156,34 @@ class BuildCache:
 
             for build in builds:
                 # Index by name
-                group_cache['by_name'][build.name].append(build)
+                group_cache["by_name"][build.name].append(build)
 
                 # Index by NVR - prioritize successful builds over failed ones
-                existing_build = group_cache['by_nvr'].get(build.nvr)
+                existing_build = group_cache["by_nvr"].get(build.nvr)
                 if existing_build is None:
                     # No existing build with this NVR, add it
-                    group_cache['by_nvr'][build.nvr] = build
+                    group_cache["by_nvr"][build.nvr] = build
                 elif (
                     existing_build.outcome != KonfluxBuildOutcome.SUCCESS
                     and build.outcome == KonfluxBuildOutcome.SUCCESS
                 ):
                     # Existing build is not successful, but new build is - replace with successful build
-                    group_cache['by_nvr'][build.nvr] = build
+                    group_cache["by_nvr"][build.nvr] = build
                 elif existing_build.outcome == build.outcome and build.start_time > existing_build.start_time:
-                    group_cache['by_nvr'][build.nvr] = build
+                    group_cache["by_nvr"][build.nvr] = build
 
                 # Track time range
                 if build.start_time:
-                    if group_cache['oldest'] is None or build.start_time < group_cache['oldest']:
-                        group_cache['oldest'] = build.start_time
-                    if group_cache['newest'] is None or build.start_time > group_cache['newest']:
-                        group_cache['newest'] = build.start_time
+                    if group_cache["oldest"] is None or build.start_time < group_cache["oldest"]:
+                        group_cache["oldest"] = build.start_time
+                    if group_cache["newest"] is None or build.start_time > group_cache["newest"]:
+                        group_cache["newest"] = build.start_time
 
-                group_cache['total_builds'] += 1
+                group_cache["total_builds"] += 1
 
             # Sort each name's build list by start_time descending (newest first)
-            for name in group_cache['by_name']:
-                group_cache['by_name'][name].sort(key=lambda b: b.start_time or datetime.min, reverse=True)
+            for name in group_cache["by_name"]:
+                group_cache["by_name"][name].sort(key=lambda b: b.start_time or datetime.min, reverse=True)
 
             self.logger.info(
                 f"{cache_type.display_name} cache loaded {len(builds)} builds for group '{group}' "
@@ -277,7 +277,7 @@ class BuildCache:
                 return None
 
             group_cache = groups[group]
-            builds = group_cache['by_name'].get(name, [])
+            builds = group_cache["by_name"].get(name, [])
             if not builds:
                 self._increment_miss(cache_type)
                 self.logger.debug(f"{cache_type.display_name} cache MISS: No builds for name {name} in group {group}")
@@ -543,21 +543,21 @@ class KonfluxDb:
             # Build query for last N days of builds in this group
             start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
             where_clauses = [
-                Column('outcome', String).in_(['success', 'failure']),
-                Column('start_time', DateTime) >= start_time,
+                Column("outcome", String).in_(["success", "failure"]),
+                Column("start_time", DateTime) >= start_time,
             ]
 
             # For builder_base_image group, match groups starting with rhel[0-9]+- or ending with -rhel[0-9]+
             # For regular groups, match exactly
             if group == BUILDER_BASE_IMAGE_GROUP:
                 # Match groups like rhel8-openshift-4.18, rhel9-openshift-4.19, openshift-4.18-rhel8, etc.
-                rhel_pattern = r'^rhel[0-9]+-|-rhel[0-9]+$'
-                regexp_condition = func.REGEXP_CONTAINS(Column('group', String), rhel_pattern)
+                rhel_pattern = r"^rhel[0-9]+-|-rhel[0-9]+$"
+                regexp_condition = func.REGEXP_CONTAINS(Column("group", String), rhel_pattern)
                 where_clauses.append(regexp_condition)
             else:
-                where_clauses.append(Column('group', String) == group)
+                where_clauses.append(Column("group", String) == group)
 
-            order_by_clause = Column('start_time', quote=True).desc()
+            order_by_clause = Column("start_time", quote=True).desc()
 
             # Execute single large query
             # For small_columns cache: exclude large columns (installed_rpms, installed_packages)
@@ -600,10 +600,10 @@ class KonfluxDb:
         :return: Dictionary with cache stats, or empty dict if cache disabled
         """
         if not self.cache:
-            return {'enabled': False}
+            return {"enabled": False}
 
         stats = self.cache.stats(group=group)
-        stats['enabled'] = True
+        stats["enabled"] = True
         return stats
 
     @classmethod
@@ -637,11 +637,11 @@ class KonfluxDb:
         ).parameters  # konflux_build_record.KonfluxBuildRecord.__init__).parameters
 
         for param_name, param in parameters.items():
-            if param_name == 'self':
+            if param_name == "self":
                 continue
 
             field_type = annotations.get(param_name, str)  # Default to string if type is not provided
-            mode = 'NULLABLE' if param.default is param.empty else 'REQUIRED'
+            mode = "NULLABLE" if param.default is param.empty else "REQUIRED"
 
             # Handle Optional types (Union[X, None])
             origin = typing.get_origin(field_type)
@@ -651,22 +651,22 @@ class KonfluxDb:
                 field_type = next((arg for arg in args if arg is not type(None)), field_type)
 
             if field_type is int:
-                field_type_str = 'INTEGER'
+                field_type_str = "INTEGER"
             elif field_type is float:
-                field_type_str = 'FLOAT'
+                field_type_str = "FLOAT"
             elif field_type is bool:
-                field_type_str = 'BOOLEAN'
+                field_type_str = "BOOLEAN"
             elif field_type is datetime:
-                field_type_str = 'TIMESTAMP'
+                field_type_str = "TIMESTAMP"
             elif field_type is list:
-                field_type_str = 'STRING'
-                mode = 'REPEATED'
+                field_type_str = "STRING"
+                mode = "REPEATED"
             else:
-                field_type_str = 'STRING'
+                field_type_str = "STRING"
 
             fields.append(SchemaField(param_name, field_type_str, mode=mode))
 
-        self.logger.info('Generated DB schema:\n%s', pprint.pformat(fields))
+        self.logger.info("Generated DB schema:\n%s", pprint.pformat(fields))
         return fields
 
     def add_build(self, build: konflux_build_record.KonfluxRecord):
@@ -682,7 +682,7 @@ class KonfluxDb:
             """
 
             if value is None:
-                return 'NULL'
+                return "NULL"
 
             elif isinstance(value, str):
                 return f"'{value}'"
@@ -714,8 +714,8 @@ class KonfluxDb:
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         extra_patterns: typing.Optional[dict] = None,
         array_contains: typing.Optional[typing.Dict[str, str]] = None,
-        order_by: str = '',
-        sorting: str = 'DESC',
+        order_by: str = "",
+        sorting: str = "DESC",
         limit: typing.Optional[int] = None,
         strict: bool = False,
         exclude_columns: typing.Optional[typing.List[str]] = None,
@@ -755,8 +755,8 @@ class KonfluxDb:
         }
 
         # Unless otherwise specified, only look for builds in 'success' or 'failure' state
-        if 'outcome' not in where:
-            base_clauses.append(Column('outcome', String).in_(['success', 'failure']))
+        if "outcome" not in where:
+            base_clauses.append(Column("outcome", String).in_(["success", "failure"]))
 
         for col_name, col_value in where.items():
             if col_value is not None:
@@ -771,7 +771,7 @@ class KonfluxDb:
         extra_patterns = extra_patterns or {}
         for col_name, col_value in extra_patterns.items():
             # Use exact match for art_job_url since URLs contain regex special characters
-            if col_name == 'art_job_url':
+            if col_name == "art_job_url":
                 base_clauses.append(Column(col_name, String) == col_value)
             else:
                 regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
@@ -784,8 +784,8 @@ class KonfluxDb:
             array_condition = text(f"'{search_value}' IN UNNEST({array_field})")
             base_clauses.append(array_condition)
 
-        order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
-        order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
+        order_by_clause = Column(order_by if order_by else "start_time", quote=True)
+        order_by_clause = order_by_clause.desc() if sorting == "DESC" else order_by_clause.asc()
 
         # Exponential window search: 7, 14, 28, 56, 112, 224, 448 days
         total_rows = 0
@@ -799,8 +799,8 @@ class KonfluxDb:
                 start_window = earliest_search
 
             where_clauses = base_clauses + [
-                Column('start_time', DateTime) >= start_window,
-                Column('start_time', DateTime) < previous_start,
+                Column("start_time", DateTime) >= start_window,
+                Column("start_time", DateTime) < previous_start,
             ]
 
             try:
@@ -814,10 +814,10 @@ class KonfluxDb:
                     exclude_columns=exclude_columns,
                 )
             except Exception as e:
-                self.logger.error(f'Failed executing query for {window_days}-day window: {e}')
+                self.logger.error(f"Failed executing query for {window_days}-day window: {e}")
                 raise
 
-            self.logger.debug(f'Found {rows.total_rows} builds in {window_days}-day window')
+            self.logger.debug(f"Found {rows.total_rows} builds in {window_days}-day window")
             for row in rows:
                 total_rows += 1
                 yield self.from_result_row(row)
@@ -835,7 +835,7 @@ class KonfluxDb:
             # We can print out BinaryExpression search clause, but it gets much trickier with Function
             # that comes into play when extra_patterns is used, so exclude those cases
             self.logger.debug(
-                'No builds found with the given criteria: %s',
+                "No builds found with the given criteria: %s",
                 [
                     f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
                     for clause in base_clauses
@@ -843,14 +843,14 @@ class KonfluxDb:
                 ],
             )
             if strict:
-                raise IOError('No builds found with the given criteria')
+                raise IOError("No builds found with the given criteria")
 
     async def get_latest_builds(
         self,
         names: typing.List[str],
         group: str,
         outcome: typing.Union[KonfluxBuildOutcome, str] = KonfluxBuildOutcome.SUCCESS,
-        assembly: str = 'stream',
+        assembly: str = "stream",
         el_target: typing.Optional[str] = None,
         artifact_type: typing.Optional[typing.Union[ArtifactType, str]] = None,
         engine: typing.Optional[typing.Union[Engine, str]] = None,
@@ -1018,10 +1018,10 @@ class KonfluxDb:
                     for col_name, col_value in extra_patterns.items():
                         build_value = getattr(cached, col_name, None)
                         # Boolean columns need exact match
-                        if col_name in ('hermetic', 'embargoed'):
+                        if col_name in ("hermetic", "embargoed"):
                             # Convert string representation to boolean if needed
                             if isinstance(col_value, str):
-                                expected_bool = col_value.lower() in ('true', '1', 'yes')
+                                expected_bool = col_value.lower() in ("true", "1", "yes")
                             else:
                                 expected_bool = bool(col_value)
                             if build_value != expected_bool:
@@ -1117,37 +1117,37 @@ class KonfluxDb:
         base_clauses = []
 
         if name:
-            base_clauses.append(Column('name', String) == name)
+            base_clauses.append(Column("name", String) == name)
         if nvr:
-            base_clauses.append(Column('nvr', String) == nvr)
+            base_clauses.append(Column("nvr", String) == nvr)
         if group:
-            base_clauses.append(Column('group', String) == group)
+            base_clauses.append(Column("group", String) == group)
         if outcome is not None:
-            base_clauses.append(Column('outcome', String) == str(outcome))
+            base_clauses.append(Column("outcome", String) == str(outcome))
         if assembly is not None:
-            base_clauses.append(Column('assembly', String) == assembly)
+            base_clauses.append(Column("assembly", String) == assembly)
         if el_target is not None:
-            base_clauses.append(Column('el_target', String) == el_target)
+            base_clauses.append(Column("el_target", String) == el_target)
         if artifact_type is not None:
-            base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+            base_clauses.append(Column("artifact_type", String) == str(artifact_type))
         if engine is not None:
-            base_clauses.append(Column('engine', String) == str(engine))
+            base_clauses.append(Column("engine", String) == str(engine))
         if embargoed is not None:
-            base_clauses.append(Column('embargoed', Boolean) == embargoed)
+            base_clauses.append(Column("embargoed", Boolean) == embargoed)
 
         # Add extra_patterns (regex matching for strings, equality for booleans)
         extra_patterns = extra_patterns or {}
         for col_name, col_value in extra_patterns.items():
             # Boolean columns should use equality, not regex
-            if col_name in ('hermetic', 'embargoed'):
+            if col_name in ("hermetic", "embargoed"):
                 # Convert string representation to boolean if needed
                 if isinstance(col_value, str):
-                    bool_value = col_value.lower() in ('true', '1', 'yes')
+                    bool_value = col_value.lower() in ("true", "1", "yes")
                 else:
                     bool_value = bool(col_value)
                 base_clauses.append(Column(col_name, Boolean) == bool_value)
             # Use exact match for art_job_url since URLs contain regex special characters
-            elif col_name == 'art_job_url':
+            elif col_name == "art_job_url":
                 base_clauses.append(Column(col_name, String) == col_value)
             else:
                 # String columns use regex matching
@@ -1155,7 +1155,7 @@ class KonfluxDb:
                 base_clauses.append(regexp_condition)
 
         # Order by start_time descending (newest first)
-        order_by_clause = Column('start_time', quote=True).desc()
+        order_by_clause = Column("start_time", quote=True).desc()
 
         # Determine search starting point
         # If completed_before is set, start searching from that point instead of now
@@ -1186,13 +1186,13 @@ class KonfluxDb:
             # Only scan the incremental new range [start_window, previous_start)
             # This avoids re-scanning data from previous windows
             where_clauses = base_clauses + [
-                Column('start_time', DateTime) >= start_window,
-                Column('start_time', DateTime) < previous_start,
+                Column("start_time", DateTime) >= start_window,
+                Column("start_time", DateTime) < previous_start,
             ]
 
             # Add completed_before filter if specified
             if completed_before:
-                where_clauses.append(Column('start_time', DateTime) < completed_before)
+                where_clauses.append(Column("start_time", DateTime) < completed_before)
 
             try:
                 self.logger.debug(
@@ -1227,13 +1227,13 @@ class KonfluxDb:
         """
         Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
         """
-        assert self.record_cls is not None, 'DB client is not bound to a table'
+        assert self.record_cls is not None, "DB client is not bound to a table"
         try:
             return self.record_cls(**{field: (row[field]) for field in row.keys()})
 
         except AttributeError as e:
             self.logger.error(
-                'Could not construct a %s object from result row %s: %s', self.record_cls.__name__, row, e
+                "Could not construct a %s object from result row %s: %s", self.record_cls.__name__, row, e
             )
             raise
 
@@ -1295,11 +1295,11 @@ class KonfluxDb:
                 )
 
         # Extract additional filters from where if provided
-        assembly = where.get('assembly') if where else None
-        el_target = where.get('el_target') if where else None
-        artifact_type = where.get('artifact_type') if where else None
-        engine = where.get('engine') if where else None
-        embargoed = where.get('embargoed') if where else None
+        assembly = where.get("assembly") if where else None
+        el_target = where.get("el_target") if where else None
+        artifact_type = where.get("artifact_type") if where else None
+        engine = where.get("engine") if where else None
+        embargoed = where.get("embargoed") if where else None
 
         # Use optimized get_latest_build for each NVR (runs in parallel)
         async def _task(nvr):

@@ -28,23 +28,23 @@ class OadpScanPipeline:
 
         group_param = self.group
         if self.data_gitref:
-            group_param += f'@{self.data_gitref}'
+            group_param += f"@{self.data_gitref}"
         self.doozer_base_command = [
-            'doozer',
-            f'--working-dir={self._doozer_working}',
-            f'--data-path={self.data_path}',
-            f'--group={group_param}',
-            f'--assembly={self.assembly}',
-            '--build-system=konflux',
+            "doozer",
+            f"--working-dir={self._doozer_working}",
+            f"--data-path={self.data_path}",
+            f"--group={group_param}",
+            f"--assembly={self.assembly}",
+            "--build-system=konflux",
         ]
 
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
-        scan_info = f'Scanning OADP group {self.group}, assembly {self.assembly}, data path {self.data_path}'
+        scan_info = f"Scanning OADP group {self.group}, assembly {self.assembly}, data path {self.data_path}"
 
         if self.data_gitref:
-            scan_info += f'@{self.data_gitref}'
+            scan_info += f"@{self.data_gitref}"
         self.logger.info(scan_info)
 
         self.check_params()
@@ -65,7 +65,7 @@ class OadpScanPipeline:
             # if self.assembly != 'stream':
             #     raise ValueError('non-stream assemblies are only allowed in dry-run mode')
             if self.data_path != constants.OCP_BUILD_DATA_URL or self.data_gitref:
-                raise ValueError('Custom data paths can only be used in dry-run mode')
+                raise ValueError("Custom data paths can only be used in dry-run mode")
 
     async def get_changes(self):
         """
@@ -75,47 +75,47 @@ class OadpScanPipeline:
 
         cmd = self.doozer_base_command.copy()
         if self.image_list:
-            cmd.append(f'--images={self.image_list}')
+            cmd.append(f"--images={self.image_list}")
         cmd.extend(
             [
-                'beta:config:konflux:scan-sources',
-                '--yaml',
-                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
-                '--rebase-priv',
+                "beta:config:konflux:scan-sources",
+                "--yaml",
+                f"--ci-kubeconfig={os.environ['KUBECONFIG']}",
+                "--rebase-priv",
             ]
         )
         if self.runtime.dry_run:
-            cmd.append('--dry-run')
+            cmd.append("--dry-run")
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-        self.logger.info('scan-sources output for %s:\n%s', self.group, out)
+        self.logger.info("scan-sources output for %s:\n%s", self.group, out)
 
         yaml_data = yaml.safe_load(out)
         self.changes = util.get_changes(yaml_data)
         if self.changes:
-            self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
+            self.logger.info("Detected source changes:\n%s", yaml.safe_dump(self.changes))
         else:
-            self.logger.info('No changes detected in OADP RPMs or images')
+            self.logger.info("No changes detected in OADP RPMs or images")
 
     def handle_source_changes(self):
         if not self.changes:
             return
 
-        jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated OADP image')
+        jenkins.update_title(" [SOURCE CHANGES]")
+        self.logger.info("Detected at least one updated OADP image")
 
-        image_list = self.changes.get('images', [])
+        image_list = self.changes.get("images", [])
 
         # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:
-            self.logger.info('Would have triggered an OADP %s build', self.group)
+            self.logger.info("Would have triggered an OADP %s build", self.group)
             return
 
         # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} OADP images<br/>')
+        jenkins.update_description(f"Changed {len(image_list)} OADP images<br/>")
 
         # Trigger OADP build
-        self.logger.info('Triggering an OADP %s build', self.group)
+        self.logger.info("Triggering an OADP %s build", self.group)
         jenkins.start_oadp(
             group=self.group,
             assembly=self.assembly,
@@ -123,23 +123,23 @@ class OadpScanPipeline:
         )
 
 
-@cli.command('beta:konflux:oadp-scan')
-@click.option('--group', required=True, help='OADP group to scan (e.g., oadp-1.5)')
-@click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
+@cli.command("beta:konflux:oadp-scan")
+@click.option("--group", required=True, help="OADP group to scan (e.g., oadp-1.5)")
+@click.option("--assembly", required=False, default="stream", help="Assembly to scan for")
 @click.option(
-    '--data-path',
+    "--data-path",
     required=False,
     default=constants.OCP_BUILD_DATA_URL,
-    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
-@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
+@click.option("--data-gitref", required=False, default="", help="Doozer data path git [branch / tag / sha] to use")
+@click.option("--image-list", required=False, help="Comma/space-separated list to of images to scan, empty to scan all")
 @pass_runtime
 @click_coroutine
 async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str):
     # KUBECONFIG env var must be defined in order to scan sources
-    if not os.getenv('KUBECONFIG'):
-        raise RuntimeError('Environment variable KUBECONFIG must be defined')
+    if not os.getenv("KUBECONFIG"):
+        raise RuntimeError("Environment variable KUBECONFIG must be defined")
 
     jenkins.init_jenkins()
 
@@ -161,7 +161,7 @@ async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str,
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
             runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+                "Env var BUILD_URL has not been defined: a random identifier will be used for the locks"
             )
 
         # Scheduled builds are already being skipped if the lock is already acquired.
@@ -188,4 +188,4 @@ async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str,
         )
 
     if pipeline.skipped:
-        jenkins.update_title(' [SKIPPED][LOCKED]')
+        jenkins.update_title(" [SKIPPED][LOCKED]")

@@ -29,21 +29,21 @@ class Ocp4ScanPipeline:
         self.skipped = True  # True by default; if not locked, run() will set it to False
 
         self._doozer_base_command = [
-            'doozer',
-            '--assembly=stream',
-            f'--working-dir={self._doozer_working}',
-            f'--data-path={self.data_path}',
-            f'--group=openshift-{self.version}',
+            "doozer",
+            "--assembly=stream",
+            f"--working-dir={self._doozer_working}",
+            f"--data-path={self.data_path}",
+            f"--group=openshift-{self.version}",
         ]
 
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
-        self.logger.info('Building: %s', self.version)
+        self.logger.info("Building: %s", self.version)
 
         # KUBECONFIG env var must be defined in order to scan sources
-        if not os.getenv('KUBECONFIG'):
-            raise RuntimeError('Environment variable KUBECONFIG must be defined')
+        if not os.getenv("KUBECONFIG"):
+            raise RuntimeError("Environment variable KUBECONFIG must be defined")
 
         # Check for RHCOS changes and inconsistencies
         # Running these two commands sequentially (instead of using asyncio.gather) to avoid file system conflicts
@@ -53,26 +53,26 @@ class Ocp4ScanPipeline:
 
         # Handle source changes, if any
         changes = False
-        if self.changes.get('rpms', None) or self.changes.get('images', None):
-            self.logger.info('Detected at least one updated RPM or image')
+        if self.changes.get("rpms", None) or self.changes.get("images", None):
+            self.logger.info("Detected at least one updated RPM or image")
             changes = True
-            rpm_list = self.changes.get('rpms', [])
-            image_list = self.changes.get('images', [])
+            rpm_list = self.changes.get("rpms", [])
+            image_list = self.changes.get("images", [])
 
             if self.runtime.dry_run:
-                self.logger.info('Would have triggered a %s ocp4 build', self.version)
+                self.logger.info("Would have triggered a %s ocp4 build", self.version)
                 return
 
             # Update build description
-            jenkins.update_description(f'Changed {len(image_list)} images<br/>')
+            jenkins.update_description(f"Changed {len(image_list)} images<br/>")
             if rpm_list:
-                jenkins.update_description(f'Changed {len(rpm_list)} rpms<br/>')
+                jenkins.update_description(f"Changed {len(rpm_list)} rpms<br/>")
 
             # Trigger ocp4
-            self.logger.info('Triggering a %s ocp4 build', self.version)
+            self.logger.info("Triggering a %s ocp4 build", self.version)
             jenkins.start_ocp4(
                 build_version=self.version,
-                assembly='stream',
+                assembly="stream",
                 rpm_list=rpm_list,
                 image_list=image_list,
                 comment_on_pr=True,
@@ -81,32 +81,32 @@ class Ocp4ScanPipeline:
         if self.rhcos_inconsistent or self.rhcos_outdated:
             changes = True
             if self.rhcos_inconsistent:
-                self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+                self.logger.info("Detected inconsistent RHCOS RPMs:\n%s", self.inconsistent_rhcos_rpms)
             if self.rhcos_outdated:
-                self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
+                self.logger.info("Detected outdated RHCOS RPMs:\n%s", self.changes.get("rhcos", None))
 
             if self.runtime.dry_run:
-                self.logger.info('Would have triggered a %s RHCOS build', self.version)
+                self.logger.info("Would have triggered a %s RHCOS build", self.version)
                 return
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
-            self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
+            self.logger.info("Triggering a %s RHCOS build for consistency", self.version)
             layered_rhcos = await has_layered_rhcos(self._doozer_base_command)
-            job_name = 'build-node-image' if layered_rhcos else 'build'
+            job_name = "build-node-image" if layered_rhcos else "build"
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
             changes = True
-            self.logger.info('Detected at least one updated RHCOS')
+            self.logger.info("Detected at least one updated RHCOS")
 
             if self.runtime.dry_run:
-                self.logger.info('Would have triggered a %s build-sync build', self.version)
+                self.logger.info("Would have triggered a %s build-sync build", self.version)
                 return
 
-            self.logger.info('Triggering a %s build-sync to pick up latest RHCOS', self.version)
+            self.logger.info("Triggering a %s build-sync to pick up latest RHCOS", self.version)
 
             if uses_konflux_imagestream_override(self.version):
-                self.runtime.logger.info('Skipping Brew build-sync for streams updated by Konflux builds')
+                self.runtime.logger.info("Skipping Brew build-sync for streams updated by Konflux builds")
             else:
                 jenkins.start_build_sync(
                     build_version=self.version,
@@ -115,8 +115,8 @@ class Ocp4ScanPipeline:
                 )
 
         if changes is False:
-            self.logger.info('*** No changes detected')
-            jenkins.update_title(' [NO CHANGES]')
+            self.logger.info("*** No changes detected")
+            jenkins.update_title(" [NO CHANGES]")
 
     async def _get_changes(self):
         """
@@ -127,33 +127,33 @@ class Ocp4ScanPipeline:
 
         # Run doozer scan-sources
         cmd = self._doozer_base_command + [
-            'config:scan-sources',
-            '--yaml',
-            f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
-            '--rebase-priv',
+            "config:scan-sources",
+            "--yaml",
+            f"--ci-kubeconfig={os.environ['KUBECONFIG']}",
+            "--rebase-priv",
         ]
         if self.runtime.dry_run:
-            cmd += ' --dry-run'
+            cmd += " --dry-run"
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
 
-        self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
+        self.logger.info("scan-sources output for openshift-%s:\n%s", self.version, out)
 
         yaml_data = yaml.safe_load(out)
         changes = get_changes(yaml_data)
         if changes:
-            self.logger.info('Detected source changes:\n%s', yaml.safe_dump(changes))
+            self.logger.info("Detected source changes:\n%s", yaml.safe_dump(changes))
         else:
-            self.logger.info('No changes detected in RPMs, images or RHCOS')
+            self.logger.info("No changes detected in RPMs, images or RHCOS")
 
         # Check for RHCOS changes
-        if changes.get('rhcos', None):
-            for rhcos_change in changes['rhcos']:
-                if rhcos_change['reason'].get('updated', None):
+        if changes.get("rhcos", None):
+            for rhcos_change in changes["rhcos"]:
+                if rhcos_change["reason"].get("updated", None):
                     self.rhcos_updated = True
-                if rhcos_change['reason'].get('outdated', None):
+                if rhcos_change["reason"].get("outdated", None):
                     self.rhcos_outdated = True
         self.changes = changes
-        self.issues = yaml_data.get('issues', [])
+        self.issues = yaml_data.get("issues", [])
 
     async def _handle_scan_issues(self):
         """
@@ -171,13 +171,13 @@ class Ocp4ScanPipeline:
         slack_client = self.runtime.new_slack_client()
         slack_client.bind_channel(self.version)
         message = (
-            f':warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:'
+            f":warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:"
         )
         slack_response = await slack_client.say(message)
 
         slack_thread = slack_response["message"]["ts"]
         for issue in self.issues:
-            await slack_client.say(f'\n- `{issue["name"]}`: {issue["issue"]}', slack_thread)
+            await slack_client.say(f"\n- `{issue['name']}`: {issue['issue']}", slack_thread)
 
     async def _rhcos_inconsistent(self):
         """
@@ -185,9 +185,9 @@ class Ocp4ScanPipeline:
         """
 
         cmd = self._doozer_base_command + [
-            'inspect:stream',
-            'INCONSISTENT_RHCOS_RPMS',
-            '--strict',
+            "inspect:stream",
+            "INCONSISTENT_RHCOS_RPMS",
+            "--strict",
         ]
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
@@ -198,8 +198,8 @@ class Ocp4ScanPipeline:
             self.inconsistent_rhcos_rpms = e
 
 
-@cli.command('ocp4-scan')
-@click.option('--version', required=True, help='OCP version to scan')
+@cli.command("ocp4-scan")
+@click.option("--version", required=True, help="OCP version to scan")
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str):
@@ -215,7 +215,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
             runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+                "Env var BUILD_URL has not been defined: a random identifier will be used for the locks"
             )
 
         # Scheduled builds are already being skipped if the lock is already acquired.
@@ -242,4 +242,4 @@ async def ocp4_scan(runtime: Runtime, version: str):
         )
 
     if pipeline.skipped:
-        jenkins.update_title(' [SKIPPED][LOCKED]')
+        jenkins.update_title(" [SKIPPED][LOCKED]")

@@ -650,7 +650,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         ]
 
         # Mock get_module_tag to return a module tag
-        with patch.object(pipeline, 'get_module_tag', return_value='module-go-toolset-rhel8-123'):
+        with patch.object(pipeline, "get_module_tag", return_value="module-go-toolset-rhel8-123"):
             await pipeline.tag_build(8, "golang-1.20.12-2.el8")
 
         # Should tag all module builds

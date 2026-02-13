@@ -84,7 +84,7 @@ class CommentOnPr:
         Get the owner, commit and repo from the dfp label
         """
         with Dir(self.distgit_dir):
-            dfp = DockerfileParser(str(Dir.getpath().joinpath('Dockerfile')))
+            dfp = DockerfileParser(str(Dir.getpath().joinpath("Dockerfile")))
 
             # eg: "https://github.com/openshift/origin/commit/660e0c785a2c9b1fd5fad33cbcffd77a6d84ccb5"
             source_commit_url = dfp.labels["io.openshift.build.commit.url"]
@@ -114,8 +114,8 @@ class CommentOnPr:
         self.set_pr_from_commit()
 
         # Skip if the PR is too old
-        if self.pr and self.pr['closed_at']:
-            closed_at = datetime.fromisoformat(self.pr['closed_at'].replace('Z', '+00:00'))
+        if self.pr and self.pr["closed_at"]:
+            closed_at = datetime.fromisoformat(self.pr["closed_at"].replace("Z", "+00:00"))
             age = datetime.now(timezone.utc) - closed_at
             if age.days >= self.OLD_PR_AGE_IN_DAYS:
                 LOGGER.warning("Skipped PR build notifier reporting on old PR %s", self.pr["html_url"])

@@ -11,9 +11,9 @@ from elliottlib.util import ensure_erratatool_auth
 LOGGER = logutil.get_logger(__name__)
 
 
-@cli.command('remove-builds', short_help='Remove builds from ADVISORY')
-@click.argument('builds', metavar='<NVR_OR_ID>', nargs=-1, required=False, default=None)
-@click.option('--advisory', '-a', 'advisory_id', type=int, metavar='ADVISORY', help='Remove found builds from ADVISORY')
+@cli.command("remove-builds", short_help="Remove builds from ADVISORY")
+@click.argument("builds", metavar="<NVR_OR_ID>", nargs=-1, required=False, default=None)
+@click.option("--advisory", "-a", "advisory_id", type=int, metavar="ADVISORY", help="Remove found builds from ADVISORY")
 @use_default_advisory_option
 @click.option(
     "--all", "clean", required=False, default=False, is_flag=True, help="Remove all builds attached to the Advisory"
@@ -89,7 +89,7 @@ def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_ty
 
     try:
         erratum = errata.Advisory(errata_id=advisory_id)
-        erratum.ensure_state('NEW_FILES')
+        erratum.ensure_state("NEW_FILES")
         erratum.remove_builds(builds_to_remove)
     except ErrataException as e:
         LOGGER.error(f"Cannot change advisory {advisory_id}: {e}")

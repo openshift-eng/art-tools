@@ -164,9 +164,9 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
                 body,
             )
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
-            result = namedtuple('pull_request', d.keys())(*d.values())
+            result = namedtuple("pull_request", d.keys())(*d.values())
             return result
-        github_token = os.environ.get('GITHUB_TOKEN')
+        github_token = os.environ.get("GITHUB_TOKEN")
         if not github_token:
             raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
         api = GhApi(owner=owner, repo=repo, token=github_token)
@@ -260,7 +260,7 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
                                 )
                         elif action_name == "warn":
                             detail = action.get("value", {})
-                            warning = f'*{dg_key}* {action.get("note")}: {detail}'
+                            warning = f"*{dg_key}* {action.get('note')}: {detail}"
                             warnings.append(warning)
                             self._logger.warning(warning)
                         else:
@@ -274,7 +274,7 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
 @click.option(
     "-g",
     "--group",
-    metavar='NAME',
+    metavar="NAME",
     required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )

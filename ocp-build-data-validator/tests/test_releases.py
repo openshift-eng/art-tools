@@ -4,13 +4,13 @@ from flexmock import flexmock
 from validator import releases
 
 group_config = group_cfg = {
-    'vars': {'MAJOR': 4, 'MINOR': 18},
+    "vars": {"MAJOR": 4, "MINOR": 18},
 }
 
 
 class TestReleases(unittest.TestCase):
     def setUp(self):
-        flexmock(releases.support).should_receive('load_group_config_for').and_return(group_config)
+        flexmock(releases.support).should_receive("load_group_config_for").and_return(group_config)
 
     def test_self_referential_upgrades(self):
         invalid_releases = {

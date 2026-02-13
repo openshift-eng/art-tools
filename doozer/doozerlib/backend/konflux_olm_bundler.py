@@ -84,7 +84,7 @@ class KonfluxOlmBundleRebaser:
             operator_build_repo_refspec = operator_build.rebase_commitish
         elif operator_build.engine is Engine.BREW:
             operator_build_repo_url = metadata.distgit_remote_url()
-            operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
+            operator_build_repo_refspec = f"{operator_build.version}-{operator_build.release}"
         else:
             raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
         operator_dir = self.base_dir.joinpath(metadata.qualified_key)
@@ -93,7 +93,7 @@ class KonfluxOlmBundleRebaser:
         )
         await operator_build_repo.ensure_source(upcycle=self.upcycle)
         await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
-        await operator_build_repo.switch('FETCH_HEAD', detach=True)
+        await operator_build_repo.switch("FETCH_HEAD", detach=True)
         logger.info(f"operator build source cloned to {operator_dir}")
 
         logger.info("Cloning bundle repository...")
@@ -131,21 +131,21 @@ class KonfluxOlmBundleRebaser:
         input_release: str,
     ) -> str:
         """Rebase an operator directory with Konflux."""
-        csv_config = metadata.config.get('update-csv')
+        csv_config = metadata.config.get("update-csv")
         if not csv_config:
             raise ValueError(f"[{metadata.distgit_key}] No update-csv config found in the operator's metadata")
-        if not csv_config.get('manifests-dir'):
+        if not csv_config.get("manifests-dir"):
             raise ValueError(f"[{metadata.distgit_key}] No manifests-dir defined in the operator's update-csv")
-        if not csv_config.get('bundle-dir'):
+        if not csv_config.get("bundle-dir"):
             raise ValueError(f"[{metadata.distgit_key}] No bundle-dir defined in the operator's update-csv")
-        if not csv_config.get('valid-subscription-label'):
+        if not csv_config.get("valid-subscription-label"):
             raise ValueError(
                 f"[{metadata.distgit_key}] No valid-subscription-label defined in the operator's update-csv"
             )
 
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
-        operator_manifests_dir = operator_dir.joinpath(csv_config['manifests-dir'])
-        operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
+        operator_manifests_dir = operator_dir.joinpath(csv_config["manifests-dir"])
+        operator_bundle_dir = operator_manifests_dir.joinpath(csv_config["bundle-dir"])
         bundle_manifests_dir = bundle_dir.joinpath("manifests")
 
         if not next(operator_bundle_dir.iterdir(), None):
@@ -155,13 +155,13 @@ class KonfluxOlmBundleRebaser:
 
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
-        file_path = glob.glob(f'{operator_manifests_dir}/*package.yaml')[0]
-        async with aiofiles.open(file_path, 'r') as f:
+        file_path = glob.glob(f"{operator_manifests_dir}/*package.yaml")[0]
+        async with aiofiles.open(file_path, "r") as f:
             package_yaml = yaml.safe_load(await f.read())
-        package_name = package_yaml['packageName']
-        channel = package_yaml['channels'][0]
-        channel_name = str(channel['name'])
-        csv_name = str(channel['currentCSV'])
+        package_name = package_yaml["packageName"]
+        channel = package_yaml["channels"][0]
+        channel_name = str(channel["name"])
+        csv_name = str(channel["currentCSV"])
 
         # Copy the operator's manifests to the bundle directory
         bundle_manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -177,21 +177,21 @@ class KonfluxOlmBundleRebaser:
                 continue  # skip image-references file
             logger.info(f"Processing {src}...")
             # Read the file content and replace image references
-            async with aiofiles.open(src, 'r') as f:
+            async with aiofiles.open(src, "r") as f:
                 content = await f.read()
             content, found_images = await self._replace_image_references(
-                str(csv_config['registry']), content, operator_build.engine, metadata
+                str(csv_config["registry"]), content, operator_build.engine, metadata
             )
             for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
                 logger.info(f"Replaced image reference {old_pullspec} ({operand_nvr}) by {new_pullspec}")
             all_found_operands.update(found_images)
             # Write the content to the dest bundle directory
             dest = bundle_manifests_dir / src.name
-            async with aiofiles.open(dest, 'w') as f:
+            async with aiofiles.open(dest, "w") as f:
                 if "clusterserviceversion.yaml" in src.name:
                     csv = yaml.safe_load(content)
-                    csv['metadata']['annotations']['operators.openshift.io/valid-subscription'] = csv_config[
-                        'valid-subscription-label'
+                    csv["metadata"]["annotations"]["operators.openshift.io/valid-subscription"] = csv_config[
+                        "valid-subscription-label"
                     ]
                     if found_images:
                         csv["spec"]["relatedImages"] = [
@@ -206,24 +206,24 @@ class KonfluxOlmBundleRebaser:
         if not metadata.runtime.group.startswith("openshift-"):
             refs_path = operator_manifests_dir / "../image-references"
         if refs_path.exists():
-            async with aiofiles.open(refs_path, 'r') as f:
+            async with aiofiles.open(refs_path, "r") as f:
                 image_refs = yaml.safe_load(await f.read())
-            for entry in image_refs.get('spec', {}).get('tags', []):
+            for entry in image_refs.get("spec", {}).get("tags", []):
                 image_references[entry["name"]] = entry
 
         # Validate that containerImage annotation in CSV matches an entry in image-references
         # This catches cases where the upstream CSV has an outdated tag that doesn't match image-references
-        csv_files = list(operator_bundle_dir.glob('*.clusterserviceversion.yaml'))
+        csv_files = list(operator_bundle_dir.glob("*.clusterserviceversion.yaml"))
         if csv_files:
             csv_file = csv_files[0]
-            async with aiofiles.open(csv_file, 'r') as f:
+            async with aiofiles.open(csv_file, "r") as f:
                 csv_content = await f.read()
             csv_data = yaml.safe_load(csv_content)
-            container_image = csv_data.get('metadata', {}).get('annotations', {}).get('containerImage')
+            container_image = csv_data.get("metadata", {}).get("annotations", {}).get("containerImage")
 
             if container_image and image_references:
                 # Check if containerImage matches any spec from image-references
-                specs_from_refs = {ref['from']['name'] for ref in image_references.values()}
+                specs_from_refs = {ref["from"]["name"] for ref in image_references.values()}
                 if container_image not in specs_from_refs:
                     logger.warning(
                         f"CSV containerImage annotation '{container_image}' does not match any entry in image-references file. "
@@ -246,8 +246,8 @@ class KonfluxOlmBundleRebaser:
         bundle_metadata_dir = bundle_dir / "metadata"
         bundle_metadata_dir.mkdir(parents=True, exist_ok=True)
         dest_annotations_path = bundle_metadata_dir / "annotations.yaml"
-        async with aiofiles.open(dest_annotations_path, 'w') as f:
-            await f.write(yaml.safe_dump({'annotations': operator_framework_tags}))
+        async with aiofiles.open(dest_annotations_path, "w") as f:
+            await f.write(yaml.safe_dump({"annotations": operator_framework_tags}))
 
         if not metadata.runtime.group.startswith("openshift-"):
             # Non-OCP products, such as MTC, may use dependencies.yaml
@@ -291,7 +291,7 @@ class KonfluxOlmBundleRebaser:
         :param all_found_operands: A map of all found operands in the bundle, in format of {image_name: (old_pullspec, new_pullspec, nvr)}
         """
         # Create a .oit/olm_bundle_info.yaml file to store additional information about the bundle
-        oit_dir = bundle_dir / '.oit'
+        oit_dir = bundle_dir / ".oit"
         oit_dir.mkdir(exist_ok=True)
         content = yaml.safe_dump(
             {
@@ -310,7 +310,7 @@ class KonfluxOlmBundleRebaser:
                 },
             }
         )
-        async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
+        async with aiofiles.open(oit_dir / "olm_bundle_info.yaml", "w") as f:
             await f.write(content)
 
     @lru_cache
@@ -334,7 +334,7 @@ class KonfluxOlmBundleRebaser:
         image_info_tasks = []
         for match in matches:
             pullspec = match.group(0)
-            namespace, image_short_name = match.group(1).rsplit('/', maxsplit=1)
+            namespace, image_short_name = match.group(1).rsplit("/", maxsplit=1)
             image_tag = match.group(2)
             references[pullspec] = (namespace, image_short_name, image_tag)
         # Get image infos for all found images
@@ -363,26 +363,26 @@ class KonfluxOlmBundleRebaser:
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content
-        csv_namespace = self._group_config.get('csv_namespace', 'openshift')
+        csv_namespace = self._group_config.get("csv_namespace", "openshift")
         for pullspec, image_info in zip(references, image_infos):
-            image_labels = image_info['config']['config']['Labels']
-            image_version = image_labels['version']
-            image_release = image_labels['release']
-            image_component_name = image_labels['com.redhat.component']
+            image_labels = image_info["config"]["config"]["Labels"]
+            image_version = image_labels["version"]
+            image_release = image_labels["release"]
+            image_component_name = image_labels["com.redhat.component"]
             image_nvr = f"{image_component_name}-{image_version}-{image_release}"
             namespace, image_short_name, image_tag = references[pullspec]
             image_sha = (
-                image_info['contentDigest']
-                if self._group_config.operator_image_ref_mode == 'by-arch'
-                else image_info['listDigest']
+                image_info["contentDigest"]
+                if self._group_config.operator_image_ref_mode == "by-arch"
+                else image_info["listDigest"]
             )
             if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
             else:
-                new_namespace = 'openshift4' if namespace == csv_namespace else namespace
-            new_pullspec = '{}/{}@{}'.format(
-                'registry.redhat.io',  # hardcoded until appregistry is dead
-                f'{new_namespace}/{image_short_name}',
+                new_namespace = "openshift4" if namespace == csv_namespace else namespace
+            new_pullspec = "{}/{}@{}".format(
+                "registry.redhat.io",  # hardcoded until appregistry is dead
+                f"{new_namespace}/{image_short_name}",
                 image_sha,
             )
             new_content = new_content.replace(pullspec, new_pullspec)
@@ -391,8 +391,8 @@ class KonfluxOlmBundleRebaser:
 
     @cached_property
     def _operator_index_mode(self):
-        mode = self._group_config.operator_index_mode or 'ga'  # default when missing
-        if mode in {'pre-release', 'ga', 'ga-plus'}:
+        mode = self._group_config.operator_index_mode or "ga"  # default when missing
+        if mode in {"pre-release", "ga", "ga-plus"}:
             # pre-release: label for pre-release operator index (unsupported)
             # ga: label for only this release's operator index
             # ga-plus: label for this release's operator index and future release indexes as well
@@ -403,20 +403,20 @@ class KonfluxOlmBundleRebaser:
             # immediately pruned). If we need `ga-plus` again, we can likely find a way around it.
             return mode
         self._logger.warning(f'{mode} is not a valid group_config.operator_index_mode. Defaulting to "ga"')
-        return 'ga'
+        return "ga"
 
     @cached_property
     def _redhat_delivery_tags(self):
         mode = self._operator_index_mode
-        versions = 'v{MAJOR}.{MINOR}' if mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
+        versions = "v{MAJOR}.{MINOR}" if mode == "ga-plus" else "=v{MAJOR}.{MINOR}"
 
         labels = {
-            'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': versions.format(**self._group_config.vars),
+            "com.redhat.delivery.operator.bundle": "true",
+            "com.redhat.openshift.versions": versions.format(**self._group_config.vars),
         }
         # TODO: deprecate pre-release mode support
-        if mode == 'pre-release':
-            labels['com.redhat.prerelease'] = 'true'
+        if mode == "pre-release":
+            labels["com.redhat.prerelease"] = "true"
         return labels
 
     def _get_operator_framework_tags(self, channel_name: str, package_name: str):
@@ -424,17 +424,17 @@ class KonfluxOlmBundleRebaser:
         override_default = channel_name
         stable_channel = "stable"
         # see: issues.redhat.com/browse/ART-3107
-        if self._group_config.operator_channel_stable in ['default', 'extra']:
-            override_channel = ','.join((channel_name, stable_channel))
-        if self._group_config.operator_channel_stable == 'default':
+        if self._group_config.operator_channel_stable in ["default", "extra"]:
+            override_channel = ",".join((channel_name, stable_channel))
+        if self._group_config.operator_channel_stable == "default":
             override_default = stable_channel
         tags = {
-            'operators.operatorframework.io.bundle.channel.default.v1': override_default,
-            'operators.operatorframework.io.bundle.channels.v1': override_channel,
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': package_name,
+            "operators.operatorframework.io.bundle.channel.default.v1": override_default,
+            "operators.operatorframework.io.bundle.channels.v1": override_channel,
+            "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+            "operators.operatorframework.io.bundle.mediatype.v1": "registry+v1",
+            "operators.operatorframework.io.bundle.metadata.v1": "metadata/",
+            "operators.operatorframework.io.bundle.package.v1": package_name,
         }
         return tags
 
@@ -446,38 +446,38 @@ class KonfluxOlmBundleRebaser:
         operator_framework_tags: Dict[str, str],
         input_release: str,
     ) -> str:
-        operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
-        bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
+        operator_df = DockerfileParser(str(operator_dir.joinpath("Dockerfile")))
+        bundle_df = DockerfileParser(str(bundle_dir.joinpath("Dockerfile")))
 
-        bundle_df.content = 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata'
+        bundle_df.content = "FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata"
 
         component_name = metadata.get_olm_bundle_brew_component_name()
-        bundle_version = f'{operator_df.labels["version"]}.{operator_df.labels["release"]}'
+        bundle_version = f"{operator_df.labels['version']}.{operator_df.labels['release']}"
         # Copy the operator's Dockerfile labels to the bundle's Dockerfile
         # and add additional labels required by the bundle
         bundle_df.labels = {
             **operator_df.labels,
             **self._redhat_delivery_tags,
             **operator_framework_tags,
-            'com.redhat.component': component_name,
-            'com.redhat.delivery.appregistry': '',  # This is a bundle, not an operator
-            'name': (bundle_name := metadata.get_olm_bundle_image_name()),
-            'version': bundle_version,
-            'release': input_release,
+            "com.redhat.component": component_name,
+            "com.redhat.delivery.appregistry": "",  # This is a bundle, not an operator
+            "name": (bundle_name := metadata.get_olm_bundle_image_name()),
+            "version": bundle_version,
+            "release": input_release,
         }
         # NVR is constructed from the component name, version, and release
         # and not the `name` label
-        nvr = f'{component_name}-{bundle_version}-{input_release}'
+        nvr = f"{component_name}-{bundle_version}-{input_release}"
 
         # The following labels are required by Conforma
-        if 'distribution-scope' not in bundle_df.labels:
+        if "distribution-scope" not in bundle_df.labels:
             # If the operator doesn't have a distribution-scope label, default to public
-            bundle_df.labels['distribution-scope'] = 'public'
-        if 'url' not in bundle_df.labels:
+            bundle_df.labels["distribution-scope"] = "public"
+        if "url" not in bundle_df.labels:
             # If the operator doesn't have a URL label, default to what OSBS uses for bundle images
             # (https://redhat-internal.slack.com/archives/C02AX10EQJW/p1749699266047229).
-            bundle_df.labels['url'] = (
-                f'https://access.redhat.com/containers/#/registry.access.redhat.com/{bundle_name}/images/{bundle_version}-{input_release}'
+            bundle_df.labels["url"] = (
+                f"https://access.redhat.com/containers/#/registry.access.redhat.com/{bundle_name}/images/{bundle_version}-{input_release}"
             )
         return nvr
 
@@ -536,7 +536,7 @@ class KonfluxOlmBundleBuilder:
         df_path = bundle_dir.joinpath("Dockerfile")
 
         record = {
-            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "status": -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
             "message": "Unknown failure",
             "task_id": "n/a",
             "task_url": "n/a",
@@ -582,28 +582,28 @@ class KonfluxOlmBundleBuilder:
 
             # Parse bundle's Dockerfile
             bundle_df = DockerfileParser(str(df_path))
-            component_name = bundle_df.labels.get('com.redhat.component')
+            component_name = bundle_df.labels.get("com.redhat.component")
             if not component_name:
                 raise IOError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
-            version = bundle_df.labels.get('version')
+            version = bundle_df.labels.get("version")
             if not version:
                 raise IOError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
-            release = bundle_df.labels.get('release')
+            release = bundle_df.labels.get("release")
             if not release:
                 raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
             nvr = f"{component_name}-{version}-{release}"
-            record['bundle_nvr'] = nvr
+            record["bundle_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
             # Load olm_bundle_info.yaml to get the operator and operand NVRs
-            async with aiofiles.open(bundle_build_repo.local_dir / '.oit' / 'olm_bundle_info.yaml', 'r') as f:
+            async with aiofiles.open(bundle_build_repo.local_dir / ".oit" / "olm_bundle_info.yaml", "r") as f:
                 bundle_info = yaml.safe_load(await f.read())
-            package_name = bundle_info['package_name']
-            csv_name = bundle_info['csv_name']
-            operator_nvr = bundle_info['operator']['nvr']
-            record['operator_nvr'] = operator_nvr
-            operand_nvrs = sorted({info['nvr'] for info in bundle_info['operands'].values()})
-            record['operand_nvrs'] = ','.join(operand_nvrs)
+            package_name = bundle_info["package_name"]
+            csv_name = bundle_info["csv_name"]
+            operator_nvr = bundle_info["operator"]["nvr"]
+            record["operator_nvr"] = operator_nvr
+            operand_nvrs = sorted({info["nvr"] for info in bundle_info["operands"].values()})
+            record["operand_nvrs"] = ",".join(operand_nvrs)
 
             # Start the bundle build
             logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
@@ -639,13 +639,13 @@ class KonfluxOlmBundleBuilder:
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
                 pipelinerun_dict = pipelinerun_info.to_dict()
-                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
+                succeeded_condition = pipelinerun_info.find_condition("Succeeded")
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if not self.dry_run:
-                    results = pipelinerun_dict.get('status', {}).get('results', [])
-                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                    results = pipelinerun_dict.get("status", {}).get("results", [])
+                    image_pullspec = next((r["value"] for r in results if r["name"] == "IMAGE_URL"), None)
+                    image_digest = next((r["value"] for r in results if r["name"] == "IMAGE_DIGEST"), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -679,10 +679,10 @@ class KonfluxOlmBundleBuilder:
                 else:
                     error = None
                     record["message"] = "Success"
-                    record['status'] = 0
+                    record["status"] = 0
                     break
             if error:
-                record['message'] = str(error)
+                record["message"] = str(error)
                 raise error
         finally:
             if self._record_logger:
@@ -783,7 +783,7 @@ class KonfluxOlmBundleBuilder:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
         if not db or db.record_cls != KonfluxBundleBuildRecord:
-            logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            logger.warning("Konflux DB connection is not initialized, not writing build record to the Konflux DB.")
             return
         try:
             rebase_repo_url = build_repo.https_url
@@ -792,43 +792,43 @@ class KonfluxOlmBundleBuilder:
             df_path = build_repo.local_dir.joinpath("Dockerfile")
             df = DockerfileParser(str(df_path))
 
-            source_repo = df.labels['io.openshift.build.source-location']
-            commitish = df.labels['io.openshift.build.commit.id']
+            source_repo = df.labels["io.openshift.build.source-location"]
+            commitish = df.labels["io.openshift.build.commit.id"]
 
-            component_name = df.labels['com.redhat.component']
-            version = df.labels['version']
-            release = df.labels['release']
+            component_name = df.labels["com.redhat.component"]
+            version = df.labels["version"]
+            release = df.labels["release"]
             nvr = "-".join([component_name, version, release])
 
             pipelinerun_name = pipelinerun_info.name
             pipelinerun_dict = pipelinerun_info.to_dict()
             build_pipeline_url = KonfluxClient.resource_url(pipelinerun_dict)
-            build_component = pipelinerun_dict['metadata']['labels'].get('appstudio.openshift.io/component')
+            build_component = pipelinerun_dict["metadata"]["labels"].get("appstudio.openshift.io/component")
 
             build_record_params = {
-                'name': metadata.get_olm_bundle_short_name(),
-                'version': version,
-                'release': release,
-                'start_time': datetime.now(tz=timezone.utc),
-                'end_time': None,
-                'nvr': nvr,
-                'group': metadata.runtime.group,
-                'assembly': metadata.runtime.assembly,
-                'source_repo': source_repo,
-                'commitish': commitish,
-                'rebase_repo_url': rebase_repo_url,
-                'rebase_commitish': rebase_commit,
-                'engine': Engine.KONFLUX,
-                'outcome': str(outcome),
-                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
-                'build_id': pipelinerun_name,
-                'build_pipeline_url': build_pipeline_url,
-                'pipeline_commit': 'n/a',  # TODO: populate this
-                'bundle_package_name': bundle_package_name,
-                'bundle_csv_name': bundle_csv_name,
-                'operator_nvr': operator_nvr,
-                'operand_nvrs': operand_nvrs,
-                'build_component': build_component,
+                "name": metadata.get_olm_bundle_short_name(),
+                "version": version,
+                "release": release,
+                "start_time": datetime.now(tz=timezone.utc),
+                "end_time": None,
+                "nvr": nvr,
+                "group": metadata.runtime.group,
+                "assembly": metadata.runtime.assembly,
+                "source_repo": source_repo,
+                "commitish": commitish,
+                "rebase_repo_url": rebase_repo_url,
+                "rebase_commitish": rebase_commit,
+                "engine": Engine.KONFLUX,
+                "outcome": str(outcome),
+                "art_job_url": os.getenv("BUILD_URL", "n/a"),
+                "build_id": pipelinerun_name,
+                "build_pipeline_url": build_pipeline_url,
+                "pipeline_commit": "n/a",  # TODO: populate this
+                "bundle_package_name": bundle_package_name,
+                "bundle_csv_name": bundle_csv_name,
+                "operator_nvr": operator_nvr,
+                "operand_nvrs": operand_nvrs,
+                "build_component": build_component,
             }
 
             match outcome:
@@ -839,9 +839,9 @@ class KonfluxOlmBundleBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    results = pipelinerun_dict.get('status', {}).get('results', [])
-                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                    results = pipelinerun_dict.get("status", {}).get("results", [])
+                    image_pullspec = next((r["value"] for r in results if r["name"] == "IMAGE_URL"), None)
+                    image_digest = next((r["value"] for r in results if r["name"] == "IMAGE_DIGEST"), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -849,36 +849,36 @@ class KonfluxOlmBundleBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
+                    status = pipelinerun_dict.get("status", {})
+                    start_time = status.get("startTime")
+                    end_time = status.get("completionTime")
 
                     build_record_params.update(
                         {
-                            'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                            "image_pullspec": f"{image_pullspec.split(':')[0]}@{image_digest}",
+                            "start_time": datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%SZ").replace(
                                 tzinfo=timezone.utc
                             ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                            'image_tag': image_pullspec.split(':')[-1],
+                            "end_time": datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc),
+                            "image_tag": image_pullspec.split(":")[-1],
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
+                    status = pipelinerun_dict.get("status", {})
+                    start_time = status.get("startTime")
+                    end_time = status.get("completionTime")
                     build_record_params.update(
                         {
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                            "start_time": datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%SZ").replace(
                                 tzinfo=timezone.utc
                             ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            "end_time": datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc),
                         }
                     )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)
             db.add_build(build_record)
-            logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
+            logger.info("Konflux build %s info stored successfully with status %s", build_record.nvr, outcome)
 
         except Exception:
-            logger.exception('Failed writing record to the konflux DB')
+            logger.exception("Failed writing record to the konflux DB")

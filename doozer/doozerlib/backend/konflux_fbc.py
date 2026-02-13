@@ -61,7 +61,7 @@ def _generate_fbc_branch_name(
         - For OpenShift: "art-{group}-assembly-{assembly}-fbc-{distgit_key}"
         - For non-OpenShift: "art-{group}-ocp-{ocp_major}.{ocp_minor}-assembly-{assembly}-fbc-{distgit_key}"
     """
-    if group.startswith('openshift-'):
+    if group.startswith("openshift-"):
         # For OpenShift products, use the traditional naming
         return f"art-{group}-assembly-{assembly}-fbc-{distgit_key}"
     else:
@@ -176,7 +176,7 @@ class KonfluxFbcImporter:
             catalog_dir.mkdir(parents=True, exist_ok=True)
             catalog_file_path = catalog_dir.joinpath("catalog.yaml")
             logger.info("Writing catalog blobs to %s", catalog_file_path)
-            with catalog_file_path.open('w') as f:
+            with catalog_file_path.open("w") as f:
                 yaml.dump_all(catalog_blobs, f)
         elif catalog_dir.exists():
             logger.info("Catalog blobs are empty. Removing existing catalog directory %s", catalog_dir)
@@ -251,14 +251,14 @@ class KonfluxFbcImporter:
         assert source_resolver, "Source resolver is not initialized; Doozer bug?"
         source = await asyncio.to_thread(source_resolver.resolve_source, metadata)
         source_dir = source_resolver.get_source_dir(source, metadata)
-        csv_config = metadata.config.get('update-csv')
+        csv_config = metadata.config.get("update-csv")
         if not csv_config:
             raise ValueError(f"update-csv config not found for {metadata.distgit_key}")
-        source_path = source_dir.joinpath(csv_config['manifests-dir'])
-        package_yaml_file = next(source_path.glob('**/*package.yaml'))
+        source_path = source_dir.joinpath(csv_config["manifests-dir"])
+        package_yaml_file = next(source_path.glob("**/*package.yaml"))
         with package_yaml_file.open() as f:
             package_yaml = yaml.load(f)
-            package_name = package_yaml.get('packageName')
+            package_name = package_yaml.get("packageName")
             if not package_name:
                 raise IOError(f"Package name not found in {package_yaml_file}")
             return str(package_name)
@@ -349,7 +349,7 @@ class KonfluxFbcFragmentMerger:
         idms_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Generating ImageDigestMirrorSet %s", idms_path)
         target_idms = await self._merge_idms(fragments)
-        with idms_path.open('w') as ims_file:
+        with idms_path.open("w") as ims_file:
             yaml.dump(target_idms, ims_file)
         logger.info("ImageDigestMirrorSet written to %s", idms_path)
 
@@ -374,7 +374,7 @@ class KonfluxFbcFragmentMerger:
         catalog_dir.mkdir(parents=True, exist_ok=True)
         catalog_file_path = catalog_dir.joinpath("catalog.yaml")
         LOGGER.info("Writing catalog blobs to %s", catalog_file_path)
-        with catalog_file_path.open('w') as f:
+        with catalog_file_path.open("w") as f:
             yaml.dump_all(catalog_blobs, f)
 
         # Generate Dockerfile
@@ -421,7 +421,7 @@ class KonfluxFbcFragmentMerger:
             logger.info(f"Waiting for Pipelinerun {plr_name} to complete...")
             plr_info = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
             plr = plr_info.to_dict()
-            succeeded_condition = plr_info.find_condition('Succeeded')
+            succeeded_condition = plr_info.find_condition("Succeeded")
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
             logger.info(
                 "Pipelinerun %s completed with outcome: %s",
@@ -614,11 +614,11 @@ class KonfluxFbcRebaser:
         nvr = f"{name}-{version}-{release}"
         record = {
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
-            'status': -1,
+            "status": -1,
             "name": name,
             "message": "Unknown failure",
             "fbc_nvr": nvr,
-            "bundle_nvrs": ','.join(
+            "bundle_nvrs": ",".join(
                 [str(bundle_build.nvr)]
             ),  # Currently we only support rebasing for one bundle at a time
         }
@@ -664,7 +664,7 @@ class KonfluxFbcRebaser:
             record["status"] = 0
             logger.info("rebase complete")
         except Exception as error:
-            record['message'] = str(error)
+            record["message"] = str(error)
             raise
         finally:
             if self._record_logger:
@@ -768,7 +768,7 @@ class KonfluxFbcRebaser:
             # We should verify if this is correct.
             skips = None
             bundle_with_skips = next(
-                (it for it in channel['entries'] if it.get('skips')), None
+                (it for it in channel["entries"] if it.get("skips")), None
             )  # Find which bundle has the skips field
             if bundle_with_skips is not None:
                 # the channel already has skips like
@@ -786,9 +786,9 @@ class KonfluxFbcRebaser:
                 # ------------
                 # Then we move the skips field to the new bundle
                 # and add the bundle name of bundle_with_skips to the skips field
-                skips = set(bundle_with_skips.pop('skips'))
-                skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
-            elif len(channel['entries']) == 1:
+                skips = set(bundle_with_skips.pop("skips"))
+                skips = (skips | {bundle_with_skips["name"]}) - {olm_bundle_name}
+            elif len(channel["entries"]) == 1:
                 # The channel only has one entry like
                 # ------------
                 # entries:
@@ -800,7 +800,7 @@ class KonfluxFbcRebaser:
                 # ------------
                 # In case the channel only contain one single entry, that bundle should
                 # become the only member of new-entry's `skip`.
-                only_entry_name = channel['entries'][0]['name']
+                only_entry_name = channel["entries"][0]["name"]
                 if only_entry_name != olm_bundle_name:
                     # Only if the new bundle build don't have the same name as the only_entry_name one
                     # if the new build have the same name like 202601292040 we should do nothing(no skips)
@@ -809,23 +809,23 @@ class KonfluxFbcRebaser:
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
             replaces = None
-            if not self.group.startswith('openshift-'):
+            if not self.group.startswith("openshift-"):
                 # Find the current head - the entry that is not replaced by any other entry
-                bundle_with_replaces = [it for it in channel['entries']]
-                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
-                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
+                bundle_with_replaces = [it for it in channel["entries"]]
+                replaced_names = {it.get("replaces") for it in bundle_with_replaces if it.get("replaces")}
+                current_head = next((it for it in bundle_with_replaces if it["name"] not in replaced_names), None)
                 if current_head:
                     # The new bundle should replace the current head
-                    replaces = current_head['name']
+                    replaces = current_head["name"]
 
             # Add the current bundle to the specified channel in the catalog
-            entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
+            entry = next((entry for entry in channel["entries"] if entry["name"] == olm_bundle_name), None)
             if not entry:
-                logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
+                logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel["name"])
                 entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
+                channel["entries"].append(entry)
             else:
-                logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
+                logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel["name"])
                 entry.clear()
                 entry["name"] = olm_bundle_name
             if olm_skip_range:
@@ -853,15 +853,15 @@ class KonfluxFbcRebaser:
                 package_blob["defaultChannel"] = default_channel_name
 
         # Replace pullspecs to use the prod registry
-        digest = bundle_build.image_pullspec.split('@', 1)[-1]
+        digest = bundle_build.image_pullspec.split("@", 1)[-1]
         bundle_prod_pullspec = f"{constants.DELIVERY_IMAGE_REGISTRY}/{delivery_repo_name}@{digest}"
         olm_bundle_blob["image"] = bundle_prod_pullspec
         related_images = olm_bundle_blob.get("relatedImages", [])
         if related_images:
-            target_entry = next((it for it in related_images if it['name'] == ""), None)
+            target_entry = next((it for it in related_images if it["name"] == ""), None)
             if target_entry:
-                logger.info("Replacing image reference %s with %s", target_entry['image'], bundle_prod_pullspec)
-                target_entry['image'] = bundle_prod_pullspec
+                logger.info("Replacing image reference %s with %s", target_entry["image"], bundle_prod_pullspec)
+                target_entry["image"] = bundle_prod_pullspec
 
         # Add the new bundle blob to the catalog
         if olm_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
@@ -893,7 +893,7 @@ class KonfluxFbcRebaser:
         else:
             logger.info("Adding ImageDigestMirrorSet to build repo")
             dot_tekton_dir.mkdir(exist_ok=True)
-            with images_mirror_set_file_path.open('w') as f:
+            with images_mirror_set_file_path.open("w") as f:
                 yaml.dump(image_digest_mirror_set, f)
 
         # Update Dockerfile
@@ -910,25 +910,25 @@ class KonfluxFbcRebaser:
         logger.info("Updating Dockerfile %s", dockerfile_path)
         dfp = DockerfileParser(str(dockerfile_path))
         metadata_envs: Dict[str, str] = {
-            '__doozer_group': self.group,
-            '__doozer_key': metadata.distgit_key,
-            '__doozer_version': version,
-            '__doozer_release': release,
-            '__doozer_bundle_nvrs': ','.join([str(bundle_build.nvr)]),
+            "__doozer_group": self.group,
+            "__doozer_key": metadata.distgit_key,
+            "__doozer_version": version,
+            "__doozer_release": release,
+            "__doozer_bundle_nvrs": ",".join([str(bundle_build.nvr)]),
         }
         for key, value in metadata_envs.items():
             if dfp.envs.get(key) != value:
                 logger.info("Setting %s=%s", key, value)
                 dfp.envs[key] = value
 
-        dfp.labels['io.openshift.build.source-location'] = bundle_build.source_repo
-        dfp.labels['io.openshift.build.commit.id'] = bundle_build.commitish
+        dfp.labels["io.openshift.build.source-location"] = bundle_build.source_repo
+        dfp.labels["io.openshift.build.commit.id"] = bundle_build.commitish
 
         # The following label is used internally by ART's shipment pipeline
         name = self.get_fbc_name(metadata.distgit_key)
-        dfp.labels['com.redhat.art.name'] = name
-        nvr = f'{name}-{version}-{release}'
-        dfp.labels['com.redhat.art.nvr'] = nvr
+        dfp.labels["com.redhat.art.name"] = name
+        nvr = f"{name}-{version}-{release}"
+        dfp.labels["com.redhat.art.nvr"] = nvr
         return nvr
 
     @staticmethod
@@ -983,18 +983,18 @@ class KonfluxFbcRebaser:
         dest_repos = {}
         for bundle_blob in olm_bundle_blobs:
             for related_image in bundle_blob.get("relatedImages", []):
-                if '@' in related_image["image"]:
-                    repo, digest = related_image["image"].split('@', 1)
+                if "@" in related_image["image"]:
+                    repo, digest = related_image["image"].split("@", 1)
                     dest_repos[digest] = repo
                 else:
                     continue
         for pullspec in ref_pullspecs:
-            p_split = pullspec.split('@', 1)
+            p_split = pullspec.split("@", 1)
             if len(p_split) == 1:
                 raise ValueError(
                     f"{p_split} invalid, it dosen't contains @, olm_bundle_blobs: {olm_bundle_blobs} \n ref_pullspecs: {ref_pullspecs}"
                 )
-        source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
+        source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split("@", 1))}
         if not dest_repos:
             return None
         image_digest_mirror_set = {
@@ -1063,7 +1063,7 @@ class KonfluxFbcRebaser:
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
             raise IOError(f"Expected exactly one rendered blob, but got {len(rendered_blobs)}")
         olm_bundle_blob = rendered_blobs[0]
-        if olm_bundle_blob.get('schema') != 'olm.bundle':
+        if olm_bundle_blob.get("schema") != "olm.bundle":
             raise IOError(f"Bundle blob has invalid schema: {olm_bundle_blob.get('schema')}")
         olm_package = olm_bundle_blob["package"]
         if not olm_package:
@@ -1177,13 +1177,13 @@ class KonfluxFbcBuilder:
 
         commits = []
         # Split by comma in case there are multiple NVRs
-        nvrs = bundle_nvrs.split(',')
+        nvrs = bundle_nvrs.split(",")
 
         for nvr in nvrs:
             nvr = nvr.strip()
             if nvr:
                 # Look for pattern .g<commit> in the NVR and extract including the 'g'
-                match = re.search(r'\.(g[a-f0-9]+)\.', nvr)
+                match = re.search(r"\.(g[a-f0-9]+)\.", nvr)
                 if match:
                     commit = match.group(1)  # This includes the 'g' prefix
                     if commit not in commits:  # Avoid duplicates
@@ -1238,7 +1238,7 @@ class KonfluxFbcBuilder:
                 else:
                     logger.info(f"Syncing {image_pullspec} to art-images-share")
                     try:
-                        destination_repo = share_pullspec.split('@')[0]  # Remove digest for destination
+                        destination_repo = share_pullspec.split("@")[0]  # Remove digest for destination
                         await artlib_util.sync_to_quay(image_pullspec, destination_repo)
                         logger.info(f"Successfully synced to art-images-share: {share_pullspec}")
                     except Exception as e:
@@ -1256,7 +1256,7 @@ class KonfluxFbcBuilder:
 
         record = {
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
-            'status': -1,
+            "status": -1,
             "name": metadata.distgit_key,
             "message": "Unknown failure",
             "task_id": "n/a",
@@ -1313,11 +1313,11 @@ class KonfluxFbcBuilder:
             # Start FBC build
             logger.info("Starting FBC build...")
             retries = 3
-            name = dfp.labels.get('com.redhat.art.name')
+            name = dfp.labels.get("com.redhat.art.name")
             if not name:
                 raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
             record["name"] = name
-            nvr = dfp.labels.get('com.redhat.art.nvr')
+            nvr = dfp.labels.get("com.redhat.art.nvr")
             if not nvr:
                 raise ValueError("FBC NVR not found in the catalog.Dockerfile. Did you rebase?")
             record["fbc_nvr"] = nvr
@@ -1332,7 +1332,7 @@ class KonfluxFbcBuilder:
                 )
 
                 # Construct doozer command to read group config for konflux.arches
-                doozer_cmd = ['doozer', f'--group={override_group}', 'config:read-group', 'konflux.arches', '--yaml']
+                doozer_cmd = ["doozer", f"--group={override_group}", "config:read-group", "konflux.arches", "--yaml"]
 
                 try:
                     # Execute the command asynchronously
@@ -1383,7 +1383,7 @@ class KonfluxFbcBuilder:
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
                 pipelinerun_dict = pipelinerun_info.to_dict()
-                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
+                succeeded_condition = pipelinerun_info.find_condition("Succeeded")
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if self.dry_run:
@@ -1407,9 +1407,9 @@ class KonfluxFbcBuilder:
                     if self.assembly == "stream":
                         if not self.dry_run:
                             try:
-                                results = pipelinerun_dict.get('status', {}).get('results', [])
-                                image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                                results = pipelinerun_dict.get("status", {}).get("results", [])
+                                image_pullspec = next((r["value"] for r in results if r["name"] == "IMAGE_URL"), None)
+                                image_digest = next((r["value"] for r in results if r["name"] == "IMAGE_DIGEST"), None)
 
                                 if image_pullspec and image_digest:
                                     fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
@@ -1430,7 +1430,7 @@ class KonfluxFbcBuilder:
 
                     break
             if error:
-                record['message'] = str(error)
+                record["message"] = str(error)
                 raise error
         finally:
             if self._record_logger:
@@ -1476,7 +1476,7 @@ class KonfluxFbcBuilder:
         if metadata.runtime.assembly == "stream":
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
-                delivery_repo_name = delivery_repo.split('/')[-1]
+                delivery_repo_name = delivery_repo.split("/")[-1]
                 if group_name.startswith("openshift-"):
                     product_name = "ocp"
                     version = group_name.removeprefix("openshift-")
@@ -1539,7 +1539,7 @@ class KonfluxFbcBuilder:
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
         if not db or db.record_cls != KonfluxFbcBuildRecord:
-            logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            logger.warning("Konflux DB connection is not initialized, not writing build record to the Konflux DB.")
             return
         try:
             rebase_repo_url = build_repo.https_url
@@ -1548,45 +1548,45 @@ class KonfluxFbcBuilder:
             df_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
             dfp = DockerfileParser(str(df_path))
 
-            name = dfp.labels.get('com.redhat.art.name')
+            name = dfp.labels.get("com.redhat.art.name")
             version = dfp.envs.get("__doozer_version")
             release = dfp.envs.get("__doozer_release")
-            nvr = dfp.labels.get('com.redhat.art.nvr')
+            nvr = dfp.labels.get("com.redhat.art.nvr")
             assert name and version and release and nvr, (
                 "Name, version, release, or NVR not found in the catalog.Dockerfile. Did you rebase?"
             )
 
             bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs", "").split(",")
-            source_repo = dfp.labels.get('io.openshift.build.source-location')
-            commitish = dfp.labels.get('io.openshift.build.commit.id')
+            source_repo = dfp.labels.get("io.openshift.build.source-location")
+            commitish = dfp.labels.get("io.openshift.build.commit.id")
 
             pipelinerun_name = pipelinerun_info.name
             pipelinerun_dict = pipelinerun_info.to_dict()
             build_pipeline_url = KonfluxClient.resource_url(pipelinerun_dict)
-            build_component = pipelinerun_dict['metadata']['labels'].get('appstudio.openshift.io/component')
+            build_component = pipelinerun_dict["metadata"]["labels"].get("appstudio.openshift.io/component")
 
             build_record_params = {
-                'name': name,
-                'version': version,
-                'release': release,
-                'start_time': datetime.now(tz=timezone.utc),
-                'end_time': None,
-                'nvr': nvr,
-                'group': metadata.runtime.group,
-                'assembly': metadata.runtime.assembly,
-                'source_repo': source_repo or "n/a",
-                'commitish': commitish or "n/a",
-                'rebase_repo_url': rebase_repo_url,
-                'rebase_commitish': rebase_commit,
-                'engine': Engine.KONFLUX,
-                'outcome': str(outcome),
-                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
-                'build_id': pipelinerun_name,
-                'build_pipeline_url': build_pipeline_url,
-                'pipeline_commit': 'n/a',  # TODO: populate this
-                'bundle_nvrs': bundle_nvrs,
-                'arches': arches,
-                'build_component': build_component,
+                "name": name,
+                "version": version,
+                "release": release,
+                "start_time": datetime.now(tz=timezone.utc),
+                "end_time": None,
+                "nvr": nvr,
+                "group": metadata.runtime.group,
+                "assembly": metadata.runtime.assembly,
+                "source_repo": source_repo or "n/a",
+                "commitish": commitish or "n/a",
+                "rebase_repo_url": rebase_repo_url,
+                "rebase_commitish": rebase_commit,
+                "engine": Engine.KONFLUX,
+                "outcome": str(outcome),
+                "art_job_url": os.getenv("BUILD_URL", "n/a"),
+                "build_id": pipelinerun_name,
+                "build_pipeline_url": build_pipeline_url,
+                "pipeline_commit": "n/a",  # TODO: populate this
+                "bundle_nvrs": bundle_nvrs,
+                "arches": arches,
+                "build_component": build_component,
             }
 
             match outcome:
@@ -1597,9 +1597,9 @@ class KonfluxFbcBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    results = pipelinerun_dict.get('status', {}).get('results', [])
-                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+                    results = pipelinerun_dict.get("status", {}).get("results", [])
+                    image_pullspec = next((r["value"] for r in results if r["name"] == "IMAGE_URL"), None)
+                    image_digest = next((r["value"] for r in results if r["name"] == "IMAGE_DIGEST"), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -1607,37 +1607,37 @@ class KonfluxFbcBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
+                    status = pipelinerun_dict.get("status", {})
+                    start_time = status.get("startTime")
+                    end_time = status.get("completionTime")
 
                     build_record_params.update(
                         {
-                            'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                            "image_pullspec": f"{image_pullspec.split(':')[0]}@{image_digest}",
+                            "start_time": datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%SZ").replace(
                                 tzinfo=timezone.utc
                             ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                            'image_tag': image_pullspec.split(':')[-1],
+                            "end_time": datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc),
+                            "image_tag": image_pullspec.split(":")[-1],
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
+                    status = pipelinerun_dict.get("status", {})
+                    start_time = status.get("startTime")
+                    end_time = status.get("completionTime")
                     build_record_params.update(
                         {
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                            "start_time": datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%SZ").replace(
                                 tzinfo=timezone.utc
                             ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            "end_time": datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc),
                         }
                     )
 
             build_record = KonfluxFbcBuildRecord(**build_record_params)
             db.add_build(build_record)
-            logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
+            logger.info("Konflux build %s info stored successfully with status %s", build_record.nvr, outcome)
 
         except Exception:
-            logger.exception('Failed writing record to the konflux DB')
+            logger.exception("Failed writing record to the konflux DB")
             raise

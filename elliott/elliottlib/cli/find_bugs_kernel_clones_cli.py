@@ -50,7 +50,7 @@ class FindBugsKernelClonesCli:
         if self._runtime.assembly_type is not AssemblyTypes.STREAM:
             raise ElliottFatalError("This command only supports stream assembly.")
         group_config = self._runtime.group_config
-        raw_config = self._runtime.gitdata.load_data(key='bug', replace_vars=group_config.vars).data.get(
+        raw_config = self._runtime.gitdata.load_data(key="bug", replace_vars=group_config.vars).data.get(
             "kernel_bug_sweep"
         )
         if not raw_config:
@@ -136,12 +136,12 @@ class FindBugsKernelClonesCli:
             "labels = art:cloned-kernel-bug",
             f"project = {config.target_jira.project}",
             f"component = {config.target_jira.component}",
-            f"\"Target Version\" = \"{target_release}\"",
+            f'"Target Version" = "{target_release}"',
         ]
         if trackers:
-            condition = ' OR '.join(map(lambda t: f"labels = art:kmaint:{t}", trackers))
+            condition = " OR ".join(map(lambda t: f"labels = art:kmaint:{t}", trackers))
             conditions.append(f"({condition})")
-        jql_str = f'{" AND ".join(conditions)} order by created DESC'
+        jql_str = f"{' AND '.join(conditions)} order by created DESC"
         found_bugs = jira_client.search_issues(jql_str, maxResults=0)
         return cast(List[Issue], found_bugs)
 
@@ -195,7 +195,7 @@ class FindBugsKernelClonesCli:
         for bug in bugs:
             current_status: str = bug.fields.status.name
             if current_status.lower() != "closed":
-                new_status = 'CLOSED'
+                new_status = "CLOSED"
                 message = f"Elliott changed bug status from {current_status} to {new_status} because {nvrs} was/were already shipped and tagged into {prod_brew_tag}."
                 early_kernel.move_jira(logger, self.dry_run, jira_client, bug, new_status, message)
             else:
@@ -207,7 +207,7 @@ class FindBugsKernelClonesCli:
         for bug in bugs:
             current_status: str = bug.fields.status.name
             if current_status.lower() in {"new", "assigned", "post"}:
-                new_status = 'MODIFIED'
+                new_status = "MODIFIED"
                 message = f"Elliott changed bug status from {current_status} to {new_status} because {nvrs} was/were already tagged into {candidate_brew_tag}."
                 early_kernel.move_jira(logger, self.dry_run, jira_client, bug, new_status, message)
             else:
@@ -252,9 +252,9 @@ class FindBugsKernelClonesCli:
 
 @cli.command("find-bugs:kernel-clones", short_help="Find kernel bugs")
 @click.option(
-    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True, help="Find by the specified KMAINT tracker JIRA_KEY"
+    "--tracker", "trackers", metavar="JIRA_KEY", multiple=True, help="Find by the specified KMAINT tracker JIRA_KEY"
 )
-@click.option("--issue", "issues", metavar='JIRA_KEY', multiple=True, help="Find by the specified Jira bug JIRA_KEY")
+@click.option("--issue", "issues", metavar="JIRA_KEY", multiple=True, help="Find by the specified Jira bug JIRA_KEY")
 @click.option("--move", is_flag=True, default=False, help="Auto move Jira bugs to MODIFIED or CLOSED")
 @click.option("--update-tracker", is_flag=True, default=False, help="Update KMAINT trackers state, links, and comments")
 @click.option("--dry-run", is_flag=True, default=False, help="Don't change anything")

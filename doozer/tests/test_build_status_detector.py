@@ -42,7 +42,7 @@ class TestBuildStatusDetector(TestCase):
                 side_effect=lambda builds: {b for b in builds if b in shipped_builds},
             ),
         ):
-            detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
+            detector = BuildStatusDetector(MagicMock(build_system="brew"), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_embargoed_builds(builds, [])
             self.assertEqual(actual, expected)
@@ -81,7 +81,7 @@ class TestBuildStatusDetector(TestCase):
                 side_effect=lambda builds: {b for b in builds if b in shipped_rpm_builds},
             ),
         ):
-            detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
+            detector = BuildStatusDetector(MagicMock(build_system="brew"), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_with_embargoed_rpms(set(b["id"] for b in image_builds), ["test-candidate"])
             self.assertEqual(actual, expected)
@@ -132,7 +132,7 @@ class TestBuildStatusDetector(TestCase):
             self.assertEqual(actual, expected)
 
     def test_find_unshipped_candidate_rpms(self):
-        latest = [dict(id=1, package_name='p1'), dict(id=2, package_name='p2'), dict(id=3, package_name='p3')]
+        latest = [dict(id=1, package_name="p1"), dict(id=2, package_name="p2"), dict(id=3, package_name="p3")]
         shipped_ids = {2}
         rpms = [  # just need to get the same thing back, not inspect contents
             [object(), object()],
@@ -143,7 +143,7 @@ class TestBuildStatusDetector(TestCase):
         session = detector.koji_session
         session.getLatestBuilds.return_value = latest
         with (
-            patch.object(detector, 'find_shipped_builds') as find_shipped_builds,
+            patch.object(detector, "find_shipped_builds") as find_shipped_builds,
             patch("doozerlib.brew.list_build_rpms") as list_build_rpms,
         ):
             find_shipped_builds.return_value = shipped_ids

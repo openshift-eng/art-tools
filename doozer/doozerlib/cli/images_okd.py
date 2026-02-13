@@ -46,7 +46,7 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.state import STATE_FAIL, STATE_PASS
 from doozerlib.util import extract_version_fields, what_is_in_master
 
-OKD_DEFAULT_IMAGE_REPO = 'quay.io/redhat-user-workloads/ocp-art-tenant/art-okd-images'
+OKD_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-okd-images"
 
 
 class ImageCoordinate(NamedTuple):
@@ -55,13 +55,13 @@ class ImageCoordinate(NamedTuple):
     tag: str
 
     def unique_key(self):
-        return f'{self.namespace}_{self.name}_{self.tag}'
+        return f"{self.namespace}_{self.name}_{self.tag}"
 
     def as_dict(self):
         return {
-            'namespace': self.namespace,
-            'name': self.name,
-            'tag': self.tag,
+            "namespace": self.namespace,
+            "name": self.name,
+            "tag": self.tag,
         }
 
 
@@ -94,26 +94,26 @@ class OkdRebaseCli:
         self.state = {}
 
     async def run(self):
-        self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+        self.runtime.initialize(mode="images", clone_distgits=False, build_system="konflux")
 
         group_config = self.runtime.group_config.copy()
-        if group_config.get('okd', None):
-            self.logger.info('Using OKD group configuration')
-            group_config = deep_merge(group_config, group_config['okd'])
+        if group_config.get("okd", None):
+            self.logger.info("Using OKD group configuration")
+            group_config = deep_merge(group_config, group_config["okd"])
             self.runtime.group_config = Model(group_config)
 
         # For OKD, we need to use the OKD group variant (e.g., okd-4.20 instead of openshift-4.20)
         # This ensures the Konflux DB cache is loaded for the correct group
         major, minor = self.runtime.get_major_minor_fields()
-        self.runtime.group = f'okd-{major}.{minor}'
-        self.logger.info(f'Changed runtime group to OKD variant: {self.runtime.group}')
+        self.runtime.group = f"okd-{major}.{minor}"
+        self.logger.info(f"Changed runtime group to OKD variant: {self.runtime.group}")
 
         base_dir = Path(self.runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_OKD_SOURCES)
         rebaser = KonfluxRebaser(
             runtime=self.runtime,
             base_dir=base_dir,
             source_resolver=self.runtime.source_resolver,
-            repo_type='unsigned',
+            repo_type="unsigned",
             upcycle=self.upcycle,
             variant=BuildVariant.OKD,
             image_repo=self.image_repo,
@@ -124,25 +124,25 @@ class OkdRebaseCli:
         await asyncio.gather(*tasks, return_exceptions=False)
 
         # Check rebase results, log errors if any in state.yml
-        self.runtime.state.setdefault('images:okd:rebase', {})['images'] = self.state
+        self.runtime.state.setdefault("images:okd:rebase", {})["images"] = self.state
 
-        if any((state == 'failure' for state in self.state.values())):
-            self.runtime.state['status'] = STATE_FAIL
+        if any((state == "failure" for state in self.state.values())):
+            self.runtime.state["status"] = STATE_FAIL
             sys.exit(1)
 
         else:
-            self.runtime.state['status'] = STATE_PASS
+            self.runtime.state["status"] = STATE_PASS
 
     async def rebase_image(self, image_meta: ImageMetadata, rebaser: KonfluxRebaser):
         image_meta.config = self.get_okd_image_config(image_meta)
         image_name = image_meta.distgit_key
 
-        if image_meta.config.mode == 'disabled':
+        if image_meta.config.mode == "disabled":
             # Raise an exception to be caught in okd4 pipeline; image will be removed from the building list.
-            self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_name)
+            self.logger.warning("Image %s is disabled for OKD: skipping rebase", image_name)
             image_meta.rebase_status = True
             image_meta.rebase_event.set()
-            self.state[image_name] = 'skipped'
+            self.state[image_name] = "skipped"
             return
 
         try:
@@ -154,11 +154,11 @@ class OkdRebaseCli:
                 commit_message=self.message,
                 push=self.push,
             )
-            self.state[image_name] = 'success'
+            self.state[image_name] = "success"
 
         except Exception as e:
-            self.logger.warning('Failed rebasing %s: %s', image_name, e)
-            self.state[image_name] = 'failure'
+            self.logger.warning("Failed rebasing %s: %s", image_name, e)
+            self.state[image_name] = "failure"
 
     def get_okd_image_config(self, image_meta: ImageMetadata):
         image_config = copy(image_meta.config)
@@ -167,12 +167,12 @@ class OkdRebaseCli:
         if image_config.okd is not Missing:
             # Merge the rest of the config, with okd taking precedence
             # Certain fields like 'from' should be completely replaced, not merged
-            self.logger.info('Merging OKD configuration into image configuration for %s', image_meta.distgit_key)
+            self.logger.info("Merging OKD configuration into image configuration for %s", image_meta.distgit_key)
             base_config = image_config.primitive()
             okd_config = image_meta.config.okd.primitive()
 
             # Fields that should be completely replaced rather than merged
-            replace_fields = {'from'}
+            replace_fields = {"from"}
 
             # First, do a deep merge for fields that should be merged
             merged_config = deep_merge(base_config, okd_config)
@@ -190,13 +190,13 @@ class OkdRebaseCli:
 @images_okd.command("rebase", short_help="Refresh a group's OKD source content.")
 @click.option(
     "--version",
-    metavar='VERSION',
+    metavar="VERSION",
     required=True,
     callback=validate_semver_major_minor_patch,
     help="Version string to populate in Dockerfiles.",
 )
-@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
-@click.option('--image-repo', default=OKD_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option("--release", metavar="RELEASE", required=True, help="Release string to populate in Dockerfiles.")
+@click.option("--image-repo", default=OKD_DEFAULT_IMAGE_REPO, help="Image repo for base images")
 @option_commit_message
 @option_push
 @pass_runtime
@@ -213,7 +213,7 @@ async def images_okd_rebase(
     Refresh a group's konflux content from source content.
     """
 
-    runtime.network_mode_override = 'open'  # OKD builds must be done in open mode.
+    runtime.network_mode_override = "open"  # OKD builds must be done in open mode.
 
     await OkdRebaseCli(
         runtime=runtime,
@@ -254,7 +254,7 @@ def resolve_okd_from_image_meta(runtime, image_meta, okd_version):
         elif resolve_as.image:
             return resolve_as.image  # Return literal pullspec
         else:
-            raise IOError(f'Unable to interpret resolve_as for {image_meta.distgit_key}')
+            raise IOError(f"Unable to interpret resolve_as for {image_meta.distgit_key}")
 
     if okd_alignment_config.tag_name:
         ci_payload_tag_name = okd_alignment_config.tag_name
@@ -265,7 +265,7 @@ def resolve_okd_from_image_meta(runtime, image_meta, okd_version):
         ci_payload_tag_name = get_okd_payload_tag_name(image_meta)
 
     # e.g. registry.ci.openshift.org/origin/scos-4.16:base
-    return f'registry.ci.openshift.org/origin/scos-{okd_version}:{ci_payload_tag_name}'
+    return f"registry.ci.openshift.org/origin/scos-{okd_version}:{ci_payload_tag_name}"
 
 
 def resolve_okd_from_entry(runtime, image_meta, from_entry, okd_version):
@@ -288,14 +288,14 @@ def resolve_okd_from_entry(runtime, image_meta, from_entry, okd_version):
         # A literal image is already being provided.
         return from_entry.image
 
-    raise IOError(f'Unable to resolve from entry for {image_meta.distgit_key}: {from_entry}')
+    raise IOError(f"Unable to resolve from entry for {image_meta.distgit_key}: {from_entry}")
 
 
 def convert_to_imagestream_coordinate(registry_ci_pullspec: str) -> ImageCoordinate:
-    if not registry_ci_pullspec.startswith('registry.ci.openshift.org/'):
-        raise IOError(f'OKD images must be sourced from registry.ci.openshift.org; cannot use {registry_ci_pullspec}')
-    parts = registry_ci_pullspec.split('/')
-    return ImageCoordinate(namespace=parts[1], name=parts[2].split(':')[0], tag=parts[2].split(':')[1])
+    if not registry_ci_pullspec.startswith("registry.ci.openshift.org/"):
+        raise IOError(f"OKD images must be sourced from registry.ci.openshift.org; cannot use {registry_ci_pullspec}")
+    parts = registry_ci_pullspec.split("/")
+    return ImageCoordinate(namespace=parts[1], name=parts[2].split(":")[0], tag=parts[2].split(":")[1])
 
 
 def _get_upstream_source(runtime, image_meta, skip_branch_check=False):
@@ -312,17 +312,17 @@ def _get_upstream_source(runtime, image_meta, skip_branch_check=False):
         source_repo_branch = image_meta.config.content.source.git.branch.target
         if not skip_branch_check:
             branch_check, err = exectools.cmd_assert(
-                f'git ls-remote --heads {source_repo_url} {source_repo_branch}', strip=True, retries=3
+                f"git ls-remote --heads {source_repo_url} {source_repo_branch}", strip=True, retries=3
             )
             if not branch_check:
                 # Output is empty if branch does not exist
                 source_repo_branch = image_meta.config.content.source.git.branch.fallback
                 if source_repo_branch is Missing:
-                    raise IOError(f'Unable to detect source repository branch for {image_meta.distgit_key}')
+                    raise IOError(f"Unable to detect source repository branch for {image_meta.distgit_key}")
     elif "alias" in image_meta.config.content.source:
         alias = image_meta.config.content.source.alias
         if alias not in runtime.group_config.sources:
-            raise IOError(f'Unable to find source alias {alias} for {image_meta.distgit_key}')
+            raise IOError(f"Unable to find source alias {alias} for {image_meta.distgit_key}")
         source_repo_url = runtime.group_config.sources[alias].url
         source_repo_branch = runtime.group_config.sources[alias].branch.target
     else:
@@ -369,7 +369,7 @@ def get_needed_for_okd_payload_constructions(image_meta):
             return True
     # See if this image is used as a builder image.
     for test_meta in image_meta.runtime.ordered_image_metas():
-        for test_builder in test_meta.config['from'].builder:
+        for test_builder in test_meta.config["from"].builder:
             if test_builder.member == image_meta.distgit_key:
                 return True
     return False
@@ -380,7 +380,7 @@ class CiOperatorImageConfig:
         self.image_meta = image_meta
         self.promotion_namespace = promotion_namespace
         self.promotion_imagestream = promotion_imagestream
-        self.dockerfile_path = 'Dockerfile'
+        self.dockerfile_path = "Dockerfile"
         self.context_dir: Optional[str] = None
         self.raw_steps = list()
         self.resources = dict()
@@ -400,7 +400,7 @@ class CiOperatorImageConfig:
         self.base_image = image_coordinate
 
     def set_dockerfile_path(self, dockerfile_path: str):
-        self.dockerfile_path = dockerfile_path.lstrip('/')
+        self.dockerfile_path = dockerfile_path.lstrip("/")
 
     def set_context_dir(self, context_dir: str):
         self.context_dir = context_dir
@@ -412,8 +412,8 @@ class CiOperatorImageConfig:
 
         build_args = [  # Used by some images to differentiate output during prow/ci-operator based builds.
             {
-                'name': 'TAGS',
-                'value': 'scos',
+                "name": "TAGS",
+                "value": "scos",
             },
         ]
         if image_meta.config.content.source.okd_alignment.build_args:
@@ -423,79 +423,79 @@ class CiOperatorImageConfig:
             self.resources.update(image_meta.config.content.source.okd_alignment.resources)
 
         if image_meta.config.content.source.okd_alignment.inject_rpm_repositories:
-            intermediate_tag = f'pre-repo-{self.payload_tag}'
+            intermediate_tag = f"pre-repo-{self.payload_tag}"
 
             repo_def_lines: List[str] = list()
             for entry in image_meta.config.content.source.okd_alignment.inject_rpm_repositories:
                 repo_id = entry.id
                 baseurl = entry.baseurl
                 if not repo_id or not baseurl:
-                    raise IOError(f'Incomplete repo injection data for {image_meta.distgit_key}: {repo_id} / {baseurl}')
+                    raise IOError(f"Incomplete repo injection data for {image_meta.distgit_key}: {repo_id} / {baseurl}")
 
                 repo_def_lines.extend(
                     [
-                        f'[{repo_id}]',
-                        f'id = {repo_id}',
-                        f'name = {repo_id}',
-                        f'baseurl = {baseurl}',
-                        'enabled = 1',
-                        'gpgcheck = 0',
-                        'sslverify = false',
-                        'skip_if_unavailable = true',
-                        '',
+                        f"[{repo_id}]",
+                        f"id = {repo_id}",
+                        f"name = {repo_id}",
+                        f"baseurl = {baseurl}",
+                        "enabled = 1",
+                        "gpgcheck = 0",
+                        "sslverify = false",
+                        "skip_if_unavailable = true",
+                        "",
                     ]
                 )
 
-            repo_lines = '\n'.join(repo_def_lines)
+            repo_lines = "\n".join(repo_def_lines)
             raw_step = {
-                'pipeline_image_cache_step': {
-                    'commands': f"""
+                "pipeline_image_cache_step": {
+                    "commands": f"""
 cat << EOF > /etc/yum.repos.d/art.repo
 {repo_lines}
 EOF
         """,
-                    'from': ci_operator_image_names[self.base_image],
-                    'to': intermediate_tag,
+                    "from": ci_operator_image_names[self.base_image],
+                    "to": intermediate_tag,
                 },
             }
 
             base_obj = {
-                'build_args': build_args,
-                'from': intermediate_tag,
-                'to': self.payload_tag,
+                "build_args": build_args,
+                "from": intermediate_tag,
+                "to": self.payload_tag,
             }
 
         else:
             base_obj = {
-                'build_args': build_args,
-                'to': self.payload_tag,
+                "build_args": build_args,
+                "to": self.payload_tag,
             }
 
             if self.base_image:
-                base_obj['from'] = ci_operator_image_names[self.base_image]
+                base_obj["from"] = ci_operator_image_names[self.base_image]
 
         prowjob_dockerfile_path = self.dockerfile_path
 
         if self.context_dir:
             # Very rarely, a prow base build will require a context_dir to be set.
-            base_obj['context_dir'] = self.context_dir
+            base_obj["context_dir"] = self.context_dir
             if prowjob_dockerfile_path.startswith(self.context_dir):
-                prowjob_dockerfile_path = prowjob_dockerfile_path[len(self.context_dir) :].lstrip('/')
+                prowjob_dockerfile_path = prowjob_dockerfile_path[len(self.context_dir) :].lstrip("/")
             else:
-                raise IOError('Expected path to start with prowjob context_dir')
+                raise IOError("Expected path to start with prowjob context_dir")
 
         if self.dockerfile_path:
-            base_obj['dockerfile_path'] = prowjob_dockerfile_path
+            base_obj["dockerfile_path"] = prowjob_dockerfile_path
 
         inputs = dict()
 
         for coordinate, replacements in self.replacements.items():
             inputs[ci_operator_image_names[coordinate]] = {
-                'as': replacements,
+                "as": replacements,
             }
 
         if inputs:
-            base_obj['inputs'] = inputs
+            base_obj["inputs"] = inputs
 
         return base_obj, raw_step
 
@@ -518,10 +518,10 @@ class CiOperatorConfig:
         self.promotion_imagestream = promotion_imagestream
         self.promotion_to = list()
         self.promotion = {
-            'to': [
+            "to": [
                 {
-                    'namespace': promotion_namespace,
-                    'name': promotion_imagestream,
+                    "namespace": promotion_namespace,
+                    "name": promotion_imagestream,
                 },
             ],
         }
@@ -548,18 +548,18 @@ class CiOperatorConfig:
 
     def get_ci_operator_config_path(self, release_clone_dir: Path):
         return release_clone_dir.joinpath(
-            'ci-operator', 'config', self.org, self.repo, f'{self.org}-{self.repo}-{self.branch_name}__okd-scos.yaml'
+            "ci-operator", "config", self.org, self.repo, f"{self.org}-{self.repo}-{self.branch_name}__okd-scos.yaml"
         )
 
     def write_config(self, release_clone_dir: Path):
         output_path = self.get_ci_operator_config_path(release_clone_dir)
 
         if not self.complete:
-            print(f'Refusing to write: {output_path} as reconciliation did not complete')
+            print(f"Refusing to write: {output_path} as reconciliation did not complete")
             return
 
         # Default resources, which can be adjusted by okd_alignment stanzas
-        resources = {'*': {'requests': {'cpu': '100m', 'memory': '200Mi'}}}
+        resources = {"*": {"requests": {"cpu": "100m", "memory": "200Mi"}}}
 
         ci_operator_image_names: Dict[ImageCoordinate, str] = dict()
         base_image_defs: OrderedDict[ImageCoordinate, True] = OrderedDict()
@@ -596,25 +596,25 @@ class CiOperatorConfig:
             base_images[ci_operator_image_names[coordinate]] = coordinate.as_dict()
 
         config = {
-            'images': images,
-            'promotion': self.promotion,
-            'resources': resources,
+            "images": images,
+            "promotion": self.promotion,
+            "resources": resources,
         }
 
         if self.tests:
-            config['tests'] = self.tests
+            config["tests"] = self.tests
         if raw_steps:
-            config['raw_steps'] = raw_steps
+            config["raw_steps"] = raw_steps
         if base_images:
-            config['base_images'] = base_images
+            config["base_images"] = base_images
         if self.build_root:
-            config['build_root'] = {
-                'image_stream_tag': self.build_root,
+            config["build_root"] = {
+                "image_stream_tag": self.build_root,
             }
         if self.releases:
-            config['releases'] = self.releases
+            config["releases"] = self.releases
         output_path.write_text(yaml.safe_dump(config))
-        print(f'Wrote: {str(output_path)}')
+        print(f"Wrote: {str(output_path)}")
 
 
 class CiOperatorConfigs:
@@ -630,7 +630,7 @@ class CiOperatorConfigs:
         self.promotion_imagestream = promotion_imagestream
 
     def get_ci_operator_config(self, org: GitHubOrgName, repo: GitHubRepoName, branch_name: str) -> CiOperatorConfig:
-        config_key = f'{org}:{repo}:{branch_name}'
+        config_key = f"{org}:{repo}:{branch_name}"
         if config_key not in self.configs_by_repo:
             self.configs_by_repo[config_key] = CiOperatorConfig(
                 org,
@@ -660,7 +660,7 @@ def image_from(from_value):
         )?
         """)
     match = re.match(regex, from_value)
-    return match.group('image', 'name') if match else (None, None)
+    return match.group("image", "name") if match else (None, None)
 
 
 def extract_stage_names(dfp: DockerfileParser) -> List[str]:
@@ -669,100 +669,100 @@ def extract_stage_names(dfp: DockerfileParser) -> List[str]:
     """
     stage_names: List[str] = list()
     for instr in dfp.structure:
-        if instr['instruction'] == 'FROM':
-            image, stage_name = image_from(instr['value'])
+        if instr["instruction"] == "FROM":
+            image, stage_name = image_from(instr["value"])
             stage_names.append(stage_name)
     return stage_names
 
 
-@images_okd.command('check', short_help='Check whether images in OKD are SCOS based on app.ci.')
+@images_okd.command("check", short_help="Check whether images in OKD are SCOS based on app.ci.")
 @pass_runtime
 def images_okg_check(runtime):
     runtime.initialize(clone_distgits=False, clone_source=False)
-    major = runtime.group_config.vars['MAJOR']
-    minor = runtime.group_config.vars['MINOR']
-    okd_version = f'{major}.{minor}'
+    major = runtime.group_config.vars["MAJOR"]
+    minor = runtime.group_config.vars["MINOR"]
+    okd_version = f"{major}.{minor}"
 
     payload_tag_names = set()
     for image_meta in runtime.ordered_image_metas():
         if get_needed_for_okd_payload_constructions(image_meta):
             dest_pull_spec = resolve_okd_from_image_meta(runtime, image_meta, okd_version)
             image_coordinate = convert_to_imagestream_coordinate(dest_pull_spec)
-            if image_coordinate.namespace == 'origin' and image_coordinate.name == f'scos-{okd_version}':
+            if image_coordinate.namespace == "origin" and image_coordinate.name == f"scos-{okd_version}":
                 payload_tag_names.add(image_coordinate.tag)
 
-    with oc.project('origin'):
-        scos_imagestream = oc.selector(f'is/scos-{okd_version}').object()
-        print('TAG,SCOS,DETAIL,PULLSPEC')
+    with oc.project("origin"):
+        scos_imagestream = oc.selector(f"is/scos-{okd_version}").object()
+        print("TAG,SCOS,DETAIL,PULLSPEC")
         for tag_entry in scos_imagestream.model.status.tags:
-            detail = ''
+            detail = ""
             tag = tag_entry.tag
             latest_pullspec = None
             scos_status = "No"
 
             if tag_entry.items:
-                latest_pullspec: str = tag_entry['items'][0].dockerImageReference
+                latest_pullspec: str = tag_entry["items"][0].dockerImageReference
                 latest_pullspec = latest_pullspec.replace(
-                    'image-registry.openshift-image-registry.svc:5000', 'registry.ci.openshift.org'
+                    "image-registry.openshift-image-registry.svc:5000", "registry.ci.openshift.org"
                 )
 
-            if tag == 'branding':
+            if tag == "branding":
                 scos_status = "N/A"
                 detail = "branching is from scratch"
             elif latest_pullspec:
                 temp_dir = tempfile.mkdtemp()
                 try:
-                    oc.invoke('image', cmd_args=['extract', f'--path=/etc/centos-release:{temp_dir}', latest_pullspec])
+                    oc.invoke("image", cmd_args=["extract", f"--path=/etc/centos-release:{temp_dir}", latest_pullspec])
                     if tag not in payload_tag_names:
-                        detail = 'not in ART built OKD tags'
+                        detail = "not in ART built OKD tags"
 
-                    if os.path.exists(f'{temp_dir}/centos-release'):
+                    if os.path.exists(f"{temp_dir}/centos-release"):
                         scos_status = "Yes"
                     else:
                         if tag not in payload_tag_names:
                             scos_status = "N/A?"
 
                 except:
-                    detail = 'error checking image'
+                    detail = "error checking image"
                 shutil.rmtree(temp_dir)
             else:
-                detail = 'does not have any items in its pullspec'
+                detail = "does not have any items in its pullspec"
 
-            print(f'{tag},{scos_status},{detail},{latest_pullspec}')
+            print(f"{tag},{scos_status},{detail},{latest_pullspec}")
             if tag in payload_tag_names:
                 payload_tag_names.remove(tag)
 
         for remaining_tag in payload_tag_names:
-            scos_status = 'No'
-            detail = 'Required in payload but not found in imagestream'
-            latest_pullspec = ''
-            print(f'{remaining_tag},{scos_status},{detail},{latest_pullspec}')
+            scos_status = "No"
+            detail = "Required in payload but not found in imagestream"
+            latest_pullspec = ""
+            print(f"{remaining_tag},{scos_status},{detail},{latest_pullspec}")
 
 
 @prs.command(
-    'open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.'
+    "open", short_help="Open PRs against upstream component repos that have a FROM that differs from ART metadata."
 )
-@click.option('--github-access-token', metavar='TOKEN', required=True, help='Github access token for user.')
-@click.option('--okd-version', metavar='VERSION', required=True, help='Which OKD stream to promote to.')
+@click.option("--github-access-token", metavar="TOKEN", required=True, help="Github access token for user.")
+@click.option("--okd-version", metavar="VERSION", required=True, help="Which OKD stream to promote to.")
 @click.option(
-    '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
+    "--ignore-missing-images", default=False, is_flag=True, help="Do not exit if an image is missing upstream."
 )
-@click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
-@click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
+@click.option("--draft-prs", default=False, is_flag=True, help="Open PRs as draft PRs")
+@click.option("--moist-run", default=False, is_flag=True, help="Do everything except opening the final PRs")
 @click.option(
-    '--add-auto-labels',
+    "--add-auto-labels",
     default=False,
     is_flag=True,
-    help='Add auto_labels to PRs; unless running as openshift-bot, you probably lack the privilege to do so',
+    help="Add auto_labels to PRs; unless running as openshift-bot, you probably lack the privilege to do so",
 )
 @click.option(
-    '--add-label',
+    "--add-label",
     default=[],
     multiple=True,
-    help='Add a label to all open PRs (new and existing) - Requires being openshift-bot',
+    help="Add a label to all open PRs (new and existing) - Requires being openshift-bot",
 )
 @click.option(
-    '--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway'
+    "--non-master", default=False, is_flag=True, help="Acknowledge that this is a non-master branch and proceed anyway"
 )
 @pass_runtime
 @click_coroutine
@@ -783,15 +783,15 @@ async def images_okd_prs(
     g = Github(login_or_token=github_access_token)
     github_user = g.get_user()
 
-    major = runtime.group_config.vars['MAJOR']
-    minor = runtime.group_config.vars['MINOR']
+    major = runtime.group_config.vars["MAJOR"]
+    minor = runtime.group_config.vars["MINOR"]
 
     master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
     if major != master_major or minor != master_minor:
         if not non_master:
             # These verbs should normally only be run against the version in master.
             runtime.logger.warning(
-                f'Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs'
+                f"Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs"
             )
             exit(0)
     else:
@@ -800,51 +800,51 @@ async def images_okd_prs(
     # Most OKD specific configuration is housed on github.com/openshift/release . It boils down
     # to generated ci-operator configuration files. We generate those configuration files
     # in our fork of openshift/release. Establish that fork if it is not already present.
-    openshift_release_repo_name = 'release'
-    public_release_repo = f'openshift/{openshift_release_repo_name}'
+    openshift_release_repo_name = "release"
+    public_release_repo = f"openshift/{openshift_release_repo_name}"
     try:
-        release_fork_repo_name = f'{github_user.login}/{openshift_release_repo_name}'
+        release_fork_repo_name = f"{github_user.login}/{openshift_release_repo_name}"
         release_fork_repo = g.get_repo(release_fork_repo_name)
     except UnknownObjectException:
         # fork of openshift/release repo doesn't exist; fork it
         release_fork_repo = github_user.create_fork(public_release_repo)
 
     # Clone openshift/release and populate our fork as a remote
-    release_repo_url = convert_remote_git_to_ssh(f'http://github.com/openshift/{openshift_release_repo_name}')
-    release_clone_dir = Path(runtime.working_dir).joinpath('clones', 'release')
+    release_repo_url = convert_remote_git_to_ssh(f"http://github.com/openshift/{openshift_release_repo_name}")
+    release_clone_dir = Path(runtime.working_dir).joinpath("clones", "release")
 
     # Clone the openshift/release repo so we can open a PR if necessary.
-    runtime.logger.info(f'Cloning {release_repo_url}')
+    runtime.logger.info(f"Cloning {release_repo_url}")
 
     git_clone(release_repo_url, release_clone_dir, git_cache_dir=runtime.git_cache_dir)
     with Dir(release_clone_dir):
-        exectools.cmd_gather('git remote remove fork')  # In case we are reusing a cloned path
-        exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(release_fork_repo.git_url)}')
-        exectools.cmd_assert('git fetch --all', retries=3)
-        exectools.cmd_assert('git checkout origin/master')
+        exectools.cmd_gather("git remote remove fork")  # In case we are reusing a cloned path
+        exectools.cmd_assert(f"git remote add fork {convert_remote_git_to_ssh(release_fork_repo.git_url)}")
+        exectools.cmd_assert("git fetch --all", retries=3)
+        exectools.cmd_assert("git checkout origin/master")
         # All content will be produced in the staging branch. It will be pushed to the public
         # reconcile branch if and only if staging differs.
-        exectools.cmd_gather('git branch -d staging')  # In case we are reusing a cloned path
-        exectools.cmd_assert('git checkout -b staging')
+        exectools.cmd_gather("git branch -d staging")  # In case we are reusing a cloned path
+        exectools.cmd_assert("git checkout -b staging")
 
-    ci_operator_configs = CiOperatorConfigs('origin', f'scos-{okd_version}')
+    ci_operator_configs = CiOperatorConfigs("origin", f"scos-{okd_version}")
 
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
         logger = image_meta.logger
-        logger.info(f'Analyzing image: {dgk}')
+        logger.info(f"Analyzing image: {dgk}")
 
         ci_alignment_config = image_meta.config.content.source.ci_alignment
         okd_alignment_config = image_meta.config.content.source.okd_alignment
 
         if okd_alignment_config and okd_alignment_config.enabled is not Missing and not okd_alignment_config.enabled:
             # Make sure this is an explicit False. Missing means the default or True.
-            logger.info('The image has OKD alignment disabled; ignoring')
+            logger.info("The image has OKD alignment disabled; ignoring")
             continue
 
-        from_config = image_meta.config['from']
+        from_config = image_meta.config["from"]
         if not from_config:
-            logger.info('Skipping PR check since there is no configured .from')
+            logger.info("Skipping PR check since there is no configured .from")
             continue
 
         desired_parents = []
@@ -862,20 +862,20 @@ async def images_okd_prs(
         #    than the downstream build. Use this method by specifying:
         #      source.okd_alignment.from: [ list of full pullspecs ]
         # We check for option 2 first
-        if okd_alignment_config['from'] is not Missing:
-            desired_parents = okd_alignment_config['from'].primitive()  # This should be list; so we're done.
+        if okd_alignment_config["from"] is not Missing:
+            desired_parents = okd_alignment_config["from"].primitive()  # This should be list; so we're done.
         else:
             builders = from_config.builder or []
             for builder in builders:
                 upstream_image = resolve_okd_from_entry(runtime, image_meta, builder, okd_version=okd_version)
                 if not upstream_image:
-                    logger.warning(f'Unable to resolve upstream image for: {builder}')
+                    logger.warning(f"Unable to resolve upstream image for: {builder}")
                     break
                 desired_parents.append(upstream_image)
 
             parent_upstream_image = resolve_okd_from_entry(runtime, image_meta, from_config, okd_version=okd_version)
             if len(desired_parents) != len(builders) or not parent_upstream_image:
-                logger.warning('Unable to find all ART equivalent upstream images for this image')
+                logger.warning("Unable to find all ART equivalent upstream images for this image")
                 continue
 
             desired_parents.append(parent_upstream_image)
@@ -890,7 +890,7 @@ async def images_okd_prs(
             # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
             # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(desired_ci_build_root_image)
-            logger.info(f'Found desired build_root state of: {desired_ci_build_root_coordinate}')
+            logger.info(f"Found desired build_root state of: {desired_ci_build_root_coordinate}")
         elif ci_alignment_config.streams_prs.ci_build_root is not Missing:
             desired_ci_build_root_image = resolve_okd_from_entry(
                 runtime, image_meta, ci_alignment_config.streams_prs.ci_build_root, okd_version=okd_version
@@ -900,7 +900,7 @@ async def images_okd_prs(
             # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
             # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(desired_ci_build_root_image)
-            logger.info(f'Found desired build_root state of: {desired_ci_build_root_coordinate}')
+            logger.info(f"Found desired build_root state of: {desired_ci_build_root_coordinate}")
         else:
             # ci-operator configuration, even if it is not building anything, fails if there is no
             # build root. Just get the default golang.
@@ -909,7 +909,7 @@ async def images_okd_prs(
                 image_meta,
                 Model(
                     {
-                        'stream': 'rhel-9-golang',
+                        "stream": "rhel-9-golang",
                     }
                 ),
                 okd_version=okd_version,
@@ -918,14 +918,14 @@ async def images_okd_prs(
 
         source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta, skip_branch_check=True)
 
-        if not source_repo_url or 'github.com' not in source_repo_url:
+        if not source_repo_url or "github.com" not in source_repo_url:
             # No upstream to clone; no PRs to open
-            logger.info('Skipping PR check since there is no configured github source URL')
+            logger.info("Skipping PR check since there is no configured github source URL")
             continue
 
         needed_for_payload_construction = get_needed_for_okd_payload_constructions(image_meta=image_meta)
         if not needed_for_payload_construction and not okd_alignment_config.resolve_as.tag_name:
-            logger.info(f'Skipping non-OKD image: {image_meta.distgit_key}')
+            logger.info(f"Skipping non-OKD image: {image_meta.distgit_key}")
             continue
 
         public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(
@@ -939,32 +939,32 @@ async def images_okd_prs(
         # openshift-4.x : Upstream team manages completely.
         # For the former style, we may need to open the PRs against the default branch (master or main).
         # For the latter style, always open directly against named branch
-        if public_branch.startswith('release-'):
-            public_branches, _ = exectools.cmd_assert(f'git ls-remote --heads {public_repo_url}', strip=True)
+        if public_branch.startswith("release-"):
+            public_branches, _ = exectools.cmd_assert(f"git ls-remote --heads {public_repo_url}", strip=True)
             public_branches = public_branches.splitlines()
-            priv_branches, _ = exectools.cmd_assert(f'git ls-remote --heads {source_repo_url}', strip=True)
+            priv_branches, _ = exectools.cmd_assert(f"git ls-remote --heads {source_repo_url}", strip=True)
             priv_branches = priv_branches.splitlines()
 
             if non_master:
-                if [bl for bl in public_branches if bl.endswith(f'/release-{major}.{minor}')]:
-                    public_branch = f'release-{major}.{minor}'
-                elif [bl for bl in public_branches if bl.endswith(f'/openshift-{major}.{minor}')]:
-                    public_branch = f'openshift-{major}.{minor}'
+                if [bl for bl in public_branches if bl.endswith(f"/release-{major}.{minor}")]:
+                    public_branch = f"release-{major}.{minor}"
+                elif [bl for bl in public_branches if bl.endswith(f"/openshift-{major}.{minor}")]:
+                    public_branch = f"openshift-{major}.{minor}"
                 else:
-                    raise IOError(f'Did not find release branch among: {public_branches}')
+                    raise IOError(f"Did not find release branch among: {public_branches}")
             else:
-                if [bl for bl in public_branches if bl.endswith('/main')] and [
-                    bl for bl in priv_branches if bl.endswith('/main')
+                if [bl for bl in public_branches if bl.endswith("/main")] and [
+                    bl for bl in priv_branches if bl.endswith("/main")
                 ]:
-                    public_branch = 'main'
-                elif [bl for bl in public_branches if bl.endswith('/master')] and [
-                    bl for bl in priv_branches if bl.endswith('/master')
+                    public_branch = "main"
+                elif [bl for bl in public_branches if bl.endswith("/master")] and [
+                    bl for bl in priv_branches if bl.endswith("/master")
                 ]:
-                    public_branch = 'master'
+                    public_branch = "master"
                 else:
                     # There are ways of determining default branch without using naming conventions, but as of today, we don't need it.
                     raise IOError(
-                        f'Did not find master or main branch; unable to detect default branch: {public_branches}'
+                        f"Did not find master or main branch; unable to detect default branch: {public_branches}"
                     )
 
         _, org, repo_name = split_git_url(public_repo_url)
@@ -973,7 +973,7 @@ async def images_okd_prs(
         ci_operator_config = ci_operator_configs.get_ci_operator_config(org, repo_name, public_branch)
 
         public_repo_url = convert_remote_git_to_ssh(public_repo_url)
-        component_source_path = pathlib.Path(runtime.working_dir).joinpath('snapshots', dgk)
+        component_source_path = pathlib.Path(runtime.working_dir).joinpath("snapshots", dgk)
         component_source_path.mkdir(exist_ok=True, parents=True)
 
         # The path to the Dockerfile in the target branch
@@ -1020,7 +1020,7 @@ async def images_okd_prs(
             # of FROM statements in the upstream Dockerfile. ART's normal build process will alert
             # artists on this condition, so assume it will be handled and skip for now.
             yellow_print(
-                f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]'
+                f"Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]"
             )
             continue
 
@@ -1029,15 +1029,15 @@ async def images_okd_prs(
 
         ci_operator_image_config = ci_operator_config.get_image_config(image_meta)
         ci_operator_config.add_release(
-            'latest',
-            {'integration': {'include_built_images': True, 'namespace': 'origin', 'name': f'scos-{okd_version}'}},
+            "latest",
+            {"integration": {"include_built_images": True, "namespace": "origin", "name": f"scos-{okd_version}"}},
         )
 
         stage_names = extract_stage_names(dfp)
         for index, stage_name in enumerate(
             stage_names[:-1]
         ):  # For all stages except the last (i.e. except for the base image)
-            if image_meta.config['from']['builder'][index].image is not Missing:
+            if image_meta.config["from"]["builder"][index].image is not Missing:
                 # An explicit image was specified. Don't try to create a coordinate.
                 continue
             replace = list()
@@ -1098,48 +1098,48 @@ async def images_okd_prs(
 
 
 @prs.command(
-    'set-optional-presubmit',
-    short_help='Find OKD configs in MODIFIED openshift/release and set optional & always_run:false.',
+    "set-optional-presubmit",
+    short_help="Find OKD configs in MODIFIED openshift/release and set optional & always_run:false.",
 )
-@click.option('--release-dir', metavar='DIR', required=True, help='Path to the openshift/release directory')
+@click.option("--release-dir", metavar="DIR", required=True, help="Path to the openshift/release directory")
 @pass_runtime
 def images_okd_prs_optional(runtime, release_dir):
     release_path = Path(release_dir)
     if not release_path.is_dir():
-        print(f'Path does not exist: {str(release_path.absolute())}')
+        print(f"Path does not exist: {str(release_path.absolute())}")
         exit(1)
 
-    print('Finding presubmit YAMLs..')
-    config_path = release_path.joinpath('ci-operator/config')
-    jobs_path = release_path.joinpath('ci-operator/jobs')
-    okd_scos_paths = config_path.rglob('**/*__okd-scos.yaml')  # for any config with okd-scos
+    print("Finding presubmit YAMLs..")
+    config_path = release_path.joinpath("ci-operator/config")
+    jobs_path = release_path.joinpath("ci-operator/jobs")
+    okd_scos_paths = config_path.rglob("**/*__okd-scos.yaml")  # for any config with okd-scos
     # If a config has an okd-scos variant, it is worth scanning its presubmit jobs
 
     okd_repos = set()
     for okd_scos_path in okd_scos_paths:
         github_repo = okd_scos_path.parent.name
         gitub_org = okd_scos_path.parent.parent.name
-        okd_repos.add(f'{gitub_org}/{github_repo}')
+        okd_repos.add(f"{gitub_org}/{github_repo}")
 
     for target_repo in okd_repos:
         target_repo_path = jobs_path.joinpath(target_repo)
-        presubmit_paths = target_repo_path.glob('*-presubmits.yaml')
+        presubmit_paths = target_repo_path.glob("*-presubmits.yaml")
         for target_path in presubmit_paths:
-            print(f'Checking: {str(target_path)}')
+            print(f"Checking: {str(target_path)}")
             file_changed = False
-            with open(str(target_path), mode='r') as file:
+            with open(str(target_path), mode="r") as file:
                 data = yaml.safe_load(file)
-                presubmits = data['presubmits']
+                presubmits = data["presubmits"]
                 for repo, entries in presubmits.items():
                     for entry in entries:
-                        if entry['context'] == 'ci/prow/okd-scos-images':
-                            if not entry.get('optional', False):
-                                entry['optional'] = True
+                        if entry["context"] == "ci/prow/okd-scos-images":
+                            if not entry.get("optional", False):
+                                entry["optional"] = True
                                 file_changed = True
-                            if entry.get('always_run', True):
-                                entry['always_run'] = False
+                            if entry.get("always_run", True):
+                                entry["always_run"] = False
                                 file_changed = True
 
             if file_changed:
-                with open(f'{str(target_path)}', mode='w+') as nfile:
+                with open(f"{str(target_path)}", mode="w+") as nfile:
                     yaml.dump(data, nfile)

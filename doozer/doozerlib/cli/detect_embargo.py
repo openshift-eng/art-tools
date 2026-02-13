@@ -65,7 +65,7 @@ def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
 )
 @click.option(
     "--event-id",
-    metavar='NUM',
+    metavar="NUM",
     required=False,
     type=int,
     help="A Brew event ID. If specified, the last NVRs as of the given Brew event will be chosen instead of latest",

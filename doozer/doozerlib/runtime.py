@@ -47,9 +47,9 @@ from doozerlib.source_resolver import SourceResolver
 # (exiting with an error if someone tries). Other values can
 # be interpreted & enforced by the build pipelines (e.g. by
 # invoking config:read-config).
-FREEZE_AUTOMATION_YES = 'yes'
-FREEZE_AUTOMATION_SCHEDULED = 'scheduled'  # inform the pipeline that only manually run tasks should be permitted
-FREEZE_AUTOMATION_NO = 'no'
+FREEZE_AUTOMATION_YES = "yes"
+FREEZE_AUTOMATION_SCHEDULED = "scheduled"  # inform the pipeline that only manually run tasks should be permitted
+FREEZE_AUTOMATION_NO = "no"
 
 
 # doozer cancel brew builds on SIGINT (Ctrl-C)
@@ -102,7 +102,7 @@ class Runtime(GroupRuntime):
         self.assembly_basis_event = None
         self.assembly_type = None
         self.releases_config = None
-        self.assembly = 'test'
+        self.assembly = "test"
         self.local = False
         self.stage = False
         self.upcycle = False
@@ -218,11 +218,11 @@ class Runtime(GroupRuntime):
         self.rhpkg_config_lst = []
         if self.rhpkg_config:
             if not os.path.isfile(self.rhpkg_config):
-                raise DoozerFatalError('--rhpkg-config option given is not a valid file! {}'.format(self.rhpkg_config))
-            self.rhpkg_config = ' --config {} '.format(self.rhpkg_config)
+                raise DoozerFatalError("--rhpkg-config option given is not a valid file! {}".format(self.rhpkg_config))
+            self.rhpkg_config = " --config {} ".format(self.rhpkg_config)
             self.rhpkg_config_lst = self.rhpkg_config.split()
         else:
-            self.rhpkg_config = ''
+            self.rhpkg_config = ""
 
     def get_releases_config(self):
         if self.releases_config is None:
@@ -251,7 +251,7 @@ class Runtime(GroupRuntime):
         return self._build_data_loader.load_config("erratatool", default={}, replace_vars=replace_vars)
 
     def get_plashet_config(self):
-        plashet_config_dict = self.group_config.get('plashet')
+        plashet_config_dict = self.group_config.get("plashet")
         if not plashet_config_dict:
             return None
         return PlashetConfig.model_validate(plashet_config_dict)
@@ -268,10 +268,10 @@ class Runtime(GroupRuntime):
 
         :return: RepoList containing repo configurations
         """
-        if 'all_repos' in self.group_config:
+        if "all_repos" in self.group_config:
             # New-style repo config: repos are defined in separate files and included via group.ext.yml
             self._logger.info("Using new-style repo configurations from all_repos")
-            all_repos = self.group_config['all_repos']
+            all_repos = self.group_config["all_repos"]
 
             # Parse using Pydantic models
             repo_list = RepoList.model_validate(all_repos)
@@ -287,19 +287,19 @@ class Runtime(GroupRuntime):
             for repo_name, repo_data in old_repos.items():
                 # Parse content_set and reposync if present
                 content_set = None
-                if 'content_set' in repo_data:
-                    content_set = ContentSet.model_validate(repo_data['content_set'])
+                if "content_set" in repo_data:
+                    content_set = ContentSet.model_validate(repo_data["content_set"])
 
                 reposync = RepoSync()
-                if 'reposync' in repo_data:
-                    reposync = RepoSync.model_validate(repo_data['reposync'])
+                if "reposync" in repo_data:
+                    reposync = RepoSync.model_validate(repo_data["reposync"])
 
                 # Create Repo object using constructor
                 repo = Repo(
                     name=repo_name,
-                    type='external',
+                    type="external",
                     disabled=False,
-                    conf=repo_data.get('conf'),
+                    conf=repo_data.get("conf"),
                     content_set=content_set,
                     reposync=reposync,
                 )
@@ -312,33 +312,33 @@ class Runtime(GroupRuntime):
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         # If assembly mode is enabled, `runtime_assembly` will become the assembly name.
-        replace_vars['runtime_assembly'] = ''
+        replace_vars["runtime_assembly"] = ""
         # If running against an assembly for a named release, release_name will become the release name.
-        replace_vars['release_name'] = ''
+        replace_vars["release_name"] = ""
         if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+            replace_vars["runtime_assembly"] = self.assembly
             if self.assembly_type is not AssemblyTypes.STREAM:
-                release_name = replace_vars['release_name'] = util.get_release_name_for_assembly(
+                release_name = replace_vars["release_name"] = util.get_release_name_for_assembly(
                     self.group, self.get_releases_config(), self.assembly
                 )
                 # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
-                if 'PATCH' not in replace_vars:
-                    replace_vars['PATCH'] = Version.parse(release_name).patch
+                if "PATCH" not in replace_vars:
+                    replace_vars["PATCH"] = Version.parse(release_name).patch
         return replace_vars
 
     def init_state(self):
         self.state = dict(state.TEMPLATE_BASE_STATE)
         if os.path.isfile(self.state_file):
-            with io.open(self.state_file, 'r', encoding='utf-8') as f:
+            with io.open(self.state_file, "r", encoding="utf-8") as f:
                 self.state = yaml.full_load(f)
 
     def save_state(self):
-        with io.open(self.state_file, 'w', encoding='utf-8') as f:
+        with io.open(self.state_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
     def initialize(
         self,
-        mode='images',
+        mode="images",
         clone_distgits=True,
         validate_content_sets=False,
         no_group=False,
@@ -388,7 +388,7 @@ class Runtime(GroupRuntime):
         self.record_log_path = os.path.join(self.working_dir, "record.log")
         self.brew_logs_dir = os.path.join(self.working_dir, "brew-logs")
         self.flags_dir = os.path.join(self.working_dir, "flags")
-        self.state_file = os.path.join(self.working_dir, 'state.yaml')
+        self.state_file = os.path.join(self.working_dir, "state.yaml")
 
         if self.upcycle:
             # A working directory may be upcycle'd numerous times.
@@ -416,15 +416,15 @@ class Runtime(GroupRuntime):
         try:
             self.db = dblib.DB(self, self.datastore)
         except Exception as err:
-            self._logger.warning('Cannot connect to the DB: %s', str(err))
+            self._logger.warning("Cannot connect to the DB: %s", str(err))
 
-        self._logger.info(f'Initial execution (cwd) directory: {os.getcwd()}')
+        self._logger.info(f"Initial execution (cwd) directory: {os.getcwd()}")
 
         if no_group:
             return  # nothing past here should be run without a group
 
-        if '@' in self.group:
-            self.group, self.group_commitish = self.group.split('@', 1)
+        if "@" in self.group:
+            self.group, self.group_commitish = self.group.split("@", 1)
         elif self.group_commitish is None:
             self.group_commitish = self.group
 
@@ -439,14 +439,14 @@ class Runtime(GroupRuntime):
         for upstream in self.upstreams:
             override_distgit_key = upstream[0]
             override_commitish = upstream[1]
-            self._logger.warning(f'Upstream source for {override_distgit_key} being set to {override_commitish}')
+            self._logger.warning(f"Upstream source for {override_distgit_key} being set to {override_commitish}")
             self.upstream_commitish_overrides[override_distgit_key] = override_commitish
 
         for upstream in self.downstreams:
             override_distgit_key = upstream[0]
             override_commitish = upstream[1]
             self._logger.warning(
-                f'Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}'
+                f"Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}"
             )
             self.downstream_commitish_overrides[override_distgit_key] = override_commitish
 
@@ -481,9 +481,9 @@ class Runtime(GroupRuntime):
         )
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
-            if re.fullmatch(r'[\w.-]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
+            if re.fullmatch(r"[\w.-]+", self.assembly) is None or self.assembly[0] == "." or self.assembly[-1] == ".":
                 raise ValueError(
-                    'Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).'
+                    "Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.)."
                 )
         else:
             # If assemblies are not enabled for the group,
@@ -506,7 +506,7 @@ class Runtime(GroupRuntime):
         if (
             self.assembly_type == AssemblyTypes.STREAM
             or not self.assembly
-            or self.assembly in ['stream', 'test', 'microshift']
+            or self.assembly in ["stream", "test", "microshift"]
         ):
             strict_mode = False
 
@@ -516,7 +516,7 @@ class Runtime(GroupRuntime):
         if self.assembly_basis_event:
             if self.brew_event:
                 raise IOError(
-                    f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
+                    f"Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time."
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
             if isinstance(self.assembly_basis_event, int):
@@ -526,18 +526,18 @@ class Runtime(GroupRuntime):
             else:
                 # The assembly basis event for Konflux is a timestamp, e.g. 2025-04-15 13:28:09
                 # Use koji.getLatestEvent() to get the latest Brew event that came before the assembly Konflux event
-                self._logger.info('Computed assembly basis event: %s', self.assembly_basis_event)
+                self._logger.info("Computed assembly basis event: %s", self.assembly_basis_event)
                 with self.shared_koji_client_session() as koji_api:
                     self.brew_event = brew_event_from_datetime(self.assembly_basis_event, koji_api)
 
-            self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
+            self._logger.info(f"Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}")
 
         # This flag indicates builds should be tagged with associated hotfix tag for the artifacts branch
         self.hotfix = self.assembly_type is not AssemblyTypes.STREAM
 
         # Instantiate the default source resolver
-        if 'source_alias' not in self.state:
-            self.state['source_alias'] = {}
+        if "source_alias" not in self.state:
+            self.state["source_alias"] = {}
         self.source_resolver = SourceResolver(
             sources_base_dir=self.sources_dir,
             cache_dir=self.git_cache_dir,
@@ -556,7 +556,7 @@ class Runtime(GroupRuntime):
                 # lock in an event so that there are no race conditions.
                 self._logger.info("Getting the latest event....")
                 event_info = koji_session.getLastEvent()
-                self.brew_event = event_info['id']
+                self.brew_event = event_info["id"]
 
         # register the sources
         # For each "--source alias path" on the command line, register its existence with
@@ -565,10 +565,10 @@ class Runtime(GroupRuntime):
             self.source_resolver.register_source_alias(r[0], r[1])
 
         if self.sources:
-            with io.open(self.sources, 'r', encoding='utf-8') as sf:
+            with io.open(self.sources, "r", encoding="utf-8") as sf:
                 source_dict = yaml.full_load(sf)
                 if not isinstance(source_dict, dict):
-                    raise ValueError('--sources param must be a yaml file containing a single dict.')
+                    raise ValueError("--sources param must be a yaml file containing a single dict.")
                 for key, val in source_dict.items():
                     self.source_resolver.register_source_alias(key, val)
 
@@ -580,27 +580,27 @@ class Runtime(GroupRuntime):
                 # split csv values
                 result = []
                 for n in names:
-                    result.append([x for x in n.replace(' ', ',').split(',') if x != ''])
+                    result.append([x for x in n.replace(" ", ",").split(",") if x != ""])
                 # flatten result and remove dupes using set
                 return list(set([y for x in result for y in x]))
 
             def filter_wip(n, d):
-                return d.get('mode', 'enabled') in ['wip', 'enabled']
+                return d.get("mode", "enabled") in ["wip", "enabled"]
 
             def filter_enabled(n, d):
-                mode = d.get('mode', 'enabled')
+                mode = d.get("mode", "enabled")
                 # Include if generally enabled
-                if mode == 'enabled':
+                if mode == "enabled":
                     return True
                 # Include if has okd.mode: enabled AND --load-okd-only flag is set
-                if mode == 'disabled' and self.load_okd_only:
-                    okd_config = d.get('okd', {})
-                    if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
+                if mode == "disabled" and self.load_okd_only:
+                    okd_config = d.get("okd", {})
+                    if isinstance(okd_config, dict) and okd_config.get("mode") == "enabled":
                         return True
                 return False
 
             def filter_disabled(n, d):
-                return d.get('mode', 'enabled') in ['enabled', 'disabled']
+                return d.get("mode", "enabled") in ["enabled", "disabled"]
 
             cli_arches_override = flatten_list(self.arches)
 
@@ -611,7 +611,7 @@ class Runtime(GroupRuntime):
             ):  # Allow arches_override in group.yaml to temporarily override GA architectures
                 self.arches = self.group_config.arches_override
             else:
-                self.arches = self.group_config.get('arches', ['x86_64'])
+                self.arches = self.group_config.get("arches", ["x86_64"])
 
             # If specified, signed repo files will be generated to enforce signature checks.
             self.gpgcheck = self.group_config.build_profiles.image.signed.gpgcheck
@@ -678,7 +678,7 @@ class Runtime(GroupRuntime):
             # pre-load the image data to get the names for all images
             # eventually we can use this to allow loading images by
             # name or distgit. For now this is used elsewhere
-            image_name_data = self.gitdata.load_data(path='images')
+            image_name_data = self.gitdata.load_data(path="images")
 
             def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
                 if name_in_bundle in self.name_in_bundle_map:
@@ -688,11 +688,11 @@ class Runtime(GroupRuntime):
                 self.name_in_bundle_map[name_in_bundle] = img.key
 
             for img in image_name_data.values():
-                name = img.data.get('name')
-                short_name = name.split('/')[1]
+                name = img.data.get("name")
+                short_name = name.split("/")[1]
                 self.image_name_map[name] = img.key
                 self.image_name_map[short_name] = img.key
-                name_in_bundle = img.data.get('name_in_bundle')
+                name_in_bundle = img.data.get("name_in_bundle")
                 if name_in_bundle:
                     _register_name_in_bundle(name_in_bundle, img.key)
                 else:
@@ -702,7 +702,7 @@ class Runtime(GroupRuntime):
                     _register_name_in_bundle(short_name_with_ose, img.key)
 
             image_data = self.gitdata.load_data(
-                path='images',
+                path="images",
                 keys=image_keys,
                 exclude=image_ex,
                 replace_vars=replace_vars,
@@ -711,7 +711,7 @@ class Runtime(GroupRuntime):
 
             try:
                 rpm_data = self.gitdata.load_data(
-                    path='rpms',
+                    path="rpms",
                     keys=rpm_keys,
                     exclude=rpm_ex,
                     replace_vars=replace_vars,
@@ -724,12 +724,12 @@ class Runtime(GroupRuntime):
             missed_include = set(image_keys + rpm_keys) - set(list(image_data.keys()) + list(rpm_data.keys()))
             if len(missed_include) > 0:
                 raise DoozerFatalError(
-                    'The following images or rpms were either missing or filtered out: {}'.format(
-                        ', '.join(missed_include)
+                    "The following images or rpms were either missing or filtered out: {}".format(
+                        ", ".join(missed_include)
                     )
                 )
 
-            if mode in ['images', 'both']:
+            if mode in ["images", "both"]:
                 for i in image_data.values():
                     if i.key not in self.image_map:
                         metadata = ImageMetadata(
@@ -754,14 +754,14 @@ class Runtime(GroupRuntime):
                     for child in image.children:
                         if image.is_ancestor(child):
                             raise DoozerFatalError(
-                                '{} cannot be both a parent and dependent of {}'.format(
+                                "{} cannot be both a parent and dependent of {}".format(
                                     child.distgit_key, image.distgit_key
                                 )
                             )
 
                 self.generate_image_tree()
 
-            if mode in ['rpms', 'both']:
+            if mode in ["rpms", "both"]:
                 for r in rpm_data.values():
                     if clone_source is None:
                         # Historically, clone_source defaulted to True for rpms.
@@ -784,10 +784,10 @@ class Runtime(GroupRuntime):
         # This would almost always indicate someone has checked in duplicate metadata into a group.
         no_collide_check = {}
         for meta in list(self.rpm_map.values()) + list(self.image_map.values()):
-            key = '{}/{}/#{}'.format(meta.namespace, meta.name, meta.branch())
+            key = "{}/{}/#{}".format(meta.namespace, meta.name, meta.branch())
             if key in no_collide_check:
                 raise IOError(
-                    'Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(
+                    "Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}".format(
                         key, meta.config_filename, no_collide_check[key].config_filename
                     )
                 )
@@ -847,7 +847,7 @@ class Runtime(GroupRuntime):
             yield self._koji_client_session
 
     @contextmanager
-    def shared_build_status_detector(self) -> 'BuildStatusDetector':
+    def shared_build_status_detector(self) -> "BuildStatusDetector":
         """
         Yields a shared build status detector within context.
         """
@@ -910,7 +910,7 @@ class Runtime(GroupRuntime):
         """
         if self.freeze_automation == FREEZE_AUTOMATION_YES:
             raise DoozerFatalError(
-                'Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(
+                "Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.".format(
                     FREEZE_AUTOMATION_YES
                 )
             )
@@ -948,9 +948,9 @@ class Runtime(GroupRuntime):
         """
         if self._build_data_product_cache:
             return self._build_data_product_cache
-        url = 'https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/product.yml'
+        url = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/main/product.yml"
         req = urllib.request.Request(url)
-        req.add_header('Accept', 'application/yaml')
+        req.add_header("Accept", "application/yaml")
         self._build_data_product_cache = Model(yaml.safe_load(exectools.urlopen_assert(req).read()))
         return self._build_data_product_cache
 
@@ -1067,7 +1067,7 @@ class Runtime(GroupRuntime):
         """
         distgit_path = self.distgits_diff_dir
 
-        with io.open(os.path.join(distgit_path, distgit + '.patch'), 'w', encoding='utf-8') as f:
+        with io.open(os.path.join(distgit_path, distgit + ".patch"), "w", encoding="utf-8") as f:
             f.write(diff)
 
     def resolve_image(self, distgit_name, required=True) -> ImageMetadata:
@@ -1096,9 +1096,9 @@ class Runtime(GroupRuntime):
             return self.image_map[distgit_name]
 
         replace_vars = self.get_replace_vars(self.group_config)
-        data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
+        data_obj = self.gitdata.load_data(path="images", key=distgit_name, replace_vars=replace_vars)
         if not data_obj:
-            raise DoozerFatalError('Unable to resolve image metadata for {}'.format(distgit_name))
+            raise DoozerFatalError("Unable to resolve image metadata for {}".format(distgit_name))
 
         mode = data_obj.data.get("mode", "enabled")
 
@@ -1109,14 +1109,14 @@ class Runtime(GroupRuntime):
         # Skip loading if disabled (unless okd.mode: enabled with load_okd_only or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
-                raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
+                raise DoozerFatalError("Attempted to load image {} but it has mode {}".format(distgit_name, mode))
             self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
             return None
 
         # Skip loading if wip
         if mode == "wip" and not self.load_wip:
             if required:
-                raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
+                raise DoozerFatalError("Attempted to load image {} but it has mode {}".format(distgit_name, mode))
             self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
             return None
 
@@ -1147,16 +1147,16 @@ class Runtime(GroupRuntime):
             # ref: https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
             url = self.group_config.urls.brew_image_host
             ns = self.group_config.urls.brew_image_namespace
-            name = image_name_and_version.replace('/', '-')
+            name = image_name_and_version.replace("/", "-")
             url = "/".join((url, ns, name))
         else:
             # If there is no namespace, just add the image name to the brew image host
             url = "/".join((self.group_config.urls.brew_image_host, image_name_and_version))
 
-        if ':' not in url.split('/')[-1]:
+        if ":" not in url.split("/")[-1]:
             # oc image info will return information about all tagged images. So be explicit
             # in indicating :latest if there is no tag.
-            url += ':latest'
+            url += ":latest"
 
         return url
 
@@ -1170,11 +1170,11 @@ class Runtime(GroupRuntime):
 
         # If the stream has an override from the command line, return it.
         if stream_name in self.stream_overrides:
-            return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
+            return Model(dict_to_model={"image": self.stream_overrides[stream_name]})
 
         matched_streams = list(
             itertools.islice(
-                ((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2
+                ((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get("aliases", [])), 2
             )
         )
         if len(matched_streams) == 0:
@@ -1198,11 +1198,11 @@ class Runtime(GroupRuntime):
         """
         if not self.cache_dir:
             return None
-        os.path.join(self.cache_dir, self.user or "default", 'git')
+        os.path.join(self.cache_dir, self.user or "default", "git")
 
     def export_sources(self, output):
-        self._logger.info('Writing sources to {}'.format(output))
-        with io.open(output, 'w', encoding='utf-8') as sources_file:
+        self._logger.info("Writing sources to {}".format(output))
+        with io.open(output, "w", encoding="utf-8") as sources_file:
             yaml.dump(
                 {k: v.source_path for k, v in self.source_resolutions.items()}, sources_file, default_flow_style=False
             )
@@ -1217,7 +1217,7 @@ class Runtime(GroupRuntime):
         rpms.  The caller must indicate which to use.
         """
 
-        repo_url = self.repos['rhel-server-ose-rpms'].baseurl(repo_type, 'x86_64')
+        repo_url = self.repos["rhel-server-ose-rpms"].baseurl(repo_type, "x86_64")
         self._logger.info(
             "Getting version from atomic-openshift package in {}".format(repo_url),
         )
@@ -1261,16 +1261,16 @@ class Runtime(GroupRuntime):
         return re.match(r"^v\d+((\.\d+)+)?$", version) is not None
 
     def clone_distgits(self, n_threads=None):
-        with exectools.timer(self._logger.info, 'Full runtime clone'):
+        with exectools.timer(self._logger.info, "Full runtime clone"):
             if n_threads is None:
-                n_threads = self.global_opts['distgit_threads']
+                n_threads = self.global_opts["distgit_threads"]
             return exectools.parallel_exec(lambda m, _: m.distgit_repo(), self.all_metas(), n_threads=n_threads).get()
 
     def push_distgits(self, n_threads=None):
         self.assert_mutation_is_permitted()
 
         if n_threads is None:
-            n_threads = self.global_opts['distgit_threads']
+            n_threads = self.global_opts["distgit_threads"]
         return exectools.parallel_exec(
             lambda m, _: m.distgit_repo().push(), self.all_metas(), n_threads=n_threads
         ).get()
@@ -1284,17 +1284,17 @@ class Runtime(GroupRuntime):
         # a specific RHEL version. Pull apart the default group branch
         # and replace it wth the targeted version.
         el_ver: int = isolate_el_version_in_brew_tag(el_target)
-        match = re.match(r'^(.*)rhel-\d+(.*)$', self.branch)
-        el_specific_branch: str = f'{match.group(1)}rhel-{el_ver}{match.group(2)}'
+        match = re.match(r"^(.*)rhel-\d+(.*)$", self.branch)
+        el_specific_branch: str = f"{match.group(1)}rhel-{el_ver}{match.group(2)}"
         return el_specific_branch
 
     def get_default_candidate_brew_tag(self, el_target: Optional[Union[str, int]] = None):
         branch = self.get_el_targeted_default_branch(el_target=el_target)
-        return branch + '-candidate' if branch else None
+        return branch + "-candidate" if branch else None
 
     def get_default_hotfix_brew_tag(self, el_target: Optional[Union[str, int]] = None):
         branch = self.get_el_targeted_default_branch(el_target=el_target)
-        return branch + '-hotfix' if branch else None
+        return branch + "-hotfix" if branch else None
 
     def get_candidate_brew_tags(self):
         """Return a set of known candidate tags relevant to this group"""
@@ -1303,20 +1303,20 @@ class Runtime(GroupRuntime):
         # releases with default rhel-7 tag also have rhel 8.
         # releases with default rhel-8 tag do not also care about rhel-7.
         # adjust as needed (and just imagine rhel 9)!
-        return {tag, tag.replace('-rhel-7', '-rhel-8')} if tag else set()
+        return {tag, tag.replace("-rhel-7", "-rhel-8")} if tag else set()
 
     def get_minor_version(self) -> str:
         """
         Returns: "<MAJOR>.<MINOR>" if the vars are defined in the group config.
         """
-        return '.'.join(str(self.group_config.vars[v]) for v in ('MAJOR', 'MINOR'))
+        return ".".join(str(self.group_config.vars[v]) for v in ("MAJOR", "MINOR"))
 
     def get_major_minor_fields(self) -> Tuple[int, int]:
         """
         Returns: (int(MAJOR), int(MINOR)) if the vars are defined in the group config.
         """
-        major = int(self.group_config.vars['MAJOR'])
-        minor = int(self.group_config.vars['MINOR'])
+        major = int(self.group_config.vars["MAJOR"])
+        minor = int(self.group_config.vars["MINOR"])
         return major, minor
 
     def resolve_metadata(self):

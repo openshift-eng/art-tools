@@ -103,7 +103,7 @@ class SignRhcosContainersPipeline:
             self.logger.info(f"  - {image_type}: {digest}")
 
         kms_cred_file = os.environ.get("KMS_CRED_FILE", "")
-        kms_key_ids = os.environ.get("KMS_KEY_ID", "").strip().split(',')
+        kms_key_ids = os.environ.get("KMS_KEY_ID", "").strip().split(",")
         rekor_url = os.environ.get("REKOR_URL", "")
 
         signatory = SigstoreSignatory(

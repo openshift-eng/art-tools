@@ -98,7 +98,7 @@ class SourceResolver:
         self._record_logger = record_logger
         self._state_holder = state_holder
 
-    def resolve_source(self, meta: 'Metadata', no_clone: bool = False) -> SourceResolution:
+    def resolve_source(self, meta: "Metadata", no_clone: bool = False) -> SourceResolution:
         """Resolve the source code repository for the specified metadata.
         :param meta: The metadata to resolve the source code repository for.
         :param no_clone: If True, the source code repository will not be cloned. Only the source resolution object will be returned.
@@ -115,12 +115,12 @@ class SourceResolver:
         # having been configured for an alias
         if self.local and meta.distgit_key in self.source_resolutions:
             alias = meta.distgit_key
-        elif 'git' in source:
+        elif "git" in source:
             git_url = urllib.parse.urlparse(art_util.convert_remote_git_to_https(source.git.url))
             name = os.path.splitext(os.path.basename(git_url.path))[0]
-            alias = f'{meta.namespace}_{meta.name}_{name}'
+            alias = f"{meta.namespace}_{meta.name}_{name}"
             source_details = dict(source.git)
-        elif 'alias' in source:
+        elif "alias" in source:
             alias = str(source.alias)
         else:
             raise ValueError(f"No source url or alias defined for {meta.qualified_key}")
@@ -171,7 +171,7 @@ class SourceResolver:
 
             if meta.prevent_cloning:
                 raise IOError(
-                    f'Attempt to clone upstream {meta.distgit_key} after cloning disabled; a regression has been introduced.'
+                    f"Attempt to clone upstream {meta.distgit_key} after cloning disabled; a regression has been introduced."
                 )
 
             use_source_fallback_branch = cast(str, self._group_config.use_source_fallback_branch or "yes")
@@ -208,7 +208,7 @@ class SourceResolver:
                 if self.is_branch_commit_hash(branch=clone_branch):
                     gitargs = []
                 else:
-                    gitargs = ['--branch', clone_branch]
+                    gitargs = ["--branch", clone_branch]
 
                 git_clone(
                     clone_url,
@@ -221,12 +221,12 @@ class SourceResolver:
                 # If we used pull_url for cloning, we need to set up the push remote
                 if pull_url and pull_url != url:
                     with exectools.Dir(source_dir):
-                        exectools.cmd_assert(f'git remote set-url origin {url}')  # Set origin to push URL
-                        exectools.cmd_assert(f'git remote add pull {pull_url}')  # Add pull remote
+                        exectools.cmd_assert(f"git remote set-url origin {url}")  # Set origin to push URL
+                        exectools.cmd_assert(f"git remote add pull {pull_url}")  # Add pull remote
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
-                        exectools.cmd_assert(f'git checkout {clone_branch}')
+                        exectools.cmd_assert(f"git checkout {clone_branch}")
 
                 if meta.commitish:
                     # With the alias registered, check out the commit we want
@@ -296,13 +296,13 @@ class SourceResolver:
             return branch, result
 
         if not fallback_branch:
-            raise IOError('Requested target branch {} does not exist and no fallback provided'.format(branch))
+            raise IOError("Requested target branch {} does not exist and no fallback provided".format(branch))
 
-        LOGGER.info('Target branch does not exist in {}, checking fallback branch {}'.format(git_url, fallback_branch))
+        LOGGER.info("Target branch does not exist in {}, checking fallback branch {}".format(git_url, fallback_branch))
         result = SourceResolver._get_remote_branch_ref(git_url, fallback_branch)
         if result:
             return fallback_branch, result
-        raise IOError('Requested fallback branch {} does not exist'.format(branch))
+        raise IOError("Requested fallback branch {} does not exist".format(branch))
 
     @staticmethod
     def is_branch_commit_hash(branch):
@@ -330,13 +330,13 @@ class SourceResolver:
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
         """
-        LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
+        LOGGER.info("Checking if target branch {} exists in {}".format(branch, git_url))
 
         try:
-            out, _ = exectools.cmd_assert('git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3)
+            out, _ = exectools.cmd_assert("git ls-remote --heads {} refs/heads/{}".format(git_url, branch), retries=3)
         except Exception as err:
             # We don't expect and exception if the branch does not exist; just an empty string
-            LOGGER.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
+            LOGGER.error("Error attempting to find target branch {} hash: {}".format(branch, err))
             return None
         result = out.strip()  # any result means the branch is found; e.g. "7e66b10fbcd6bb4988275ffad0a69f563695901f	refs/heads/some_branch")
         if not result and SourceResolver.is_branch_commit_hash(branch):
@@ -390,7 +390,7 @@ class SourceResolver:
             has_public_upstream = False
             public_upstream_url = origin_url
             public_upstream_branch = branch
-            if branch != 'HEAD' and self._group_config.public_upstreams:
+            if branch != "HEAD" and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
                 public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(
                     url, self._group_config.public_upstreams
@@ -414,13 +414,13 @@ class SourceResolver:
             self.source_resolutions[alias] = resolution
             if self._record_logger:
                 self._record_logger.add_record(
-                    "source_alias", alias=alias, origin_url=origin_url, branch=branch or '?', path=path
+                    "source_alias", alias=alias, origin_url=origin_url, branch=branch or "?", path=path
                 )
             if self._state_holder is not None:
                 self._state_holder[alias] = {
-                    'url': origin_url,
-                    'branch': branch or '?',
-                    'path': path,
+                    "url": origin_url,
+                    "branch": branch or "?",
+                    "path": path,
                 }
             return resolution
 
@@ -460,7 +460,7 @@ class SourceResolver:
                     priv
                 )  # Normalize whatever is specified in group.yaml
                 https_pub_prefix = art_util.convert_remote_git_to_https(pub)
-                if remote_https.startswith(f'{https_priv_prefix}/') or remote_https == https_priv_prefix:
+                if remote_https.startswith(f"{https_priv_prefix}/") or remote_https == https_priv_prefix:
                     # If we have not set the prefix yet, or if it is longer than the current contender
                     if not target_priv_prefix or len(https_priv_prefix) > len(target_pub_prefix):
                         target_priv_prefix = https_priv_prefix
@@ -471,18 +471,18 @@ class SourceResolver:
                 repo_path = remote_https[len(target_priv_prefix) :]  # e.g., "/migtools-mig-operator"
 
                 # Extract public org name
-                pub_org = target_pub_prefix.split('/')[-1]  # e.g., "migtools"
+                pub_org = target_pub_prefix.split("/")[-1]  # e.g., "migtools"
 
                 # If public org is not "openshift", try removing org prefix from repo name
                 if pub_org != "openshift":
-                    repo_name = repo_path.lstrip('/')  # "migtools-mig-operator"
+                    repo_name = repo_path.lstrip("/")  # "migtools-mig-operator"
                     if repo_name.startswith(f"{pub_org}-"):
                         # Remove the org prefix: "migtools-mig-operator" → "mig-operator"
                         repo_without_prefix = repo_name.removeprefix(f"{pub_org}-")
-                        return f'{target_pub_prefix}/{repo_without_prefix}', target_pub_branch, True
+                        return f"{target_pub_prefix}/{repo_without_prefix}", target_pub_branch, True
 
                 # Fallback to original behavior
-                return f'{target_pub_prefix}{repo_path}', target_pub_branch, True
+                return f"{target_pub_prefix}{repo_path}", target_pub_branch, True
 
         return remote_https, None, False
 
@@ -496,7 +496,7 @@ class SourceResolver:
         :param source_dir: Path to the local Git repository
         """
         out, _ = exectools.cmd_assert(["git", "-C", source_dir, "remote"])
-        if 'public_upstream' not in out.strip().split():
+        if "public_upstream" not in out.strip().split():
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "add", "--", "public_upstream", public_source_url])
         else:
             exectools.cmd_assert(
@@ -509,7 +509,7 @@ class SourceResolver:
         )
 
     @staticmethod
-    def get_source_dir(source: SourceResolution, metadata: 'Metadata', check=True) -> Path:
+    def get_source_dir(source: SourceResolution, metadata: "Metadata", check=True) -> Path:
         if not metadata.has_source():
             raise ValueError("Metadata does not have a source")
         source_dir = Path(source.source_path)

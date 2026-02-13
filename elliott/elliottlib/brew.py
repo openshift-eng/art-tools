@@ -157,7 +157,7 @@ def get_builds_tags(build_nvrs, session=None):
 
 
 @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(10))
-def get_brew_build(nvr, product_version='', session=None):
+def get_brew_build(nvr, product_version="", session=None):
     """5.2.2.1. GET /api/v1/build/{id_or_nvr}
 
     Get Brew build details.
@@ -196,8 +196,8 @@ def get_brew_build(nvr, product_version='', session=None):
         raise exceptions.BrewBuildException("{build}: {msg}".format(build=nvr, msg=res.text))
 
 
-def get_nvr_arch_log(name, version, release, arch='x86_64'):
-    log_url = '{host}/packages/{name}/{version}/{release}/data/logs/{arch}.log'.format(
+def get_nvr_arch_log(name, version, release, arch="x86_64"):
+    log_url = "{host}/packages/{name}/{version}/{release}/data/logs/{arch}.log".format(
         host=constants.BREW_DOWNLOAD_URL,
         name=name,
         version=version,
@@ -212,8 +212,8 @@ def get_nvr_arch_log(name, version, release, arch='x86_64'):
     return res.text
 
 
-def get_nvr_root_log(name, version, release, arch='x86_64'):
-    tmp = re.search(r'\.el(\d+)', release)
+def get_nvr_root_log(name, version, release, arch="x86_64"):
+    tmp = re.search(r"\.el(\d+)", release)
     try:
         rhel_version = int(tmp.groups()[0])
     except Exception as e:
@@ -221,7 +221,7 @@ def get_nvr_root_log(name, version, release, arch='x86_64'):
         logger.warning("Assuming rhel-8")
         rhel_version = 8
 
-    root_log_url = f'{constants.BREW_DOWNLOAD_URL}/vol/rhel-{rhel_version}/packages/{name}/{version}/{release}/data/logs/{arch}/root.log'
+    root_log_url = f"{constants.BREW_DOWNLOAD_URL}/vol/rhel-{rhel_version}/packages/{name}/{version}/{release}/data/logs/{arch}/root.log"
 
     logger.debug(f"Trying {root_log_url}")
     res = requests.get(root_log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
@@ -245,7 +245,7 @@ class Build(object):
 
     """
 
-    def __init__(self, nvr=None, body={}, product_version=''):
+    def __init__(self, nvr=None, body={}, product_version=""):
         """Model for a brew build.
 
         :param str nvr: Name-Version-Release (or build ID) of a brew build
@@ -263,8 +263,8 @@ class Build(object):
         self.nvr = nvr
         self.body = body
         self.all_errata = []
-        self.kind = ''
-        self.path = ''
+        self.kind = ""
+        self.path = ""
         self.attached_erratum_ids = set([])
         self.attached_closed_erratum_ids = set([])
         self.product_version = product_version
@@ -296,17 +296,17 @@ class Build(object):
     @property
     def open_erratum(self):
         """Any open erratum this build is attached to"""
-        return [e for e in self.all_errata if e['status'] in constants.errata_active_advisory_labels]
+        return [e for e in self.all_errata if e["status"] in constants.errata_active_advisory_labels]
 
     @property
     def shipped_erratum(self):
         """Any shipped live erratum this build is attached to"""
-        return [e for e in self.all_errata if e['status'] == constants.errata_shipped_advisory_label]
+        return [e for e in self.all_errata if e["status"] == constants.errata_shipped_advisory_label]
 
     @property
     def open_errata_id(self):
         """Any open erratum this build is attached to"""
-        return [e['id'] for e in self.all_errata if e['status'] in constants.errata_active_advisory_labels]
+        return [e["id"] for e in self.all_errata if e["status"] in constants.errata_active_advisory_labels]
 
     @property
     def attached_to_open_erratum(self):
@@ -321,7 +321,7 @@ class Build(object):
     @property
     def closed_erratum(self):
         """Any closed erratum this build is attached to"""
-        return [e for e in self.all_errata if e['status'] in constants.errata_inactive_advisory_labels]
+        return [e for e in self.all_errata if e["status"] in constants.errata_inactive_advisory_labels]
 
     @property
     def attached_to_closed_erratum(self):
@@ -337,10 +337,10 @@ class Build(object):
         """Generate some easy to access attributes about this build so we
         don't have to do extra manipulation later back in the view"""
         # Has this build been attached to any erratum?
-        self.all_errata = self.body.get('all_errata', [])
+        self.all_errata = self.body.get("all_errata", [])
 
         # What kind of build is this?
-        if 'files' in self.body:
+        if "files" in self.body:
             # All of the files are provided. What we're trying to do
             # is figure out if this build classifies as one of the
             # kind of builds we work with: RPM builds and Container
@@ -355,23 +355,23 @@ class Build(object):
             # seen some other general product builds that have both
             # tars and rpms (and assorted other file types), and I've
             # seen pure RPM builds with srpms and rpms...
-            for f in self.body['files']:
-                if f['type'] == 'rpm':
-                    self.kind = 'rpm'
-                    self.file_type = 'rpm'
+            for f in self.body["files"]:
+                if f["type"] == "rpm":
+                    self.kind = "rpm"
+                    self.file_type = "rpm"
                     break
-                elif f['type'] == 'tar':
-                    self.kind = 'image'
-                    self.file_type = 'tar'
+                elif f["type"] == "tar":
+                    self.kind = "image"
+                    self.file_type = "tar"
                     break
 
     def to_json(self):
         """Method for adding this build to advisory via the Errata Tool
         API. This is the body content of the erratum add_builds endpoint."""
         return {
-            'product_version': self.product_version,
-            'build': self.nvr,
-            'file_types': [self.file_type],
+            "product_version": self.product_version,
+            "build": self.nvr,
+            "file_types": [self.file_type],
         }
 
 
@@ -436,30 +436,30 @@ class KojiWrapper(koji.ClientSession):
     # A list of methods which support receiving an event kwarg. See --brew-event CLI argument.
     methods_with_event = set(
         [
-            'getBuildConfig',
-            'getBuildTarget',
-            'getBuildTargets',
-            'getExternalRepo',
-            'getExternalRepoList',
-            'getFullInheritance',
-            'getGlobalInheritance',
-            'getHost',
-            'getInheritanceData',
-            'getLatestBuilds',
-            'getLatestMavenArchives',
-            'getLatestRPMS',
-            'getPackageConfig',
-            'getRepo',
-            'getTag',
-            'getTagExternalRepos',
-            'getTagGroups',
-            'listChannels',
-            'listExternalRepos',
-            'listPackages',
-            'listTagged',
-            'listTaggedArchives',
-            'listTaggedRPMS',
-            'newRepo',
+            "getBuildConfig",
+            "getBuildTarget",
+            "getBuildTargets",
+            "getExternalRepo",
+            "getExternalRepoList",
+            "getFullInheritance",
+            "getGlobalInheritance",
+            "getHost",
+            "getInheritanceData",
+            "getLatestBuilds",
+            "getLatestMavenArchives",
+            "getLatestRPMS",
+            "getPackageConfig",
+            "getRepo",
+            "getTag",
+            "getTagExternalRepos",
+            "getTagGroups",
+            "listChannels",
+            "listExternalRepos",
+            "listPackages",
+            "listTagged",
+            "listTaggedArchives",
+            "listTaggedRPMS",
+            "newRepo",
         ]
     )
 
@@ -468,90 +468,90 @@ class KojiWrapper(koji.ClientSession):
     # koji API call.
     safe_methods = set(
         [
-            'getEvent',
-            'getBuild',
-            'listArchives',
-            'listRPMs',
-            'getPackage',
-            'getPackageID',
-            'listTags',
-            'gssapi_login',
-            'sslLogin',
-            'getTaskInfo',
-            'build',
-            'buildContainer',
-            'buildImage',
-            'buildReferences',
-            'cancelBuild',
-            'cancelTask',
-            'cancelTaskChildren',
-            'cancelTaskFull',
-            'chainBuild',
-            'chainMaven',
-            'createImageBuild',
-            'createMavenBuild',
-            'filterResults',
-            'getAPIVersion',
-            'getArchive',
-            'getArchiveFile',
-            'getArchiveType',
-            'getArchiveTypes',
-            'getAverageBuildDuration',
-            'getBuildLogs',
-            'getBuildNotificationBlock',
-            'getBuildType',
-            'getBuildroot',
-            'getChangelogEntries',
-            'getImageArchive',
-            'getImageBuild',
-            'getLoggedInUser',
-            'getMavenArchive',
-            'getMavenBuild',
-            'getPerms',
-            'getRPM',
-            'getRPMDeps',
-            'getRPMFile',
-            'getRPMHeaders',
-            'getTaskChildren',
-            'getTaskDescendents',
-            'getTaskRequest',
-            'getTaskResult',
-            'getUser',
-            'getUserPerms',
-            'getVolume',
-            'getWinArchive',
-            'getWinBuild',
-            'hello',
-            'listArchiveFiles',
-            'listArchives',
-            'listBTypes',
-            'listBuildRPMs',
-            'listBuildroots',
-            'listRPMFiles',
-            'listRPMs',
-            'listTags',
-            'listTaskOutput',
-            'listTasks',
-            'listUsers',
-            'listVolumes',
-            'login',
-            'logout',
-            'logoutChild',
-            'makeTask',
-            'mavenEnabled',
-            'mergeScratch',
-            'moveAllBuilds',
-            'moveBuild',
-            'queryRPMSigs',
-            'resubmitTask',
-            'tagBuild',
-            'tagBuildBypass',
-            'taskFinished',
-            'taskReport',
-            'untagBuild',
-            'winEnabled',
-            'winBuild',
-            'uploadFile',
+            "getEvent",
+            "getBuild",
+            "listArchives",
+            "listRPMs",
+            "getPackage",
+            "getPackageID",
+            "listTags",
+            "gssapi_login",
+            "sslLogin",
+            "getTaskInfo",
+            "build",
+            "buildContainer",
+            "buildImage",
+            "buildReferences",
+            "cancelBuild",
+            "cancelTask",
+            "cancelTaskChildren",
+            "cancelTaskFull",
+            "chainBuild",
+            "chainMaven",
+            "createImageBuild",
+            "createMavenBuild",
+            "filterResults",
+            "getAPIVersion",
+            "getArchive",
+            "getArchiveFile",
+            "getArchiveType",
+            "getArchiveTypes",
+            "getAverageBuildDuration",
+            "getBuildLogs",
+            "getBuildNotificationBlock",
+            "getBuildType",
+            "getBuildroot",
+            "getChangelogEntries",
+            "getImageArchive",
+            "getImageBuild",
+            "getLoggedInUser",
+            "getMavenArchive",
+            "getMavenBuild",
+            "getPerms",
+            "getRPM",
+            "getRPMDeps",
+            "getRPMFile",
+            "getRPMHeaders",
+            "getTaskChildren",
+            "getTaskDescendents",
+            "getTaskRequest",
+            "getTaskResult",
+            "getUser",
+            "getUserPerms",
+            "getVolume",
+            "getWinArchive",
+            "getWinBuild",
+            "hello",
+            "listArchiveFiles",
+            "listArchives",
+            "listBTypes",
+            "listBuildRPMs",
+            "listBuildroots",
+            "listRPMFiles",
+            "listRPMs",
+            "listTags",
+            "listTaskOutput",
+            "listTasks",
+            "listUsers",
+            "listVolumes",
+            "login",
+            "logout",
+            "logoutChild",
+            "makeTask",
+            "mavenEnabled",
+            "mergeScratch",
+            "moveAllBuilds",
+            "moveBuild",
+            "queryRPMSigs",
+            "resubmitTask",
+            "tagBuild",
+            "tagBuildBypass",
+            "taskFinished",
+            "taskReport",
+            "untagBuild",
+            "winEnabled",
+            "winBuild",
+            "uploadFile",
         ]
     )
 
@@ -572,7 +572,7 @@ class KojiWrapper(koji.ClientSession):
         self._gss_logged_in: bool = False  # Tracks whether this instance has authenticated
         self.___before_timestamp = None
         if brew_event:
-            self.___before_timestamp = self.getEvent(self.___brew_event)['ts']
+            self.___before_timestamp = self.getEvent(self.___brew_event)["ts"]
 
     @classmethod
     def clear_global_cache(cls):
@@ -625,13 +625,13 @@ class KojiWrapper(koji.ClientSession):
         """
         brew_event = self.___brew_event
         if brew_event:
-            if method_name == 'queryHistory':
-                if 'beforeEvent' not in kwargs and 'before' not in kwargs:
+            if method_name == "queryHistory":
+                if "beforeEvent" not in kwargs and "before" not in kwargs:
                     # Only set the kwarg if the caller didn't
                     kwargs = kwargs or {}
-                    kwargs['beforeEvent'] = brew_event + 1
-            elif method_name == 'listBuilds':
-                if 'completeBefore' not in kwargs and 'createdBefore' not in kwargs:
+                    kwargs["beforeEvent"] = brew_event + 1
+            elif method_name == "listBuilds":
+                if "completeBefore" not in kwargs and "createdBefore" not in kwargs:
                     kwargs = kwargs or {}
                     # Recently brew started returning outdated results for filtering via float timestamps.
                     # Using a date string works around this issue.
@@ -639,12 +639,12 @@ class KojiWrapper(koji.ClientSession):
                     dt = None
                     if self.___before_timestamp:
                         dt = str(datetime.utcfromtimestamp(self.___before_timestamp))
-                    kwargs['completeBefore'] = dt
+                    kwargs["completeBefore"] = dt
             elif method_name in KojiWrapper.methods_with_event:
-                if 'event' not in kwargs:
+                if "event" not in kwargs:
                     # Only set the kwarg if the caller didn't
                     kwargs = kwargs or {}
-                    kwargs['event'] = brew_event
+                    kwargs["event"] = brew_event
             elif method_name in KojiWrapper.safe_methods:
                 # Let it go through
                 pass
@@ -652,7 +652,7 @@ class KojiWrapper(koji.ClientSession):
                 # If --brew-event has been specified and non-constrainable API call is invoked, raise
                 # an exception if the caller has not made clear that are ok with that via brew_event_aware option.
                 raise IOError(
-                    f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True'
+                    f"Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True"
                 )
 
         return kwargs
@@ -711,7 +711,7 @@ class KojiWrapper(koji.ClientSession):
             caching=(KojiWrapper.force_global_caching or self.force_instance_caching)
         )
 
-        if name == 'multiCall':
+        if name == "multiCall":
             # If this is a multiCall, we need to search through and modify each bundled invocation
             """
             Example args:
@@ -720,17 +720,17 @@ class KojiWrapper(koji.ClientSession):
             """
             multiArg = args[0]  # args is a tuple, the first should be our listing of method invocations.
             for call_dict in multiArg:  # For each method invocation in the multicall
-                method_name = call_dict['methodName']
-                params = self.modify_koji_call_params(method_name, call_dict['params'], aggregate_kw_opts)
+                method_name = call_dict["methodName"]
+                params = self.modify_koji_call_params(method_name, call_dict["params"], aggregate_kw_opts)
                 if params:
                     params = list(params)
                     # Assess whether we need to inject event of beforeEvent into the koji call kwargs
                     possible_kwargs = params[-1]  # last element could be normal arg or kwargs dict
-                    if isinstance(possible_kwargs, dict) and possible_kwargs.get('__starstar', None):
+                    if isinstance(possible_kwargs, dict) and possible_kwargs.get("__starstar", None):
                         # __starstar is a special identifier added by the koji library indicating
                         # the entry is kwargs and not normal args.
                         params[-1] = self.modify_koji_call_kwargs(method_name, possible_kwargs, aggregate_kw_opts)
-                call_dict['params'] = tuple(params)
+                call_dict["params"] = tuple(params)
         else:
             args = self.modify_koji_call_params(name, args, aggregate_kw_opts)
             kwargs = self.modify_koji_call_kwargs(name, kwargs, aggregate_kw_opts)
@@ -745,14 +745,14 @@ class KojiWrapper(koji.ClientSession):
         while retries > 0:
             try:
                 if logger:
-                    logger.info(f'koji-api-call-{my_id}: {name}(args={args}, kwargs={kwargs})')
+                    logger.info(f"koji-api-call-{my_id}: {name}(args={args}, kwargs={kwargs})")
 
                 def package_result(result, cache_hit: bool):
                     ret = result
                     if return_metadata:
                         # If KojiWrapperOpts asked for information about call metadata back,
                         # return the results in a wrapper containing that information.
-                        if name == 'multiCall':
+                        if name == "multiCall":
                             # Results are going to be returned as [ [result1], [result2], ... ] if there is no fault.
                             # If there is a fault, the fault entry will be a dict.
                             ret = []
@@ -773,16 +773,16 @@ class KojiWrapper(koji.ClientSession):
                     # and sorting keys is a deterministic way of achieving this.
                     caching_key = json.dumps(
                         {
-                            'method_name': name,
-                            'args': args,
-                            'kwargs': kwargs,
+                            "method_name": name,
+                            "args": args,
+                            "kwargs": kwargs,
                         },
                         sort_keys=True,
                     )
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:
                         if logger:
-                            logger.info(f'CACHE HIT: koji-api-call-{my_id}: {name} returned={result}')
+                            logger.info(f"CACHE HIT: koji-api-call-{my_id}: {name} returned={result}")
                         return package_result(result, True)
 
                 result = super()._callMethod(name, args, kwargs=kwargs, retry=retry)
@@ -791,7 +791,7 @@ class KojiWrapper(koji.ClientSession):
                     self._cache_result(caching_key, result)
 
                 if logger:
-                    logger.info(f'koji-api-call-{my_id}: {name} returned={result}')
+                    logger.info(f"koji-api-call-{my_id}: {name} returned={result}")
 
                 return package_result(result, False)
             except requests.exceptions.ConnectionError as ce:
@@ -808,7 +808,7 @@ class KojiWrapper(koji.ClientSession):
         # Prevent redundant logins for shared sessions.
         if self._gss_logged_in:
             if logger:
-                logger.warning('Attempted to login to already logged in KojiWrapper instance')
+                logger.warning("Attempted to login to already logged in KojiWrapper instance")
             return True
         self._gss_logged_in = super().gssapi_login(
             principal=principal, keytab=keytab, ccache=ccache, proxyuser=proxyuser
@@ -823,4 +823,4 @@ def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
     """
     return koji_api.getLastEvent(
         before=datetime_obj.timestamp(),
-    )['id']
+    )["id"]
