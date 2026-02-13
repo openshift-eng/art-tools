@@ -427,6 +427,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
                 raise e
             logger.info(f'Could not determine build system from release {nvr[2]} for {nvr}')
             golang_builder_nvrs.append(nvr)
+            continue
 
         if build_system is not None:
             assert build_system == nvr_build_system, (
