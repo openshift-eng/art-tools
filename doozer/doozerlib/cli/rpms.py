@@ -30,7 +30,7 @@ def rpms_print(runtime, short, output, pattern):
     if "{" not in pattern:
         pattern = "{%s}" % pattern.strip()
 
-    runtime.initialize(mode="rpms", clone_distgits=False, clone_source=False, prevent_cloning=True)
+    runtime.initialize(mode="rpms", clone_distgits=False, clone_source=False)
     rpms = list(runtime.rpm_metas())
 
     if short:

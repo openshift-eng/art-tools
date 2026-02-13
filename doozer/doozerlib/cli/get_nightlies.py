@@ -121,7 +121,7 @@ async def get_nightlies(
     if latest:
         allow_pending = True
         allow_rejected = True
-    runtime.initialize(clone_distgits=False, prevent_cloning=True)
+    runtime.initialize(clone_distgits=False)
     include_arches: Set[str] = determine_arch_list(runtime, set(exclude_arches))
 
     # make lists of nightly objects per arch

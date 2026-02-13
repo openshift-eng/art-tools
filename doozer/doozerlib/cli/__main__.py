@@ -126,7 +126,7 @@ def db_select(runtime, operation, attribute, match, like, where, sort_by, limit,
     https://docs.aws.amazon.com/AmazonSimpleDB/latest/DeveloperGuide/SortingDataSelect.html
     """
 
-    runtime.initialize(clone_distgits=False, prevent_cloning=True, no_group=True)
+    runtime.initialize(clone_distgits=False, no_group=True)
     if not runtime.datastore:
         red_print('--datastore must be specified')
         exit(1)
@@ -297,7 +297,7 @@ def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
         $ doozer --group=openshift-4.0 beta:reposync -o /tmp/repo_sync -c /tmp/cache/ --repo-type signed -r rhel-server-ose-rpms
 
     """
-    runtime.initialize(clone_distgits=False, prevent_cloning=True)
+    runtime.initialize(clone_distgits=False)
     repos = runtime.repos
 
     enabled_repos = []

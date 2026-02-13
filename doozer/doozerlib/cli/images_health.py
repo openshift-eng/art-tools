@@ -226,7 +226,7 @@ class ImagesHealthPipeline:
 @click_coroutine
 @pass_runtime
 async def images_health(runtime, limit, group, assembly, variant):
-    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
+    runtime.initialize(clone_distgits=False, clone_source=False)
     await ImagesHealthPipeline(
         runtime=runtime, limit=limit, group=group, assembly=assembly, variant=BuildVariant(variant)
     ).run()
