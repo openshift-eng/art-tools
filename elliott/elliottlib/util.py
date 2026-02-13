@@ -20,6 +20,7 @@ from artcommonlib.format_util import green_prefix, green_print, red_prefix
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.util import extract_related_images_from_fbc
 from errata_tool import Erratum
 
@@ -682,18 +683,20 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
 
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
-    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in tags]
 
     log("Querying image infos...")
-    cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
 
-    for image, cmd, cmd_result in zip(tags, cmds, cmd_results):
+    async def _get_image_info(tag):
+        pullspec = tag['from']['name']
+        try:
+            return await oc_image_info__cached_async(pullspec)
+        except ChildProcessError as e:
+            raise RuntimeError(f"Unable to run oc image info for {pullspec}: {e}") from e
+
+    image_info_results = await asyncio.gather(*[_get_image_info(tag) for tag in tags])
+
+    for image, stdout in zip(tags, image_info_results):
         image_name = image['name']
-        rc, stdout, stderr = cmd_result
-        if rc != 0:
-            # Probably no point in continuing.. can't contact brew?
-            msg = f"Unable to run oc image info: cmd={cmd!r}, out={stdout}  ; err={stderr}"
-            raise RuntimeError(msg)
 
         image_info = json.loads(stdout)
         labels = image_info['config']['config']['Labels']
@@ -769,14 +772,12 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
         """Extract NVR from a single image. Returns (image_url, nvr_or_empty, error_msg_or_empty)"""
         try:
             logger.debug(f"Running oc image info for: {image_url}")
-            oc_cmd = ['oc', 'image', 'info', image_url, '--filter-by-os', 'amd64', '-o', 'json']
-
-            # Add registry config for authentication if available
-            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-            if konflux_art_images_auth_file:
-                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
-
-            _, image_info_output, _ = await exectools.cmd_gather_async(oc_cmd)
+            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            image_info_output = await oc_image_info__cached_async(
+                image_url,
+                '--filter-by-os=amd64',
+                registry_config=registry_config,
+            )
             image_info = json.loads(image_info_output)
 
             # Extract labels

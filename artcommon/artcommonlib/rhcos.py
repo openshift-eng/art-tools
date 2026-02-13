@@ -1,8 +1,9 @@
 import json
 
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import ListModel, Model
+from artcommonlib.oc_image_info import oc_image_info__cached
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import get_art_prod_image_repo_for_version
 
@@ -103,7 +104,7 @@ def get_build_id_from_rhcos_pullspec(pullspec) -> str:
 
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
 
-    image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
+    image_info_str = oc_image_info__cached(pullspec)
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
@@ -141,18 +142,14 @@ def get_latest_layered_rhcos_build(container_conf: dict = None, arch: str = None
     brew_arch = go_arch_for_brew_arch(arch)
 
     # Get build_id from rhel_build_id_index
-    rhel_info_str, _ = exectools.cmd_assert(
-        f'oc image info -o json {container_conf.rhel_build_id_index} --filter-by-os={brew_arch}', retries=3
-    )
+    rhel_info_str = oc_image_info__cached(container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}')
     rhel_info = json.loads(rhel_info_str)
     build_id = rhel_info['config']['config']['Labels']["org.opencontainers.image.version"]
 
     if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
         digest = rhel_info['digest']
     else:
-        rhcos_info_str, _ = exectools.cmd_assert(
-            f'oc image info -o json {container_conf.rhcos_index_tag} --filter-by-os={brew_arch}', retries=3
-        )
+        rhcos_info_str = oc_image_info__cached(container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}')
         digest = json.loads(rhcos_info_str)['digest']
 
     # NOTE: RHCOS images are always hosted in the OCP 4.x art-dev repository, even for OCP 5.x,

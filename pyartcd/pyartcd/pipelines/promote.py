@@ -29,6 +29,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
 from elliottlib.errata import get_errata_live_id
@@ -1852,16 +1853,16 @@ class PromotePipeline:
     @staticmethod
     async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
         # Get image manifest/manifest-list.
-        cmd = f'oc image info --show-multiarch -o json {pullspec}'
-        env = os.environ.copy()
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-        if rc != 0:
-            if "not found: manifest unknown" in stderr or "was deleted or has expired" in stderr:
+        try:
+            stdout = await oc_image_info__cached_async(pullspec, '--show-multiarch')
+        except ChildProcessError as e:
+            err_msg = str(e)
+            if "not found: manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
                 # image doesn't exist
                 if raise_if_not_found:
                     raise IOError(f"Image {pullspec} is not found.")
                 return None
-            raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+            raise
 
         # Info provided by oc need to be converted back into Skopeo-looking format
         info = json.loads(stdout)
@@ -1891,17 +1892,16 @@ class PromotePipeline:
     @staticmethod
     async def get_multi_image_digest(pullspec: str, raise_if_not_found: bool = False):
         # Get image digest
-        cmd = f'oc image info {pullspec} --filter-by-os linux/amd64 -o json'
-        env = os.environ.copy()
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-
-        if rc != 0:
-            if "manifest unknown" in stderr or "was deleted or has expired" in stderr:
+        try:
+            stdout = await oc_image_info__cached_async(pullspec, '--filter-by-os=linux/amd64')
+        except ChildProcessError as e:
+            err_msg = str(e)
+            if "manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
                 # image doesn't exist
                 if raise_if_not_found:
                     raise IOError(f"Image {pullspec} is not found.")
                 return None
-            raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+            raise
 
         return json.loads(stdout)['listDigest']
 

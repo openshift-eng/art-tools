@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import yaml
 from artcommonlib import exectools, pushd
 from artcommonlib.brew import BuildStates
+from artcommonlib.oc_image_info import oc_image_info__cached
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -663,10 +664,10 @@ class OLMBundle(object):
         return self.operator_csv_config['valid-subscription-label']
 
     def delivery_labels_match(self, bundle_image_pullspec):
-        cmd = f"oc image info {bundle_image_pullspec} -o json"
-        rc, out, err = exectools.cmd_gather(cmd)
-        if rc != 0:
-            raise ValueError(f"Error running {cmd}: {err}")
+        try:
+            out = oc_image_info__cached(bundle_image_pullspec)
+        except ChildProcessError as e:
+            raise ValueError(f"Error running oc image info for {bundle_image_pullspec}: {e}") from e
         image_info = json.loads(out)
         image_labels = image_info['config']['config']['Labels']
         for label, value in self.redhat_delivery_tags.items():
