@@ -193,12 +193,24 @@ class RHCOSBuildFinder:
 
     def rhel_build_meta_layered(self, pullspec: str):
         """
-        For layered node image, get it's rhel image rpm list
-        :param pullspec: the rhel image pullspec eg. quay.io/openshift-release-dev/ocp-v4.0-art-dev
-        :return: rpm list for rhel build
+        For layered node image, get its rhel image rpm list.
+
+        Uses org.opencontainers.image.version label directly to get the RHEL
+        base build_id (e.g. 9.6.20260204-0), rather than
+        get_build_id_from_rhcos_pullspec() which returns the OCP ystream
+        build_id used for Brew NVR construction (e.g. 4.21.9.6.202602041851-0).
+
+        Arg(s):
+            pullspec (str): the rhel image pullspec eg. quay.io/openshift-release-dev/ocp-v4.0-art-dev
+        Return Value(s):
+            list: rpm list for rhel build
         """
         if self.layered:
-            build_id = get_build_id_from_rhcos_pullspec(pullspec)
+            image_info_str, _ = exectools.cmd_assert(f"oc image info -o json {pullspec}", retries=3)
+            image_info = Model(json.loads(image_info_str))
+            build_id = image_info.config.config.Labels.get("org.opencontainers.image.version")
+            if not build_id:
+                raise Exception(f"Unable to determine RHEL build_id from: {pullspec}")
             rhel_major = build_id.split(".")[0]
             rhel_minor = build_id.split(".")[1]
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_major}.{rhel_minor}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
@@ -241,7 +253,8 @@ class RHCOSBuildInspector:
         self._os_commitmeta_10 = None
 
         if self.layered:
-            # set build_id to the rhel base image build id of the rhel-coreos image
+            # set build_id to the OCP ystream build_id of the rhel-coreos image
+            # (e.g. 4.21.9.6.202602041851-0, used for Brew NVR construction)
             self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"])
 
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
