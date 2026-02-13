@@ -413,23 +413,36 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     """
     # quickly determine build system from given nvrs using build_visibility suffix
     build_system = None
+    golang_builder_nvrs = []
     for nvr in nvrs:
-        # golang builder image does not have build visibility suffix
-        # so assume that build system is konflux
-        # even if it is built in brew, we should be able to get that info from ART's build records DB
-        if GOLANG_BUILDER_IMAGE_NAME in nvr[0]:
-            build_system = 'konflux'
-            continue
-
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
-        nvr_build_system = get_build_system(nvr[2].split('.')[1])
+        try:
+            nvr_build_system = get_build_system(nvr[2].split('.')[1])
+        except ValueError as e:
+            # golang builder NVRs are a special case
+            # They historically did not have build visibility suffix
+            # so for backward compatibility we will try fetching nvrs from both brew and konflux
+            if not GOLANG_BUILDER_IMAGE_NAME in nvr[0]:
+                raise e
+            logger.info(f'Could not determine build system from release {nvr[2]} for {nvr}')
+            golang_builder_nvrs.append(nvr)
+
         if build_system is not None:
             assert build_system == nvr_build_system, (
                 f'Build system mismatch for {nvr}: {build_system} != {nvr_build_system}'
             )
         else:
             build_system = nvr_build_system
+
+    if golang_builder_nvrs:
+        try:
+            golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger)
+        except Exception as e:
+            logger.info(f'Failed to find golang builder nvrs in ART build DB: {e}')
+            golang_map = get_golang_container_nvrs_brew(golang_builder_nvrs, logger)
+        return golang_map
+
     if build_system == 'brew':
         return get_golang_container_nvrs_brew(nvrs, logger)
     elif build_system == 'konflux':
