@@ -423,8 +423,8 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
             # golang builder NVRs are a special case
             # They historically did not have build visibility suffix
             # so for backward compatibility we will try fetching nvrs from both brew and konflux
-            if not GOLANG_BUILDER_IMAGE_NAME in nvr[0]:
-                raise e
+            if GOLANG_BUILDER_IMAGE_NAME not in nvr[0]:
+                raise
             logger.debug(f'Could not determine build system from release {nvr[2]} for {nvr}')
             golang_builder_nvrs.append(nvr)
             continue
