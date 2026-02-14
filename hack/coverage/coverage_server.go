@@ -116,17 +116,29 @@ func _covStartServer() {
 	_covLog.Printf("[COVERAGE] ERROR: Could not bind any port in range %d–%d", startPort, startPort+_covMaxRetries-1)
 }
 
-// _covHandler collects coverage data and returns it via HTTP as JSON
+// _covHandler collects coverage data and returns it via HTTP as JSON.
+// Pass ?nometa=1 to skip metadata collection (useful after the first fetch
+// since metadata does not change for the lifetime of the process).
 func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
-	_covLog.Println("[COVERAGE] Collecting coverage data...")
+	skipMeta := r.URL.Query().Get("nometa") == "1"
 
-	// Collect metadata
-	var metaBuf _covBytes.Buffer
-	if err := _covRuntime.WriteMeta(&metaBuf); err != nil {
-		_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect metadata: %v", err), _covHTTP.StatusInternalServerError)
-		return
+	if skipMeta {
+		_covLog.Println("[COVERAGE] Collecting coverage counters (metadata skipped)...")
+	} else {
+		_covLog.Println("[COVERAGE] Collecting coverage data...")
 	}
-	metaData := metaBuf.Bytes()
+
+	// Collect metadata unless the caller opted out
+	var metaData []byte
+	var metaFilename string
+	if !skipMeta {
+		var metaBuf _covBytes.Buffer
+		if err := _covRuntime.WriteMeta(&metaBuf); err != nil {
+			_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect metadata: %v", err), _covHTTP.StatusInternalServerError)
+			return
+		}
+		metaData = metaBuf.Bytes()
+	}
 
 	// Collect counters
 	var counterBuf _covBytes.Buffer
@@ -136,7 +148,8 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 	}
 	counterData := counterBuf.Bytes()
 
-	// Extract hash from metadata to create proper filenames
+	// Extract hash from metadata to create proper filenames.
+	// When metadata is skipped we cannot derive the hash, so use "unknown".
 	var hash string
 	if len(metaData) >= 32 {
 		hashBytes := metaData[16:32]
@@ -145,9 +158,12 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 		hash = "unknown"
 	}
 
-	// Generate proper filenames
+	if !skipMeta {
+		metaFilename = _covFmt.Sprintf("covmeta.%s", hash)
+	}
+
+	// Generate counter filename
 	timestamp := _covTime.Now().UnixNano()
-	metaFilename := _covFmt.Sprintf("covmeta.%s", hash)
 	counterFilename := _covFmt.Sprintf("covcounters.%s.%d.%d", hash, _covOS.Getpid(), timestamp)
 
 	_covLog.Printf("[COVERAGE] Collected %d bytes metadata, %d bytes counters",
@@ -156,10 +172,12 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 	// Return coverage data as JSON
 	response := _covResponse{
 		MetaFilename:     metaFilename,
-		MetaData:         _covBase64.StdEncoding.EncodeToString(metaData),
 		CountersFilename: counterFilename,
 		CountersData:     _covBase64.StdEncoding.EncodeToString(counterData),
 		Timestamp:        timestamp,
+	}
+	if !skipMeta {
+		response.MetaData = _covBase64.StdEncoding.EncodeToString(metaData)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

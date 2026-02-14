@@ -124,6 +124,12 @@ class RPMBuilder:
             # directory so that it is compiled into the binary via its init() function.
             util.inject_coverage_server(Path(rpm.source_path), logger)
 
+            # The openshift RPM builds from openshift-priv/kubernetes.git and
+            # contains cmd/kubelet/.  Inject the coverage producer into the
+            # kubelet so it can discover and upload coverage data from the node.
+            if rpm.config.name == 'openshift':
+                util.inject_coverage_producer(Path(rpm.source_path), logger)
+
         # create tarball source as Source0
         logger.info("Creating tarball source...")
         tarball_path = dg.dg_path / tarball_name

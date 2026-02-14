@@ -955,8 +955,14 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
 # Go coverage instrumentation helpers
 # ---------------------------------------------------------------------------
 
-# Path to the coverage_server.go resource bundled with doozerlib
-_COVERAGE_SERVER_GO = pathlib.Path(__file__).parent / 'resources' / 'coverage_server.go'
+# Path to coverage Go sources in hack/coverage/ (at the repo root)
+_HACK_COVERAGE_DIR = pathlib.Path(__file__).parent.parent.parent / 'hack' / 'coverage'
+
+# Path to the coverage_server.go resource injected into every main package
+_COVERAGE_SERVER_GO = _HACK_COVERAGE_DIR / 'coverage_server.go'
+
+# Path to the coverage_producer.go resource (injected only into the kubelet)
+_COVERAGE_PRODUCER_GO = _HACK_COVERAGE_DIR / 'coverage_producer.go'
 
 # Compiled regex to detect 'package main' declarations in Go source files
 _PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
@@ -1094,3 +1100,37 @@ def inject_coverage_server(dg_path: pathlib.Path, logger_instance: logging.Logge
         logger_instance.info('Injected %s into %s', _COVERAGE_SERVER_GO.name, pkg_dir)
 
     logger_instance.info('Injected coverage server into %d main package(s)', len(main_dirs))
+
+
+def inject_coverage_producer(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_producer.go`` into the kubelet's ``cmd/kubelet/``
+    directory if it exists and is a ``package main`` directory.
+
+    The producer is only useful inside the kubelet binary — it discovers
+    coverage-instrumented containers on the node and uploads their data to S3.
+    """
+    import shutil
+
+    if not _COVERAGE_PRODUCER_GO.is_file():
+        logger_instance.warning(
+            'coverage_producer.go resource not found at %s; skipping injection',
+            _COVERAGE_PRODUCER_GO,
+        )
+        return
+
+    kubelet_dir = (dg_path / 'cmd' / 'kubelet').resolve()
+    if not kubelet_dir.is_dir():
+        logger_instance.debug('No cmd/kubelet/ directory found under %s; skipping producer injection', dg_path)
+        return
+
+    # Verify it is actually a package main directory
+    main_dirs = find_go_main_packages(dg_path)
+    if kubelet_dir not in main_dirs:
+        logger_instance.warning(
+            'cmd/kubelet/ exists but is not a package main directory; skipping producer injection',
+        )
+        return
+
+    dest = kubelet_dir / _COVERAGE_PRODUCER_GO.name
+    shutil.copy2(str(_COVERAGE_PRODUCER_GO), str(dest))
+    logger_instance.info('Injected %s into %s', _COVERAGE_PRODUCER_GO.name, kubelet_dir)

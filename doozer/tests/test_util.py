@@ -479,5 +479,74 @@ class TestInjectCoverageServer(unittest.TestCase):
             self.assertFalse((plugins_dir / 'coverage_server.go').exists())
 
 
+class TestInjectCoverageProducer(unittest.TestCase):
+    """Tests for ``inject_coverage_producer``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_injects_into_cmd_kubelet(self):
+        """Producer should be injected into cmd/kubelet/ when it exists and
+        is a package main directory.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_without_cmd_kubelet(self):
+        """Producer should NOT be injected when there is no cmd/kubelet/ dir."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_if_kubelet_not_package_main(self):
+        """If cmd/kubelet/ exists but is not package main, skip injection."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'lib.go', 'package kubelet\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_injects_alongside_coverage_server(self):
+        """Both server and producer should coexist in cmd/kubelet/."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+            # Also create another cmd to verify server is injected everywhere
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+            util.inject_coverage_producer(root, logger)
+
+            # Both files in kubelet dir
+            self.assertTrue((kubelet_dir / 'coverage_server.go').exists())
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+            # Only server in other dir
+            self.assertTrue((other_dir / 'coverage_server.go').exists())
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+
 if __name__ == "__main__":
     unittest.main()
