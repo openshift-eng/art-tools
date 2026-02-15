@@ -133,7 +133,7 @@ options field is the reliable indicator.
 ### S3 credentials via registry auth
 
 The producer reads `/var/lib/kubelet/config.json` (the kubelet's container
-registry auth config).  A fake registry entry for `cluster-code-coverage.io`
+registry auth config).  A fake registry entry for `cluster-code-coverage.openshift.io`
 holds the S3 credentials.  The auth value is
 `base64("coverage:" + base64(json_config))`.
 

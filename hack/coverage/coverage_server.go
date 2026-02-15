@@ -38,6 +38,11 @@ const (
 	_covMaxRetries  = 50    // Maximum number of ports to try
 )
 
+// _covCachedHash stores the metadata hash after the first collection so
+// that subsequent requests with ?nometa=1 can still produce correct
+// counter filenames.
+var _covCachedHash string
+
 // _covResponse represents the JSON response from the coverage endpoint
 type _covResponse struct {
 	MetaFilename     string `json:"meta_filename"`
@@ -149,11 +154,15 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 	counterData := counterBuf.Bytes()
 
 	// Extract hash from metadata to create proper filenames.
-	// When metadata is skipped we cannot derive the hash, so use "unknown".
+	// Cache the hash so that ?nometa=1 requests can still produce correct
+	// counter filenames without re-collecting metadata.
 	var hash string
 	if len(metaData) >= 32 {
 		hashBytes := metaData[16:32]
 		hash = _covFmt.Sprintf("%x", hashBytes)
+		_covCachedHash = hash
+	} else if _covCachedHash != "" {
+		hash = _covCachedHash
 	} else {
 		hash = "unknown"
 	}

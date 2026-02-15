@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Inject the cluster-code-coverage.io registry auth entry into an OCP pull secret.
+Inject the cluster-code-coverage.openshift.io registry auth entry into an OCP pull secret.
 
 Two modes:
 
@@ -36,7 +36,7 @@ import json
 import subprocess
 import sys
 
-COVERAGE_SERVER = "cluster-code-coverage.io"
+COVERAGE_SERVER = "cluster-code-coverage.openshift.io"
 COVERAGE_USERNAME = "coverage"  # arbitrary; only the password matters
 
 

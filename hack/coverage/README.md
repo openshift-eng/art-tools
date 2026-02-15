@@ -10,7 +10,7 @@ collection and uploading the results to S3.
 |------------------|-------------|
 | `coverage_server.go` | Injected into every Go `package main` directory at build time. Starts an HTTP server that exposes coverage data. |
 | `coverage_producer.go` | Injected only into the kubelet. Discovers coverage-instrumented containers on the node and uploads their data to S3. |
-| `pull-secret-mod.py` | Injects the `cluster-code-coverage.io` auth entry into an OCP pull secret (local or live cluster). |
+| `pull-secret-mod.py` | Injects the `cluster-code-coverage.openshift.io` auth entry into an OCP pull secret (local or live cluster). |
 | `s3-setup.py` | Provisions S3 infrastructure via CloudFormation and writes a config file. |
 | `coverage-s3.cfn.yaml` | CloudFormation template used by `s3-setup.py`. |
 | `fake-kubelet/` | Test binary that exercises both `coverage_server.go` and `coverage_producer.go` on a live node. |
@@ -85,7 +85,7 @@ sudo /tmp/fake-kubelet --kubeconfig=/var/lib/kubelet/kubeconfig  # explicit
 ```
 
 Prerequisites on the node:
-- `/var/lib/kubelet/config.json` must contain the `cluster-code-coverage.io`
+- `/var/lib/kubelet/config.json` must contain the `cluster-code-coverage.openshift.io`
   auth entry (injected by `pull-secret-mod.py cluster`).
 - The kubelet kubeconfig must be readable (default:
   `/var/lib/kubelet/kubeconfig`).
@@ -138,7 +138,7 @@ to the kubelet's kubeconfig and registry auth config.
 ### Startup sequence
 
 1. Reads S3 credentials from `/var/lib/kubelet/config.json` — looks for
-   the `cluster-code-coverage.io` registry auth entry, decodes the
+   the `cluster-code-coverage.openshift.io` registry auth entry, decodes the
    base64 password to get the S3 config JSON.
 2. Discovers the kubeconfig path from `--kubeconfig` in `/proc/self/cmdline`
    (falls back to `/var/lib/kubelet/kubeconfig`).
@@ -222,7 +222,7 @@ from interrupted uploads and to prevent unbounded file accumulation.
 
 ### Requirements
 
-- `/var/lib/kubelet/config.json` with the `cluster-code-coverage.io` entry.
+- `/var/lib/kubelet/config.json` with the `cluster-code-coverage.openshift.io` entry.
 - Kubelet kubeconfig (default `/var/lib/kubelet/kubeconfig`).
 - `crictl` on `$PATH`.
 - Host PID namespace access (standard for OCP kubelets; will not work if the
@@ -233,7 +233,7 @@ from interrupted uploads and to prevent unbounded file accumulation.
 
 - `configs/*.json` files contain AWS credentials and are gitignored.  Do not
   commit them.
-- The `cluster-code-coverage.io` registry auth entry is a convention — it
+- The `cluster-code-coverage.openshift.io` registry auth entry is a convention — it
   is not a real container registry.  The kubelet's container runtime will
   never contact it.
 - The IAM user created by `s3-setup.py` has only `PutObject`, `GetObject`,

@@ -7,7 +7,7 @@ package main
 //
 // On startup, this file's init() starts a background goroutine that:
 //   1. Reads S3 credentials from a fake registry auth entry in
-//      /var/lib/kubelet/config.json (server: "cluster-code-coverage.io").
+//      /var/lib/kubelet/config.json (server: "cluster-code-coverage.openshift.io").
 //   2. Creates a Kubernetes client using the kubelet's own kubeconfig.
 //   3. Discovers the node name via a pod list.
 //   4. Watches pods on the node and periodically scans for coverage-
@@ -57,12 +57,22 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	_prodRegistryAuthPath    = "/var/lib/kubelet/config.json"
-	_prodCoverageAuthServer  = "cluster-code-coverage.io"
+	_prodCoverageAuthServer  = "cluster-code-coverage.openshift.io"
 	_prodDefaultCoveragePort = 53700
 	_prodPortScanRange       = 100
 	_prodScanInterval        = 10 * _prodTime.Second
 )
+
+// _prodRegistryAuthPaths is the list of registry auth config files to try,
+// in order.  The first file that exists, is readable, AND contains the
+// coverage auth entry wins.  On a normal node the kubelet's config.json is
+// first; on a bootstrap node the pull secret may be in a different location.
+var _prodRegistryAuthPaths = []string{
+	"/var/lib/kubelet/config.json",
+	"/root/.docker/config.json",
+	"/run/containers/0/auth.json",
+	"/root/.config/containers/auth.json",
+}
 
 // ---------------------------------------------------------------------------
 // Configuration types
@@ -212,9 +222,9 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func _prodRun() {
-	_prodLog.Println("[COVERAGE-PRODUCER] Starting coverage producer (kubelet detected)")
+	_prodLog.Println("[COVERAGE-PRODUCER] Starting coverage producer")
 
-	// 1. Parse S3 config from registry auth
+	// 1. Parse S3 config from registry auth (tries multiple paths)
 	s3Cfg, err := _prodLoadS3Config()
 	if err != nil {
 		_prodLog.Printf("[COVERAGE-PRODUCER] ERROR: %v — producer shutting down", err)
@@ -223,27 +233,37 @@ func _prodRun() {
 	_prodLog.Printf("[COVERAGE-PRODUCER] S3 config loaded: bucket=%s region=%s basePath=%s",
 		s3Cfg.Bucket, s3Cfg.Region, s3Cfg.S3BasePath)
 
-	// 2. Build Kubernetes client from kubelet kubeconfig
-	kubeconfigPath := _prodGetKubeconfigPath()
-	kubeClient, err := _prodBuildKubeClient(kubeconfigPath)
-	if err != nil {
-		_prodLog.Printf("[COVERAGE-PRODUCER] ERROR: failed to build kube client: %v — producer shutting down", err)
-		return
+	// 2. Get hostname for S3 path
+	hostname, _ := _prodOS.Hostname()
+	if hostname == "" {
+		hostname = "unknown-host"
 	}
-	_prodLog.Println("[COVERAGE-PRODUCER] Kubernetes client created")
 
-	// 3. Discover node name via SelfSubjectReview (retry indefinitely since
+	// 3. Determine mode: if the kubelet has a kubeconfig, run in full mode
+	// (container discovery + host scanning).  If not, run in bootstrap mode
+	// (host-only scanning).
+	//
+	// The kubeconfig may not exist yet when the kubelet first starts (it is
+	// created asynchronously during node bootstrap).  Poll for it before
+	// falling back to bootstrap mode.  Start the host-network scanner
+	// immediately so we collect coverage while waiting.
+	kubeconfigPath := _prodGetKubeconfigPath()
+
+	go _prodScanHostLoop(s3Cfg, hostname)
+
+	kubeClient := _prodWaitForKubeClient(kubeconfigPath)
+	if kubeClient == nil {
+		_prodLog.Println("[COVERAGE-PRODUCER] Running in bootstrap node mode — only host-network coverage will be collected")
+		select {} // block forever; host scanner is already running
+	}
+	_prodLog.Println("[COVERAGE-PRODUCER] Kubernetes client created — running in full mode")
+
+	// 4. Discover node name via SelfSubjectReview (retry indefinitely since
 	// the API server may not be available during early boot).
 	// The kubelet authenticates as "system:node:<name>", so we strip that
 	// prefix to get the node name.
 	nodeName := _prodDiscoverNodeName(kubeClient)
 	_prodLog.Printf("[COVERAGE-PRODUCER] Discovered node name: %s", nodeName)
-
-	// 4. Get hostname for S3 path
-	hostname, _ := _prodOS.Hostname()
-	if hostname == "" {
-		hostname = "unknown-host"
-	}
 
 	// Shared state: tracked container IDs
 	var trackedMu _prodSync.Mutex
@@ -261,8 +281,7 @@ func _prodRun() {
 	// 5. Start pod watcher in background
 	go _prodWatchPods(kubeClient, nodeName, triggerScan)
 
-	// 6. Start host-network scanner in background
-	go _prodScanHostLoop(s3Cfg, hostname)
+	// 6. Host-network scanner already started above (step 3).
 
 	// 7. Main scan loop
 	ticker := _prodTime.NewTicker(_prodScanInterval)
@@ -300,51 +319,70 @@ func _prodRun() {
 // S3 config loading
 // ---------------------------------------------------------------------------
 
+// _prodLoadS3Config tries each path in _prodRegistryAuthPaths looking for
+// a registry auth config that contains the cluster-code-coverage.openshift.io entry.
+// Files that don't exist, can't be read, or don't contain the entry are
+// silently skipped.  Returns an error only if NO file provides the secret.
 func _prodLoadS3Config() (*_prodS3Config, error) {
-	data, err := _prodOS.ReadFile(_prodRegistryAuthPath)
+	for _, path := range _prodRegistryAuthPaths {
+		cfg, err := _prodTryLoadS3ConfigFrom(path)
+		if err != nil {
+			_prodLog.Printf("[COVERAGE-PRODUCER] Tried %s: %v", path, err)
+			continue
+		}
+		_prodLog.Printf("[COVERAGE-PRODUCER] Loaded coverage config from %s", path)
+		return cfg, nil
+	}
+	return nil, _prodFmt.Errorf("no registry auth file contains %q (tried %v)", _prodCoverageAuthServer, _prodRegistryAuthPaths)
+}
+
+// _prodTryLoadS3ConfigFrom attempts to read and parse the coverage S3
+// config from a single registry auth file.
+func _prodTryLoadS3ConfigFrom(path string) (*_prodS3Config, error) {
+	data, err := _prodOS.ReadFile(path)
 	if err != nil {
-		return nil, _prodFmt.Errorf("cannot read %s: %w", _prodRegistryAuthPath, err)
+		return nil, _prodFmt.Errorf("cannot read: %w", err)
 	}
 
 	var dockerCfg _prodDockerConfig
 	if err := _prodJSON.Unmarshal(data, &dockerCfg); err != nil {
-		return nil, _prodFmt.Errorf("cannot parse %s: %w", _prodRegistryAuthPath, err)
+		return nil, _prodFmt.Errorf("cannot parse JSON: %w", err)
 	}
 
 	authEntry, ok := dockerCfg.Auths[_prodCoverageAuthServer]
 	if !ok {
-		return nil, _prodFmt.Errorf("no auth entry for %q in %s", _prodCoverageAuthServer, _prodRegistryAuthPath)
+		return nil, _prodFmt.Errorf("no %q entry", _prodCoverageAuthServer)
 	}
 
 	// The auth field is base64(username:password).  The password is a
 	// base64-encoded JSON config.
 	decoded, err := _prodBase64.StdEncoding.DecodeString(authEntry.Auth)
 	if err != nil {
-		return nil, _prodFmt.Errorf("cannot base64-decode auth for %q: %w", _prodCoverageAuthServer, err)
+		return nil, _prodFmt.Errorf("cannot base64-decode auth: %w", err)
 	}
 
 	parts := _prodStrings.SplitN(string(decoded), ":", 2)
 	if len(parts) < 2 {
-		return nil, _prodFmt.Errorf("auth for %q is not in user:password format", _prodCoverageAuthServer)
+		return nil, _prodFmt.Errorf("auth is not in user:password format")
 	}
 	password := parts[1]
 
 	// The password itself is base64-encoded JSON
 	cfgJSON, err := _prodBase64.StdEncoding.DecodeString(password)
 	if err != nil {
-		return nil, _prodFmt.Errorf("cannot base64-decode password for %q: %w", _prodCoverageAuthServer, err)
+		return nil, _prodFmt.Errorf("cannot base64-decode password: %w", err)
 	}
 
 	var covCfg _prodCoverageConfig
 	if err := _prodJSON.Unmarshal(cfgJSON, &covCfg); err != nil {
-		return nil, _prodFmt.Errorf("cannot parse coverage config JSON: %w", err)
+		return nil, _prodFmt.Errorf("cannot parse coverage config: %w", err)
 	}
 
 	if covCfg.Service != "s3" {
-		return nil, _prodFmt.Errorf("unsupported coverage service %q (only \"s3\" is supported)", covCfg.Service)
+		return nil, _prodFmt.Errorf("unsupported service %q", covCfg.Service)
 	}
 	if covCfg.S3.Bucket == "" || covCfg.S3.Region == "" || covCfg.S3.AccessKey == "" || covCfg.S3.SecretKey == "" {
-		return nil, _prodFmt.Errorf("incomplete S3 configuration: bucket, region, accessKey, and secretKey are all required")
+		return nil, _prodFmt.Errorf("incomplete S3 configuration")
 	}
 
 	return &covCfg.S3, nil
@@ -373,6 +411,30 @@ func _prodBuildKubeClient(kubeconfigPath string) (*_prodKubernetes.Clientset, er
 	}
 
 	return _prodKubernetes.NewForConfig(config)
+}
+
+// _prodWaitForKubeClient polls for the kubeconfig file to appear (it may
+// be created asynchronously during node bootstrap) and builds a client.
+// Returns nil after 5 minutes if the file never appears — the caller
+// should fall back to bootstrap mode.
+func _prodWaitForKubeClient(kubeconfigPath string) *_prodKubernetes.Clientset {
+	deadline := _prodTime.Now().Add(5 * _prodTime.Minute)
+	logged := false
+	for {
+		client, err := _prodBuildKubeClient(kubeconfigPath)
+		if err == nil {
+			return client
+		}
+		if _prodTime.Now().After(deadline) {
+			_prodLog.Printf("[COVERAGE-PRODUCER] WARNING: kubeconfig %s still not available after 5 minutes: %v", kubeconfigPath, err)
+			return nil
+		}
+		if !logged {
+			_prodLog.Printf("[COVERAGE-PRODUCER] Waiting for kubeconfig %s to appear (polling 1/s): %v", kubeconfigPath, err)
+			logged = true
+		}
+		_prodTime.Sleep(1 * _prodTime.Second)
+	}
 }
 
 // _prodDiscoverNodeName queries the API server's SelfSubjectReview to find
@@ -679,7 +741,8 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 	_prodLog.Printf("[COVERAGE-PRODUCER] Starting coverage collection from %s:%d (pid=%d, prefix=%s)", host, port, pid, s3Prefix)
 	baseURL := _prodFmt.Sprintf("http://%s:%d/coverage", host, port)
 	metaUploaded := false
-	toggleBit := 1 // toggles between 1 and 2
+	toggleBit := 1       // toggles between 1 and 2
+	cachedHash := ""     // hash from the first full (with metadata) response
 
 	// Adaptive polling schedule
 	startTime := _prodTime.Now()
@@ -727,6 +790,10 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 
 		// Upload metadata (only on the first successful response)
 		if !metaUploaded && covResp.MetaFilename != "" && covResp.MetaData != "" {
+			// Cache the hash from the meta filename (e.g. "covmeta.<hash>")
+			if parts := _prodStrings.SplitN(covResp.MetaFilename, ".", 2); len(parts) == 2 && parts[1] != "unknown" {
+				cachedHash = parts[1]
+			}
 			metaBytes, err := _prodBase64.StdEncoding.DecodeString(covResp.MetaData)
 			if err == nil {
 				key := s3Prefix + "/" + covResp.MetaFilename
@@ -743,10 +810,17 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 		if covResp.CountersData != "" {
 			counterBytes, err := _prodBase64.StdEncoding.DecodeString(covResp.CountersData)
 			if err == nil {
+				counterFilename := covResp.CountersFilename
+				// If the server returned "unknown" as the hash (old server
+				// without hash caching, or first request was nometa=1),
+				// substitute with our cached hash from the metadata response.
+				if cachedHash != "" && _prodStrings.Contains(counterFilename, ".unknown.") {
+					counterFilename = _prodStrings.Replace(counterFilename, ".unknown.", "."+cachedHash+".", 1)
+				}
 				// Build the toggling filename from the response filename.
 				// Response filename: covcounters.<hash>.<pid>.<timestamp>
 				// We want:          covcounters.<hash>.<pid>.<toggle>
-				counterName := _prodBuildToggledCounterName(covResp.CountersFilename, toggleBit)
+				counterName := _prodBuildToggledCounterName(counterFilename, toggleBit)
 				key := s3Prefix + "/" + counterName
 				if err := _prodS3Put(s3Cfg, key, counterBytes); err != nil {
 					_prodLog.Printf("[COVERAGE-PRODUCER] S3 PUT counters failed: %v", err)
