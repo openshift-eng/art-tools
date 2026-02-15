@@ -650,22 +650,22 @@ func _prodMonitorContainer(ci _prodContainerInfo, s3Cfg *_prodS3Config, hostname
 			// routes into the pod's network namespace from the host.
 			// For hostNetwork containers, we connect to 127.0.0.1 since the
 			// port is on the host network.
-			binary := _prodCheckCoverageServer(connectHost, port)
-			if binary == "" {
+			info := _prodCheckCoverageServer(connectHost, port)
+			if info == nil {
 				continue
 			}
 
-			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed coverage server for %s (pid %d) at %s:%d (binary=%s, hostNet=%v)",
-				ci.ContainerName, ci.Pid, connectHost, port, binary, ci.HostNetwork)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed coverage server for %s (pid %d) at %s:%d (binary=%s, commit=%s, hostNet=%v)",
+				ci.ContainerName, ci.Pid, connectHost, port, info.Binary, info.SourceCommit, ci.HostNetwork)
 			collectorPorts[port] = struct{}{}
 
-			sanitizedBinary := _prodSanitizePath(binary)
+			sanitizedBinary := _prodSanitizePath(info.Binary)
 			sanitizedImage := _prodSanitizePath(ci.ImageRef)
 			s3Prefix := _prodFmt.Sprintf("%s/%s/%s/%s/%s/%s/%s/%s",
 				s3Cfg.S3BasePath, hostname, ci.Namespace, ci.PodName,
 				ci.ContainerName, ci.DiscoveryTime, sanitizedImage, sanitizedBinary)
 
-			go _prodCollectCoverage(ci.Pid, connectHost, port, s3Prefix, s3Cfg)
+			go _prodCollectCoverage(ci.Pid, connectHost, port, s3Prefix, s3Cfg, info)
 		}
 
 		_prodTime.Sleep(2 * _prodTime.Second)
@@ -709,16 +709,16 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 			}
 
 			_prodLog.Printf("[COVERAGE-PRODUCER] Host scan: checking port %d", port)
-			binary := _prodCheckCoverageServer("127.0.0.1", port)
-			if binary == "" {
+			info := _prodCheckCoverageServer("127.0.0.1", port)
+			if info == nil {
 				_prodLog.Printf("[COVERAGE-PRODUCER] Host scan: port %d is not a coverage server", port)
 				continue
 			}
 
-			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed host-network coverage server at :%d (binary=%s)", port, binary)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed host-network coverage server at :%d (binary=%s, commit=%s)", port, info.Binary, info.SourceCommit)
 			collectorPorts[port] = struct{}{}
 
-			sanitizedBinary := _prodSanitizePath(binary)
+			sanitizedBinary := _prodSanitizePath(info.Binary)
 			discoveryTime := _prodTime.Now().UTC().Format("20060102T150405Z")
 			s3Prefix := _prodFmt.Sprintf("%s/%s/_host_/%s/%s",
 				s3Cfg.S3BasePath, hostname, discoveryTime, sanitizedBinary)
@@ -726,7 +726,7 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 			_prodLog.Printf("[COVERAGE-PRODUCER] S3 prefix for host server: %s", s3Prefix)
 
 			// pid=0 for host-network: collector won't check /proc/<pid>
-			go _prodCollectCoverage(0, "127.0.0.1", port, s3Prefix, s3Cfg)
+			go _prodCollectCoverage(0, "127.0.0.1", port, s3Prefix, s3Cfg, info)
 		}
 
 		_prodTime.Sleep(_prodScanInterval)
@@ -737,8 +737,12 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 // Coverage collection goroutine (adaptive polling)
 // ---------------------------------------------------------------------------
 
-func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg *_prodS3Config) {
+func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg *_prodS3Config, serverInfo *_prodCoverageServerInfo) {
 	_prodLog.Printf("[COVERAGE-PRODUCER] Starting coverage collection from %s:%d (pid=%d, prefix=%s)", host, port, pid, s3Prefix)
+
+	// Write info.json once to capture server identity metadata.
+	_prodWriteInfoJSON(s3Prefix, s3Cfg, serverInfo, host, port, pid)
+
 	baseURL := _prodFmt.Sprintf("http://%s:%d/coverage", host, port)
 	metaUploaded := false
 	toggleBit := 1       // toggles between 1 and 2
@@ -835,6 +839,41 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 		}
 
 		_prodTime.Sleep(getPollInterval())
+	}
+}
+
+// _prodWriteInfoJSON uploads a one-time info.json file to the S3 prefix
+// capturing the coverage server's identity metadata.
+func _prodWriteInfoJSON(s3Prefix string, s3Cfg *_prodS3Config, info *_prodCoverageServerInfo, host string, port int, pid int) {
+	infoMap := map[string]interface{}{
+		"binary": info.Binary,
+		"host":   host,
+		"port":   port,
+		"pid":    pid,
+	}
+	// Include optional fields only when non-empty
+	for key, val := range map[string]string{
+		"source_commit": info.SourceCommit,
+		"source_url":    info.SourceURL,
+		"doozer_group":  info.DoozerGroup,
+		"doozer_key":    info.DoozerKey,
+	} {
+		if val != "" {
+			infoMap[key] = val
+		}
+	}
+
+	data, err := _prodJSON.MarshalIndent(infoMap, "", "  ")
+	if err != nil {
+		_prodLog.Printf("[COVERAGE-PRODUCER] Failed to marshal info.json: %v", err)
+		return
+	}
+
+	key := s3Prefix + "/info.json"
+	if err := _prodS3Put(s3Cfg, key, data); err != nil {
+		_prodLog.Printf("[COVERAGE-PRODUCER] S3 PUT info.json failed: %v", err)
+	} else {
+		_prodLog.Printf("[COVERAGE-PRODUCER] Uploaded %s", key)
 	}
 }
 
@@ -988,24 +1027,41 @@ func _prodFindListeningPortsFromFile(path string, minPort int, maxPort int, inod
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+// _prodCoverageServerInfo holds identity information returned by a coverage
+// server's HEAD response.  All fields except Binary may be empty.
+type _prodCoverageServerInfo struct {
+	Binary       string
+	SourceCommit string
+	SourceURL    string
+	DoozerGroup  string
+	DoozerKey    string
+}
+
 // _prodCheckCoverageServer sends a HEAD request to a coverage server's
-// health endpoint and returns the binary name if it is a coverage server.
-func _prodCheckCoverageServer(host string, port int) string {
+// health endpoint and returns server info if it is a coverage server,
+// or nil if the endpoint is not a coverage server.
+func _prodCheckCoverageServer(host string, port int) *_prodCoverageServerInfo {
 	client := &_prodHTTP.Client{Timeout: 5 * _prodTime.Second}
 	url := _prodFmt.Sprintf("http://%s:%d/health", host, port)
 	req, err := _prodHTTP.NewRequest("HEAD", url, nil)
 	if err != nil {
-		return ""
+		return nil
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return nil
 	}
 	resp.Body.Close()
 	if resp.Header.Get("X-Art-Coverage-Server") != "1" {
-		return ""
+		return nil
 	}
-	return resp.Header.Get("X-Art-Coverage-Binary")
+	return &_prodCoverageServerInfo{
+		Binary:       resp.Header.Get("X-Art-Coverage-Binary"),
+		SourceCommit: resp.Header.Get("X-Art-Coverage-Source-Commit"),
+		SourceURL:    resp.Header.Get("X-Art-Coverage-Source-Url"),
+		DoozerGroup:  resp.Header.Get("X-Art-Coverage-Doozer-Group"),
+		DoozerKey:    resp.Header.Get("X-Art-Coverage-Doozer-Key"),
+	}
 }
 
 // _prodHTTPGet fetches a URL and returns the body.

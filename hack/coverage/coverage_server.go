@@ -14,9 +14,13 @@ package main
 //
 // Clients can identify a coverage server by sending a HEAD request to any
 // endpoint: the response will include the headers:
-//   X-Art-Coverage-Server: 1
-//   X-Art-Coverage-Pid:    <pid>
-//   X-Art-Coverage-Binary: <binary-name>
+//   X-Art-Coverage-Server:        1
+//   X-Art-Coverage-Pid:           <pid>
+//   X-Art-Coverage-Binary:        <binary-name>
+//   X-Art-Coverage-Source-Commit: <commit>  (if SOURCE_GIT_COMMIT is set)
+//   X-Art-Coverage-Source-Url:    <url>     (if SOURCE_GIT_URL is set)
+//   X-Art-Coverage-Doozer-Group:  <group>   (if __doozer_group is set)
+//   X-Art-Coverage-Doozer-Key:    <key>     (if __doozer_key is set)
 
 import (
 	_covBytes "bytes"
@@ -66,10 +70,24 @@ func _covIdentityMiddleware(next _covHTTP.Handler) _covHTTP.Handler {
 	if exePath, err := _covOS.Executable(); err == nil {
 		exe = _covPath.Base(exePath)
 	}
+
+	// Optional environment variables — included as headers when set.
+	envHeaders := map[string]string{
+		"X-Art-Coverage-Source-Commit": _covOS.Getenv("SOURCE_GIT_COMMIT"),
+		"X-Art-Coverage-Source-Url":    _covOS.Getenv("SOURCE_GIT_URL"),
+		"X-Art-Coverage-Doozer-Group":  _covOS.Getenv("__doozer_group"),
+		"X-Art-Coverage-Doozer-Key":    _covOS.Getenv("__doozer_key"),
+	}
+
 	return _covHTTP.HandlerFunc(func(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 		w.Header().Set("X-Art-Coverage-Server", "1")
 		w.Header().Set("X-Art-Coverage-Pid", pid)
 		w.Header().Set("X-Art-Coverage-Binary", exe)
+		for header, val := range envHeaders {
+			if val != "" {
+				w.Header().Set(header, val)
+			}
+		}
 		next.ServeHTTP(w, r)
 	})
 }
