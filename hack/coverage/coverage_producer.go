@@ -624,7 +624,19 @@ func _prodMonitorContainer(ci _prodContainerInfo, s3Cfg *_prodS3Config, hostname
 	// Track which ports we have already started collectors for
 	collectorPorts := make(map[int]struct{})
 
+	// Channel for collector goroutines to release ports (e.g. when the
+	// binary identity changes after an exec, or the server disappears).
+	portReleased := make(chan int, 16)
+
 	for {
+		// Drain any ports released by collector goroutines so they can
+		// be rediscovered on this scan iteration.
+		for len(portReleased) > 0 {
+			p := <-portReleased
+			delete(collectorPorts, p)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Port %d released for container %s (will rescan)", p, ci.ContainerName)
+		}
+
 		// Check if the process is still alive
 		if !_prodPidAlive(ci.Pid) {
 			_prodLog.Printf("[COVERAGE-PRODUCER] Container %s pid %d gone; stopping monitor",
@@ -665,7 +677,7 @@ func _prodMonitorContainer(ci _prodContainerInfo, s3Cfg *_prodS3Config, hostname
 				s3Cfg.S3BasePath, hostname, ci.Namespace, ci.PodName,
 				ci.ContainerName, ci.DiscoveryTime, sanitizedImage, sanitizedBinary)
 
-			go _prodCollectCoverage(ci.Pid, connectHost, port, s3Prefix, s3Cfg, info)
+			go _prodCollectCoverage(ci.Pid, connectHost, port, s3Prefix, s3Cfg, info, portReleased)
 		}
 
 		_prodTime.Sleep(2 * _prodTime.Second)
@@ -688,8 +700,20 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 		}
 	}
 
+	// Channel for collector goroutines to release ports (e.g. when the
+	// binary identity changes after an exec, or the server disappears).
+	portReleased := make(chan int, 16)
+
 	scanCount := 0
 	for {
+		// Drain any ports released by collector goroutines so they can
+		// be rediscovered on this scan iteration.
+		for len(portReleased) > 0 {
+			p := <-portReleased
+			delete(collectorPorts, p)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Host scan: port %d released (will rescan)", p)
+		}
+
 		scanCount++
 		// Parse /proc/net/tcp and /proc/net/tcp6 for listening ports in the
 		// coverage range (host network namespace).  Go may bind to IPv6, so
@@ -726,7 +750,7 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 			_prodLog.Printf("[COVERAGE-PRODUCER] S3 prefix for host server: %s", s3Prefix)
 
 			// pid=0 for host-network: collector won't check /proc/<pid>
-			go _prodCollectCoverage(0, "127.0.0.1", port, s3Prefix, s3Cfg, info)
+			go _prodCollectCoverage(0, "127.0.0.1", port, s3Prefix, s3Cfg, info, portReleased)
 		}
 
 		_prodTime.Sleep(_prodScanInterval)
@@ -737,7 +761,14 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 // Coverage collection goroutine (adaptive polling)
 // ---------------------------------------------------------------------------
 
-func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg *_prodS3Config, serverInfo *_prodCoverageServerInfo) {
+func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg *_prodS3Config, serverInfo *_prodCoverageServerInfo, portReleased chan<- int) {
+	// Always release the port when the goroutine exits so the
+	// monitor/scanner can rediscover it (e.g. after an exec replaces the
+	// binary serving coverage on this port).
+	defer func() {
+		portReleased <- port
+	}()
+
 	_prodLog.Printf("[COVERAGE-PRODUCER] Starting coverage collection from %s:%d (pid=%d, prefix=%s)", host, port, pid, s3Prefix)
 
 	// Write info.json once to capture server identity metadata.
@@ -774,7 +805,7 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 			url = baseURL + "?nometa=1"
 		}
 
-		resp, err := _prodHTTPGet(url)
+		resp, headers, err := _prodHTTPGet(url)
 		if err != nil {
 			_prodLog.Printf("[COVERAGE-PRODUCER] GET %s failed: %v", url, err)
 			// If the server is gone (host network, pid=0), stop
@@ -783,6 +814,16 @@ func _prodCollectCoverage(pid int, host string, port int, s3Prefix string, s3Cfg
 			}
 			_prodTime.Sleep(getPollInterval())
 			continue
+		}
+
+		// Check if the binary identity has changed (e.g. after
+		// watch-termination exec's into kube-apiserver).  The coverage
+		// server includes identity headers on every response.
+		responseBinary := headers.Get("X-Art-Coverage-Binary")
+		if responseBinary != "" && responseBinary != serverInfo.Binary {
+			_prodLog.Printf("[COVERAGE-PRODUCER] Binary identity changed on %s:%d: %q -> %q; dropping data and stopping collector (port will be rediscovered)",
+				host, port, serverInfo.Binary, responseBinary)
+			return
 		}
 
 		var covResp _prodCovResponse
@@ -1064,18 +1105,19 @@ func _prodCheckCoverageServer(host string, port int) *_prodCoverageServerInfo {
 	}
 }
 
-// _prodHTTPGet fetches a URL and returns the body.
-func _prodHTTPGet(url string) ([]byte, error) {
+// _prodHTTPGet fetches a URL and returns the body and response headers.
+func _prodHTTPGet(url string) ([]byte, _prodHTTP.Header, error) {
 	client := &_prodHTTP.Client{Timeout: 30 * _prodTime.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, _prodFmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, nil, _prodFmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return _prodIO.ReadAll(resp.Body)
+	body, err := _prodIO.ReadAll(resp.Body)
+	return body, resp.Header, err
 }
 
 // ---------------------------------------------------------------------------
