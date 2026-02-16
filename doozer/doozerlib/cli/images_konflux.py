@@ -474,12 +474,27 @@ class KonfluxBundleCli:
                     input_release,
                 )
 
-        logger.info("Rebasing OLM bundle...")
-        nvr = await rebaser.rebase(image_meta, operator_build, input_release)
-        logger.info("Building OLM bundle...")
-        await builder.build(image_meta)
-        logger.info("Bundle build complete")
-        return nvr
+        try:
+            logger.info("Rebasing OLM bundle...")
+            nvr = await rebaser.rebase(image_meta, operator_build, input_release)
+            logger.info("Building OLM bundle...")
+            await builder.build(image_meta)
+            logger.info("Bundle build complete")
+            return nvr
+        except Exception as e:
+            # Record rebase failure in record.log to detect partial success (only some bundles rebased/built successfuly)
+            if self.runtime.record_logger:
+                record = {
+                    'status': -1,
+                    "message": str(e),
+                    "task_id": "n/a",
+                    "task_url": "n/a",
+                    "operator_nvr": operator_build.nvr,
+                    "operand_nvrs": "n/a",
+                    "bundle_nvr": "n/a",
+                }
+                self.runtime.record_logger.add_record("build_olm_bundle_konflux", **record)
+            raise
 
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):
