@@ -67,12 +67,14 @@ class PrepareReleaseKonfluxPipeline:
         build_data_repo_url: Optional[str] = None,
         shipment_data_repo_url: Optional[str] = None,
         inject_build_data_repo: bool = False,
+        plr_template: str | None = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.group = group
         self.inject_build_data_repo = inject_build_data_repo
+        self.plr_template = plr_template
 
         self._slack_client = slack_client
 
@@ -679,6 +681,12 @@ class PrepareReleaseKonfluxPipeline:
             f"--message={message}",
             "--output=json",
         ]
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = self.plr_template.split("@")
+            plr_template_url = constants.KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            cmd += ["--plr-template", plr_template_url]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
@@ -742,6 +750,12 @@ class PrepareReleaseKonfluxPipeline:
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
         ]
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = self.plr_template.split("@")
+            plr_template_url = constants.KONFLUX_BUNDLE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            cmd += ["--plr-template", plr_template_url]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
@@ -1578,6 +1592,12 @@ class PrepareReleaseKonfluxPipeline:
     '--shipment-data-repo-url',
     help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
 )
+@click.option(
+    '--plr-template',
+    required=False,
+    default=None,
+    help='Override the Konflux PipelineRun template for FBC and bundle builds. Format: <owner>@<branch>',
+)
 @pass_runtime
 @click_coroutine
 async def prepare_release(
@@ -1587,6 +1607,7 @@ async def prepare_release(
     build_data_repo_url: Optional[str],
     inject_build_data_repo: bool,
     shipment_data_repo_url: Optional[str],
+    plr_template: str | None = None,
 ):
     # Check if assembly is valid
     if assembly == "stream":
@@ -1606,6 +1627,7 @@ async def prepare_release(
             build_data_repo_url=build_data_repo_url,
             shipment_data_repo_url=shipment_data_repo_url,
             inject_build_data_repo=inject_build_data_repo,
+            plr_template=plr_template,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")
