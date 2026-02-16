@@ -419,7 +419,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
         # we just want the p2 part
         try:
             nvr_build_system = get_build_system(nvr[2].split('.')[1])
-        except ValueError as e:
+        except ValueError:
             # golang builder NVRs are a special case
             # They historically did not have build visibility suffix
             # so for backward compatibility we will try fetching nvrs from both brew and konflux
