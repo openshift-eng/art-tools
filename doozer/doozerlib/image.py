@@ -853,6 +853,24 @@ class ImageMetadata(Metadata):
         # Update targets after config merge
         self.targets = self.determine_targets()
 
+    @staticmethod
+    def _is_pullspec_unresolved(pullspec: str | None) -> bool:
+        """
+        Check whether a Dockerfile FROM pullspec is missing or contains unresolved
+        ARG references.
+
+        A pullspec is considered unresolved if it is None/empty, still contains "${"
+        (an unexpanded ARG substitution), or equals ":" (the result of
+        FROM ${IMAGE}:${TAG} when both ARGs have no defaults).
+
+        Arg(s):
+            pullspec (str | None): The image pullspec string from a Dockerfile FROM directive.
+
+        Return Value(s):
+            bool: True if the pullspec is unresolved, False otherwise.
+        """
+        return not pullspec or "${" in pullspec or pullspec == ":"
+
     def _determine_upstream_builder_info(
         self, source_dir: pathlib.Path
     ) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
@@ -893,10 +911,9 @@ class ImageMetadata(Metadata):
             # We will infer the versions from the last build layer in the upstream Dockerfile
             last_layer_pullspec = parent_images[-1]
 
-            # If the pullspec contains unresolved ARG references (e.g. "${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}")
-            # or collapsed to just ":" due to ARGs without defaults, apply content.source.modifications
+            # If the pullspec contains unresolved ARG references, apply content.source.modifications
             # (replace actions) to the Dockerfile content and re-parse.
-            if not last_layer_pullspec or "${" in last_layer_pullspec or last_layer_pullspec == ":":
+            if self._is_pullspec_unresolved(last_layer_pullspec):
                 self.logger.info(
                     '[%s] Upstream Dockerfile last FROM has unresolved ARG references ("%s"), '
                     'applying content.source.modifications and re-parsing',
@@ -924,10 +941,6 @@ class ImageMetadata(Metadata):
         """
         Apply content.source.modifications (replace actions) to the Dockerfile content
         and re-parse to extract the last parent image pullspec.
-
-        This handles the case where upstream Dockerfiles use ARGs without defaults
-        (e.g. FROM ${BASE_IMAGE_URL}:${BASE_IMAGE_TAG}) and the ocp-build-data modifications
-        provide the ARG default values needed to resolve the FROM directive.
 
         Arg(s):
             df_content: The raw Dockerfile content string.
@@ -959,7 +972,7 @@ class ImageMetadata(Metadata):
             return None
 
         pullspec = parent_images[-1]
-        if not pullspec or "${" in pullspec or pullspec == ":":
+        if self._is_pullspec_unresolved(pullspec):
             self.logger.warning(
                 '[%s] Pullspec still unresolved after applying modifications: "%s"',
                 self.distgit_key,

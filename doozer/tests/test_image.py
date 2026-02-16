@@ -859,7 +859,7 @@ RUN echo "test"
     ):
         """
         Test that when upstream Dockerfile has unresolved ARG references and there are no
-        content.source.modifications, the method returns None for rhel_version gracefully.
+        content.source.modifications, the method raises IOError.
         """
         extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/test_no_mods')
