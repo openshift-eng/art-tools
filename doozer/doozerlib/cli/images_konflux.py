@@ -550,16 +550,29 @@ class KonfluxBundleCli:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_tasks = []
+        successful_tasks = []
         for dgk, result in zip(dgk_records, results):
             if isinstance(result, Exception):
                 failed_tasks.append(dgk)
                 stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
                 LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
-        if failed_tasks:
+            else:
+                successful_tasks.append(dgk)
+
+        # Handle build results
+        if failed_tasks and successful_tasks:
+            # Partial success - log warning but don't fail
+            LOGGER.warning(
+                f"Partial success: {len(successful_tasks)} bundle(s) built successfully\nFailed to rebase/build bundles: {failed_tasks}"
+            )
+        elif failed_tasks:
+            # All builds failed = Fatal error
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         if self.output == 'json':
             click.echo(json.dumps({"nvrs": results}, indent=4))
-        LOGGER.info("Build complete")
+
+        if successful_tasks and not failed_tasks:
+            LOGGER.info(f"Build complete: {len(successful_tasks)} bundle(s) built successfully")
 
 
 @cli.command("beta:images:konflux:bundle", short_help="Rebase and build an OLM bundle for an operator with Konflux.")
