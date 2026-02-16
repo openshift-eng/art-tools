@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall
+.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
 
 venv:
 	uv venv --python 3.11
@@ -20,12 +20,23 @@ lint: format-check
 pylint:
 	uv run pylint --errors-only .
 
-unit:
+unit-artcommon:
 	uv run pytest --verbose --color=yes artcommon/tests/
+
+unit-doozer:
 	uv run pytest --verbose --color=yes doozer/tests/
+
+unit-elliott:
 	uv run pytest --verbose --color=yes elliott/tests/
+
+unit-pyartcd:
 	uv run pytest --verbose --color=yes pyartcd/tests/
+
+unit-ocp-build-data-validator:
 	uv run pytest --verbose --color=yes ocp-build-data-validator/tests/
+
+unit:
+	./run-tests-parallel.sh
 
 functional-elliott:
 	uv run pytest --verbose --color=yes elliott/functional_tests/
