@@ -297,7 +297,7 @@ def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
         $ doozer --group=openshift-4.0 beta:reposync -o /tmp/repo_sync -c /tmp/cache/ --repo-type signed -r rhel-server-ose-rpms
 
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     repos = runtime.repos
 
     enabled_repos = []
