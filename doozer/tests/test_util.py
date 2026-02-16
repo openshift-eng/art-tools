@@ -381,7 +381,11 @@ class TestFindGoMainPackages(unittest.TestCase):
             )
             # Also add a real main package elsewhere
             cmd_dir = root / 'cmd' / 'prometheus'
-            self._write(cmd_dir, 'main.go', 'package main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n')
+            self._write(
+                cmd_dir,
+                'main.go',
+                'package main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n',
+            )
 
             result = util.find_go_main_packages(root)
             # plugins/ should NOT be in the result; cmd/prometheus/ should be

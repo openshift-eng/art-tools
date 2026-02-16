@@ -1,6 +1,6 @@
 package main
 
-// Source: https://github.com/psturc/go-coverage-http
+// Inspired by: https://github.com/psturc/go-coverage-http
 //
 // NOTE: This file is injected into arbitrary Go "package main" directories by
 // doozer's coverage instrumentation.  All imports are aliased with a "_cov"
@@ -14,13 +14,16 @@ package main
 //
 // Clients can identify a coverage server by sending a HEAD request to any
 // endpoint: the response will include the headers:
-//   X-Art-Coverage-Server:        1
-//   X-Art-Coverage-Pid:           <pid>
-//   X-Art-Coverage-Binary:        <binary-name>
-//   X-Art-Coverage-Source-Commit: <commit>  (if SOURCE_GIT_COMMIT is set)
-//   X-Art-Coverage-Source-Url:    <url>     (if SOURCE_GIT_URL is set)
-//   X-Art-Coverage-Doozer-Group:  <group>   (if __doozer_group is set)
-//   X-Art-Coverage-Doozer-Key:    <key>     (if __doozer_key is set)
+//   X-Art-Coverage-Server:         1
+//   X-Art-Coverage-Pid:            <pid>
+//   X-Art-Coverage-Binary:         <binary-name>
+//   X-Art-Coverage-Source-Commit:  <commit>  (if SOURCE_GIT_COMMIT is set)
+//   X-Art-Coverage-Source-Url:     <url>     (if SOURCE_GIT_URL is set)
+//   X-Art-Coverage-Software-Group: <group>   (if SOFTWARE_GROUP or __doozer_group is set)
+//   X-Art-Coverage-Software-Key:   <key>     (if SOFTWARE_KEY or __doozer_key is set)
+//
+// The producer records ALL X-Art-Coverage-* headers into info.json, converting
+// header names to lowercase with dashes replaced by underscores.
 
 import (
 	_covBytes "bytes"
@@ -72,11 +75,20 @@ func _covIdentityMiddleware(next _covHTTP.Handler) _covHTTP.Handler {
 	}
 
 	// Optional environment variables — included as headers when set.
+	// For SOFTWARE_GROUP / SOFTWARE_KEY, fall back to __doozer_group / __doozer_key.
+	softwareGroup := _covOS.Getenv("SOFTWARE_GROUP")
+	if softwareGroup == "" {
+		softwareGroup = _covOS.Getenv("__doozer_group")
+	}
+	softwareKey := _covOS.Getenv("SOFTWARE_KEY")
+	if softwareKey == "" {
+		softwareKey = _covOS.Getenv("__doozer_key")
+	}
 	envHeaders := map[string]string{
-		"X-Art-Coverage-Source-Commit": _covOS.Getenv("SOURCE_GIT_COMMIT"),
-		"X-Art-Coverage-Source-Url":    _covOS.Getenv("SOURCE_GIT_URL"),
-		"X-Art-Coverage-Doozer-Group":  _covOS.Getenv("__doozer_group"),
-		"X-Art-Coverage-Doozer-Key":    _covOS.Getenv("__doozer_key"),
+		"X-Art-Coverage-Source-Commit":  _covOS.Getenv("SOURCE_GIT_COMMIT"),
+		"X-Art-Coverage-Source-Url":     _covOS.Getenv("SOURCE_GIT_URL"),
+		"X-Art-Coverage-Software-Group": softwareGroup,
+		"X-Art-Coverage-Software-Key":   softwareKey,
 	}
 
 	return _covHTTP.HandlerFunc(func(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {

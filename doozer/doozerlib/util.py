@@ -828,6 +828,7 @@ def get_konflux_build_priority(metadata, group):
     :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
+    phase = metadata.runtime.group_config.software_lifecycle.phase
 
     def higher_by(val: int) -> str:
         new_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - val))
@@ -852,7 +853,6 @@ def get_konflux_build_priority(metadata, group):
         return higher_by(3)
 
     # 4. Higher than default priority for main & pre-GA N-1 streams.
-    phase = metadata.runtime.group_config.software_lifecycle.phase
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):
         return higher_by(2)
 

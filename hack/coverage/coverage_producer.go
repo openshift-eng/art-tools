@@ -667,8 +667,8 @@ func _prodMonitorContainer(ci _prodContainerInfo, s3Cfg *_prodS3Config, hostname
 				continue
 			}
 
-			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed coverage server for %s (pid %d) at %s:%d (binary=%s, commit=%s, hostNet=%v)",
-				ci.ContainerName, ci.Pid, connectHost, port, info.Binary, info.SourceCommit, ci.HostNetwork)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed coverage server for %s (pid %d) at %s:%d (binary=%s, hostNet=%v, extra=%v)",
+				ci.ContainerName, ci.Pid, connectHost, port, info.Binary, ci.HostNetwork, info.Extra)
 			collectorPorts[port] = struct{}{}
 
 			sanitizedBinary := _prodSanitizePath(info.Binary)
@@ -739,7 +739,7 @@ func _prodScanHostLoop(s3Cfg *_prodS3Config, hostname string) {
 				continue
 			}
 
-			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed host-network coverage server at :%d (binary=%s, commit=%s)", port, info.Binary, info.SourceCommit)
+			_prodLog.Printf("[COVERAGE-PRODUCER] Confirmed host-network coverage server at :%d (binary=%s, extra=%v)", port, info.Binary, info.Extra)
 			collectorPorts[port] = struct{}{}
 
 			sanitizedBinary := _prodSanitizePath(info.Binary)
@@ -892,16 +892,9 @@ func _prodWriteInfoJSON(s3Prefix string, s3Cfg *_prodS3Config, info *_prodCovera
 		"port":   port,
 		"pid":    pid,
 	}
-	// Include optional fields only when non-empty
-	for key, val := range map[string]string{
-		"source_commit": info.SourceCommit,
-		"source_url":    info.SourceURL,
-		"doozer_group":  info.DoozerGroup,
-		"doozer_key":    info.DoozerKey,
-	} {
-		if val != "" {
-			infoMap[key] = val
-		}
+	// Include all X-Art-Coverage-* extra fields
+	for key, val := range info.Extra {
+		infoMap[key] = val
 	}
 
 	data, err := _prodJSON.MarshalIndent(infoMap, "", "  ")
@@ -959,14 +952,78 @@ func _prodFindListeningPorts(pid int, minPort int, maxPort int, hostNetwork bool
 
 	var inodeFilter map[string]struct{}
 	if hostNetwork {
-		// Build the set of socket inodes owned by this PID so we can
-		// filter the global host socket table to just this process's sockets.
-		inodeFilter = _prodSocketInodesForPid(pid)
+		// Build the set of socket inodes owned by this PID and all its
+		// descendant processes.  This is necessary because container
+		// wrappers (e.g. watch-termination) spawn child processes
+		// (e.g. kube-apiserver) that open their own coverage servers.
+		// Without including descendants, those child ports are invisible
+		// to the container monitor and only the host scanner finds them.
+		inodeFilter = _prodSocketInodesForPidTree(pid)
 	}
 
 	ports := _prodFindListeningPortsFromFile(tcp4, minPort, maxPort, inodeFilter)
 	ports = append(ports, _prodFindListeningPortsFromFile(tcp6, minPort, maxPort, inodeFilter)...)
 	return _prodDedup(ports)
+}
+
+// _prodSocketInodesForPidTree returns socket inodes for a PID and all of its
+// descendant processes.  This handles cases like watch-termination spawning
+// kube-apiserver as a child — the child's coverage server sockets need to be
+// included so the container monitor can discover them.
+func _prodSocketInodesForPidTree(pid int) map[string]struct{} {
+	pids := _prodDescendantPids(pid)
+	pids = append(pids, pid)
+	inodes := make(map[string]struct{})
+	for _, p := range pids {
+		for inode := range _prodSocketInodesForPid(p) {
+			inodes[inode] = struct{}{}
+		}
+	}
+	return inodes
+}
+
+// _prodDescendantPids returns all descendant PIDs of the given PID by reading
+// /proc/<pid>/status for PPid fields.
+func _prodDescendantPids(rootPid int) []int {
+	// Build parent→children map from /proc
+	children := make(map[int][]int)
+	entries, err := _prodOS.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := _prodStrconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		data, err := _prodOS.ReadFile(_prodFmt.Sprintf("/proc/%d/status", pid))
+		if err != nil {
+			continue
+		}
+		for _, line := range _prodStrings.Split(string(data), "\n") {
+			if _prodStrings.HasPrefix(line, "PPid:\t") {
+				ppid, err := _prodStrconv.Atoi(_prodStrings.TrimPrefix(line, "PPid:\t"))
+				if err == nil {
+					children[ppid] = append(children[ppid], pid)
+				}
+				break
+			}
+		}
+	}
+
+	// BFS from rootPid
+	var result []int
+	queue := children[rootPid]
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		result = append(result, pid)
+		queue = append(queue, children[pid]...)
+	}
+	return result
 }
 
 // _prodSocketInodesForPid returns the set of socket inode numbers referenced
@@ -1069,13 +1126,12 @@ func _prodFindListeningPortsFromFile(path string, minPort int, maxPort int, inod
 // ---------------------------------------------------------------------------
 
 // _prodCoverageServerInfo holds identity information returned by a coverage
-// server's HEAD response.  All fields except Binary may be empty.
+// server's HEAD response.  Binary is always set; Extra contains all other
+// X-Art-Coverage-* header values keyed by their lowercase, underscore-
+// delimited names (e.g. "source_commit", "software_group").
 type _prodCoverageServerInfo struct {
-	Binary       string
-	SourceCommit string
-	SourceURL    string
-	DoozerGroup  string
-	DoozerKey    string
+	Binary string
+	Extra  map[string]string // all X-Art-Coverage-* headers except Server/Pid/Binary
 }
 
 // _prodCheckCoverageServer sends a HEAD request to a coverage server's
@@ -1096,13 +1152,29 @@ func _prodCheckCoverageServer(host string, port int) *_prodCoverageServerInfo {
 	if resp.Header.Get("X-Art-Coverage-Server") != "1" {
 		return nil
 	}
-	return &_prodCoverageServerInfo{
-		Binary:       resp.Header.Get("X-Art-Coverage-Binary"),
-		SourceCommit: resp.Header.Get("X-Art-Coverage-Source-Commit"),
-		SourceURL:    resp.Header.Get("X-Art-Coverage-Source-Url"),
-		DoozerGroup:  resp.Header.Get("X-Art-Coverage-Doozer-Group"),
-		DoozerKey:    resp.Header.Get("X-Art-Coverage-Doozer-Key"),
+	info := &_prodCoverageServerInfo{
+		Binary: resp.Header.Get("X-Art-Coverage-Binary"),
+		Extra:  make(map[string]string),
 	}
+
+	// Collect all X-Art-Coverage-* headers into Extra, converting the header
+	// name to a lowercase underscore key.  Skip Server, Pid, and Binary
+	// since they are handled separately.
+	skip := map[string]bool{
+		"X-Art-Coverage-Server": true,
+		"X-Art-Coverage-Pid":    true,
+		"X-Art-Coverage-Binary": true,
+	}
+	const prefix = "X-Art-Coverage-"
+	for header, values := range resp.Header {
+		if !_prodStrings.HasPrefix(header, prefix) || skip[header] || len(values) == 0 || values[0] == "" {
+			continue
+		}
+		// "X-Art-Coverage-Source-Commit" -> "source_commit"
+		key := _prodStrings.ToLower(_prodStrings.ReplaceAll(header[len(prefix):], "-", "_"))
+		info.Extra[key] = values[0]
+	}
+	return info
 }
 
 // _prodHTTPGet fetches a URL and returns the body and response headers.

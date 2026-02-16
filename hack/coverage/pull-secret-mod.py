@@ -175,9 +175,13 @@ def mode_cluster(config_file: str | None, s3_prefix: str):
     # Fetch the current global pull secret
     print("\nFetching global pull secret...")
     secret_json = run_oc(
-        "get", "secret", "pull-secret",
-        "-n", "openshift-config",
-        "-o", "jsonpath={.data.\\.dockerconfigjson}",
+        "get",
+        "secret",
+        "pull-secret",
+        "-n",
+        "openshift-config",
+        "-o",
+        "jsonpath={.data.\\.dockerconfigjson}",
     )
     if not secret_json:
         print("ERROR: Could not read .dockerconfigjson from pull-secret.", file=sys.stderr)
@@ -202,8 +206,12 @@ def mode_cluster(config_file: str | None, s3_prefix: str):
     print("\nApplying updated pull secret to the cluster...")
     result = subprocess.run(
         [
-            "oc", "set", "data", "secret/pull-secret",
-            "-n", "openshift-config",
+            "oc",
+            "set",
+            "data",
+            "secret/pull-secret",
+            "-n",
+            "openshift-config",
             f"--from-literal=.dockerconfigjson={updated_json}",
         ],
         capture_output=True,
@@ -220,7 +228,10 @@ def mode_cluster(config_file: str | None, s3_prefix: str):
 
 def _usage():
     print(f"Usage: {sys.argv[0]} <local|cluster> --s3-prefix PREFIX [-f <s3-config-file>]", file=sys.stderr)
-    print(f"  Example: {sys.argv[0]} cluster --s3-prefix openshift-ci/coverage/my-cluster -f configs/bucket.json", file=sys.stderr)
+    print(
+        f"  Example: {sys.argv[0]} cluster --s3-prefix openshift-ci/coverage/my-cluster -f configs/bucket.json",
+        file=sys.stderr,
+    )
 
 
 def main():

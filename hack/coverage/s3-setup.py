@@ -43,16 +43,17 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Deploy coverage S3 infrastructure and write a config file.",
     )
-    p.add_argument("--bucket", required=True,
-                    help="S3 bucket name (required)")
-    p.add_argument("--region", required=True,
-                    help="AWS region (required)")
-    p.add_argument("--stack-name", default=DEFAULTS["stack_name"],
-                    help=f"CloudFormation stack name (default: {DEFAULTS['stack_name']})")
-    p.add_argument("--base-path", default=DEFAULTS["base_path"],
-                    help=f"S3 base path prefix (default: {DEFAULTS['base_path']})")
-    p.add_argument("--profile", default=None,
-                    help="AWS CLI profile name (default: session default)")
+    p.add_argument("--bucket", required=True, help="S3 bucket name (required)")
+    p.add_argument("--region", required=True, help="AWS region (required)")
+    p.add_argument(
+        "--stack-name",
+        default=DEFAULTS["stack_name"],
+        help=f"CloudFormation stack name (default: {DEFAULTS['stack_name']})",
+    )
+    p.add_argument(
+        "--base-path", default=DEFAULTS["base_path"], help=f"S3 base path prefix (default: {DEFAULTS['base_path']})"
+    )
+    p.add_argument("--profile", default=None, help="AWS CLI profile name (default: session default)")
     return p.parse_args()
 
 
@@ -131,12 +132,14 @@ def main():
             s3.put_bucket_lifecycle_configuration(
                 Bucket=args.bucket,
                 LifecycleConfiguration={
-                    "Rules": [{
-                        "ID": "ExpireOldCoverage",
-                        "Status": "Enabled",
-                        "Expiration": {"Days": 90},
-                        "Filter": {"Prefix": ""},
-                    }],
+                    "Rules": [
+                        {
+                            "ID": "ExpireOldCoverage",
+                            "Status": "Enabled",
+                            "Expiration": {"Days": 90},
+                            "Filter": {"Prefix": ""},
+                        }
+                    ],
                 },
             )
             print(f"  Created bucket '{args.bucket}' with 90-day lifecycle rule.")
@@ -238,17 +241,17 @@ def main():
         json.dump(s3_config, f, indent=2)
         f.write("\n")
 
-    print(f"\nInfrastructure ready:")
+    print("\nInfrastructure ready:")
     print(f"  Bucket:     {s3_config['s3']['bucket']}")
     print(f"  Region:     {s3_config['s3']['region']}")
     print(f"  IAM User:   {outputs.get('UserName', 'auto-generated')}")
     print(f"  Base Path:  {s3_config['s3']['s3BasePath']}")
     print(f"  Config:     {output_path}")
     print()
-    print(f"Next steps:")
-    print(f"  # Inject into a pull-secret (local):")
+    print("Next steps:")
+    print("  # Inject into a pull-secret (local):")
     print(f"  python3 pull-secret-mod.py local -f {output_path}")
-    print(f"  # Or inject directly into a live cluster:")
+    print("  # Or inject directly into a live cluster:")
     print(f"  python3 pull-secret-mod.py cluster -f {output_path}")
     print()
     print(f"WARNING: {output_path} contains AWS credentials. Do not commit it.")

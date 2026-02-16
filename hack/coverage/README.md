@@ -44,13 +44,15 @@ Options:
 
 ```bash
 # Apply directly to a live cluster (requires oc login)
-python3 pull-secret-mod.py cluster -f configs/my-coverage-bucket.json
+python3 pull-secret-mod.py cluster --s3-prefix openshift-ci/coverage/my-cluster -f configs/my-coverage-bucket.json
 
 # Or modify a pull-secret JSON locally
-echo '<pull-secret-json>' | python3 pull-secret-mod.py local -f configs/my-coverage-bucket.json
+echo '<pull-secret-json>' | python3 pull-secret-mod.py local --s3-prefix openshift-ci/coverage/my-cluster -f configs/my-coverage-bucket.json
 ```
 
-Without `-f`, the tool prompts interactively for S3 configuration.
+`--s3-prefix` is required and sets the S3 base path for this cluster's
+coverage data.  Without `-f`, the tool prompts interactively for S3
+configuration.
 
 ### 3. Build with coverage enabled
 
@@ -79,29 +81,30 @@ make build          # produces ./fake-kubelet (statically linked, ~51MB)
 scp fake-kubelet core@<node>:/tmp/
 
 # SSH to the node and run
-ssh core@<node>
 sudo /tmp/fake-kubelet                                        # uses default kubeconfig
 sudo /tmp/fake-kubelet --kubeconfig=/var/lib/kubelet/kubeconfig  # explicit
 ```
 
 Prerequisites on the node:
-- `/var/lib/kubelet/config.json` must contain the `cluster-code-coverage.openshift.io`
-  auth entry (injected by `pull-secret-mod.py cluster`).
+- A registry auth config containing the `cluster-code-coverage.openshift.io`
+  entry must exist at one of the searched paths (see "Registry auth search
+  paths" below).
 - The kubelet kubeconfig must be readable (default:
-  `/var/lib/kubelet/kubeconfig`).
+  `/var/lib/kubelet/kubeconfig`).  If it doesn't exist yet (bootstrap),
+  the producer polls for up to 5 minutes before falling back to
+  bootstrap mode.
 - `crictl` must be on `$PATH` (standard on RHCOS).
 
 What fake-kubelet does:
 1. Starts a coverage HTTP server (port 53700+).
 2. Reads S3 credentials from the registry auth config.
-3. Uses SelfSubjectReview to discover the node name (authenticates as
-   `system:node:<name>` via the kubelet's kubeconfig).
-4. Watches pods on the node and scans for coverage-instrumented containers.
-5. Collects coverage data and uploads it to S3.
-6. Blocks until SIGINT/SIGTERM.
-
-The fake-kubelet's own coverage server will appear in the host-network scan
-results and be uploaded to S3 under `_host_/`.
+3. Starts the host-network scanner immediately (collects coverage while
+   waiting for the kubeconfig).
+4. Polls for the kubeconfig (1/s, up to 5 minutes).
+5. If found: uses SelfSubjectReview to discover the node name, watches
+   pods, and scans containers (full mode).
+6. If not found: continues in bootstrap mode (host-only scanning).
+7. Blocks until SIGINT/SIGTERM.
 
 ## Coverage Server (`coverage_server.go`)
 
@@ -119,15 +122,28 @@ Starts automatically via `init()` in any instrumented binary.  Tries ports
 
 **Identity headers** (on every response):
 
-| Header | Example |
-|--------|---------|
-| `X-Art-Coverage-Server` | `1` |
-| `X-Art-Coverage-Pid` | `12345` |
-| `X-Art-Coverage-Binary` | `kubelet` |
+| Header | Env Var | Always present |
+|--------|---------|----------------|
+| `X-Art-Coverage-Server` | — | Yes (always `1`) |
+| `X-Art-Coverage-Pid` | — | Yes |
+| `X-Art-Coverage-Binary` | — | Yes |
+| `X-Art-Coverage-Source-Commit` | `SOURCE_GIT_COMMIT` | If set |
+| `X-Art-Coverage-Source-Url` | `SOURCE_GIT_URL` | If set |
+| `X-Art-Coverage-Software-Group` | `SOFTWARE_GROUP` or `__doozer_group` | If set |
+| `X-Art-Coverage-Software-Key` | `SOFTWARE_KEY` or `__doozer_key` | If set |
+
+The producer records ALL `X-Art-Coverage-*` headers (except Server, Pid,
+Binary) into `info.json`, converting header names to `lowercase_underscore`
+format.  New headers added in the future are automatically captured.
 
 All imports use a `_cov` prefix and all identifiers use a `_cov` prefix to
 avoid name collisions with the host package (e.g. many Go projects declare
 `var log = ...` at the package level).
+
+**Metadata hash caching:** The server caches the coverage metadata hash
+from the first full request.  Subsequent `?nometa=1` requests use the
+cached hash to produce correct counter filenames.  The producer also
+caches the hash and substitutes "unknown" if encountered.
 
 ## Coverage Producer (`coverage_producer.go`)
 
@@ -135,21 +151,27 @@ Starts automatically via `init()`.  Intended to run inside the kubelet
 (injected at build time by doozer), but works in any binary that has access
 to the kubelet's kubeconfig and registry auth config.
 
+### Registry auth search paths
+
+The producer tries the following paths in order to find the S3 credentials.
+The first file that exists, is readable, and contains the
+`cluster-code-coverage.openshift.io` entry wins:
+
+1. `/var/lib/kubelet/config.json` (normal node)
+2. `/root/.docker/config.json` (bootstrap node)
+3. `/run/containers/0/auth.json` (bootstrap node)
+4. `/root/.config/containers/auth.json` (bootstrap node)
+
 ### Startup sequence
 
-1. Reads S3 credentials from `/var/lib/kubelet/config.json` — looks for
-   the `cluster-code-coverage.openshift.io` registry auth entry, decodes the
-   base64 password to get the S3 config JSON.
-2. Discovers the kubeconfig path from `--kubeconfig` in `/proc/self/cmdline`
-   (falls back to `/var/lib/kubelet/kubeconfig`).
-3. Creates a Kubernetes client via client-go.
-4. Discovers the node name via `SelfSubjectReview` (retries indefinitely
-   since the API server may not be up during early boot).
-5. Starts a pod watcher with `fieldSelector=spec.nodeName=<name>` (the
-   only scope the kubelet's credentials allow).
-6. Starts a host-network scanner goroutine.
-7. Enters the main scan loop (triggered by pod watch events or a 10-second
-   ticker).
+1. Reads S3 credentials from the registry auth config (tries multiple paths).
+2. Starts the host-network scanner immediately.
+3. Polls for the kubeconfig file (1/s, up to 5 minutes).
+   - **Full mode** (kubeconfig found): creates a Kubernetes client,
+     discovers the node name via SelfSubjectReview, starts a pod watcher,
+     and enters the container scan loop.
+   - **Bootstrap mode** (kubeconfig not found): continues with host-network
+     scanning only.
 
 ### Container discovery
 
@@ -163,20 +185,20 @@ containers on the node.  For each container it extracts:
 ### Network namespace handling
 
 The producer must connect to each container's coverage server.  The approach
-differs based on the pod's network mode:
+differs based on the pod's network mode
+(`status.linux.namespaces.options.network` from `crictl inspectp`):
 
-**Non-hostNetwork pods** (`status.linux.namespaces.options.network == "POD"`):
+**Non-hostNetwork pods** (`"POD"`):
 - The container has its own network namespace with a pod IP.
 - `/proc/<pid>/net/tcp6` only shows sockets in that namespace.
-- The producer connects to `<podIP>:<port>` from the host (the host can
-  route to pod CIDRs).
+- The producer connects to `<podIP>:<port>` from the host.
 
-**hostNetwork pods** (`status.linux.namespaces.options.network == "NODE"`):
+**hostNetwork pods** (`"NODE"`):
 - The container shares the host's network namespace.
 - `/proc/<pid>/net/tcp6` shows ALL host sockets, not just this process's.
 - To find only this container's ports, the producer reads `/proc/<pid>/fd/`
   to build a set of socket inodes owned by the PID, then filters the
-  tcp/tcp6 table entries by matching inode (field 9 in `/proc/net/tcp6`).
+  tcp/tcp6 table entries by matching inode (field 9).
 - The producer connects to `127.0.0.1:<port>`.
 
 **Host-network scanner** (`_prodScanHostLoop`):
@@ -207,14 +229,31 @@ Uses pure Go stdlib for AWS Signature V4 signing (`crypto/hmac`,
 
 ```
 {basePath}/{hostname}/{namespace}/{pod}/{container}/{discovery-time}/{imageRef}/{binary}/
-  covmeta.<hash>              # written once
-  covcounters.<hash>.<pid>.1  # toggled
-  covcounters.<hash>.<pid>.2  # toggled
+  info.json                     # written once (server identity metadata)
+  covmeta.<hash>                # written once
+  covcounters.<hash>.<pid>.1    # toggled
+  covcounters.<hash>.<pid>.2    # toggled
 
 {basePath}/{hostname}/_host_/{discovery-time}/{binary}/
+  info.json
   covmeta.<hash>
   covcounters.<hash>.<pid>.1
   covcounters.<hash>.<pid>.2
+```
+
+`info.json` captures all `X-Art-Coverage-*` headers from the server:
+
+```json
+{
+  "binary": "kube-apiserver",
+  "host": "10.128.2.8",
+  "port": 53700,
+  "pid": 2827,
+  "source_commit": "abc123",
+  "source_url": "https://github.com/openshift/kubernetes",
+  "software_group": "openshift-4.21",
+  "software_key": "ose-kube-apiserver"
+}
 ```
 
 Counter files alternate between `.1` and `.2` suffixes to avoid corruption
@@ -222,9 +261,11 @@ from interrupted uploads and to prevent unbounded file accumulation.
 
 ### Requirements
 
-- `/var/lib/kubelet/config.json` with the `cluster-code-coverage.openshift.io` entry.
-- Kubelet kubeconfig (default `/var/lib/kubelet/kubeconfig`).
-- `crictl` on `$PATH`.
+- A registry auth config with the `cluster-code-coverage.openshift.io`
+  entry at one of the searched paths.
+- Kubelet kubeconfig (default `/var/lib/kubelet/kubeconfig`) for full mode.
+  Not required for bootstrap mode.
+- `crictl` on `$PATH` (for container discovery in full mode).
 - Host PID namespace access (standard for OCP kubelets; will not work if the
   kubelet is containerized without `hostPID: true`, e.g. some MicroShift
   configurations).
@@ -233,9 +274,9 @@ from interrupted uploads and to prevent unbounded file accumulation.
 
 - `configs/*.json` files contain AWS credentials and are gitignored.  Do not
   commit them.
-- The `cluster-code-coverage.openshift.io` registry auth entry is a convention — it
-  is not a real container registry.  The kubelet's container runtime will
-  never contact it.
+- The `cluster-code-coverage.openshift.io` registry auth entry is a
+  convention — it is not a real container registry.  The kubelet's container
+  runtime will never contact it.
 - The IAM user created by `s3-setup.py` has only `PutObject`, `GetObject`,
   and `ListBucket` permissions on the coverage bucket.
 - The S3 bucket has a 90-day lifecycle expiration rule.
