@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Creates an IAM policy, IAM user, and access key for OCP cluster code
+  coverage data uploads.  The S3 bucket is created separately by the
+  s3-setup.py script (idempotent via boto3).
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: cluster-code-coverage-analysis
+    Description: Name of the S3 bucket for coverage data (must already exist).
+
+  S3BasePath:
+    Type: String
+    Default: openshift-ci/coverage
+    Description: >
+      Default base path prefix written into the config file.
+      The producer uses this as the root directory within the bucket.
+
+Resources:
+  CoverageUploadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub "Allows PutObject/GetObject on the ${BucketName} S3 bucket."
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub "arn:aws:s3:::${BucketName}"
+              - !Sub "arn:aws:s3:::${BucketName}/*"
+
+  CoverageUser:
+    Type: AWS::IAM::User
+    Properties:
+      ManagedPolicyArns:
+        - !Ref CoverageUploadPolicy
+
+  CoverageAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref CoverageUser
+
+Outputs:
+  BucketName:
+    Value: !Ref BucketName
+  UserName:
+    Value: !Ref CoverageUser
+  AccessKeyId:
+    Value: !Ref CoverageAccessKey
+  SecretAccessKey:
+    Value: !GetAtt CoverageAccessKey.SecretAccessKey
+  Region:
+    Value: !Ref "AWS::Region"
+  S3BasePath:
+    Value: !Ref S3BasePath
