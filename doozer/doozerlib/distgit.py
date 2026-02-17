@@ -497,7 +497,10 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self.metadata.canonical_builders_enabled:
+        # Skip canonical builders initialization for performance when autoclone=False
+        # (e.g., for commands like images:list that don't need this information)
+        # This avoids expensive oc image info operations
+        if self.metadata.canonical_builders_enabled and autoclone:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path

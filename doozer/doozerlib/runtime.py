@@ -109,6 +109,9 @@ class Runtime(GroupRuntime):
         self._build_status_detector = None
         self.disable_gssapi = False
         self._build_data_product_cache: Model = None
+        # Defaults for cloning behavior (updated in initialize())
+        self.prevent_cloning = False
+        self.clone_source = None
 
         # init cli options
         self.group = None
@@ -369,6 +372,9 @@ class Runtime(GroupRuntime):
             exit(1)
 
         self.mode = mode
+        # Store initialization parameters for use by late_resolve_image
+        self.prevent_cloning = prevent_cloning
+        self.clone_source = clone_source
 
         # We could mark these as required and the click library would do this for us,
         # but this seems to prevent getting help from the various commands (unless you
@@ -1123,8 +1129,14 @@ class Runtime(GroupRuntime):
         # Only process dependents if this image will be added to image_map.
         # When add=False, we're just loading the image to query its latest build,
         # so we should not trigger loading its dependents as a side effect.
+        # Use the same clone_source and prevent_cloning settings as the main initialization
         meta = ImageMetadata(
-            self, data_obj, self.upstream_commitish_overrides.get(data_obj.key), process_dependents=add
+            self,
+            data_obj,
+            self.upstream_commitish_overrides.get(data_obj.key),
+            clone_source=self.clone_source,
+            prevent_cloning=self.prevent_cloning,
+            process_dependents=add,
         )
         if add:
             self.image_map[distgit_name] = meta
