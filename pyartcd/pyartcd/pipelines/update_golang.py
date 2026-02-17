@@ -80,8 +80,9 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     if (major, minor) < (4, 12):
         raise ValueError(f'Only OCP 4.12+ is supported, found: {ocp_version}')
 
-    # only rhel 8 and 9 are supported 4.12 onwards
     supported_els = {8, 9}
+    if (major, minor) >= (4, 21):
+        supported_els.add(10)
 
     if len(go_nvrs) > len(supported_els):
         raise click.BadParameter(f'There should be max 1 nvr for each supported rhel version: {supported_els}')
@@ -205,6 +206,11 @@ class UpdateGolangPipeline:
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+
+        # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
+        el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
+        if el_nvr_map.keys() - el_nvr_map_for_images.keys():
+            _LOGGER.info("RHEL 10 NVRs will only be used for build root tagging, not for golang-builder images")
         self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
@@ -240,17 +246,18 @@ class UpdateGolangPipeline:
             await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
+        # Only for RHEL versions that support golang-builder images (excludes el10 for now)
         brew_nvrs = {}
         konflux_nvrs = {}
         if not self.force_image_build:
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
         # Determine which rhel versions need builds
-        brew_missing = el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-        konflux_missing = el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+        brew_missing = el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+        konflux_missing = el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
 
         if brew_missing or konflux_missing:
             # FIXME: yuxzhu: already broken
@@ -272,16 +279,16 @@ class UpdateGolangPipeline:
 
             # Now all builders should be available, try to fetch again
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
             # Check if we still have missing builds
             brew_still_missing = (
-                el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+                el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
             )
             konflux_still_missing = (
-                el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+                el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
             )
 
             if brew_still_missing or konflux_still_missing:

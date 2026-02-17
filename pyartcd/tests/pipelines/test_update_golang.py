@@ -76,6 +76,23 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
                 "4.16", ["golang-1.20.12-2.el8", "golang-1.20.12-2.el9", "golang-1.20.12-2.el10"]
             )
 
+    def test_el10_unsupported_before_421(self):
+        """Test that el10 is rejected for OCP versions before 4.21"""
+        with self.assertRaisesRegex(ValueError, "Unsupported RHEL version detected"):
+            extract_and_validate_golang_nvrs("4.20", ["golang-1.20.12-2.el10"])
+
+    def test_el10_supported_from_421(self):
+        """Test that el10 is accepted for OCP 4.21+"""
+        go_version, el_nvr_map = extract_and_validate_golang_nvrs(
+            "4.21", ["golang-1.20.12-2.el8", "golang-1.20.12-2.el9", "golang-1.20.12-2.el10"]
+        )
+        self.assertEqual(go_version, "1.20.12")
+        self.assertEqual(el_nvr_map, {
+            8: "golang-1.20.12-2.el8",
+            9: "golang-1.20.12-2.el9",
+            10: "golang-1.20.12-2.el10",
+        })
+
 
 class TestGetLatestNvrInTag(unittest.TestCase):
     """Test the get_latest_nvr_in_tag function"""
