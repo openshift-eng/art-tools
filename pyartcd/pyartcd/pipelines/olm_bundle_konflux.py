@@ -149,6 +149,7 @@ async def olm_bundle_konflux(
         # Parse doozer record.log
         bundle_nvrs = []
         operator_nvrs = []
+        image_target_mapping = {}  # mapping of image_name -> {'target_version': str, 'operator_nvr': str}
         record_log_path = Path(runtime.doozer_working, 'record.log')
         if record_log_path.exists():
             with record_log_path.open() as file:
@@ -163,12 +164,25 @@ async def olm_bundle_konflux(
                 bundle_nvrs.append(record['bundle_nvr'])
                 operator_nvrs.append(record['operator_nvr'])
 
+                # Build mapping with target version and NVR for images
+                image_name = record.get('image_name')
+                target_version = record.get('target_version')
+                operator_nvr = record.get('operator_nvr')
+
+                if image_name:
+                    image_target_mapping[image_name] = {'target_version': target_version, 'operator_nvr': operator_nvr}
+
         runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
         if operator_nvrs:
             runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
+
+            # Validate group parameter
+            if not group:
+                raise ValueError("Group parameter is required but not provided")
+
             # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
-            if group and not group.startswith("openshift-"):
+            if not group.startswith("openshift-"):
                 runtime.logger.info(f'Group {group} is a non-openshift group, checking for OCP_TARGET_VERSIONS')
                 # Load group config to check for OCP_TARGET_VERSIONS
                 group_config = await load_group_config(
@@ -206,15 +220,61 @@ async def olm_bundle_konflux(
                         dry_run=runtime.dry_run,
                     )
             else:
-                runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
-                # Not an OADP/MTA/MTC group, use original behavior
-                jenkins.start_build_fbc(
-                    version=version,
-                    group=group if group else None,
-                    assembly=assembly,
-                    operator_nvrs=operator_nvrs,
-                    dry_run=runtime.dry_run,
-                )
+                # OpenShift group logic with per-image target versions
+                runtime.logger.info(f'Group {group} is an OpenShift group, checking for per-image target versions')
+                runtime.logger.info(f'Image target version mapping: {image_target_mapping}')
+
+                # Collect images with target_version set
+                images_with_target = {
+                    name: info for name, info in image_target_mapping.items() if info.get('target_version')
+                }
+
+                # Collect images without target_version
+                images_without_target = {
+                    name: info for name, info in image_target_mapping.items() if not info.get('target_version')
+                }
+
+                # Handle images with explicit target_version
+                if images_with_target:
+                    runtime.logger.info(f'Found images with explicit target_version: {list(images_with_target.keys())}')
+
+                    # Group images by target version
+                    target_version_groups = {}
+                    for image_name, info in images_with_target.items():
+                        target_ver = info['target_version']
+                        if target_ver not in target_version_groups:
+                            target_version_groups[target_ver] = []
+                        target_version_groups[target_ver].append(info['operator_nvr'])
+
+                    # Create FBC job for each target version
+                    for target_version, nvr_list in target_version_groups.items():
+                        runtime.logger.info(
+                            f'Starting FBC job for target version {target_version} with NVRs: {nvr_list}'
+                        )
+                        jenkins.start_build_fbc(
+                            version=version,
+                            group=group,
+                            assembly=assembly,
+                            operator_nvrs=nvr_list,
+                            dry_run=runtime.dry_run,
+                            ocp_target_version=target_version,
+                            force_build=True,  # Force rebuild for explicit target versions
+                        )
+                        await asyncio.sleep(5)
+
+                # Handle remaining images without target_version (original behavior)
+                if images_without_target:
+                    fallback_nvrs = [info['operator_nvr'] for info in images_without_target.values()]
+                    runtime.logger.info(
+                        f'Using original behavior for images without target_version: {list(images_without_target.keys())}'
+                    )
+                    jenkins.start_build_fbc(
+                        version=version,
+                        group=group if group else None,
+                        assembly=assembly,
+                        operator_nvrs=fallback_nvrs,
+                        dry_run=runtime.dry_run,
+                    )
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)

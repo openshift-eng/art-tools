@@ -646,6 +646,8 @@ class KonfluxOlmBundleBuilder:
             record['operator_nvr'] = operator_nvr
             operand_nvrs = sorted({info['nvr'] for info in bundle_info['operands'].values()})
             record['operand_nvrs'] = ','.join(operand_nvrs)
+            record['image_name'] = metadata.distgit_key
+            record['target_version'] = metadata.config.get('target_version')
 
             # Start the bundle build
             logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
