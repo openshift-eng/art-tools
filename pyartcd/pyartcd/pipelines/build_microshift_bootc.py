@@ -36,6 +36,7 @@ from artcommonlib.util import (
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
+from doozerlib.util import isolate_git_commit_in_release
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import Github, GithubException
 
@@ -397,6 +398,35 @@ class BuildMicroShiftBootcPipeline:
             block_until_complete=True,
         )
 
+    async def _get_microshift_rpm_commit(self) -> str:
+        """
+        Extracts the upstream source commit from the microshift RPM NVR for this assembly.
+        This ensures the bootc image is built from the same commit as the RPM.
+
+        Return Value(s):
+            str: The abbreviated git commit hash extracted from the RPM NVR.
+        """
+        microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+        if not microshift_nvrs:
+            raise ValueError(
+                f"Could not find microshift RPM NVRs for assembly {self.assembly}. "
+                f"Ensure the microshift RPM has been built before building the bootc image."
+            )
+
+        # All EL versions are built from the same source commit; extract it from the first NVR
+        # that contains a recognizable commit hash
+        for nvr in microshift_nvrs:
+            release = nvr.rsplit("-", 1)[-1]
+            commit = isolate_git_commit_in_release(release)
+            if commit:
+                self._logger.info("Extracted upstream commit %s from microshift RPM NVR %s", commit, nvr)
+                return commit
+
+        raise ValueError(
+            f"Could not extract git commit from any microshift RPM NVR: {microshift_nvrs}. "
+            f"The NVR release fields do not contain a recognizable commit hash."
+        )
+
     async def _rebase_and_build_bootc(self):
         bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
@@ -447,6 +477,9 @@ class BuildMicroShiftBootcPipeline:
 
         await self._build_plashet_for_bootc()
 
+        # Extract the commit from the microshift RPM to ensure bootc is built from the same source
+        upstream_commit = await self._get_microshift_rpm_commit()
+
         # Rebase and build bootc image
         version = f"v{major}.{minor}.0"
         release = default_release_suffix()
@@ -459,11 +492,12 @@ class BuildMicroShiftBootcPipeline:
             "--latest-parent-version",
             "-i",
             bootc_image_name,
-            # regardless of assembly cutoff time lock to HEAD in release branch
-            # also not passing this breaks the command since we try to use brew to find the appropriate commit
+            # Lock to the same commit as the microshift RPM to ensure consistency
+            # between RPM and bootc artifacts. Without this, doozer would try to
+            # use brew to find the commit which fails for Konflux-built images.
             "--lock-upstream",
             bootc_image_name,
-            "HEAD",
+            upstream_commit,
             "--build-system",
             "konflux",
             "beta:images:konflux:rebase",
@@ -487,11 +521,10 @@ class BuildMicroShiftBootcPipeline:
             "--latest-parent-version",
             "-i",
             bootc_image_name,
-            # regardless of assembly cutoff time lock to HEAD in release branch
-            # also not passing this breaks the command since we try to use brew to find the appropriate commit
+            # Lock to the same commit as the microshift RPM to ensure consistency
             "--lock-upstream",
             bootc_image_name,
-            "HEAD",
+            upstream_commit,
             "--build-system",
             "konflux",
             "beta:images:konflux:build",
