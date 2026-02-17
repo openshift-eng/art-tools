@@ -76,6 +76,26 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
                 "4.16", ["golang-1.20.12-2.el8", "golang-1.20.12-2.el9", "golang-1.20.12-2.el10"]
             )
 
+    def test_el10_unsupported_before_421(self):
+        """Test that el10 is rejected for OCP versions before 4.21"""
+        with self.assertRaisesRegex(ValueError, "Unsupported RHEL version detected"):
+            extract_and_validate_golang_nvrs("4.20", ["golang-1.20.12-2.el10"])
+
+    def test_el10_supported_from_421(self):
+        """Test that el10 is accepted for OCP 4.21+"""
+        go_version, el_nvr_map = extract_and_validate_golang_nvrs(
+            "4.21", ["golang-1.20.12-2.el8", "golang-1.20.12-2.el9", "golang-1.20.12-2.el10"]
+        )
+        self.assertEqual(go_version, "1.20.12")
+        self.assertEqual(
+            el_nvr_map,
+            {
+                8: "golang-1.20.12-2.el8",
+                9: "golang-1.20.12-2.el9",
+                10: "golang-1.20.12-2.el10",
+            },
+        )
+
 
 class TestGetLatestNvrInTag(unittest.TestCase):
     """Test the get_latest_nvr_in_tag function"""
@@ -726,7 +746,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         mock_build_record = Mock(spec=KonfluxBuildRecord)
 
         # Mock the async generator
-        async def mock_search_builds(*args, **kwargs):
+        async def mock_search_builds(*_args, **_kwargs):
             yield mock_build_record
 
         mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
@@ -739,6 +759,47 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.20.12")
 
         self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-v1.20.12-202403212137.el8.g144a3f8"})
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_get_existing_builders_konflux_el_suffix(self, mock_get_golang_nvrs, mock_konflux_db_class):
+        """Test that el9_5 installed RPM matches el9 input NVR"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.7-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+        )
+
+        mock_build_record = Mock(spec=KonfluxBuildRecord)
+
+        async def mock_search_builds(*_args, **_kwargs):
+            yield mock_build_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+
+        # Installed RPM has el9_5 suffix while input NVR has just el9
+        mock_get_golang_nvrs.return_value = {
+            "1.25.7-1.el9_5": [("openshift-golang-builder", "v1.25.7", "202602170955.g5015a16.el9")]
+        }
+
+        el_nvr_map = {9: "golang-1.25.7-1.el9"}
+        builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.25.7")
+
+        self.assertEqual(builder_nvrs, {9: "openshift-golang-builder-v1.25.7-202602170955.g5015a16.el9"})
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
