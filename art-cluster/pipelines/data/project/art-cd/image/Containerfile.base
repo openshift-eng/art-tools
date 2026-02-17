@@ -1,4 +1,4 @@
-FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.23-openshift-4.19
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21
 
 # Set metadata
 LABEL name="openshift-art/artcd-base" \
@@ -16,6 +16,10 @@ RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel g
     brewkoji rhpkg podman python3-rpm \
     && python3.11 -m pip install --upgrade setuptools pip \
     && dnf clean all
+
+# Install uv python package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+ENV PATH="/usr/local/bin:$PATH"
 
 # Set ARG for OC_VERSION
 ARG OC_VERSION=latest
@@ -46,7 +50,7 @@ RUN pip3 install setuptools==70.0.0
 
 # In openshift, we do not need to create virtual envronment because all runs are indepenedent
 # Hence we cannot use ./install.sh since uv needs to have a virtual environment
-RUN pip3 install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
+RUN ./install.sh
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 RUN git clone https://github.com/openshift/check-payload check-payload &&  \
