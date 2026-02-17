@@ -87,11 +87,14 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
             "4.21", ["golang-1.20.12-2.el8", "golang-1.20.12-2.el9", "golang-1.20.12-2.el10"]
         )
         self.assertEqual(go_version, "1.20.12")
-        self.assertEqual(el_nvr_map, {
-            8: "golang-1.20.12-2.el8",
-            9: "golang-1.20.12-2.el9",
-            10: "golang-1.20.12-2.el10",
-        })
+        self.assertEqual(
+            el_nvr_map,
+            {
+                8: "golang-1.20.12-2.el8",
+                9: "golang-1.20.12-2.el9",
+                10: "golang-1.20.12-2.el10",
+            },
+        )
 
 
 class TestGetLatestNvrInTag(unittest.TestCase):
@@ -715,8 +718,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-container-v1.20.12-202403212137.el8.g144a3f8"})
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
-    async def test_get_existing_builders_konflux(self, mock_get_golang_nvrs, mock_konflux_db_class):
+    async def test_get_existing_builders_konflux(self, mock_konflux_db_class):
         """Test get_existing_builders_konflux for Konflux"""
         mock_runtime = Mock(
             dry_run=False,
@@ -741,6 +743,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         # Mock the build record
         mock_build_record = Mock(spec=KonfluxBuildRecord)
+        mock_build_record.nvr = "openshift-golang-builder-container-v1.20.12-202403212137.el8.g144a3f8"
 
         # Mock the async generator
         async def mock_search_builds(*args, **kwargs):
@@ -748,14 +751,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
 
-        mock_get_golang_nvrs.return_value = {
-            "1.20.12-2.el8": [("openshift-golang-builder", "v1.20.12", "202403212137.el8.g144a3f8")]
-        }
-
         el_nvr_map = {8: "golang-1.20.12-2.el8"}
         builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.20.12")
 
-        self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-v1.20.12-202403212137.el8.g144a3f8"})
+        self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-container-v1.20.12-202403212137.el8.g144a3f8"})
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")

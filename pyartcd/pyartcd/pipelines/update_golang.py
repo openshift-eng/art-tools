@@ -256,8 +256,12 @@ class UpdateGolangPipeline:
                 konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
         # Determine which rhel versions need builds
-        brew_missing = el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-        konflux_missing = el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+        brew_missing = (
+            el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+        )
+        konflux_missing = (
+            el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+        )
 
         if brew_missing or konflux_missing:
             # FIXME: yuxzhu: already broken
@@ -277,20 +281,20 @@ class UpdateGolangPipeline:
                 error_msgs = "\n".join([str(e) for e in errors])
                 raise RuntimeError(f"{len(errors)} image build(s) failed:\n{error_msgs}")
 
-            # Now all builders should be available, try to fetch again
+            # Now all builders should be available, fetch again
             if self.build_system in ['both', 'brew']:
                 brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
                 konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
-            # Check if we still have missing builds
             brew_still_missing = (
                 el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
             )
             konflux_still_missing = (
-                el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+                el_nvr_map_for_images.keys() - konflux_nvrs.keys()
+                if self.build_system in ['both', 'konflux']
+                else set()
             )
-
             if brew_still_missing or konflux_still_missing:
                 error_parts = []
                 if brew_still_missing:
@@ -444,19 +448,11 @@ class UpdateGolangPipeline:
                 for el_v in el_nvr_map
             )
         )
-        found_records = {
-            el_v: cast(KonfluxBuildRecord, build_record)
-            for el_v, build_record in zip(el_nvr_map, build_records)
-            if build_record
-        }
-        go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(found_records.values(), _LOGGER)
-        for builder_go_vr, nvrs in go_nvr_map.items():
-            for el_v, go_nvr in el_nvr_map.items():
-                if builder_go_vr in go_nvr:
-                    for nvr in nvrs:
-                        nvr_str = f"{nvr[0]}-{nvr[1]}-{nvr[2]}"
-                        _LOGGER.info(f"Found existing builder image in Konflux: {nvr_str} built with {go_nvr}")
-                        builder_nvrs[el_v] = nvr_str
+        for el_v, build_record in zip(el_nvr_map, build_records):
+            if build_record:
+                record = cast(KonfluxBuildRecord, build_record)
+                _LOGGER.info(f"Found existing builder image in Konflux: {record.nvr} for el{el_v}")
+                builder_nvrs[el_v] = record.nvr
         return builder_nvrs
 
     def _get_builder_pullspec(self, parsed_nvr, build_system: str):
