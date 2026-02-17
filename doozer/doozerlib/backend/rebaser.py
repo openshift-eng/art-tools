@@ -987,6 +987,9 @@ class KonfluxRebaser:
         dfp.labels['version'] = version
         dfp.labels['release'] = release
 
+        # log nvr
+        self._logger.info(f"nvr={metadata.get_component_name()}-{version}-{release}")
+
         # Delete differently cased labels that we override or use newer versions of
         for deprecated in ["Release", "Architecture", "BZComponent"]:
             if deprecated in dfp.labels:

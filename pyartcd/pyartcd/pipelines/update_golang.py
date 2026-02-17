@@ -25,6 +25,7 @@ from github import Github
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.util import default_release_suffix
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -691,7 +692,7 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
-        release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
+        release = default_release_suffix()
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
