@@ -8,10 +8,10 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: registry.access.redhat.com/ubi9/ubi:latest
+    container: registry.fedoraproject.org/fedora:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y git clang gcc krb5-devel make glibc
+        run: dnf install -y --nobest git clang gcc krb5-devel make glibc
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4

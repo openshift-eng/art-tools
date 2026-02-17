@@ -227,3 +227,132 @@ shipment:
         timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
         self.assertEqual(len(timestamp_part), 14)
         self.assertTrue(timestamp_part.isdigit())
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_extracts_commit(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit correctly extracts the git commit
+        from the microshift RPM NVR.
+        """
+        # given
+        mock_get_builds.return_value = [
+            "microshift-4.21.0-202601290005.p2.g0d0943b.assembly.4.21.0.el8",
+            "microshift-4.21.0-202601290005.p2.g0d0943b.assembly.4.21.0.el9",
+        ]
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when
+        commit = await pipeline._get_microshift_rpm_commit()
+
+        # then
+        self.assertEqual(commit, "0d0943b")
+        mock_get_builds.assert_called_once_with(self.group, self.assembly, env=pipeline._elliott_env_vars)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_raises_when_no_nvrs(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit raises ValueError when no NVRs are found.
+        """
+        # given
+        mock_get_builds.return_value = []
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._get_microshift_rpm_commit()
+        self.assertIn("Could not find microshift RPM NVRs", str(ctx.exception))
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_raises_when_no_commit_in_nvr(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit raises ValueError when the NVR
+        does not contain a recognizable commit hash.
+        """
+        # given
+        mock_get_builds.return_value = [
+            "microshift-4.21.0-202601290005.assembly.4.21.0.el9",
+        ]
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._get_microshift_rpm_commit()
+        self.assertIn("commit", str(ctx.exception).lower())
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_rebase_and_build_bootc_uses_rpm_commit(
+        self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd
+    ):
+        """
+        Test that _rebase_and_build_bootc passes the RPM commit to --lock-upstream
+        instead of HEAD.
+        """
+        # given
+        mock_get_commit.return_value = "0d0943b"
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.assembly_type = Mock()
+        pipeline.assembly_type.__ne__ = Mock(return_value=True)
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            # when
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            # then
+            # Verify rebase command uses the RPM commit, not HEAD
+            rebase_call = mock_cmd.call_args_list[0]
+            rebase_cmd = rebase_call[0][0]
+            lock_idx = rebase_cmd.index("--lock-upstream")
+            self.assertEqual(rebase_cmd[lock_idx + 1], "microshift-bootc")
+            self.assertEqual(rebase_cmd[lock_idx + 2], "0d0943b")
+
+            # Verify build command uses the RPM commit, not HEAD
+            build_call = mock_cmd.call_args_list[1]
+            build_cmd = build_call[0][0]
+            lock_idx = build_cmd.index("--lock-upstream")
+            self.assertEqual(build_cmd[lock_idx + 1], "microshift-bootc")
+            self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
