@@ -439,6 +439,48 @@ class TestImageMetadata(unittest.TestCase):
         self.assertEqual(result, {'repo1', 'repo2'})
         mock_config.get.assert_called_once_with("enabled_repos", [])
 
+    def test_get_konflux_build_attempts_default(self):
+        """
+        Test default build attempts when no config is set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = Missing
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 3)
+
+    def test_get_konflux_build_attempts_metadata_override(self):
+        """
+        Test component-level override takes precedence over group
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = 5
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 2
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 5)
+
+    def test_get_konflux_build_attempts_group_override(self):
+        """
+        Test group-level override when component not set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 1
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 1)
+
     def test_calculate_config_digest_old_style_repos(self):
         """
         Test calculate_config_digest with old-style repos (dict format).

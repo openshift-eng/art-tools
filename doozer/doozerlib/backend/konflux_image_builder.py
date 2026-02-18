@@ -172,7 +172,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
@@ -185,8 +185,8 @@ class KonfluxImageBuilder:
                 build_priority = self._config.build_priority
                 logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
 
-            for attempt in range(retries):
-                logger.info("Build attempt %s/%s", attempt + 1, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 pipelinerun_info = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
@@ -242,7 +242,7 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
-                elif outcome is KonfluxBuildOutcome.SUCCESS or attempt == (retries - 1):
+                elif outcome is KonfluxBuildOutcome.SUCCESS or attempt == (build_attempts - 1):
                     # Only create a failed build record if this is the latest attempt
                     await self.update_konflux_db(
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority

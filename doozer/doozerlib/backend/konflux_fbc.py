@@ -405,9 +405,9 @@ class KonfluxFbcFragmentMerger:
             logger.info("Dry run enabled, not pushing changes.")
 
         # Start the build
-        retries = 3
-        for attempt in range(retries):
-            logger.info(f"Attempt {attempt + 1} of {retries} to start the build...")
+        build_attempts = self.group_config.get("konflux", {}).get("build_attempts", 3)
+        for attempt in range(build_attempts):
+            logger.info(f"Attempt {attempt + 1} of {build_attempts} to start the build...")
             error = None
             created_plr = await self._start_build(
                 build_repo=build_repo,
@@ -438,7 +438,7 @@ class KonfluxFbcFragmentMerger:
                 error = None
                 break
         if error:
-            logger.error("Build failed after %d attempts: %s", retries, error)
+            logger.error("Build failed after %d attempts: %s", build_attempts, error)
             raise error
 
     @staticmethod
@@ -1312,7 +1312,7 @@ class KonfluxFbcBuilder:
 
             # Start FBC build
             logger.info("Starting FBC build...")
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             name = dfp.labels.get('com.redhat.art.name')
             if not name:
                 raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
@@ -1356,8 +1356,8 @@ class KonfluxFbcBuilder:
             else:
                 arches = metadata.get_arches()
 
-            for attempt in range(1, retries + 1):
-                logger.info("Build attempt %d/%d", attempt, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,

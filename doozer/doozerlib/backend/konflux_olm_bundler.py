@@ -649,10 +649,10 @@ class KonfluxOlmBundleBuilder:
 
             # Start the bundle build
             logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             pipelinerun_dict = None  # Initialize to handle cases where the loop doesn't set it
-            for attempt in range(retries):
-                logger.info("Build attempt %d/%d", attempt + 1, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %d/%d", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
                     metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks
                 )
