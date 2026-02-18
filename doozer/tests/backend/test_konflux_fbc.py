@@ -859,6 +859,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "9"
+        metadata.get_konflux_build_attempts.return_value = 3
         all_arches = metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
         build_repo = MockBuildRepo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
@@ -951,6 +952,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "9"
+        metadata.get_konflux_build_attempts.return_value = 3
         all_arches = metadata.get_arches.return_value = list(KonfluxClient.SUPPORTED_ARCHES.keys())
         build_repo = MockBuildRepo.from_local_dir.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)

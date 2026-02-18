@@ -768,6 +768,36 @@ class ImageMetadata(Metadata):
             return False
         return canonical_builders_from_upstream
 
+    def get_konflux_build_attempts(self) -> int:
+        """
+        Returns the number of build attempts to use for Konflux builds.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.build_attempts)
+        2. Group configuration (konflux.build_attempts)
+        3. Default value (3 attempts)
+
+        Returns:
+            int: Number of build attempts
+        """
+        DEFAULT_BUILD_ATTEMPTS = 3
+
+        # Check component-level override first
+        if (component_override := self.config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(component_override)
+            source = "metadata config"
+        # Check group-level override
+        elif (group_override := self.runtime.group_config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(group_override)
+            source = "group config"
+        else:
+            attempts = DEFAULT_BUILD_ATTEMPTS
+            source = "default"
+
+        self.logger.info("Using %d Konflux build attempts for %s (source: %s)", attempts, self.distgit_key, source)
+
+        return attempts
+
     def _apply_alternative_upstream_config(self) -> None:
         """
         When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
