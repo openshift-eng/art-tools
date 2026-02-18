@@ -242,8 +242,8 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
-                elif outcome is KonfluxBuildOutcome.SUCCESS or attempt == (build_attempts - 1):
-                    # Only create a failed build record if this is the latest attempt
+                else:
+                    # Create a build record after every attempt (both success and failure)
                     await self.update_konflux_db(
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
                     )
