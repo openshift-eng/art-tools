@@ -1353,6 +1353,11 @@
             "legacy"
           ]
         },
+        "build_timeout": {
+          "description": "Build timeout in minutes for konflux builds",
+          "type": "integer",
+          "minimum": 1
+        },
         "content": {
           "$ref": "image_content.base.schema.json"
         }
