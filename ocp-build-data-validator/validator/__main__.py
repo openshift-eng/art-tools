@@ -25,11 +25,16 @@ def validate(file, schema_only, images_dir):
         msg = 'Schema mismatch: {}\nReturned error: {}'.format(file, err)
         support.fail_validation(msg, parsed)
 
-    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases']:
+    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases', 'group']:
         print(f'✅ Validated {file}')
         return
 
     if schema_only:
+        print(f'✅ Validated {file}')
+        return
+
+    if support.get_artifact_type(file) == 'group':
+        # group.yml schema validation is already done above
         print(f'✅ Validated {file}')
         return
 

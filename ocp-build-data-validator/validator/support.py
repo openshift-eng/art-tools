@@ -50,7 +50,10 @@ def get_artifact_type(file):
     if 'shipment' in file:
         return 'shipment'
 
-    if any([x in file for x in ['erratatool.yml', 'group.yml', 'bug.yml', 'bugzilla.yml']]):
+    if 'group.yml' in file:
+        return 'group'
+
+    if any([x in file for x in ['erratatool.yml', 'bug.yml', 'bugzilla.yml']]):
         return 'ignore'
 
     return '???'
