@@ -210,7 +210,10 @@
     },
     "upgrades_next-": {},
     "check_golang_versions": {
-      "type": "boolean"
+      "oneOf": [
+        {"type": "boolean"},
+        {"type": "string"}
+      ]
     },
     "check_golang_versions!": {
       "$ref": "#/properties/check_golang_versions"
@@ -221,7 +224,12 @@
     "check_golang_versions-": {},
     "cachito": {
       "description": "Cachito integration configuration",
-      "$ref": "cachito.schema.json"
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "version": {"type": "integer"}
+      },
+      "additionalProperties": true
     },
     "cachito!": {
       "$ref": "#/properties/cachito"
@@ -248,13 +256,32 @@
             "properties": {
                "name": {"type": "string"},
                "build_metadata_key": {"type": "string"},
-               "primary": {"type": "boolean"}
+               "primary": {"type": "boolean"},
+               "meta_type": {"type": "string"},
+               "rhel_build_id_index": {"type": "string"},
+               "rhel_version": {
+                 "oneOf": [
+                   {"type": "string"},
+                   {"type": "number"}
+                 ]
+               },
+               "rhcos_index_tag": {"type": "string"}
             },
-            "additionalProperties": false
+            "additionalProperties": true
           }
+        },
+        "exempt_rpms": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "layered_rhcos": {"type": "boolean"},
+        "require_consistency": {"type": "object"},
+        "enabled_repos": {
+          "type": "array",
+          "items": {"type": "string"}
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "build_profiles-": {},
     "urls": {
@@ -295,13 +322,226 @@
       "$ref": "#/properties/canonical_builders_from_upstream"
     },
     "canonical_builders_from_upstream-": {},
+    "konflux": {
+      "description": "Konflux configuration",
+      "type": "object",
+      "properties": {
+        "arches": {
+          "type": "array",
+          "items": {
+            "$ref": "arch.schema.json"
+          }
+        },
+        "arches!": {
+          "$ref": "#/properties/konflux/properties/arches"
+        },
+        "arches?": {
+          "$ref": "#/properties/konflux/properties/arches"
+        },
+        "arches-": {},
+        "cachi2": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled-": {},
+            "gomod_version_patch": {
+              "type": "boolean"
+            },
+            "gomod_version_patch!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/gomod_version_patch"
+            },
+            "gomod_version_patch?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/gomod_version_patch"
+            },
+            "gomod_version_patch-": {},
+            "lockfile": {
+              "type": "object",
+              "properties": {
+                "force": {
+                  "type": "boolean"
+                },
+                "force!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force-": {}
+              },
+              "additionalProperties": false
+            },
+            "lockfile!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile-": {}
+          },
+          "additionalProperties": false
+        },
+        "cachi2!": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2?": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2-": {},
+        "sast": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/sast/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/sast/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "sast!": {
+          "$ref": "#/properties/konflux/properties/sast"
+        },
+        "sast?": {
+          "$ref": "#/properties/konflux/properties/sast"
+        },
+        "sast-": {},
+        "network_mode": {
+          "type": "string"
+        },
+        "network_mode!": {
+          "$ref": "#/properties/konflux/properties/network_mode"
+        },
+        "network_mode?": {
+          "$ref": "#/properties/konflux/properties/network_mode"
+        },
+        "network_mode-": {},
+        "build_attempts": {
+          "description": "The number of times a build should be attempted before giving up",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts!": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts?": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts-": {}
+      },
+      "additionalProperties": false
+    },
+    "konflux!": {
+      "$ref": "#/properties/konflux"
+    },
+    "konflux?": {
+      "$ref": "#/properties/konflux"
+    },
+    "konflux-": {},
+    "okd": {
+      "type": "object",
+      "properties": {
+        "konflux": {
+          "type": "object",
+          "properties": {
+            "build_priority": {"type": "integer"},
+            "build_priority!": {"$ref": "#/properties/okd/properties/konflux/properties/build_priority"},
+            "build_priority?": {"$ref": "#/properties/okd/properties/konflux/properties/build_priority"},
+            "build_priority-": {},
+            "cachi2": {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "enabled!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
+                "enabled?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
+                "enabled-": {},
+                "lockfile": {
+                  "type": "object",
+                  "properties": {
+                    "force": {"type": "boolean"},
+                    "force!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
+                    "force?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
+                    "force-": {}
+                  },
+                  "additionalProperties": false
+                },
+                "lockfile!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile"},
+                "lockfile?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile"},
+                "lockfile-": {}
+              },
+              "additionalProperties": false
+            },
+            "cachi2!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
+            "cachi2?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
+            "cachi2-": {}
+          },
+          "additionalProperties": false
+        },
+        "konflux!": {
+          "$ref": "#/properties/okd/properties/konflux"
+        },
+        "konflux?": {
+          "$ref": "#/properties/okd/properties/konflux"
+        },
+        "konflux-": {}
+      },
+      "additionalProperties": false
+    },
+    "okd!": {
+      "$ref": "#/properties/okd"
+    },
+    "okd?": {
+      "$ref": "#/properties/okd"
+    },
+    "okd-": {},
     "operator_index_mode": {
       "type": "string",
       "enum": ["pre-release", "pre-ga", "ga"]
     },
     "release_date": {
       "type": "string"
-    }
+    },
+    "freeze_automation": {
+      "oneOf": [
+        {"type": "boolean"},
+        {"type": "string"}
+      ]
+    },
+    "vars": {"type": "object"},
+    "compliance": {"type": "object"},
+    "multi_arch": {"type": "object"},
+    "new_payload_versioning_scheme": {"type": "boolean"},
+    "operator_image_ref_mode": {"type": "string"},
+    "signing_advisory": {"type": "integer"},
+    "assemblies": {"type": "object"},
+    "check_external_packages": {"type": "array"},
+    "default_image_build_profile": {"type": "string"},
+    "default_rpm_build_profile": {"type": "string"},
+    "rpm_deliveries": {"type": "array"},
+    "branch": {"type": "string"},
+    "name": {"type": "string"},
+    "dist_git_ignore": {"type": "array"},
+    "push": {"type": "object"},
+    "public_upstreams": {"type": "array"},
+    "default_image_build_method": {"type": "string"},
+    "image_build_log_scanner": {"type": "object"},
+    "scan_freshness": {"type": "object"},
+    "csv_namespace": {"type": "string"},
+    "software_lifecycle": {"type": "object"},
+    "external_scanners": {"type": "object"},
+    "reconciliation_prs": {"type": "object"}
   },
   "additionalProperties": false
 }

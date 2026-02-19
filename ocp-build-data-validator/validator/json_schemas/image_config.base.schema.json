@@ -1358,6 +1358,18 @@
           "type": "integer",
           "minimum": 1
         },
+        "build_attempts": {
+          "description": "The number of times a build should be attempted before giving up",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts?": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts!": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }
