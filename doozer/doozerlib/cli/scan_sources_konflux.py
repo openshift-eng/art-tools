@@ -21,6 +21,7 @@ from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
@@ -1231,9 +1232,7 @@ class ConfigScanSources:
         pullspec = f"quay.io/konflux-ci/tekton-catalog/{task_name}@sha256:{sha}"
         self.logger.info(f'Getting age for task bundle {task_name} using pullspec {pullspec}')
         try:
-            cmd = f"oc image info {pullspec} -o json"
-            _, out, _ = await cmd_gather_async(cmd)
-
+            out = await oc_image_info__cached_async(pullspec)
             image_info = json.loads(out)
             created_str = image_info.get('config', {}).get('created', '')
             if not created_str:

@@ -153,9 +153,9 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             ("dummy", "test@sha256:abcd1234alt"), rhcos.RHCOSBuildFinder(self.runtime, "4.4").latest_container()
         )
 
-    @patch('artcommonlib.exectools.cmd_assert')
+    @patch('artcommonlib.rhcos.oc_image_info__cached')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    def test_rhcos_build_inspector(self, rhcos_build_meta_mock, cmd_assert_mock):
+    def test_rhcos_build_inspector(self, rhcos_build_meta_mock, oc_image_info_mock):
         """
         Tests the RHCOS build inspector abstraction to ensure it correctly parses and utilizes
         pre-canned data.
@@ -172,7 +172,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         )
 
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
-        cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "47.83.202107261211-0"}}}}', None)
+        oc_image_info_mock.return_value = '{"config": {"config": {"Labels": {"version": "47.83.202107261211-0"}}}}'
         test_digest = 'sha256:spamneggs'
         test_pullspec = f'somereg/somerepo@{test_digest}'
         pullspecs = {'machine-os-content': test_pullspec}
@@ -199,9 +199,9 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("util-linux-2.32.1-24.el8", rhcos_build.get_rpm_nvrs())
         self.assertEqual(rhcos_build.get_container_digest(), test_digest)
 
-    @patch('artcommonlib.exectools.cmd_assert')
+    @patch('artcommonlib.rhcos.oc_image_info__cached')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    def test_rhcos_build_inspector_extension(self, rhcos_build_meta_mock, cmd_assert_mock):
+    def test_rhcos_build_inspector_extension(self, rhcos_build_meta_mock, oc_image_info_mock):
         """
         Tests the RHCOS build inspector to ensure it additionally includes RPMs from extensions.
         """
@@ -211,7 +211,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
 
         pullspecs = {'machine-os-content': 'somereg/somerepo@sha256:spamneggs'}
-        cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
+        oc_image_info_mock.return_value = '{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}'
         runtime = MockRuntime(self.logger)
         runtime.get_major_minor_fields.return_value = 4, 13
         rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
@@ -220,14 +220,14 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6", rhcos_build.get_rpm_nvrs())
         self.assertIn("qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6", rhcos_build.get_rpm_nvrs())  # epoch stripped
 
-    @patch('artcommonlib.exectools.cmd_assert')
+    @patch('artcommonlib.rhcos.oc_image_info__cached')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    def test_inspector_get_container_pullspec(self, rhcos_build_meta_mock, cmd_assert_mock):
+    def test_inspector_get_container_pullspec(self, rhcos_build_meta_mock, oc_image_info_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
-        cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
+        oc_image_info_mock.return_value = '{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}'
         pullspecs = {'machine-os-content': 'spam@eggs'}
         runtime = MockRuntime(self.logger)
         runtime.get_major_minor_fields.return_value = 4, 12
@@ -238,14 +238,14 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RhcosMissingContainerException):
             rhcos_build.get_container_pullspec(Model(container_conf))
 
-    @patch('artcommonlib.exectools.cmd_assert')
+    @patch('artcommonlib.rhcos.oc_image_info__cached')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    async def test_find_non_latest_rpms_with_missing_enabled_repos(self, rhcos_build_meta_mock, cmd_assert_mock):
+    async def test_find_non_latest_rpms_with_missing_enabled_repos(self, rhcos_build_meta_mock, oc_image_info_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
-        cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
+        oc_image_info_mock.return_value = '{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}'
         pullspecs = {'machine-os-content': 'spam@eggs'}
         runtime = MockRuntime(self.logger)
         runtime.group_config.rhcos = Model({})
@@ -256,12 +256,12 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
     @patch('doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list')
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @patch('artcommonlib.exectools.cmd_assert')
+    @patch('artcommonlib.rhcos.oc_image_info__cached')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms(
         self,
         rhcos_build_meta_mock: Mock,
-        cmd_assert_mock: Mock,
+        oc_image_info_mock: Mock,
         get_repodata_threadsafe: AsyncMock,
         get_os_metadata_rpm_list: Mock,
     ):
@@ -269,7 +269,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
-        cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
+        oc_image_info_mock.return_value = '{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}'
         pullspecs = {'machine-os-content': 'spam@eggs'}
         self.runtime.group_config.rhcos = Model(
             {

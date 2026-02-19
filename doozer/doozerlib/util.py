@@ -23,6 +23,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
+from artcommonlib.oc_image_info import oc_image_info__cached, oc_image_info__cached_async
 from artcommonlib.util import isolate_major_minor_in_group
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -591,25 +592,21 @@ def oc_image_info(
     pullspec. Use oc_image_info__caching if you do not believe the image will change
     during the course of doozer's execution.
 
+    Results for sha256-pinned pullspecs are cached in Redis when credentials are available.
+
     :param pullspec: e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-vsphere-problem-detector-rhel9:v4.19.0-202501230108.p0.gcbd8539.assembly.stream.el9
     :param options: list of extra args to use with oc, e.g. '--show-multiarch', '--filter-by-os=linux/amd64'
     :param registry_config: The path to the registry config file.
     :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
     :return: Parsed JSON output or None if strict=False and image doesn't exist
     """
-
-    cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
-    cmd.extend(options)
-    if registry_config:
-        cmd.extend([f'--registry-config={registry_config}'])
-
-    rc, out, err = exectools.cmd_gather(cmd)
-
-    if rc != 0:
-        if not strict and 'manifest unknown' in err.lower():
+    try:
+        out = oc_image_info__cached(pullspec, *options, registry_config=registry_config)
+    except ChildProcessError as e:
+        err_msg = str(e)
+        if not strict and 'manifest unknown' in err_msg.lower():
             return None
-        # Raise IOError for errors (strict=True or other errors)
-        raise IOError(f"oc image info failed (rc={rc}): {err}")
+        raise IOError(err_msg) from e
 
     return json.loads(out)
 
@@ -705,6 +702,8 @@ async def oc_image_info_async(
     pullspec.
     This function will authenticate with the registry using the provided registry_config.
 
+    Results for sha256-pinned pullspecs are cached in Redis when credentials are available.
+
     Use oc_image_info_async__caching if you think the image won't change during the course of doozer
     execution.
 
@@ -712,13 +711,7 @@ async def oc_image_info_async(
     :param registry_config: The path to the registry config file.
     :return: The parsed JSON output of `oc image info`.
     """
-
-    opts = ['-o', 'json']
-    if registry_config:
-        opts.extend([f'--registry-config={registry_config}'])
-    opts.extend(options)
-    cmd = ['oc', 'image', 'info'] + opts + [pullspec]
-    _, out, _ = await exectools.cmd_gather_async(cmd)
+    out = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
     return json.loads(out)
 
 
@@ -774,38 +767,6 @@ async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_
         cmd.extend([f'--registry-config={registry_config}'])
     cmd.extend(["--", pullspec])
     await exectools.cmd_assert_async(cmd)
-
-
-async def oc_image_info_show_multiarch_async(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return await oc_image_info_async(
-        pullspec,
-        '--show-multiarch',
-        registry_config=registry_config,
-    )
-
-
-@alru_cache
-async def oc_image_info_show_multiarch_async__caching(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return await oc_image_info_show_multiarch_async(
-        pullspec=pullspec,
-        registry_config=registry_config,
-    )
 
 
 def infer_assembly_type(custom, assembly_name):
