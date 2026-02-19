@@ -149,7 +149,7 @@ class ImagesHealthPipeline:
         # Get rebase failures for this version
         rebase_failures = self.rebase_failures.get(version, {})
 
-        version_tag = f'`openshift-{version}`'
+        version_tag = f'`okd-{version}`'
         if self.assembly != 'stream':
             version_tag += f' (assembly `{self.assembly}`)'
 
