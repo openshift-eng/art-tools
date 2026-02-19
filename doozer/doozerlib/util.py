@@ -223,6 +223,7 @@ def extract_version_fields(version, at_least=0):
     :param version: A version to parse
     :param at_least: The minimum number of fields to find (else raise an error)
     """
+    version = version.replace('golang-builder-', '')
     fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
     if len(fields) < at_least:
         raise IOError(f'Unable to find required {at_least} fields in {version}')
