@@ -510,6 +510,7 @@ class KonfluxBundleCli:
             upcycle=runtime.upcycle,
             image_repo=self.image_repo,
             dry_run=self.dry_run,
+            record_logger=runtime.record_logger,
         )
 
         builder = KonfluxOlmBundleBuilder(

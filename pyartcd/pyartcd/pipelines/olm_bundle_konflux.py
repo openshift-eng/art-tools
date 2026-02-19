@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from pathlib import Path
 
 import click
@@ -137,6 +138,9 @@ async def olm_bundle_konflux(
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
+    # Track whether doozer command succeeded
+    doozer_error = None
+
     try:
         # Build bundles
         await locks.run_with_lock(
@@ -145,82 +149,117 @@ async def olm_bundle_konflux(
             lock_name=lock_name,
             lock_id=lock_identifier,
         )
+    except ChildProcessError as e:
+        # Doozer command failed - but bundles may have partially succeeded
+        doozer_error = e
+        runtime.logger.warning(f'Doozer command failed: {e}')
+        runtime.logger.info('Checking record.log for partial success...')
 
-        # Parse doozer record.log
-        bundle_nvrs = []
-        operator_nvrs = []
-        record_log_path = Path(runtime.doozer_working, 'record.log')
-        if record_log_path.exists():
-            with record_log_path.open() as file:
-                record_log = parse_record_log(file)
-            records = record_log.get('build_olm_bundle_konflux', [])
-            for record in records:
-                if record['status'] != '0':
-                    raise RuntimeError(
-                        'record.log includes unexpected build_olm_bundle_konflux '
-                        f'record with error message: {record["message"]}'
-                    )
-                bundle_nvrs.append(record['bundle_nvr'])
+    # Parse doozer record.log to determine actual build results
+    # This runs regardless of whether doozer succeeded or failed
+    operator_nvrs = []
+    operators_with_failed_bundles = []
+    successful_bundles = []
+
+    record_log_path = Path(runtime.doozer_working, 'record.log')
+    if record_log_path.exists():
+        with record_log_path.open() as file:
+            record_log = parse_record_log(file)
+        records = record_log.get('build_olm_bundle_konflux', [])
+
+        for record in records:
+            if record['status'] == '0':
                 operator_nvrs.append(record['operator_nvr'])
+                successful_bundles.append(record['bundle_nvr'])
+            else:
+                operators_with_failed_bundles.append(record.get('operator_nvr', 'unknown'))
 
-        runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
+        if successful_bundles:
+            runtime.logger.info(f'Successfully built {len(successful_bundles)} bundle(s): {successful_bundles}')
+        if operators_with_failed_bundles:
+            runtime.logger.error(f'Bundle builds of the following operators failed: {operators_with_failed_bundles}')
+    else:
+        runtime.logger.error('record.log not found - cannot determine build results')
+        if doozer_error:
+            # No record.log and doozer failed
+            raise doozer_error
 
-        if operator_nvrs:
-            runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
-            # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
-            if group and not group.startswith("openshift-"):
-                runtime.logger.info(f'Group {group} is a non-openshift group, checking for OCP_TARGET_VERSIONS')
-                # Load group config to check for OCP_TARGET_VERSIONS
-                group_config = await load_group_config(
-                    group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
-                )
+    total_bundles = len(successful_bundles) + len(operators_with_failed_bundles)
+    if total_bundles == 0:
+        runtime.logger.error('No bundle builds were attempted')
+        if doozer_error:
+            raise doozer_error
+        raise RuntimeError('No bundle builds found in record.log')
 
-                # Check if OCP_TARGET_VERSIONS is defined in group config
-                ocp_target_versions = group_config.get("OCP_TARGET_VERSIONS")
-                runtime.logger.info(f'OCP_TARGET_VERSIONS from group config: {ocp_target_versions}')
+    if operators_with_failed_bundles and not successful_bundles:
+        # All builds failed - re-raise the error or raise a new one
+        runtime.logger.error(f'All {len(operators_with_failed_bundles)} bundle build(s) failed')
+        if doozer_error:
+            raise doozer_error
+        raise RuntimeError(f'All {len(operators_with_failed_bundles)} bundle build(s) failed')
 
-                if ocp_target_versions:
-                    runtime.logger.info(f'Starting multiple FBC jobs for target versions: {ocp_target_versions}')
-                    # Generate multiple FBC jobs, one for each target version
-                    for target_version in ocp_target_versions:
-                        runtime.logger.info(f'Starting FBC job for target version: {target_version}')
-                        jenkins.start_build_fbc(
-                            version=version,
-                            group=group,
-                            assembly=assembly,
-                            operator_nvrs=operator_nvrs,
-                            dry_run=runtime.dry_run,
-                            ocp_target_version=target_version,
-                            # Always force rebuild FBCs for OADP / MTA / MTC
-                            force_build=True,
-                        )
-                        await asyncio.sleep(5)
-                else:
-                    runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
-                    # No OCP_TARGET_VERSIONS defined, use original behavior
+    # Trigger FBC builds for successful bundles only
+    if operator_nvrs:
+        runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
+        # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
+        if group and not group.startswith("openshift-"):
+            runtime.logger.info(f'Group {group} is a non-openshift group, checking for OCP_TARGET_VERSIONS')
+            # Load group config to check for OCP_TARGET_VERSIONS
+            group_config = await load_group_config(
+                group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+            )
+
+            # Check if OCP_TARGET_VERSIONS is defined in group config
+            ocp_target_versions = group_config.get("OCP_TARGET_VERSIONS")
+            runtime.logger.info(f'OCP_TARGET_VERSIONS from group config: {ocp_target_versions}')
+
+            if ocp_target_versions:
+                runtime.logger.info(f'Starting multiple FBC jobs for target versions: {ocp_target_versions}')
+                # Generate multiple FBC jobs, one for each target version
+                for target_version in ocp_target_versions:
+                    runtime.logger.info(f'Starting FBC job for target version: {target_version}')
                     jenkins.start_build_fbc(
                         version=version,
                         group=group,
                         assembly=assembly,
                         operator_nvrs=operator_nvrs,
                         dry_run=runtime.dry_run,
+                        ocp_target_version=target_version,
+                        # Always force rebuild FBCs for OADP / MTA / MTC
+                        force_build=True,
                     )
+                    await asyncio.sleep(5)
             else:
-                runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
-                # Not an OADP/MTA/MTC group, use original behavior
+                runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
+                # No OCP_TARGET_VERSIONS defined, use original behavior
                 jenkins.start_build_fbc(
                     version=version,
-                    group=group if group else None,
+                    group=group,
                     assembly=assembly,
                     operator_nvrs=operator_nvrs,
                     dry_run=runtime.dry_run,
                 )
+        else:
+            runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
+            # Not an OADP/MTA/MTC group, use original behavior
+            jenkins.start_build_fbc(
+                version=version,
+                group=group if group else None,
+                assembly=assembly,
+                operator_nvrs=operator_nvrs,
+                dry_run=runtime.dry_run,
+            )
 
-    except (ChildProcessError, RuntimeError) as e:
-        runtime.logger.error('Encountered error: %s', e)
-        # if not runtime.dry_run and assembly != 'test':
-        #    slack_client = runtime.new_slack_client()
-        #    slack_client.bind_channel(version)
-        #    await slack_client.say('*:heavy_exclamation_mark: konflux_olm_bundle failed*\n'
-        #                           f'buildvm job: {os.environ["BUILD_URL"]}')
-        raise
+    if operators_with_failed_bundles and successful_bundles:
+        # Partial failure - exit with code 2 to mark Jenkins job as UNSTABLE
+        runtime.logger.warning(
+            'Job completed with partial success - some bundle builds failed but FBC triggered for successful bundles'
+        )
+        runtime.logger.warning(
+            f'{len(successful_bundles)} bundle(s) built successfully: {", ".join(successful_bundles)}'
+        )
+        runtime.logger.warning(f'{len(operators_with_failed_bundles)} bundle(s) failed - see errors above')
+        sys.exit(2)
+
+    # If we get here, all builds succeeded - job will be marked as SUCCESS
+    runtime.logger.info('All bundle builds completed successfully')
