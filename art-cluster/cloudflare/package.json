@@ -14,7 +14,7 @@
     "wrangler": "^4.14.1"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.670.0",
+    "@aws-sdk/client-secrets-manager": "^3.993.0",
     "base-64": "^1.0.0"
   }
 }
