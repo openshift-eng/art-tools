@@ -45,6 +45,7 @@ class KonfluxOlmBundleRebaser:
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         dry_run: bool = False,
         logger: logging.Logger = _LOGGER,
+        record_logger=None,
     ):
         self.base_dir = base_dir
         self.group = group
@@ -57,6 +58,7 @@ class KonfluxOlmBundleRebaser:
         self.image_repo = image_repo
         self.dry_run = dry_run
         self._logger = logger
+        self._record_logger = record_logger
 
     async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str) -> str:
         """Rebase an operator with Konflux.
@@ -68,59 +70,84 @@ class KonfluxOlmBundleRebaser:
         assert input_release, "input_release must be provided"
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        source = None
-        if metadata.has_source():
-            logger.info("Resolving source...")
-            source = cast(
-                SourceResolution,
-                await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True),
+        # Initialize record with failure defaults
+        record = {
+            'status': -1,
+            "message": "Rebase failed",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "operator_nvr": operator_build.nvr,
+            "operand_nvrs": "n/a",
+            "bundle_nvr": "n/a",
+        }
+
+        try:
+            source = None
+            if metadata.has_source():
+                logger.info("Resolving source...")
+                source = cast(
+                    SourceResolution,
+                    await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True),
+                )
+            else:
+                raise IOError(
+                    f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
+                )
+
+            logger.info("Cloning operator build source...")
+            if operator_build.engine is Engine.KONFLUX:
+                operator_build_repo_url = source.url
+                operator_build_repo_refspec = operator_build.rebase_commitish
+            elif operator_build.engine is Engine.BREW:
+                operator_build_repo_url = metadata.distgit_remote_url()
+                operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
+            else:
+                raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
+            operator_dir = self.base_dir.joinpath(metadata.qualified_key)
+            operator_build_repo = BuildRepo(
+                url=operator_build_repo_url, branch=None, local_dir=operator_dir, logger=self._logger
             )
-        else:
-            raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
+            await operator_build_repo.ensure_source(upcycle=self.upcycle)
+            await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
+            await operator_build_repo.switch('FETCH_HEAD', detach=True)
+            logger.info(f"operator build source cloned to {operator_dir}")
 
-        logger.info("Cloning operator build source...")
-        if operator_build.engine is Engine.KONFLUX:
-            operator_build_repo_url = source.url
-            operator_build_repo_refspec = operator_build.rebase_commitish
-        elif operator_build.engine is Engine.BREW:
-            operator_build_repo_url = metadata.distgit_remote_url()
-            operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
-        else:
-            raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
-        operator_dir = self.base_dir.joinpath(metadata.qualified_key)
-        operator_build_repo = BuildRepo(
-            url=operator_build_repo_url, branch=None, local_dir=operator_dir, logger=self._logger
-        )
-        await operator_build_repo.ensure_source(upcycle=self.upcycle)
-        await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
-        await operator_build_repo.switch('FETCH_HEAD', detach=True)
-        logger.info(f"operator build source cloned to {operator_dir}")
+            logger.info("Cloning bundle repository...")
+            bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
+            bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
+                {
+                    "group": self.group,
+                    "assembly_name": self.assembly,
+                    "distgit_key": metadata.distgit_key,
+                }
+            )
+            bundle_build_repo = BuildRepo(
+                url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger
+            )
+            await bundle_build_repo.ensure_source(upcycle=self.upcycle)
+            logger.info("Bundle repository cloned to %s", bundle_dir)
+            # clean the bundle build directory
+            logger.info("Cleaning bundle build directory...")
+            await bundle_build_repo.delete_all_files()
+            logger.info("Rebasing bundle content...")
+            nvr = await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
 
-        logger.info("Cloning bundle repository...")
-        bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
-        bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
-            {
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            }
-        )
-        bundle_build_repo = BuildRepo(
-            url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger
-        )
-        await bundle_build_repo.ensure_source(upcycle=self.upcycle)
-        logger.info("Bundle repository cloned to %s", bundle_dir)
-        # clean the bundle build directory
-        logger.info("Cleaning bundle build directory...")
-        await bundle_build_repo.delete_all_files()
-        logger.info("Rebasing bundle content...")
-        nvr = await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
-        # commit and push the changes
-        logger.info("Committing and pushing bundle content...")
-        await bundle_build_repo.commit(f"Update bundle manifests for {operator_build.nvr}", allow_empty=True)
-        if not self.dry_run:
-            await bundle_build_repo.push()
-        return nvr
+            record['bundle_nvr'] = nvr
+
+            # commit and push the changes
+            logger.info("Committing and pushing bundle content...")
+            await bundle_build_repo.commit(f"Update bundle manifests for {operator_build.nvr}", allow_empty=True)
+            if not self.dry_run:
+                await bundle_build_repo.push()
+
+            # Rebase succeeded - don't write record, builder will handle it
+            return nvr
+        except Exception as e:
+            # Record rebase failure
+            record['message'] = f"Rebase failed: {str(e)}"
+            if self._record_logger:
+                self._record_logger.add_record("build_olm_bundle_konflux", **record)
+            raise
 
     async def _rebase_dir(
         self,
