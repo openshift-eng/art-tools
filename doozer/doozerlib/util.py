@@ -787,9 +787,15 @@ def get_konflux_build_priority(metadata, group):
 
     :param metadata: ImageMetadata object containing config and runtime info
     :param group: doozer group, eg: openshift-4.15 / oadp-1.5
-    :return: Priority value as string (1-10)
+    :return: Priority value as string; "1" (high) "10" (low)
     """
     logger.info(f"Resolving build priority for {metadata.distgit_key}")
+    phase = metadata.runtime.group_config.software_lifecycle.phase
+
+    def higher_by(val: int) -> str:
+        new_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - val))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {new_priority} (phase: {phase})")
+        return new_priority
 
     # 1. Image config priority
     image_config_priority = metadata.config.konflux.get("build_priority")
@@ -803,16 +809,17 @@ def get_konflux_build_priority(metadata, group):
         logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
         return str(group_config_priority)
 
-    # 3. Higher than default priority for main & pre-GA N-1 streams.
-    phase = metadata.runtime.group_config.software_lifecycle.phase
+    # 3. Golang builder images are high priority since they block other builds.
+    if 'golang' in group:
+        # Prioritize since golang builds may be part of addressing security issues.
+        return higher_by(3)
+
+    # 4. Higher than default priority for main & pre-GA N-1 streams.
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):
-        pre_release_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - 2))
-        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {pre_release_priority} (phase: {phase})")
-        return pre_release_priority
+        return higher_by(2)
 
     # Default
-    logger.info(f"Using default priority for {metadata.distgit_key}: {constants.KONFLUX_DEFAULT_BUILD_PRIORITY}")
-    return str(constants.KONFLUX_DEFAULT_BUILD_PRIORITY)
+    return higher_by(0)
 
 
 def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
@@ -904,3 +911,188 @@ async def check_nightly_exists(nightly_name: str, private_nightly: bool = False)
     except Exception as e:
         logger.warning(f"Error checking for nightly: {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Go coverage instrumentation helpers
+# ---------------------------------------------------------------------------
+
+# Path to coverage Go sources in hack/coverage/ (at the repo root)
+_HACK_COVERAGE_DIR = pathlib.Path(__file__).parent.parent.parent / 'hack' / 'coverage'
+
+# Path to the coverage_server.go resource injected into every main package
+_COVERAGE_SERVER_GO = _HACK_COVERAGE_DIR / 'coverage_server.go'
+
+# Path to the coverage_producer.go resource (injected only into the kubelet)
+_COVERAGE_PRODUCER_GO = _HACK_COVERAGE_DIR / 'coverage_producer.go'
+
+# Compiled regex to detect 'package main' declarations in Go source files
+_PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
+
+# Compiled regex to detect any 'package <name>' declaration in Go source files
+_PKG_ANY_PATTERN = re.compile(rb'^\s*package\s+(\w+)')
+
+# Compiled regex to detect build-ignore constraints that exclude a file from
+# normal compilation (``//go:build ignore`` or ``// +build ignore``).
+_BUILD_IGNORE_PATTERN = re.compile(rb'^\s*//\s*(\+build\s+ignore|go:build\s+ignore)\b')
+
+# Directories that should be skipped when scanning for main packages
+_SKIP_DIRS = frozenset({'.git', 'vendor', 'node_modules', '.idea', '.vscode', '__pycache__'})
+
+
+def _is_package_main(file_path: pathlib.Path) -> bool:
+    """Return True if *file_path* contains a ``package main`` declaration
+    within the first 50 lines **and** is not excluded by a ``//go:build ignore``
+    or ``// +build ignore`` build constraint.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                if _PKG_MAIN_PATTERN.match(line):
+                    return not has_ignore
+    except (OSError, PermissionError):
+        pass
+    return False
+
+
+def _get_effective_package(file_path: pathlib.Path) -> Optional[str]:
+    """Return the package name declared in *file_path*, or ``None`` if the
+    file should be skipped (has a ``//go:build ignore`` constraint or could
+    not be read).  Only the first 50 lines are inspected.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                m = _PKG_ANY_PATTERN.match(line)
+                if m:
+                    if has_ignore:
+                        return None  # File is build-ignored; skip it
+                    return m.group(1).decode('utf-8')
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
+def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
+    """Return a sorted list of directories under *root_path* that contain a
+    Go ``package main`` source file (excluding ``_test.go`` files and files
+    with ``//go:build ignore`` constraints).
+
+    As a safety net, a directory is only included when **all** of its
+    compilable ``.go`` files (non-test, non-ignored) consistently declare
+    ``package main``.  This prevents injecting ``coverage_server.go`` into
+    directories that have a mix of package names (e.g. a ``package main``
+    example file coexisting with regular library files).
+
+    Sub-modules (directories that contain their own ``go.mod``) are skipped
+    entirely.  These are separate Go modules — typically vendored
+    dependencies referenced via ``replace`` directives — and injecting
+    into them would pollute the vendor directory when ``go mod vendor``
+    copies their contents.
+    """
+    root = root_path.resolve()
+    main_dirs: set[pathlib.Path] = set()
+
+    for current_root, dirs, files in os.walk(root):
+        # Prune directories in-place to avoid descending into irrelevant trees
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+
+        current_path = pathlib.Path(current_root)
+
+        # Skip sub-modules: if a non-root directory has its own go.mod it is
+        # a separate Go module (e.g. a staging/ dependency used via a replace
+        # directive).  Injecting into it would cause files to leak into the
+        # vendor/ tree when ``go mod vendor`` runs.
+        if current_path != root and 'go.mod' in files:
+            dirs.clear()  # Stop descending into this sub-module
+            continue
+
+        go_files = [f for f in files if f.endswith('.go') and not f.endswith('_test.go')]
+        if not go_files:
+            continue
+
+        has_main = False
+        has_non_main = False
+        for file in go_files:
+            pkg = _get_effective_package(current_path / file)
+            if pkg is None:
+                continue  # Build-ignored or unreadable
+            if pkg == 'main':
+                has_main = True
+            else:
+                has_non_main = True
+
+        if has_main and not has_non_main:
+            main_dirs.add(current_path)
+
+    return sorted(main_dirs)
+
+
+def inject_coverage_server(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_server.go`` into every Go ``main`` package directory
+    found under *dg_path* so that the coverage HTTP server is compiled into
+    each binary via its ``init()`` function.
+    """
+    import shutil
+
+    if not _COVERAGE_SERVER_GO.is_file():
+        logger_instance.warning('coverage_server.go resource not found at %s; skipping injection', _COVERAGE_SERVER_GO)
+        return
+
+    main_dirs = find_go_main_packages(dg_path)
+    if not main_dirs:
+        logger_instance.debug('No Go main packages found under %s; nothing to inject', dg_path)
+        return
+
+    for pkg_dir in main_dirs:
+        dest = pkg_dir / _COVERAGE_SERVER_GO.name
+        shutil.copy2(str(_COVERAGE_SERVER_GO), str(dest))
+        logger_instance.info('Injected %s into %s', _COVERAGE_SERVER_GO.name, pkg_dir)
+
+    logger_instance.info('Injected coverage server into %d main package(s)', len(main_dirs))
+
+
+def inject_coverage_producer(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_producer.go`` into the kubelet's ``cmd/kubelet/``
+    directory if it exists and is a ``package main`` directory.
+
+    The producer is only useful inside the kubelet binary — it discovers
+    coverage-instrumented containers on the node and uploads their data to S3.
+    """
+    import shutil
+
+    if not _COVERAGE_PRODUCER_GO.is_file():
+        logger_instance.warning(
+            'coverage_producer.go resource not found at %s; skipping injection',
+            _COVERAGE_PRODUCER_GO,
+        )
+        return
+
+    kubelet_dir = (dg_path / 'cmd' / 'kubelet').resolve()
+    if not kubelet_dir.is_dir():
+        logger_instance.debug('No cmd/kubelet/ directory found under %s; skipping producer injection', dg_path)
+        return
+
+    # Verify it is actually a package main directory
+    main_dirs = find_go_main_packages(dg_path)
+    if kubelet_dir not in main_dirs:
+        logger_instance.warning(
+            'cmd/kubelet/ exists but is not a package main directory; skipping producer injection',
+        )
+        return
+
+    dest = kubelet_dir / _COVERAGE_PRODUCER_GO.name
+    shutil.copy2(str(_COVERAGE_PRODUCER_GO), str(dest))
+    logger_instance.info('Injected %s into %s', _COVERAGE_PRODUCER_GO.name, kubelet_dir)

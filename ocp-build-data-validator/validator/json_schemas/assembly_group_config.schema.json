@@ -238,10 +238,17 @@
       "$ref": "#/properties/cachito"
     },
     "cachito-": {},
-    "build_profiles": {},
+    "build_profiles": {
+      "description": "Build profile configurations for images and RPMs",
+      "$ref": "build_profiles.schema.json"
+    },
+    "build_profiles!": {
+      "$ref": "#/properties/build_profiles"
+    },
     "build_profiles?": {
       "$ref": "#/properties/build_profiles"
     },
+    "build_profiles-": {},
     "rhcos": {
       "description": "RHCOS needs special config as it is a special build",
       "type": "object",
@@ -283,7 +290,6 @@
       },
       "additionalProperties": true
     },
-    "build_profiles-": {},
     "urls": {
       "description": "URLs",
       "type": "object",

@@ -1,3 +1,6 @@
+import logging
+import pathlib
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -236,6 +239,317 @@ class TestUtil(unittest.TestCase):
             util.get_cincinnati_channels(3, 11)
         self.assertIn('Cincinnati channels are only available for OCP 4.x and later', str(ctx.exception))
         self.assertIn('3.11', str(ctx.exception))
+
+
+class TestIsPackageMain(unittest.TestCase):
+    """Tests for ``_is_package_main``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_simple_package_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'main.go', 'package main\n\nfunc main() {}\n')
+            self.assertTrue(util._is_package_main(f))
+
+    def test_package_not_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'lib.go', 'package mylib\n')
+            self.assertFalse(util._is_package_main(f))
+
+    def test_go_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build ignore\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertFalse(util._is_package_main(f))
+
+    def test_plus_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '// +build ignore\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertFalse(util._is_package_main(f))
+
+    def test_build_constraint_not_ignore(self):
+        """A non-ignore build constraint should NOT prevent detection."""
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build linux\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'linux_main.go', content)
+            self.assertTrue(util._is_package_main(f))
+
+    def test_nonexistent_file(self):
+        self.assertFalse(util._is_package_main(pathlib.Path('/nonexistent/file.go')))
+
+
+class TestGetEffectivePackage(unittest.TestCase):
+    """Tests for ``_get_effective_package``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_returns_package_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'lib.go', 'package plugins\n')
+            self.assertEqual(util._get_effective_package(f), 'plugins')
+
+    def test_returns_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'main.go', 'package main\n')
+            self.assertEqual(util._get_effective_package(f), 'main')
+
+    def test_returns_none_for_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build ignore\n\npackage main\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertIsNone(util._get_effective_package(f))
+
+    def test_returns_none_for_unreadable(self):
+        self.assertIsNone(util._get_effective_package(pathlib.Path('/nonexistent/file.go')))
+
+
+class TestFindGoMainPackages(unittest.TestCase):
+    """Tests for ``find_go_main_packages``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_finds_simple_main_package(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd_dir = root / 'cmd' / 'myapp'
+            self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [cmd_dir])
+
+    def test_skips_vendor_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write(root / 'vendor' / 'pkg', 'main.go', 'package main\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_test_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # Directory with only a test file declaring package main
+            self._write(root / 'pkg', 'main_test.go', 'package main\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_build_ignored_main(self):
+        """A directory with only ``//go:build ignore`` main files should be skipped."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'example.go', '//go:build ignore\n\npackage main\n\nfunc main() {}\n')
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_mixed_package_directory(self):
+        """A directory with both ``package main`` and another package (e.g.
+        due to a build-constrained file that wasn't caught by the ignore
+        check) should be skipped.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            mixed_dir = root / 'mixed'
+            self._write(mixed_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+            self._write(mixed_dir, 'lib.go', 'package mixed\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_prometheus_plugins_scenario(self):
+        """Reproduce the exact prometheus/plugins failure scenario:
+        plugins/minimum.go is ``package plugins`` and there is a
+        ``//go:build ignore`` file with ``package main``.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n\nvar _ = 1\n')
+            self._write(
+                plugins_dir,
+                'example_plugin.go',
+                '// +build ignore\n\npackage main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n',
+            )
+            # Also add a real main package elsewhere
+            cmd_dir = root / 'cmd' / 'prometheus'
+            self._write(
+                cmd_dir,
+                'main.go',
+                'package main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n',
+            )
+
+            result = util.find_go_main_packages(root)
+            # plugins/ should NOT be in the result; cmd/prometheus/ should be
+            self.assertIn(cmd_dir, result)
+            self.assertNotIn(plugins_dir, result)
+
+    def test_multiple_main_packages(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd1 = root / 'cmd' / 'app1'
+            cmd2 = root / 'cmd' / 'app2'
+            self._write(cmd1, 'main.go', 'package main\n\nfunc main() {}\n')
+            self._write(cmd2, 'main.go', 'package main\n\nfunc main() {}\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, sorted([cmd1, cmd2]))
+
+    def test_skips_sub_modules_with_own_go_mod(self):
+        """Directories with their own ``go.mod`` are separate Go modules
+        (e.g. staging/ deps via replace directives) and must be skipped so
+        that ``go mod vendor`` does not copy injected files into vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # Root module
+            self._write(root, 'go.mod', 'module example.com/myproject\n')
+            root_cmd = root / 'cmd' / 'myapp'
+            self._write(root_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Sub-module in staging/ (like operator-framework-olm)
+            staging = root / 'staging' / 'subproject'
+            self._write(staging, 'go.mod', 'module example.com/subproject\n')
+            staging_cmd = staging / 'cmd' / 'subcmd'
+            self._write(staging_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertIn(root_cmd, result)
+            self.assertNotIn(staging_cmd, result)
+
+    def test_operator_framework_olm_scenario(self):
+        """Reproduce the operator-framework-olm failure: staging/ contains
+        separate Go modules referenced via replace directives.  Injecting
+        into them causes ``go mod vendor`` to copy coverage_server.go into
+        vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write(root, 'go.mod', 'module example.com/olm\n')
+            # Root cmd directories
+            cmd_a = root / 'cmd' / 'collect-profiles'
+            self._write(cmd_a, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Staging sub-modules
+            for submod in ['operator-lifecycle-manager', 'operator-registry']:
+                staging_mod = root / 'staging' / submod
+                self._write(staging_mod, 'go.mod', f'module github.com/operator-framework/{submod}\n')
+                for cmd_name in ['catalog', 'opm']:
+                    cmd_dir = staging_mod / 'cmd' / cmd_name
+                    self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [cmd_a])  # Only root cmd, no staging
+
+
+class TestInjectCoverageServer(unittest.TestCase):
+    """Tests for ``inject_coverage_server``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_injects_into_main_packages(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd_dir = root / 'cmd' / 'myapp'
+            self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+
+            self.assertTrue((cmd_dir / 'coverage_server.go').exists())
+
+    def test_does_not_inject_into_mixed_package(self):
+        """Ensure coverage_server.go is NOT injected into directories that
+        have conflicting package names (the prometheus/plugins scenario).
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n')
+            self._write(plugins_dir, 'example.go', '//go:build ignore\n\npackage main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+
+            self.assertFalse((plugins_dir / 'coverage_server.go').exists())
+
+
+class TestInjectCoverageProducer(unittest.TestCase):
+    """Tests for ``inject_coverage_producer``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_injects_into_cmd_kubelet(self):
+        """Producer should be injected into cmd/kubelet/ when it exists and
+        is a package main directory.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_without_cmd_kubelet(self):
+        """Producer should NOT be injected when there is no cmd/kubelet/ dir."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_if_kubelet_not_package_main(self):
+        """If cmd/kubelet/ exists but is not package main, skip injection."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'lib.go', 'package kubelet\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_injects_alongside_coverage_server(self):
+        """Both server and producer should coexist in cmd/kubelet/."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+            # Also create another cmd to verify server is injected everywhere
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+            util.inject_coverage_producer(root, logger)
+
+            # Both files in kubelet dir
+            self.assertTrue((kubelet_dir / 'coverage_server.go').exists())
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+            # Only server in other dir
+            self.assertTrue((other_dir / 'coverage_server.go').exists())
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build_profiles.schema.json",
+  "title": "Build Profiles",
+  "type": "object",
+  "description": "Build profile configurations for images and RPMs",
+  "properties": {
+    "enable_go_cover": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable Go coverage instrumentation for both images and RPMs"
+    },
+    "enable_go_cover!": {
+      "$ref": "#/properties/enable_go_cover"
+    },
+    "enable_go_cover?": {
+      "$ref": "#/properties/enable_go_cover"
+    },
+    "enable_go_cover-": {},
+    "image": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "type": "object",
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "targets!": {
+              "$ref": "#/properties/image/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/targets"
+            },
+            "targets?": {
+              "$ref": "#/properties/image/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/targets"
+            },
+            "targets-": {},
+            "gpgcheck": {
+              "type": "boolean"
+            },
+            "gpgcheck!": {
+              "$ref": "#/properties/image/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/gpgcheck"
+            },
+            "gpgcheck?": {
+              "$ref": "#/properties/image/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/gpgcheck"
+            },
+            "gpgcheck-": {}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "image!": {
+      "$ref": "#/properties/image"
+    },
+    "image?": {
+      "$ref": "#/properties/image"
+    },
+    "image-": {},
+    "rpm": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "type": "object",
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "targets!": {
+              "$ref": "#/properties/rpm/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/targets"
+            },
+            "targets?": {
+              "$ref": "#/properties/rpm/patternProperties/%5E%5Ba-zA-Z0-9_-%5D+$/properties/targets"
+            },
+            "targets-": {}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rpm!": {
+      "$ref": "#/properties/rpm"
+    },
+    "rpm?": {
+      "$ref": "#/properties/rpm"
+    },
+    "rpm-": {}
+  },
+  "additionalProperties": false
+}

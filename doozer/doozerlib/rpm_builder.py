@@ -15,7 +15,7 @@ from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 
-from doozerlib import brew
+from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata
@@ -118,6 +118,17 @@ class RPMBuilder:
             )
 
         rpm.specfile = str(dg_specfile_path)
+
+        if rpm.runtime.group_config.build_profiles.enable_go_cover is True:
+            # Inject the coverage HTTP server source into every Go main package
+            # directory so that it is compiled into the binary via its init() function.
+            util.inject_coverage_server(Path(rpm.source_path), logger)
+
+            # The openshift RPM builds from openshift-priv/kubernetes.git and
+            # contains cmd/kubelet/.  Inject the coverage producer into the
+            # kubelet so it can discover and upload coverage data from the node.
+            if rpm.config.name == 'openshift':
+                util.inject_coverage_producer(Path(rpm.source_path), logger)
 
         # create tarball source as Source0
         logger.info("Creating tarball source...")
@@ -410,8 +421,10 @@ if [[ -n "$REAL_GO_PATH" ]]; then
     mkdir -p $GOSHIM_DIR
     ln -s $REAL_GO_PATH $GOSHIM_DIR/go.real
     export PATH=$GOSHIM_DIR:$PATH
-    # Use single quotes 'EOF' to avoid variable expansion.
+    # Use single quotes 'EOF' to avoid variable expansion within script content.
 cat > $GOSHIM_DIR/go << 'EOF'
+#!/bin/sh
+export GO_COMPLIANCE_COVER={'1' if rpm.runtime.group_config.build_profiles.enable_go_cover is True else '0'}
 {rpm_builder_go_wrapper_sh}
 EOF
     chmod +x $GOSHIM_DIR/go
