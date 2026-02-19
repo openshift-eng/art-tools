@@ -13,6 +13,7 @@ This pipeline:
 7. Updates latest directories as appropriate
 """
 
+import asyncio
 import hashlib
 import os
 import re
@@ -97,34 +98,43 @@ class SyncRhcosPipeline:
         return urls
 
     async def _download_images(self, urls: List[str]):
-        """Download all images from the synclist URLs."""
+        """Download all images from the synclist URLs, up to 3 concurrently."""
+        semaphore = asyncio.Semaphore(3)
         timeout = aiohttp.ClientTimeout(total=30 * 60, sock_read=5 * 60)
+
+        async def _limited(url):
+            async with semaphore:
+                await self._download_one(session, url)
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            for url in urls:
-                filename = url.rsplit("/", 1)[-1]
-                dest = self.staging_dir / filename
-                self.logger.info("Downloading %s", url)
+            await asyncio.gather(*[_limited(url) for url in urls])
+        self.logger.info("Successfully downloaded all %d artifacts", len(urls))
 
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        raise Exception(f"Failed to download {url}: HTTP {response.status}")
+    async def _download_one(self, session: aiohttp.ClientSession, url: str):
+        """Download a single artifact from a URL."""
+        filename = url.rsplit("/", 1)[-1]
+        dest = self.staging_dir / filename
+        self.logger.info("Downloading %s", url)
 
-                    content_length = response.headers.get("content-length")
-                    if content_length:
-                        self.logger.info("%s size: %.1f MB", filename, int(content_length) / (1024 * 1024))
+        async with session.get(url) as response:
+            response.raise_for_status()
 
-                    with open(dest, "wb") as f:
-                        downloaded = 0
-                        last_logged_mb = 0
-                        async for chunk in response.content.iter_chunked(1024 * 1024):
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            downloaded_mb = downloaded / (1024 * 1024)
-                            if downloaded_mb - last_logged_mb >= 200:
-                                self.logger.info("%s downloaded: %.1f MB", filename, downloaded_mb)
-                                last_logged_mb = downloaded_mb
+            content_length = response.headers.get("content-length")
+            if content_length:
+                self.logger.info("%s size: %.1f MB", filename, int(content_length) / (1024 * 1024))
 
-                self.logger.info("Downloaded %s", filename)
+            with open(dest, "wb") as f:
+                downloaded = 0
+                last_logged_mb = 0
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    downloaded_mb = downloaded / (1024 * 1024)
+                    if downloaded_mb - last_logged_mb >= 200:
+                        self.logger.info("%s downloaded: %.1f MB", filename, downloaded_mb)
+                        last_logged_mb = downloaded_mb
+
+        self.logger.info("Downloaded %s", filename)
 
     def _rename_with_version(self):
         """Rename files to include release version and create unversioned symlinks.
