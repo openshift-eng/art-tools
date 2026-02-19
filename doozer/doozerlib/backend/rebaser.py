@@ -1115,7 +1115,8 @@ class KonfluxRebaser:
             return None
 
         required_artifacts = metadata.get_required_artifacts()
-        for artifact_url in required_artifacts:
+        for artifact in required_artifacts:
+            artifact_url = artifact['url']
             if url_pattern.lower() in artifact_url.lower():
                 return artifact_url
         return None
