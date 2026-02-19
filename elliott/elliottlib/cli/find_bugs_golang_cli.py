@@ -398,9 +398,9 @@ class FindBugsGolangCli:
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
-    def move_to_qa_and_comment(self, bug: JIRABug, comment: str):
+    def move_bug_and_comment(self, bug: JIRABug, comment: str):
         if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
-            self.jira_tracker.update_bug_status(bug, 'ON_QA', comment=comment, noop=self.dry_run)
+            self.jira_tracker.update_bug_status(bug, 'VERIFIED', comment=comment, noop=self.dry_run)
         else:
             self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
 
@@ -681,11 +681,11 @@ class FindBugsGolangCli:
             if fixed:
                 if self.update_tracker:
                     comment = f"{comment} {art_ticket_message}"
-                    self.move_to_qa_and_comment(bug, comment)
+                    self.move_bug_and_comment(bug, comment)
                     updated_bugs.append(bug.id)
                 fixed_bugs.append(bug.id)
             elif self.force_update_tracker:
-                self.move_to_qa_and_comment(bug, art_ticket_message)
+                self.move_bug_and_comment(bug, art_ticket_message)
                 updated_bugs.append(bug.id)
             else:
                 unfixed_bugs.append(bug.id)
@@ -725,13 +725,13 @@ class FindBugsGolangCli:
     "--update-tracker",
     is_flag=True,
     default=False,
-    help="If a tracker bug is fixed then comment with analysis and move to ON_QA",
+    help="If a tracker bug is fixed then comment with analysis and move to VERIFIED",
 )
 @click.option(
     "--force-update-tracker",
     is_flag=True,
     default=False,
-    help="Move to ON_QA even if tracker bug is not determined to be fixed",
+    help="Move to VERIFIED even if tracker bug is not determined to be fixed",
 )
 @click.option(
     "--component",
@@ -743,7 +743,7 @@ class FindBugsGolangCli:
 @click.option(
     "--exclude-bug-statuses",
     default=None,
-    help="Exclude bugs in these statuses. By default Verified,ON_QA are excluded."
+    help="Exclude bugs in these statuses. By default VERIFIED bugs are excluded."
     "Pass empty string to include all open statuses or comma separated list of statuses to exclude",
 )
 @click.option("--jql-filter", help="JQL filter to apply to the search")
@@ -787,10 +787,10 @@ async def find_bugs_golang_cli(
 
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
 
-    --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to ON_QA
+    --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to VERIFIED.
 
-    --force-update-tracker: Move to ON_QA even if tracker bug is not determined to be fixed. This is useful in case of
-    bugs like openshift-golang-builder where we want to move the bug to ON_QA after or close to when mass rebuild is
+    --force-update-tracker: Move to VERIFIED even if tracker bug is not determined to be fixed. This is useful in case of
+    bugs like openshift-golang-builder where we want to move the bug to VERIFIED after or close to when mass rebuild is
     triggered.
 
     --component: Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container.
@@ -830,7 +830,7 @@ async def find_bugs_golang_cli(
     exclude_bug_statuses = (
         exclude_bug_statuses.split(',')
         if exclude_bug_statuses
-        else ['Verified', 'ON_QA']
+        else ['Verified']
         if exclude_bug_statuses is None
         else []
     )
