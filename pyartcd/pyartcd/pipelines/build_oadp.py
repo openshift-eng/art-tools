@@ -34,6 +34,7 @@ class BuildOadpPipeline:
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
         network_mode: Optional[str] = None,
+        plr_template: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -46,6 +47,7 @@ class BuildOadpPipeline:
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
         self.network_mode = network_mode
+        self.plr_template = plr_template
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -193,6 +195,14 @@ class BuildOadpPipeline:
                 kubeconfig,
             ]
         )
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = (
+                self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
+            )
+            plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            build_cmd.extend(['--plr-template', plr_template_url])
         if self.network_mode:
             build_cmd.extend(['--network-mode', self.network_mode])
         if self.runtime.dry_run:
@@ -254,6 +264,12 @@ class BuildOadpPipeline:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
+@click.option(
+    '--plr-template',
+    required=False,
+    default='',
+    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+)
 @pass_runtime
 @click_coroutine
 async def build_oadp(
@@ -269,6 +285,7 @@ async def build_oadp(
     data_gitref: Optional[str],
     network_mode: Optional[str],
     ignore_locks: bool,
+    plr_template: str,
 ):
     """Rebase and build OADP image for an assembly"""
     try:
@@ -284,6 +301,7 @@ async def build_oadp(
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
             network_mode=network_mode,
+            plr_template=plr_template,
         )
 
         lock_identifier = jenkins.get_build_path_or_random()
