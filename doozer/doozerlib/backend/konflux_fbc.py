@@ -1475,7 +1475,7 @@ class KonfluxFbcBuilder:
 
         additional_tags = []
         group_name = metadata.runtime.group
-        if metadata.runtime.assembly == "stream":
+        if metadata.runtime.assembly in ("stream", "test"):
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
                 delivery_repo_name = delivery_repo.split('/')[-1]
@@ -1499,6 +1499,10 @@ class KonfluxFbcBuilder:
                         if operator_nvr:
                             version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
                             additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
+
+        # Append "-test" suffix to all tags for test streams
+        if metadata.runtime.assembly == "test":
+            additional_tags = [tag + "-test" for tag in additional_tags]
 
         if additional_tags:
             logger.info(
