@@ -12,6 +12,7 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
 from ghapi.all import GhApi
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -256,13 +257,18 @@ class RebuildGolangRPMsPipeline:
             dry_run=self.runtime.dry_run,
         )
 
+    @staticmethod
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    async def rhpkg_clone(branch, rpm, dg_dir):
+        cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
+        await exectools.cmd_assert_async(cmd)
+
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
         branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
         dg_dir = f'{rpm}-{el_v}'
         # check if dir exists
         if not os.path.isdir(dg_dir):
-            cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
-            await exectools.cmd_assert_async(cmd)
+            await self.rhpkg_clone(branch, rpm, dg_dir)
         else:
             await exectools.cmd_assert_async('git reset --hard', cwd=dg_dir)
             await exectools.cmd_assert_async('git fetch --all', cwd=dg_dir)
