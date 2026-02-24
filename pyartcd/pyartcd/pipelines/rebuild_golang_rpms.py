@@ -366,6 +366,11 @@ class RebuildGolangRPMsPipeline:
 async def rebuild_golang_rpms(
     runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, all: bool, go_nvrs: List[str]
 ):
+    if all and rpms:
+        raise ValueError(
+            "Cannot specify --rpms when --all is set since --all means to rebuild all rpms regardless of what is specified in --rpms"
+        )
+
     if rpms:
         rpms = rpms.split(',')
     if cves:
