@@ -218,13 +218,15 @@ class RebuildGolangRPMsPipeline:
 
         # bugs will only be moved if good builds are found
         # so we can run this even if some rpms failed
-        await move_golang_bugs(
-            ocp_version=self.ocp_version,
-            cves=self.cves,
-            nvrs=self.go_nvrs if self.cves else None,
-            rpms_only=True,
-            dry_run=self.runtime.dry_run,
-        )
+        # skip if all rpms failed
+        if len(failed_rpms) < len(list_of_rpms):
+            await move_golang_bugs(
+                ocp_version=self.ocp_version,
+                cves=self.cves,
+                nvrs=self.go_nvrs if self.cves else None,
+                rpms_only=True,
+                dry_run=self.runtime.dry_run,
+            )
 
         if failed_rpms:
             raise RuntimeError(f'Bumping and rebuilding failed for these rpms: {failed_rpms}')
