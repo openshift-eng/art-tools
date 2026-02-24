@@ -209,8 +209,8 @@ class RebuildGolangRPMsPipeline:
         failed_rpms_with_results = [
             (rpm, result) for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)
         ]
-        if failed_rpms_with_results:
-            failed_rpms = [rpm for rpm, _ in failed_rpms_with_results]
+        failed_rpms = [rpm for rpm, _ in failed_rpms_with_results]
+        if failed_rpms:
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
             for rpm, result in failed_rpms_with_results:
                 _LOGGER.error(f'Error for {rpm}: {result}')
