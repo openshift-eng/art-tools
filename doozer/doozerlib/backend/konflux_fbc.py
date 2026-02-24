@@ -26,7 +26,6 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.model import Model
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
@@ -37,7 +36,6 @@ from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
-from kubernetes.dynamic import resource
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 
@@ -704,9 +702,7 @@ class KonfluxFbcRebaser:
             # Only consider standard assemblies
             assem_type = assembly_type(releases_config, release_name)
             if assem_type != AssemblyTypes.STANDARD:
-                self._logger.info(
-                    "Skipping assembly %s (type=%s, expected standard)", release_name, assem_type.value
-                )
+                self._logger.info("Skipping assembly %s (type=%s, expected standard)", release_name, assem_type.value)
                 continue
 
             release_date = (
