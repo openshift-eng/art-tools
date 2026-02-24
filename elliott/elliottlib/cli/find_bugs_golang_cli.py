@@ -621,17 +621,17 @@ class FindBugsGolangCli:
         table = PrettyTable()
         table.align = "l"
         table.field_names = [
-            "Jira ID",
-            "Target Version",
-            "CVE",
+            "id",
+            "target_version",
+            "cve",
             "pscomponent",
-            "Status",
-            "Fixed",
-            "ART managed",
-            "Backported compiler build needed",
-            "NVRs",
-            "Expected Golang",
-            "Actual Golang",
+            "status",
+            "fixed",
+            "art_managed",
+            "backport_needed",
+            "nvrs",
+            "golang_expected",
+            "golang_actual",
         ]
 
         fixed_bugs, unfixed_bugs, updated_bugs = [], [], []

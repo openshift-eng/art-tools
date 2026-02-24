@@ -98,7 +98,7 @@ class RebuildGolangRPMsPipeline:
             # better to panic here if pscomponent is missing since it means find-bugs:golang output format has changed in an unexpected way
             component = bug['pscomponent']
             rpms_to_rebuild.add(component)
-            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug['JIRA ID']}")
+            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug['id']}")
 
         rpms_list = sorted(list(rpms_to_rebuild))
         _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
