@@ -50,7 +50,7 @@ class RebuildGolangRPMsPipeline:
         self.all = all
         self.koji_session = koji.ClientSession(BREW_HUB)
 
-    async def get_rpms_from_find_bugs_golang(self):
+    async def get_vulnerable_rpms(self) -> List[str]:
         """Fetch RPMs that need rebuilding using find-bugs:golang command.
 
         This method invokes the find-bugs:golang command to identify which RPMs
@@ -62,60 +62,53 @@ class RebuildGolangRPMsPipeline:
         """
         _LOGGER.info('Fetching RPMs affected by golang security issues from find-bugs:golang')
 
-        if not self.cves:
-            _LOGGER.warning('No CVEs provided, cannot fetch RPMs from find-bugs:golang')
-            return []
-
-        try:
-            # Build the elliott command with CVEs and golang NVRs
-            # Command: elliott --group openshift-X.Y --assembly stream find-bugs:golang --analyze --cve-id CVE1 --cve-id CVE2 --fixed-in-nvr nvr1 --fixed-in-nvr nvr2 --rpms-only -o json
-
-            # Extract major and minor version from ocp_version (e.g., "4.20" -> "4.20")
-            ocp_group = f"openshift-{self.ocp_version}"
-
-            # Build CVE arguments
+        cve_args = ""
+        if self.cves:
             cve_args = ' '.join([f"--cve-id {cve}" for cve in self.cves])
 
-            # Build NVR arguments
+        nvr_args = ""
+        if self.go_nvrs:
             nvr_args = ' '.join([f"--fixed-in-nvr {nvr}" for nvr in self.go_nvrs])
 
-            # Construct the full elliott command
-            cmd = (
-                f"elliott --group {ocp_group} --assembly stream find-bugs:golang "
-                f"--analyze {cve_args} {nvr_args} --rpms-only -o json"
-            )
+        cmd = (
+            f"elliott --group openshift-{self.ocp_version} --assembly stream find-bugs:golang "
+            f"--analyze {cve_args} {nvr_args} --rpms-only -o json"
+        )
 
-            _LOGGER.info(f"Invoking: {cmd}")
+        # Execute the command and capture output
+        _, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        if stdout:
+            _LOGGER.info("Command stdout:\n %s", stdout)
+        if stderr:
+            _LOGGER.info("Command stderr:\n %s", stderr)
 
-            # Execute the command and capture output
-            rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        if not stdout or not stdout.strip():
+            _LOGGER.info('No output from find-bugs:golang command, no unfixed bugs found')
+            return []
 
-            if rc != 0:
-                raise RuntimeError(f"elliott find-bugs:golang command failed with rc={rc}: {stderr}")
-
-            # Parse the JSON output
-            try:
-                unfixed_bugs = json.loads(stdout)
-            except json.JSONDecodeError as e:
-                _LOGGER.error(f"Failed to parse JSON output from find-bugs:golang: {e}")
-                _LOGGER.error(f"Output was: {stdout}")
-                raise
-
-            # Extract RPM names (pscomponent) from unfixed bugs
-            rpms_to_rebuild = set()
-            for bug in unfixed_bugs:
-                component = bug.get('pscomponent')
-                if component:
-                    rpms_to_rebuild.add(component)
-                    _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug.get('jira_id')}")
-
-            rpms_list = sorted(list(rpms_to_rebuild))
-            _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
-            return rpms_list
-
-        except Exception as e:
-            _LOGGER.error(f'Failed to fetch RPMs from find-bugs:golang: {e}')
+        # Parse the JSON output
+        try:
+            json_data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            _LOGGER.error(f"Failed to parse JSON output from find-bugs:golang: {e}")
+            _LOGGER.error(f"Output was: {stdout}")
             raise
+
+        if not json_data:
+            _LOGGER.info('No unfixed bugs found in find-bugs:golang output')
+            return []
+
+        # Extract RPM names (pscomponent) from unfixed bugs
+        rpms_to_rebuild = set()
+        for bug in json_data:
+            # better to panic here if pscomponent is missing since it means find-bugs:golang output format has changed in an unexpected way
+            component = bug['pscomponent']
+            rpms_to_rebuild.add(component)
+            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug.get('jira_id')}")
+
+        rpms_list = sorted(list(rpms_to_rebuild))
+        _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
+        return rpms_list
 
     async def run(self):
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
@@ -125,7 +118,7 @@ class RebuildGolangRPMsPipeline:
         # If all=False and rpms is empty, fetch RPMs from find-bugs:golang
         if not self.all and not self.rpms:
             _LOGGER.info('all=False and rpms is empty, fetching RPMs from find-bugs:golang')
-            self.rpms = await self.get_rpms_from_find_bugs_golang()
+            self.rpms = await self.get_vulnerable_rpms()
 
         # For rpms - first make sure builds are tagged and available
         _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')

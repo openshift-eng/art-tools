@@ -720,7 +720,8 @@ class FindBugsGolangCli:
 
         self._logger.info(f"\n{table}")
         if self.output_format:
-            print(table.get_formatted_string(self.output_format))
+            header = True if self.output_format == 'csv' else False
+            print(table.get_formatted_string(self.output_format, header=header))
 
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
