@@ -50,7 +50,7 @@ class RebuildGolangRPMsPipeline:
         self.all = all
         self.koji_session = koji.ClientSession(BREW_HUB)
 
-    async def get_vulnerable_rpms(self) -> List[str]:
+    async def get_rpms_from_open_trackers(self) -> List[str]:
         """Fetch RPMs that need rebuilding using find-bugs:golang command.
 
         This method invokes the find-bugs:golang command to identify which RPMs
@@ -118,7 +118,7 @@ class RebuildGolangRPMsPipeline:
         # If all=False and rpms is empty, fetch RPMs from find-bugs:golang
         if not self.all and not self.rpms:
             _LOGGER.info('all=False and rpms is empty, fetching RPMs from find-bugs:golang')
-            self.rpms = await self.get_vulnerable_rpms()
+            self.rpms = await self.get_rpms_from_open_trackers()
             if not self.rpms:
                 _LOGGER.info('No open rpm trackers found, exiting pipeline')
                 return
