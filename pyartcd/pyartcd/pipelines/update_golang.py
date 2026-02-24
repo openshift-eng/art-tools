@@ -122,6 +122,7 @@ async def move_golang_bugs(
     nvrs: list[str] | None = None,
     components: list[str] | None = None,
     force_update_tracker: bool = False,
+    rpms_only: bool = False,
     dry_run: bool = False,
 ):
     cmd = [
@@ -145,6 +146,8 @@ async def move_golang_bugs(
             cmd.extend(['--component', component])
     if force_update_tracker:
         cmd.append('--force-update-tracker')
+    if rpms_only:
+        cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
     await exectools.cmd_assert_async(cmd)

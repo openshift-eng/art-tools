@@ -211,7 +211,7 @@ class RebuildGolangRPMsPipeline:
             ],
             return_exceptions=True,
         )
-        list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
+        list_of_rpms = [rpm for _, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
         failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
         if failed_rpms:
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
@@ -223,6 +223,7 @@ class RebuildGolangRPMsPipeline:
             ocp_version=self.ocp_version,
             cves=self.cves,
             nvrs=self.go_nvrs if self.cves else None,
+            rpms_only=True,
             dry_run=self.runtime.dry_run,
         )
 
