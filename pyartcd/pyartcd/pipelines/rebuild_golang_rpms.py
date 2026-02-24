@@ -120,7 +120,7 @@ class RebuildGolangRPMsPipeline:
             _LOGGER.info('all=False and rpms is empty, fetching RPMs from find-bugs:golang')
             self.rpms = await self.get_vulnerable_rpms()
             if not self.rpms:
-                _LOGGER.info('No vulnerable RPMs found, exiting pipeline')
+                _LOGGER.info('No open rpm trackers found, exiting pipeline')
                 return
 
         # For rpms - first make sure builds are tagged and available
