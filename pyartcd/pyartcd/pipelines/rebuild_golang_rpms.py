@@ -77,23 +77,16 @@ class RebuildGolangRPMsPipeline:
 
         # Execute the command and capture output
         _, stdout, stderr = await exectools.cmd_gather_async(cmd)
-        if stdout:
-            _LOGGER.info("Command stdout:\n %s", stdout)
         if stderr:
             _LOGGER.info("Command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Command stdout:\n %s", stdout)
 
         if not stdout or not stdout.strip():
             _LOGGER.info('No output from find-bugs:golang command, no unfixed bugs found')
             return []
 
-        # Parse the JSON output
-        try:
-            json_data = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            _LOGGER.error(f"Failed to parse JSON output from find-bugs:golang: {e}")
-            _LOGGER.error(f"Output was: {stdout}")
-            raise
-
+        json_data = json.loads(stdout)
         if not json_data:
             _LOGGER.info('No unfixed bugs found in find-bugs:golang output')
             return []
@@ -104,7 +97,7 @@ class RebuildGolangRPMsPipeline:
             # better to panic here if pscomponent is missing since it means find-bugs:golang output format has changed in an unexpected way
             component = bug['pscomponent']
             rpms_to_rebuild.add(component)
-            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug.get('jira_id')}")
+            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug['JIRA ID']}")
 
         rpms_list = sorted(list(rpms_to_rebuild))
         _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
@@ -212,9 +205,14 @@ class RebuildGolangRPMsPipeline:
             return_exceptions=True,
         )
         list_of_rpms = [rpm for _, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
-        failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
-        if failed_rpms:
+        failed_rpms_with_results = [
+            (rpm, result) for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)
+        ]
+        if failed_rpms_with_results:
+            failed_rpms = [rpm for rpm, _ in failed_rpms_with_results]
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
+            for rpm, result in failed_rpms_with_results:
+                _LOGGER.error(f'Error for {rpm}: {result}')
             await self.notify_failed_rpms(failed_rpms)
 
         # bugs will only be moved if good builds are found
