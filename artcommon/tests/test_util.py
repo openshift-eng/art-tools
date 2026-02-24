@@ -1,11 +1,7 @@
-import asyncio
-import os
 import unittest
-from unittest.mock import AsyncMock, patch
 
 import yaml
 from artcommonlib import build_util, release_util, util
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import (

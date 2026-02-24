@@ -12,9 +12,7 @@ from typing import Dict, Optional, Sequence, Tuple, cast
 import aiofiles
 import yaml
 from artcommonlib import exectools
-from artcommonlib import util as artlib_util
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
-from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
@@ -22,7 +20,7 @@ from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient, resource
+from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
@@ -47,6 +45,7 @@ class KonfluxOlmBundleRebaser:
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         dry_run: bool = False,
         logger: logging.Logger = _LOGGER,
+        record_logger=None,
     ):
         self.base_dir = base_dir
         self.group = group
@@ -59,6 +58,7 @@ class KonfluxOlmBundleRebaser:
         self.image_repo = image_repo
         self.dry_run = dry_run
         self._logger = logger
+        self._record_logger = record_logger
 
     async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str) -> str:
         """Rebase an operator with Konflux.
@@ -70,59 +70,84 @@ class KonfluxOlmBundleRebaser:
         assert input_release, "input_release must be provided"
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        source = None
-        if metadata.has_source():
-            logger.info("Resolving source...")
-            source = cast(
-                SourceResolution,
-                await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True),
+        # Initialize record with failure defaults
+        record = {
+            'status': -1,
+            "message": "Rebase failed",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "operator_nvr": operator_build.nvr,
+            "operand_nvrs": "n/a",
+            "bundle_nvr": "n/a",
+        }
+
+        try:
+            source = None
+            if metadata.has_source():
+                logger.info("Resolving source...")
+                source = cast(
+                    SourceResolution,
+                    await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True),
+                )
+            else:
+                raise IOError(
+                    f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
+                )
+
+            logger.info("Cloning operator build source...")
+            if operator_build.engine is Engine.KONFLUX:
+                operator_build_repo_url = source.url
+                operator_build_repo_refspec = operator_build.rebase_commitish
+            elif operator_build.engine is Engine.BREW:
+                operator_build_repo_url = metadata.distgit_remote_url()
+                operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
+            else:
+                raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
+            operator_dir = self.base_dir.joinpath(metadata.qualified_key)
+            operator_build_repo = BuildRepo(
+                url=operator_build_repo_url, branch=None, local_dir=operator_dir, logger=self._logger
             )
-        else:
-            raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
+            await operator_build_repo.ensure_source(upcycle=self.upcycle)
+            await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
+            await operator_build_repo.switch('FETCH_HEAD', detach=True)
+            logger.info(f"operator build source cloned to {operator_dir}")
 
-        logger.info("Cloning operator build source...")
-        if operator_build.engine is Engine.KONFLUX:
-            operator_build_repo_url = source.url
-            operator_build_repo_refspec = operator_build.rebase_commitish
-        elif operator_build.engine is Engine.BREW:
-            operator_build_repo_url = metadata.distgit_remote_url()
-            operator_build_repo_refspec = f'{operator_build.version}-{operator_build.release}'
-        else:
-            raise ValueError(f"Unsupported engine {operator_build.engine} for {metadata.distgit_key}")
-        operator_dir = self.base_dir.joinpath(metadata.qualified_key)
-        operator_build_repo = BuildRepo(
-            url=operator_build_repo_url, branch=None, local_dir=operator_dir, logger=self._logger
-        )
-        await operator_build_repo.ensure_source(upcycle=self.upcycle)
-        await operator_build_repo.fetch(operator_build_repo_refspec, strict=True)
-        await operator_build_repo.switch('FETCH_HEAD', detach=True)
-        logger.info(f"operator build source cloned to {operator_dir}")
+            logger.info("Cloning bundle repository...")
+            bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
+            bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
+                {
+                    "group": self.group,
+                    "assembly_name": self.assembly,
+                    "distgit_key": metadata.distgit_key,
+                }
+            )
+            bundle_build_repo = BuildRepo(
+                url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger
+            )
+            await bundle_build_repo.ensure_source(upcycle=self.upcycle)
+            logger.info("Bundle repository cloned to %s", bundle_dir)
+            # clean the bundle build directory
+            logger.info("Cleaning bundle build directory...")
+            await bundle_build_repo.delete_all_files()
+            logger.info("Rebasing bundle content...")
+            nvr = await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
 
-        logger.info("Cloning bundle repository...")
-        bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
-        bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
-            {
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            }
-        )
-        bundle_build_repo = BuildRepo(
-            url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger
-        )
-        await bundle_build_repo.ensure_source(upcycle=self.upcycle)
-        logger.info("Bundle repository cloned to %s", bundle_dir)
-        # clean the bundle build directory
-        logger.info("Cleaning bundle build directory...")
-        await bundle_build_repo.delete_all_files()
-        logger.info("Rebasing bundle content...")
-        nvr = await self._rebase_dir(metadata, operator_dir, bundle_dir, operator_build, input_release)
-        # commit and push the changes
-        logger.info("Committing and pushing bundle content...")
-        await bundle_build_repo.commit(f"Update bundle manifests for {operator_build.nvr}", allow_empty=True)
-        if not self.dry_run:
-            await bundle_build_repo.push()
-        return nvr
+            record['bundle_nvr'] = nvr
+
+            # commit and push the changes
+            logger.info("Committing and pushing bundle content...")
+            await bundle_build_repo.commit(f"Update bundle manifests for {operator_build.nvr}", allow_empty=True)
+            if not self.dry_run:
+                await bundle_build_repo.push()
+
+            # Rebase succeeded - don't write record, builder will handle it
+            return nvr
+        except Exception as e:
+            # Record rebase failure
+            record['message'] = f"Rebase failed: {str(e)}"
+            if self._record_logger:
+                self._record_logger.add_record("build_olm_bundle_konflux", **record)
+            raise
 
     async def _rebase_dir(
         self,
@@ -322,25 +347,46 @@ class KonfluxOlmBundleRebaser:
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
         return re.compile(pattern)
 
+    @staticmethod
+    def _get_digest_image_pattern():
+        """Get a compiled regex pattern to match digest-pinned image references.
+
+        Matches images in the format: registry/namespace/image@sha256:digest
+        Examples:
+            - registry.redhat.io/rhel9/postgresql-15@sha256:abc123...
+            - quay.io/openshift/image@sha256:def456...
+        """
+        # Match: registry/path@sha256:hexdigest
+        pattern = r'([a-zA-Z0-9][-a-zA-Z0-9.]*(?::[0-9]+)?/[^@\s]+)@(sha256:[a-fA-F0-9]{64})'
+        return re.compile(pattern)
+
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
         Replace image references in the content by their corresponding SHA.
         Returns the content with the replacements and a map of found images in format of {image_name: (old_pullspec, new_pullspec, nvr)}
+
+        This function handles two types of image references:
+        1. ART-built images matching the registry pattern (e.g., registry.redhat.io/openshift/image:tag)
+           - These are resolved via Konflux/Brew to get the SHA digest
+        2. Digest-pinned images (e.g., registry.redhat.io/rhel9/postgresql-15@sha256:...)
+           - These are already pinned and are included in found_images without modification
         """
         new_content = content
         found_images: Dict[str, Tuple[str, str, str]] = {}
-        # Find all image references in the content
+
+        # Step 1: Find and process ART-built images matching the registry pattern
         pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(old_registry)
         matches = pattern.finditer(content)
-        references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
+        art_references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
         image_info_tasks = []
         for match in matches:
             pullspec = match.group(0)
             namespace, image_short_name = match.group(1).rsplit('/', maxsplit=1)
             image_tag = match.group(2)
-            references[pullspec] = (namespace, image_short_name, image_tag)
-        # Get image infos for all found images
-        for pullspec, (namespace, image_short_name, image_tag) in references.items():
+            art_references[pullspec] = (namespace, image_short_name, image_tag)
+
+        # Get image infos for ART-built images
+        for pullspec, (namespace, image_short_name, image_tag) in art_references.items():
             if engine is Engine.KONFLUX:
                 build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
                 image_info_tasks.append(
@@ -364,15 +410,15 @@ class KonfluxOlmBundleRebaser:
                 )
         image_infos = await asyncio.gather(*image_info_tasks)
 
-        # Replace image references in the content
+        # Replace ART-built image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
-        for pullspec, image_info in zip(references, image_infos):
+        for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']
             image_release = image_labels['release']
             image_component_name = image_labels['com.redhat.component']
             image_nvr = f"{image_component_name}-{image_version}-{image_release}"
-            namespace, image_short_name, image_tag = references[pullspec]
+            namespace, image_short_name, image_tag = art_references[pullspec]
             image_sha = (
                 image_info['contentDigest']
                 if self._group_config.operator_image_ref_mode == 'by-arch'
@@ -389,6 +435,27 @@ class KonfluxOlmBundleRebaser:
             )
             new_content = new_content.replace(pullspec, new_pullspec)
             found_images[image_short_name] = (pullspec, new_pullspec, image_nvr)
+
+        # Step 2: Find digest-pinned images that are already resolved (e.g., external images)
+        # These don't need resolution but should be included in found_images for relatedImages
+        digest_pattern = KonfluxOlmBundleRebaser._get_digest_image_pattern()
+        for match in digest_pattern.finditer(new_content):
+            image_path = match.group(1)  # e.g., registry.redhat.io/rhel9/postgresql-15
+            digest = match.group(2)  # e.g., sha256:abc123...
+            pullspec = f"{image_path}@{digest}"
+
+            # Extract image short name from the path
+            image_short_name = image_path.rsplit('/', 1)[-1]
+
+            # Skip if this image was already processed as an ART-built image
+            if image_short_name in found_images:
+                continue
+
+            # Add to found_images with pullspec as both old and new (no change needed)
+            # Use "external" as NVR since we don't have version info for external images
+            found_images[image_short_name] = (pullspec, pullspec, "external")
+            self._logger.debug(f"Found digest-pinned external image: {pullspec}")
+
         return new_content, found_images
 
     @cached_property
@@ -609,10 +676,10 @@ class KonfluxOlmBundleBuilder:
 
             # Start the bundle build
             logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             pipelinerun_dict = None  # Initialize to handle cases where the loop doesn't set it
-            for attempt in range(retries):
-                logger.info("Build attempt %d/%d", attempt + 1, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %d/%d", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
                     metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks
                 )

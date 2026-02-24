@@ -12,7 +12,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
 from ghapi.all import GhApi
 
-from pyartcd import constants, jenkins
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.pipelines.update_golang import extract_and_validate_golang_nvrs, is_latest_and_available, move_golang_bugs
 from pyartcd.runtime import Runtime

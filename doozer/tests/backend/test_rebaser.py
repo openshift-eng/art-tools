@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import semver
 from artcommonlib.model import Missing, Model

@@ -1,14 +1,11 @@
-import json
 import textwrap
 
 import click
-import koji
 import requests
 from errata_tool import Erratum
 
-from elliottlib import Runtime, brew, constants, errata
+from elliottlib import Runtime, constants
 from elliottlib.cli.common import cli
-from elliottlib.util import exit_unauthenticated
 
 pass_runtime = click.make_pass_decorator(Runtime)
 

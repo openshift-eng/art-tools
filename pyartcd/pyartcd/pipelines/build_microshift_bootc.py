@@ -10,25 +10,24 @@ import tempfile
 import time
 import traceback
 from datetime import datetime, timezone
-from importlib import util
+from functools import cached_property
 from io import StringIO
 from pathlib import Path
 from typing import Optional, cast
 from urllib.parse import urlparse
 
 import click
-import gitlab
 import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.config.repo import BrewSource, BrewTag, PlashetRepo, Repo, RepoList
+from artcommonlib.config.repo import RepoList
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib.util import (
-    convert_remote_git_to_ssh,
     get_art_prod_image_repo_for_version,
     get_ocp_version_from_group,
     new_roundtrip_yaml_handler,
@@ -37,6 +36,7 @@ from artcommonlib.util import (
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
+from doozerlib.util import isolate_git_commit_in_release
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import Github, GithubException
 
@@ -119,6 +119,7 @@ class BuildMicroShiftBootcPipeline:
         # Initialize GitRepository for shipment data (will be setup later if needed)
         self.shipment_data_repo = None
         self.gitlab_token = None
+        self.shipment_mr_url = None
 
         # sets environment variables for Elliott and Doozer
         self._elliott_env_vars = os.environ.copy()
@@ -226,6 +227,10 @@ class BuildMicroShiftBootcPipeline:
 
             if self.prepare_shipment:
                 await self._prepare_shipment(bootc_build)
+
+            if self.shipment_mr_url and not self.runtime.dry_run:
+                await self._set_shipment_mr_ready()
+                await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -393,6 +398,35 @@ class BuildMicroShiftBootcPipeline:
             block_until_complete=True,
         )
 
+    async def _get_microshift_rpm_commit(self) -> str:
+        """
+        Extracts the upstream source commit from the microshift RPM NVR for this assembly.
+        This ensures the bootc image is built from the same commit as the RPM.
+
+        Return Value(s):
+            str: The abbreviated git commit hash extracted from the RPM NVR.
+        """
+        microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+        if not microshift_nvrs:
+            raise ValueError(
+                f"Could not find microshift RPM NVRs for assembly {self.assembly}. "
+                f"Ensure the microshift RPM has been built before building the bootc image."
+            )
+
+        # All EL versions are built from the same source commit; extract it from the first NVR
+        # that contains a recognizable commit hash
+        for nvr in microshift_nvrs:
+            release = nvr.rsplit("-", 1)[-1]
+            commit = isolate_git_commit_in_release(release)
+            if commit:
+                self._logger.info("Extracted upstream commit %s from microshift RPM NVR %s", commit, nvr)
+                return commit
+
+        raise ValueError(
+            f"Could not extract git commit from any microshift RPM NVR: {microshift_nvrs}. "
+            f"The NVR release fields do not contain a recognizable commit hash."
+        )
+
     async def _rebase_and_build_bootc(self):
         bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
@@ -443,6 +477,9 @@ class BuildMicroShiftBootcPipeline:
 
         await self._build_plashet_for_bootc()
 
+        # Extract the commit from the microshift RPM to ensure bootc is built from the same source
+        upstream_commit = await self._get_microshift_rpm_commit()
+
         # Rebase and build bootc image
         version = f"v{major}.{minor}.0"
         release = default_release_suffix()
@@ -455,11 +492,12 @@ class BuildMicroShiftBootcPipeline:
             "--latest-parent-version",
             "-i",
             bootc_image_name,
-            # regardless of assembly cutoff time lock to HEAD in release branch
-            # also not passing this breaks the command since we try to use brew to find the appropriate commit
+            # Lock to the same commit as the microshift RPM to ensure consistency
+            # between RPM and bootc artifacts. Without this, doozer would try to
+            # use brew to find the commit which fails for Konflux-built images.
             "--lock-upstream",
             bootc_image_name,
-            "HEAD",
+            upstream_commit,
             "--build-system",
             "konflux",
             "beta:images:konflux:rebase",
@@ -483,11 +521,10 @@ class BuildMicroShiftBootcPipeline:
             "--latest-parent-version",
             "-i",
             bootc_image_name,
-            # regardless of assembly cutoff time lock to HEAD in release branch
-            # also not passing this breaks the command since we try to use brew to find the appropriate commit
+            # Lock to the same commit as the microshift RPM to ensure consistency
             "--lock-upstream",
             bootc_image_name,
-            "HEAD",
+            upstream_commit,
             "--build-system",
             "konflux",
             "beta:images:konflux:build",
@@ -681,10 +718,38 @@ class BuildMicroShiftBootcPipeline:
         shipment_config.shipment.snapshot = snapshot
 
         # Step 6: Create shipment MR
-        shipment_mr_url = await self._create_shipment_mr(shipment_config)
+        self.shipment_mr_url = await self._create_shipment_mr(shipment_config)
 
-        await self.slack_client.say_in_thread(f"Shipment MR created: {shipment_mr_url}")
-        await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
+        if self.shipment_mr_url:
+            await self.slack_client.say_in_thread(f"Shipment MR created: {self.shipment_mr_url}")
+        else:
+            await self.slack_client.say_in_thread("No changes in shipment data. MR was not created or updated.")
+
+    async def _set_shipment_mr_ready(self):
+        """
+        Mark the shipment MR as ready by removing the Draft prefix from the title.
+        This should be called at the end of the pipeline when all work is complete.
+        """
+        mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
+
+        if mr and not self.runtime.dry_run:
+            await self.slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
+
+            # Trigger CI pipeline after marking as ready
+            # wait for 30 seconds to ensure the MR is updated
+            self._logger.info("Waiting for 30 seconds to ensure MR is updated...")
+            await asyncio.sleep(30)
+
+            try:
+                pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+                if pipeline_url:
+                    await self.slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
+                else:
+                    await self.slack_client.say_in_thread(
+                        f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
+                    )
+            except Exception as e:
+                self._logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
     async def _setup_shipment_environment(self):
         """Setup environment variables and tokens required for shipment operations"""
@@ -833,8 +898,8 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment data repository setup completed")
 
-    async def _create_shipment_mr(self, shipment_config: ShipmentConfig) -> str:
-        """Create or update shipment MR with the given shipment config"""
+    async def _create_shipment_mr(self, shipment_config: ShipmentConfig) -> str | None:
+        """Create or update shipment MR with the given shipment config. Returns None if no changes."""
         self._logger.info("Creating or updating shipment MR...")
 
         # Branch handling is now done in _load_or_init_shipment_config
@@ -856,12 +921,12 @@ class BuildMicroShiftBootcPipeline:
         updated = await self._update_shipment_data(shipment_config, timestamp, commit_message, source_branch)
         if not updated:
             self._logger.info("No changes in shipment data. MR will not be created or updated.")
-            return "No changes to commit"
+            return None
 
         def _get_project(url):
             parsed_url = urlparse(url)
             project_path = parsed_url.path.strip('/').removesuffix('.git')
-            return self._get_gitlab().projects.get(project_path)
+            return self._gitlab.get_project(project_path)
 
         source_project = _get_project(self.shipment_data_repo_push_url)
         target_project = _get_project(self.shipment_data_repo_pull_url)
@@ -934,12 +999,12 @@ class BuildMicroShiftBootcPipeline:
 
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
-    def _get_gitlab(self):
-        """Get GitLab client instance"""
-        if not hasattr(self, '_gitlab_client'):
-            self._gitlab_client = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
-            self._gitlab_client.auth()
-        return self._gitlab_client
+    @cached_property
+    def _gitlab(self) -> GitLabClient:
+        """
+        Get GitLab client instance.
+        """
+        return GitLabClient(self.gitlab_url, self.gitlab_token, self.runtime.dry_run)
 
     @staticmethod
     def _basic_auth_url(url: str, token: str) -> str:

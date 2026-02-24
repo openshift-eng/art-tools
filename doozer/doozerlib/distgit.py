@@ -497,7 +497,10 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self.metadata.canonical_builders_enabled:
+        # Skip canonical builders initialization for performance when autoclone=False
+        # (e.g., for commands like images:list that don't need this information)
+        # This avoids expensive oc image info operations
+        if self.metadata.canonical_builders_enabled and autoclone:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -2250,6 +2253,14 @@ class ImageDistGitRepo(DistGitRepo):
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
                 metadata_envs.update(self.config.envs.primitive())
+
+            if self.runtime.group_config.build_profiles.enable_go_cover is True:
+                # This must be implemented by the ART golang wrappers
+                # in order to have any effect.
+                metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+                # Inject the coverage HTTP server source into every Go main package
+                # directory so that it is compiled into the binary via its init() function.
+                util.inject_coverage_server(dg_path, self.logger)
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:

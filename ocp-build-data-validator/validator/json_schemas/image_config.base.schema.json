@@ -1285,11 +1285,32 @@
                 },
                 "enabled-": {},
                 "resources": {
-                  "description": "Array of resource URLs to include in artifact lockfile generation",
+                  "description": "Array of resource URLs or objects with URL and optional filename",
                   "type": "array",
                   "items": {
-                    "type": "string",
-                    "format": "uri"
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Simple URL - filename extracted from URL"
+                      },
+                      {
+                        "type": "object",
+                        "required": ["url"],
+                        "properties": {
+                          "url": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Download URL"
+                          },
+                          "filename": {
+                            "type": "string",
+                            "description": "Custom destination filename (optional)"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "resources?": {
@@ -1353,6 +1374,23 @@
             "legacy"
           ]
         },
+        "build_timeout": {
+          "description": "Build timeout in minutes for konflux builds",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts": {
+          "description": "The number of times a build should be attempted before giving up",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts?": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts!": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }

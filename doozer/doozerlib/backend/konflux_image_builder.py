@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pprint
+import re
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -15,9 +16,9 @@ from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.build_visibility import is_release_embargoed
-from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
@@ -25,13 +26,12 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.backend.pipelinerun_utils import ContainerInfo, PipelineRunInfo
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.image import ImageMetadata
 from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
-from kubernetes.dynamic import resource
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -173,7 +173,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
@@ -186,8 +186,8 @@ class KonfluxImageBuilder:
                 build_priority = self._config.build_priority
                 logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
 
-            for attempt in range(retries):
-                logger.info("Build attempt %s/%s", attempt + 1, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 pipelinerun_info = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
@@ -243,8 +243,8 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
-                elif outcome is KonfluxBuildOutcome.SUCCESS or attempt == (retries - 1):
-                    # Only create a failed build record if this is the latest attempt
+                else:
+                    # Create a build record after every attempt (both success and failure)
                     await self.update_konflux_db(
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
                     )
@@ -408,10 +408,19 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            if group.startswith("openshift-"):
+            golang_pattern = re.compile(r'^golang-|^rhel-\d+-golang-\d+\.\d+')
+            if group.startswith("openshift-") or golang_pattern.match(group):
                 # For groups like oadp, mta, logging we should always use signed repos
-                phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
-                if phase <= SoftwareLifecyclePhase.SIGNING:
+                # For golang groups (golang-* and rhel-X-golang-Y.Z), always exclude gpg check regardless of lifecycle phase
+                should_disable_gpg = False
+
+                if golang_pattern.match(group):
+                    should_disable_gpg = True
+                elif group.startswith("openshift-"):
+                    phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
+                    should_disable_gpg = phase <= SoftwareLifecyclePhase.SIGNING
+
+                if should_disable_gpg:
                     enabled_repos = metadata.get_enabled_repos()
                     if enabled_repos:
                         dnf_options = {}
@@ -942,13 +951,15 @@ class KonfluxImageBuilder:
             try:
                 # Use oc image info with optional auth file to get image labels
                 # Use --filter-by-os to handle manifest list images
-                auth_arg = f"-a {registry_auth_file}" if registry_auth_file else ""
-                cmd = f"oc image info -o json --filter-by-os=amd64 {auth_arg} {pullspec}"
-                rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
-
-                if rc != 0:
+                try:
+                    stdout = await oc_image_info__cached_async(
+                        pullspec,
+                        '--filter-by-os=amd64',
+                        registry_config=registry_auth_file if registry_auth_file else None,
+                    )
+                except ChildProcessError as e:
                     # Could not access the image - this is unexpected and worth a warning
-                    logger.warning(f"Could not access parent image {pullspec}: {stderr}")
+                    logger.warning(f"Could not access parent image {pullspec}: {e}")
                     parent_image_nvrs.append(pullspec)
                     continue
 

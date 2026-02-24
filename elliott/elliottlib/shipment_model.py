@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Literal, Optional, Self, Union
+from typing import List, Literal, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from ruamel.yaml import scalarstring

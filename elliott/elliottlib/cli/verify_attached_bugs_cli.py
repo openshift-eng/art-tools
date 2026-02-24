@@ -5,7 +5,6 @@ import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
-from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week

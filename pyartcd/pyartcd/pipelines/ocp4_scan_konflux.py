@@ -328,11 +328,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
     else:
         lock = Lock.SCAN_KONFLUX
         lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path()
-        if not lock_identifier:
-            runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
-            )
+        lock_identifier = jenkins.get_build_path_or_random()
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,

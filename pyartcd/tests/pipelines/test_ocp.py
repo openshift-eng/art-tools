@@ -1,6 +1,5 @@
 import os
 import unittest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd.jenkins import Jobs

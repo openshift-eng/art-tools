@@ -13,6 +13,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
@@ -121,7 +122,7 @@ def images_streams_mirror(
     dry_run: bool,
     registry_auth: Optional[str],
 ):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     runtime.assert_mutation_is_permitted()
 
     # Determine which registry config to use:
@@ -294,7 +295,7 @@ def images_streams_mirror(
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @pass_runtime
 def images_streams_check_upstream(runtime, streams, live_test_mode):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     istags_status = []
     if not streams:
@@ -380,7 +381,7 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode):
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
 def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     group_label = runtime.group_config.name
     if live_test_mode:
@@ -509,7 +510,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     to know the image is in use. These daemonsets can like be eliminated when CI infra moves fully to
     4.x.
     """
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     runtime.assert_mutation_is_permitted()
 
     major = runtime.group_config.vars['MAJOR']
@@ -838,7 +839,7 @@ def prs():
 )
 @pass_runtime
 def prs_list(runtime, as_user, include_master):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
     retdata = {}
@@ -883,7 +884,7 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
             if issue in comment.body:
                 return  # an exist comment already have the issue
         pr.create_issue_comment(
-            f"ART wants to connect issue [{issue}](https://issues.redhat.com/browse/{issue}) to this PR, \
+            f"ART wants to connect issue [{issue}]({get_jira_browse_url(issue)}) to this PR, \
                                 but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do."
         )
     else:  # update pr title
@@ -1134,7 +1135,7 @@ def images_streams_prs(
     add_auto_labels,
     add_label,
 ):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     g = Github(login_or_token=(github_access_token or os.getenv(constants.GITHUB_TOKEN)))
     github_user = g.get_user()
 

@@ -8,16 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
+from doozerlib import build_info, image
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
-
-try:
-    from importlib import reload
-except ImportError:
-    pass
-from doozerlib import build_info, image
 
 TEST_YAML = """---
 name: 'openshift/test'
@@ -443,6 +438,48 @@ class TestImageMetadata(unittest.TestCase):
         # Should only return repos enabled in BOTH places (repo1 and repo2)
         self.assertEqual(result, {'repo1', 'repo2'})
         mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_konflux_build_attempts_default(self):
+        """
+        Test default build attempts when no config is set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = Missing
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 3)
+
+    def test_get_konflux_build_attempts_metadata_override(self):
+        """
+        Test component-level override takes precedence over group
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = 5
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 2
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 5)
+
+    def test_get_konflux_build_attempts_group_override(self):
+        """
+        Test group-level override when component not set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 1
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 1)
 
     def test_calculate_config_digest_old_style_repos(self):
         """
@@ -1202,7 +1239,10 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
 
         result = metadata.get_required_artifacts()
-        expected = ["https://example.com/cert1.pem", "https://example.com/cert2.pem"]
+        expected = [
+            {'url': "https://example.com/cert1.pem", 'filename': None},
+            {'url': "https://example.com/cert2.pem", 'filename': None},
+        ]
         self.assertEqual(result, expected)
 
     def test_get_required_artifacts_missing_resources(self):

@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -343,9 +342,7 @@ async def build_fbc(
         ignore_locks=ignore_locks,
     )
 
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+    lock_identifier = jenkins.get_build_path_or_random()
 
     if ignore_locks:
         await pipeline.run()

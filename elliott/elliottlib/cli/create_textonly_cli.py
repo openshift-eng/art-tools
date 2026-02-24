@@ -6,7 +6,6 @@ from errata_tool import Erratum
 import elliottlib
 from elliottlib.bzutil import BugTracker
 from elliottlib.cli.common import cli
-from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import exit_unauthorized, validate_email_address, validate_release_date
 
 LOGGER = logutil.get_logger(__name__)

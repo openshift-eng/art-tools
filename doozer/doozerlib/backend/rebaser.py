@@ -9,7 +9,7 @@ import pathlib
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
 import bashlex
@@ -487,7 +487,7 @@ class KonfluxRebaser:
         self, metadata: ImageMetadata, stream_name: str, original_parent: str, dfp: DockerfileParser
     ):
         stream_image = None
-        if self.variant is BuildVariant.OCP and metadata.canonical_builders_enabled:
+        if metadata.canonical_builders_enabled:
             # canonical_builders_from_upstream is enabled: try matching upstream golang builders
             stream_image = await self._resolve_image_from_upstream_parent(original_parent, dfp)
 
@@ -987,6 +987,9 @@ class KonfluxRebaser:
         dfp.labels['version'] = version
         dfp.labels['release'] = release
 
+        # log nvr
+        self._logger.info(f"nvr={metadata.get_component_name()}-{version}-{release}")
+
         # Delete differently cased labels that we override or use newer versions of
         for deprecated in ["Release", "Architecture", "BZComponent"]:
             if deprecated in dfp.labels:
@@ -1033,7 +1036,7 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if metadata.canonical_builders_enabled:
+        if metadata.canonical_builders_enabled and self.variant is not BuildVariant.OKD:
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
@@ -1078,6 +1081,14 @@ class KonfluxRebaser:
             # Allow environment variables to be specified in the ART image metadata
             metadata_envs.update(metadata.config.envs.primitive())
 
+        if self._runtime.group_config.build_profiles.enable_go_cover is True:
+            # This must be implemented by the ART golang wrappers
+            # in order to have any effect.
+            metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+            # Inject the coverage HTTP server source into every Go main package
+            # directory so that it is compiled into the binary via its init() function.
+            util.inject_coverage_server(dest_dir, self._logger)
+
         df_fileobj = self._update_yum_update_commands(metadata, force_yum_updates, io.StringIO(df_content))
         with Path(dfp.dockerfile_path).open('w', encoding="utf-8") as df:
             shutil.copyfileobj(df_fileobj, df)
@@ -1112,7 +1123,8 @@ class KonfluxRebaser:
             return None
 
         required_artifacts = metadata.get_required_artifacts()
-        for artifact_url in required_artifacts:
+        for artifact in required_artifacts:
+            artifact_url = artifact['url']
             if url_pattern.lower() in artifact_url.lower():
                 return artifact_url
         return None
@@ -2185,20 +2197,32 @@ class KonfluxRebaser:
                     await df.write("        %s=\"%s\"" % (k, escaped_v))
                 await df.write("\n\n")
 
-    def _get_csv_file_and_refs(self, metadata: ImageMetadata, repo_dir: Path, csv_config):
-        #           bundle-dir: stable/
-        #   manifests-dir: manifests/
+    def _get_bundle_paths(self, csv_config: dict) -> Tuple[str, str, str]:
+        """Returns (manifests_dir, bundle_dir, bundle_manifests_dir)."""
         manifests_dir = csv_config.get('manifests-dir', 'manifests')
         gvars = self._runtime.group_config.vars
         bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
         bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
+        return manifests_dir, bundle_dir, bundle_manifests_dir
 
+    def _find_image_refs_path(self, repo_dir: Path, csv_config: dict) -> Optional[Path]:
+        """Find the image-references file path, returns None if not found."""
+        manifests_dir, bundle_dir, bundle_manifests_dir = self._get_bundle_paths(csv_config)
         ref_candidates = [
             repo_dir.joinpath(dirpath, 'image-references')
             for dirpath in [bundle_manifests_dir, manifests_dir, bundle_dir]
         ]
-        refs = next((cand for cand in ref_candidates if cand.is_file()), None)
+        return next((cand for cand in ref_candidates if cand.is_file()), None)
+
+    def _get_csv_file_and_refs(self, metadata: ImageMetadata, repo_dir: Path, csv_config):
+        manifests_dir, bundle_dir, bundle_manifests_dir = self._get_bundle_paths(csv_config)
+
+        refs = self._find_image_refs_path(repo_dir, csv_config)
         if not refs:
+            ref_candidates = [
+                repo_dir.joinpath(dirpath, 'image-references')
+                for dirpath in [bundle_manifests_dir, manifests_dir, bundle_dir]
+            ]
             raise FileNotFoundError(
                 '{}: image-references file not found in any location: {}'.format(metadata.distgit_key, ref_candidates)
             )
@@ -2224,17 +2248,29 @@ class KonfluxRebaser:
             )
         return str(csvs[0]), image_refs
 
-    @start_as_current_span_async(TRACER, "rebase.update_csv")
-    async def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str):
-        csv_config = metadata.config.get('update-csv', None)
-        if not csv_config:
-            return
+    @start_as_current_span_async(TRACER, "rebase.replace_internal_image_refs")
+    async def _replace_internal_image_refs(
+        self,
+        metadata: ImageMetadata,
+        csv_file: str,
+        image_refs: list,
+        registry: str,
+        image_map: dict,
+        external_image_names: Optional[Set[str]] = None,
+    ) -> None:
+        """Replace internal ART-built image references in the CSV file.
 
-        csv_file, image_refs = self._get_csv_file_and_refs(metadata, dest_dir, csv_config)
-        registry = csv_config['registry'].rstrip("/")
-        image_map = csv_config.get('image-map', {})
-        # External images are not built by us and should be skipped when replacing image refs
-        external_images = set(csv_config.get('external-images', []))
+        Collects all replacements first, then performs a single read-modify-write cycle.
+
+        Args:
+            metadata: The ImageMetadata for this operator bundle.
+            csv_file: Path to the CSV file.
+            image_refs: List of image references from image-references file.
+            registry: The registry to use for replacements.
+            image_map: Mapping of image names.
+            external_image_names: Set of image names defined in external-images config.
+                                  These will be skipped as they are handled by _replace_external_image_refs.
+        """
 
         def _map_image_name(name, image_map):
             for match, replacement in image_map.items():
@@ -2242,16 +2278,27 @@ class KonfluxRebaser:
                     return name.replace(match, replacement)
             return name
 
+        namespace = self._runtime.group_config.get('csv_namespace', None)
+        if not namespace:
+            raise ValueError('csv_namespace is required in group.yaml when any image defines update-csv')
+
+        if external_image_names is None:
+            external_image_names = set()
+
+        # Collect all replacements first
+        replacements: List[Tuple[str, str]] = []
         for ref in image_refs:
             name = ref['name']
             mapped_name = _map_image_name(name, image_map)
             spec = ref['from']['name']
 
-            # Skip external images that are not built by us
-            if name in external_images or mapped_name in external_images:
+            # Skip images that are defined in external-images config
+            # They will be handled by _replace_external_image_refs
+            if name in external_image_names:
+                self._logger.info(f"Skipping {name} - defined in external-images config")
                 continue
 
-            distgit = self._runtime.name_in_bundle_map.get(mapped_name, None)
+            distgit = self._runtime.name_in_bundle_map.get(name, None)
             # fail if upstream is referring to an image we don't actually build
             if not distgit:
                 raise ValueError(
@@ -2259,7 +2306,7 @@ class KonfluxRebaser:
                 )
 
             meta = self._runtime.image_map.get(distgit, None)
-            if meta:  # image is currently be processed
+            if meta:  # image is currently being processed
                 image_tag = f"{meta.image_name_short}:{self.uuid_tag}"
             else:
                 meta = self._runtime.late_resolve_image(distgit)
@@ -2281,21 +2328,48 @@ class KonfluxRebaser:
                         f'Related image contains {meta.distgit_key} but this does not have {metadata.distgit_key} in dependents'
                     )
 
-            namespace = self._runtime.group_config.get('csv_namespace', None)
-            if not namespace:
-                raise ValueError('csv_namespace is required in group.yaml when any image defines update-csv')
             replace = '{}/{}/{}'.format(registry, namespace, image_tag)
+            replacements.append((spec, replace))
 
-            # Read content
-            async with aiofiles.open(csv_file, 'r', encoding='utf-8') as f:
-                content = await f.read()
-            # Modify content
+        # Perform single read-modify-write cycle
+        async with aiofiles.open(csv_file, 'r', encoding='utf-8') as f:
+            content = await f.read()
+
+        for spec, replace in replacements:
             content = content.replace(spec + '\n', replace + '\n')
             content = content.replace(spec + '"', replace + '"')
-            # Overwrite file with updated content
-            async with aiofiles.open(csv_file, 'w', encoding='utf-8') as f:
-                await f.write(content)
 
+        async with aiofiles.open(csv_file, 'w', encoding='utf-8') as f:
+            await f.write(content)
+
+    @start_as_current_span_async(TRACER, "rebase.apply_art_yaml_updates")
+    async def _apply_art_yaml_updates(
+        self,
+        metadata: ImageMetadata,
+        dest_dir: Path,
+        csv_config: dict,
+        version: str,
+        release: str,
+    ) -> Optional[dict]:
+        """Apply art.yaml search-and-replace updates to manifests.
+
+        This function reads the art.yaml file from the operator's manifests directory
+        and performs search-and-replace operations defined in the 'updates' section.
+        The art.yaml supports template variables like {MAJOR}, {MINOR}, {SUBMINOR},
+        {RELEASE}, and {FULL_VER} which are substituted before processing.
+
+        Args:
+            metadata: The ImageMetadata for this operator bundle.
+            dest_dir: The destination directory containing the operator bundle.
+            csv_config: The 'update-csv' configuration from the image metadata.
+            version: The version string (e.g., "4.17.0" or "v4.17.0").
+            release: The release string for template substitution.
+
+        Returns:
+            The parsed art.yaml data as a dict for use by other functions
+            (e.g., _replace_external_image_refs for processing 'external-images'),
+            or None if art.yaml doesn't exist.
+        """
         if version.startswith('v'):
             version = version[1:]  # strip off leading v
 
@@ -2309,22 +2383,24 @@ class KonfluxRebaser:
             'FULL_VER': '{}-{}'.format(version, release.split('.')[0]),
         }
 
-        manifests_dir = csv_config.get('manifests-dir', 'manifests')
+        manifests_dir, _, _ = self._get_bundle_paths(csv_config)
         manifests_base = os.path.join(dest_dir, manifests_dir)
-
         art_yaml = os.path.join(manifests_base, 'art.yaml')
 
-        if os.path.isfile(art_yaml):
-            with io.open(art_yaml, 'r', encoding="utf-8") as art_file:
-                art_yaml_str = art_file.read()
+        if not os.path.isfile(art_yaml):
+            return None
 
-            try:
-                art_yaml_str = art_yaml_str.format(**replace_args)
-                art_yaml_data = yaml.full_load(art_yaml_str)
-            except Exception as ex:  # exception is low level, need to pull out the details and rethrow
-                raise IOError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
+        with io.open(art_yaml, 'r', encoding="utf-8") as art_file:
+            art_yaml_str = art_file.read()
 
-            updates = art_yaml_data.get('updates', [])
+        try:
+            art_yaml_str = art_yaml_str.format(**replace_args)
+            art_yaml_data = yaml.full_load(art_yaml_str)
+        except Exception as ex:  # exception is low level, need to pull out the details and rethrow
+            raise IOError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
+
+        updates = art_yaml_data.get('updates', [])
+        if updates:
             if not isinstance(updates, list):
                 raise TypeError('`updates` key must be a list in art.yaml')
 
@@ -2362,3 +2438,175 @@ class KonfluxRebaser:
                 # Overwrite file with updated content
                 async with aiofiles.open(f_path, 'w', encoding='utf-8') as sr_file:
                     await sr_file.write(sr_file_str)
+
+        return art_yaml_data
+
+    @start_as_current_span_async(TRACER, "rebase.replace_external_image_refs")
+    async def _replace_external_image_refs(
+        self,
+        csv_file: str,
+        csv_config: dict,
+        dest_dir: Path,
+        art_yaml_data: Optional[dict],
+    ) -> None:
+        """Replace external image references with digest-pinned pullspecs.
+
+        This function processes the 'external-images' section from art.yaml to resolve
+        external (non-ART-built) container images to their digest-pinned form. For each
+        external image, it:
+        1. Resolves the target image to get its SHA256 digest
+        2. Strips any tag from the target to get the base image reference
+        3. Constructs the digest-pinned pullspec (e.g., registry.redhat.io/rhel9/postgresql-15@sha256:...)
+        4. Replaces the source placeholder with the resolved pullspec in CSV and image-references files
+
+        The 'external-images' configuration in art.yaml should have entries like:
+            external-images:
+              - name: postgresql
+                source: RELATED_IMAGE_POSTGRESQL  # placeholder in CSV
+                target: registry.redhat.io/rhel9/postgresql-15:latest  # image to resolve
+
+        Args:
+            csv_file: Path to the ClusterServiceVersion YAML file.
+            csv_config: The 'update-csv' configuration from the image metadata.
+            dest_dir: The destination directory containing the operator bundle.
+            art_yaml_data: Parsed art.yaml data from _apply_art_yaml_updates, or None
+                           if art.yaml doesn't exist. This avoids duplicate file I/O.
+        """
+        if not art_yaml_data:
+            return
+
+        external_images = art_yaml_data.get('external-images', [])
+        if not external_images:
+            return
+
+        refs_path = self._find_image_refs_path(dest_dir, csv_config)
+
+        for ext_img in external_images:
+            name = ext_img.get('name')
+            source = ext_img.get('search')
+            target = ext_img.get('replace')
+
+            if not source or not target:
+                self._logger.warning(f"External image configuration for {name} is missing search or replace")
+                continue
+
+            self._logger.info(f"Resolving digest for external image {target}")
+            try:
+                registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
+                image_info = await util.oc_image_info_for_arch_async__caching(target, registry_config=registry_auth)
+                # Use listDigest for multi-arch images, if no listDigest, use digest
+                digest = image_info.get('listDigest')
+                if not digest:
+                    digest = image_info.get('digest')
+            except Exception as e:
+                self._logger.error(f"Failed to resolve digest for {target}: {e}")
+                raise
+
+            if not digest:
+                raise IOError(f"Could not resolve digest for {target}")
+
+            # Strip the tag from target to get the base image reference
+            # e.g., registry.redhat.io/rhel9/postgresql-15:latest -> registry.redhat.io/rhel9/postgresql-15
+            # Handle edge cases like registry.example.com:5000/image:tag (port vs tag)
+            if '@' in target:
+                # Already has a digest - strip it to get the base
+                base_target = target.split('@')[0]
+            else:
+                # Check for tag: split by '/' and check if last segment has ':'
+                # This handles registry:port/image:tag correctly
+                parts = target.rsplit('/', 1)
+                if len(parts) == 2 and ':' in parts[1]:
+                    # The last segment has a tag, strip it
+                    base_target = parts[0] + '/' + parts[1].rsplit(':', 1)[0]
+                elif len(parts) == 1 and ':' in parts[0]:
+                    # No '/' in target, check if it's just image:tag
+                    # This is less common but handle it
+                    base_target = parts[0].rsplit(':', 1)[0]
+                else:
+                    # No tag
+                    base_target = target
+
+            resolved_target = f"{base_target}@{digest}"
+
+            self._logger.info(f"Replacing {source} with {resolved_target} in CSV and {refs_path}")
+
+            # Update CSV
+            async with aiofiles.open(csv_file, 'r', encoding='utf-8') as f:
+                content = await f.read()
+
+            if source in content:
+                content = content.replace(source, resolved_target)
+                async with aiofiles.open(csv_file, 'w', encoding='utf-8') as f:
+                    await f.write(content)
+            else:
+                self._logger.info(f"Source image {source} not found in CSV {csv_file}, nothing to replace")
+
+            # Update image-references
+            if refs_path:
+                async with aiofiles.open(refs_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+
+                if source in content:
+                    content = content.replace(source, resolved_target)
+                    async with aiofiles.open(refs_path, 'w', encoding='utf-8') as f:
+                        await f.write(content)
+                else:
+                    self._logger.info(f"Source image {source} not found in {refs_path}, nothing to replace")
+
+    def _get_external_image_names(self, dest_dir: Path, csv_config: dict) -> Set[str]:
+        """Get the set of image names defined in external-images config from art.yaml.
+
+        These images are not ART-built and will be handled separately by _replace_external_image_refs.
+
+        Args:
+            dest_dir: The destination directory containing the operator bundle.
+            csv_config: The 'update-csv' configuration from the image metadata.
+
+        Returns:
+            Set of image names defined in external-images config, or empty set if none.
+        """
+        manifests_dir, _, _ = self._get_bundle_paths(csv_config)
+        manifests_base = os.path.join(dest_dir, manifests_dir)
+        art_yaml_path = os.path.join(manifests_base, 'art.yaml')
+
+        if not os.path.isfile(art_yaml_path):
+            return set()
+
+        try:
+            with io.open(art_yaml_path, 'r', encoding="utf-8") as art_file:
+                art_yaml_data = yaml.full_load(art_file.read())
+        except Exception:
+            return set()
+
+        external_images = art_yaml_data.get('external-images', [])
+        if not external_images:
+            return set()
+
+        return {ext_img.get('name') for ext_img in external_images if ext_img.get('name')}
+
+    @start_as_current_span_async(TRACER, "rebase.update_csv")
+    async def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str):
+        csv_config = metadata.config.get('update-csv', None)
+        if not csv_config:
+            return
+
+        csv_file, image_refs = self._get_csv_file_and_refs(metadata, dest_dir, csv_config)
+        registry = csv_config['registry'].rstrip("/")
+        image_map = csv_config.get('image-map', {})
+
+        # Get external image names to skip in internal image replacement
+        external_image_names = self._get_external_image_names(dest_dir, csv_config)
+
+        # Replace internal ART-built image references
+        await self._replace_internal_image_refs(
+            metadata, csv_file, image_refs, registry, image_map, external_image_names
+        )
+
+        # Apply art.yaml search-and-replace updates and get parsed art.yaml data.
+        # The returned art_yaml_data is passed to _replace_external_image_refs to avoid
+        # reading art.yaml twice (optimization to reduce file I/O).
+        art_yaml_data = await self._apply_art_yaml_updates(metadata, dest_dir, csv_config, version, release)
+
+        # Replace external image references with digest-pinned pullspecs.
+        # Uses 'external-images' config from the art_yaml_data returned above.
+        await self._replace_external_image_refs(csv_file, csv_config, dest_dir, art_yaml_data)

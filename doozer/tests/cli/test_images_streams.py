@@ -1,10 +1,4 @@
 import pytest
-from artcommonlib.konflux.konflux_build_record import (
-    ArtifactType,
-    Engine,
-    KonfluxBuildOutcome,
-    KonfluxBuildRecord,
-)
 from artcommonlib.model import Missing, Model
 from doozerlib.cli import images_streams
 

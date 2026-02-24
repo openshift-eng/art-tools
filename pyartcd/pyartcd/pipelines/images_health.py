@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
@@ -13,21 +14,6 @@ from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
-
-OCP4_VERSIONS = [
-    "4.23",
-    "4.22",
-    "4.21",
-    "4.20",
-    "4.19",
-    "4.18",
-    "4.17",
-    "4.16",
-    "4.15",
-    "4.14",
-    "4.13",
-    "4.12",
-]
 
 
 class ImagesHealthPipeline:
@@ -43,7 +29,7 @@ class ImagesHealthPipeline:
         assembly: str,
     ):
         self.runtime = runtime
-        self.versions = versions.split(',') if versions else OCP4_VERSIONS
+        self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
         self.send_to_forum_ocp_art = send_to_forum_ocp_art

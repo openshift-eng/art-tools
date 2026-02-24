@@ -127,20 +127,22 @@ class ImageMetadata(Metadata):
         # This must happen early so config is correct for all subsequent operations
         if self.canonical_builders_enabled:
             if prevent_cloning:
-                raise IOError(
-                    f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
-                    'Cannot determine upstream RHEL version without cloning source.'
-                )
-            if not clone_source:
                 self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
-                    'Source will be cloned anyway to determine upstream RHEL version.',
+                    '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
+                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
                     self.distgit_key,
                 )
-            # When canonical_builders_from_upstream is enabled, we need to determine
-            # the upstream RHEL version and merge alternative_upstream config if needed.
-            # This will clone source as part of the process.
-            self._apply_alternative_upstream_config()
+            else:
+                if not clone_source:
+                    self.logger.warning(
+                        '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
+                        'Source will be cloned anyway to determine upstream RHEL version.',
+                        self.distgit_key,
+                    )
+                # When canonical_builders_from_upstream is enabled, we need to determine
+                # the upstream RHEL version and merge alternative_upstream config if needed.
+                # This will clone source as part of the process.
+                self._apply_alternative_upstream_config()
         elif clone_source:
             # Normal case: clone source if requested (and canonical builders not enabled)
             runtime.source_resolver.resolve_source(self)
@@ -766,6 +768,36 @@ class ImageMetadata(Metadata):
             return False
         return canonical_builders_from_upstream
 
+    def get_konflux_build_attempts(self) -> int:
+        """
+        Returns the number of build attempts to use for Konflux builds.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.build_attempts)
+        2. Group configuration (konflux.build_attempts)
+        3. Default value (3 attempts)
+
+        Returns:
+            int: Number of build attempts
+        """
+        DEFAULT_BUILD_ATTEMPTS = 3
+
+        # Check component-level override first
+        if (component_override := self.config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(component_override)
+            source = "metadata config"
+        # Check group-level override
+        elif (group_override := self.runtime.group_config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(group_override)
+            source = "group config"
+        else:
+            attempts = DEFAULT_BUILD_ATTEMPTS
+            source = "default"
+
+        self.logger.info("Using %d Konflux build attempts for %s (source: %s)", attempts, self.distgit_key, source)
+
+        return attempts
+
     def _apply_alternative_upstream_config(self) -> None:
         """
         When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
@@ -1203,12 +1235,28 @@ class ImageMetadata(Metadata):
         return artifact_lockfile_enabled
 
     def get_required_artifacts(self) -> list:
-        """Get list of required artifact URLs from image config."""
+        """
+        Get list of required artifacts from image config.
+
+        Returns:
+            list[dict]: List of dicts with 'url' and 'filename' keys.
+                        Normalizes both string URLs and object formats.
+        """
         if not self.is_artifact_lockfile_enabled():
             return []
 
-        resource_urls = self.config.konflux.cachi2.artifact_lockfile.resources
-        if resource_urls in [Missing, None]:
+        resources = self.config.konflux.cachi2.artifact_lockfile.resources
+        if resources in [Missing, None]:
             return []
 
-        return resource_urls  # Direct URL list
+        # Normalize to list of dicts
+        normalized = []
+        for resource in resources:
+            if isinstance(resource, str):
+                # Simple URL string - filename will be extracted from URL
+                normalized.append({'url': resource, 'filename': None})
+            elif isinstance(resource, dict):
+                # Object format with url and optional filename
+                normalized.append({'url': resource['url'], 'filename': resource.get('filename', None)})
+
+        return normalized

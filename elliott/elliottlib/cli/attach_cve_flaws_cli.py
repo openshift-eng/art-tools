@@ -301,6 +301,29 @@ class AttachCveFlaws:
 
         return release_notes
 
+    @staticmethod
+    def _contains_placeholders(text: str) -> bool:
+        """
+        Check if text contains template placeholders that should be replaced by promote job.
+        These placeholders are populated by the promote job, and we should preserve the text
+        if they've been replaced with real values.
+
+        Args:
+            text: The text to check for placeholders
+
+        Returns:
+            True if text contains placeholders, False otherwise
+        """
+        placeholders = [
+            "{IMAGE_ADVISORY}",
+            "{x864_DIGEST}",
+            "{s390x_DIGEST}",
+            "{ppc64le_DIGEST}",
+            "{aarch64_DIGEST}",
+        ]
+
+        return any(placeholder in text for placeholder in placeholders)
+
     def get_attached_trackers(self, bugs_ids: List[str], bug_tracker: BugTracker) -> List[Bug]:
         """
         Get attached tracker bugs from a list of bug IDs.
@@ -372,10 +395,19 @@ class AttachCveFlaws:
             self._replace_vars['CVES'] = formatted_cve_list
             release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **self._replace_vars)
             release_notes.topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
-            release_notes.solution = formatter.format(cve_boilerplate['solution'], **self._replace_vars)
 
-            # Update description
-            release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
+            # Preserve existing solution if it contains real values (not placeholders)
+            # This prevents reverting payload SHAs and advisory URLs that were already populated by promote
+            if release_notes.solution and not self._contains_placeholders(release_notes.solution):
+                self.logger.info("Preserving existing solution (contains real values, not placeholders)")
+            else:
+                release_notes.solution = formatter.format(cve_boilerplate['solution'], **self._replace_vars)
+            # Preserve existing description if it contains real values (not placeholders)
+            if release_notes.description and not self._contains_placeholders(release_notes.description):
+                self.logger.info("Preserving existing description (contains real values, not placeholders)")
+            else:
+                release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
+
         elif self.reconcile:
             # Convert RHSA back to RHBA
             if release_notes.type == 'RHBA':
@@ -402,8 +434,18 @@ class AttachCveFlaws:
             )
             release_notes.synopsis = formatter.format(boilerplate['synopsis'], **self._replace_vars)
             release_notes.topic = formatter.format(boilerplate['topic'], **self._replace_vars)
-            release_notes.solution = formatter.format(boilerplate['solution'], **self._replace_vars)
-            release_notes.description = formatter.format(boilerplate['description'], **self._replace_vars)
+
+            # Preserve existing solution/description if they contain real values (not placeholders)
+            # This prevents reverting payload SHAs and advisory URLs during reconciliation
+            if release_notes.solution and not self._contains_placeholders(release_notes.solution):
+                self.logger.info("Preserving existing solution during reconciliation (contains real values)")
+            else:
+                release_notes.solution = formatter.format(boilerplate['solution'], **self._replace_vars)
+            # Preserve existing description if it contains real values (not placeholders)
+            if release_notes.description and not self._contains_placeholders(release_notes.description):
+                self.logger.info("Preserving existing description during reconciliation (contains real values)")
+            else:
+                release_notes.description = formatter.format(boilerplate['description'], **self._replace_vars)
 
     async def handle_brew_cve_flaws(self):
         """

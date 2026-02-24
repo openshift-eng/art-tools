@@ -1,10 +1,9 @@
 import logging
 import os
-import traceback
 import warnings
 from abc import ABC, abstractmethod
 
-from artcommonlib import constants, logutil
+from artcommonlib import logutil
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 # an abstract class intended to be used by anything looking for config specific to a single

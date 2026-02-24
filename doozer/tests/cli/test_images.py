@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.gitdata import DataObj
-from artcommonlib.model import Model
 from click.testing import CliRunner
 from doozerlib import Runtime
 from doozerlib.cli.images import images_show_ancestors

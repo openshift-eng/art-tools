@@ -1,5 +1,5 @@
 from .. import support
-from . import image_schema, releases_schema, rpm_schema, shipment_schema, streams_schema
+from . import group_schema, image_schema, releases_schema, rpm_schema, shipment_schema, streams_schema
 
 
 def ignore_validate(*args, **kwargs):
@@ -15,6 +15,7 @@ def validate(file, data, images_dir=None):
         'ignore': ignore_validate,
         'releases': releases_schema.validate,
         'shipment': shipment_schema.validate,
+        'group': group_schema.validate,
     }.get(support.get_artifact_type(file), err)(file, data)
 
 

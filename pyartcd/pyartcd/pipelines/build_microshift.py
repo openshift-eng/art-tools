@@ -3,9 +3,7 @@ import copy
 import io
 import logging
 import os
-import re
 import traceback
-from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -21,14 +19,12 @@ from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.util import get_advisory_boilerplate
 from errata_tool import Erratum
-from ghapi.all import GhApi
 from github import Github, GithubException
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, jenkins, oc, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (

@@ -1,7 +1,6 @@
 from unittest import TestCase
 from unittest.mock import patch
 
-from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import GitHubApiUrlInfo, KonfluxClient, parse_github_api_url
 
 
