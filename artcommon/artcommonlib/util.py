@@ -184,7 +184,7 @@ def is_future_release_date(date_str):
             return target_date > datetime.now(tz=timezone.utc)
         except ValueError:
             continue
-    return False
+    raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
 def get_assembly_release_date(assembly, group):

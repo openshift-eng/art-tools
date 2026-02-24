@@ -520,20 +520,20 @@ class TestIsFutureReleaseDate(unittest.TestCase):
         self.assertFalse(result)
 
     def test_invalid_date_format(self):
-        """Test invalid date format returns False"""
+        """Test invalid date format raises ValueError"""
         invalid_date = "not-a-date"
-        result = util.is_future_release_date(invalid_date)
-        self.assertFalse(result)
+        with self.assertRaises(ValueError):
+            util.is_future_release_date(invalid_date)
 
     def test_empty_string(self):
-        """Test empty string returns False"""
-        result = util.is_future_release_date("")
-        self.assertFalse(result)
+        """Test empty string raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("")
 
     def test_partial_date(self):
-        """Test partial date returns False"""
-        result = util.is_future_release_date("2024-01")
-        self.assertFalse(result)
+        """Test partial date raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("2024-01")
 
     def test_various_month_abbreviations(self):
         """Test various month abbreviations in YYYY-Mon-DD format"""

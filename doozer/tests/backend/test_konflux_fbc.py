@@ -4,6 +4,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
@@ -802,9 +803,10 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             upcycle=self.upcycle,
         )
 
-    def test_find_future_release_assembly_found(self):
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_found(self, mock_assembly_type):
         """Test finding a future release assembly."""
-        logger = MagicMock()
+        mock_assembly_type.return_value = AssemblyTypes.STANDARD
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = ["4.20.10", "4.20.11", "4.20.12"]
         releases_config.releases.get.side_effect = lambda name, default=None: {
@@ -815,13 +817,14 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
             mock_is_future.side_effect = lambda d: d == "2099-12-31"
-            result = self.rebaser._find_future_release_assembly(releases_config, logger)
+            result = self.rebaser._find_future_release_assembly(releases_config)
 
         self.assertEqual(result, "4.20.11")
 
-    def test_find_future_release_assembly_not_found(self):
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_not_found(self, mock_assembly_type):
         """Test when no future release assembly exists."""
-        logger = MagicMock()
+        mock_assembly_type.return_value = AssemblyTypes.STANDARD
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = ["4.20.10", "4.20.11"]
         releases_config.releases.get.side_effect = lambda name, default=None: {
@@ -831,22 +834,40 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
             mock_is_future.return_value = False
-            result = self.rebaser._find_future_release_assembly(releases_config, logger)
+            result = self.rebaser._find_future_release_assembly(releases_config)
 
         self.assertIsNone(result)
 
     def test_find_future_release_assembly_empty_releases(self):
         """Test when releases config is empty."""
-        logger = MagicMock()
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = []
 
-        result = self.rebaser._find_future_release_assembly(releases_config, logger)
+        result = self.rebaser._find_future_release_assembly(releases_config)
         self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_skips_non_standard(self, mock_assembly_type):
+        """Test that non-standard assemblies are skipped."""
+        mock_assembly_type.side_effect = lambda rc, name: {
+            "artXYZ": AssemblyTypes.CUSTOM,
+            "4.20.11": AssemblyTypes.STANDARD,
+        }.get(name, AssemblyTypes.STREAM)
+        releases_config = MagicMock()
+        releases_config.releases.keys.return_value = ["artXYZ", "4.20.11"]
+        releases_config.releases.get.side_effect = lambda name, default=None: {
+            "artXYZ": {"assembly": {"group": {"release_date": "2099-12-31"}}},
+            "4.20.11": {"assembly": {"group": {"release_date": "2099-12-31"}}},
+        }.get(name, default)
+
+        with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
+            mock_is_future.return_value = True
+            result = self.rebaser._find_future_release_assembly(releases_config)
+
+        self.assertEqual(result, "4.20.11")
 
     def test_get_shipment_url_for_assembly_found(self):
         """Test getting shipment URL for an assembly."""
-        logger = MagicMock()
         releases_config = MagicMock()
         releases_config.releases.get.return_value = {
             "assembly": {
@@ -858,32 +879,29 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13", logger)
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13")
         self.assertEqual(
             result, "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/337"
         )
 
     def test_get_shipment_url_for_assembly_not_found(self):
         """Test when shipment URL doesn't exist."""
-        logger = MagicMock()
         releases_config = MagicMock()
         releases_config.releases.get.return_value = {"assembly": {"group": {}}}
 
-        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13", logger)
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13")
         self.assertIsNone(result)
 
     def test_get_shipment_url_for_assembly_missing_assembly(self):
         """Test when assembly doesn't exist in releases."""
-        logger = MagicMock()
         releases_config = MagicMock()
         releases_config.releases.get.return_value = {}
 
-        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "nonexistent", logger)
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "nonexistent")
         self.assertIsNone(result)
 
     def test_find_component_in_shipment_found(self):
         """Test finding a component in shipment snapshot."""
-        logger = MagicMock()
         shipment = MagicMock()
 
         component1 = MagicMock()
@@ -893,12 +911,11 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         shipment.shipment.snapshot.spec.components = [component1, component2]
 
-        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator", logger)
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
         self.assertEqual(result, component2)
 
     def test_find_component_in_shipment_not_found(self):
         """Test when component is not found in shipment."""
-        logger = MagicMock()
         shipment = MagicMock()
 
         component1 = MagicMock()
@@ -906,22 +923,20 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         shipment.shipment.snapshot.spec.components = [component1]
 
-        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator", logger)
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
         self.assertIsNone(result)
 
     def test_find_component_in_shipment_empty(self):
         """Test when shipment snapshot is None."""
-        logger = MagicMock()
         shipment = MagicMock()
         shipment.shipment.snapshot = None
 
-        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator", logger)
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
         self.assertIsNone(result)
 
     @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
     async def test_extract_csv_info_from_bundle_success(self, mock_fetch_csv):
         """Test extracting CSV info from a bundle component."""
-        logger = MagicMock()
         bundle_component = MagicMock()
         bundle_component.name = "nfd-operator-bundle"
         bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
@@ -934,7 +949,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component, logger)
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
 
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "nfd.4.20.0-202601280915")
@@ -943,7 +958,6 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
     async def test_extract_csv_info_from_bundle_no_skip_range(self, mock_fetch_csv):
         """Test extracting CSV info when skipRange is not present."""
-        logger = MagicMock()
         bundle_component = MagicMock()
         bundle_component.name = "nfd-operator-bundle"
         bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
@@ -956,7 +970,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component, logger)
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
 
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "nfd.4.20.0-202601280915")
@@ -965,7 +979,6 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
     async def test_extract_csv_info_from_bundle_fetch_failed(self, mock_fetch_csv):
         """Test when fetching CSV from git fails."""
-        logger = MagicMock()
         bundle_component = MagicMock()
         bundle_component.name = "nfd-operator-bundle"
         bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
@@ -973,13 +986,12 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch_csv.return_value = None
 
-        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component, logger)
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
         self.assertIsNone(result)
 
     @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
     async def test_get_bundle_blob_from_fbc_success(self, mock_render):
         """Test getting bundle blob from FBC image."""
-        logger = MagicMock()
         fbc_component = MagicMock()
         fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
 
@@ -990,7 +1002,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.bundle", "name": "nfd.4.19.0", "package": "nfd"},
         ]
 
-        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-202601280915", logger)
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-202601280915")
 
         self.assertIsNotNone(result)
         self.assertEqual(result["schema"], "olm.bundle")
@@ -999,7 +1011,6 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
     async def test_get_bundle_blob_from_fbc_not_found(self, mock_render):
         """Test when bundle blob is not found in FBC image."""
-        logger = MagicMock()
         fbc_component = MagicMock()
         fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
 
@@ -1008,19 +1019,18 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.bundle", "name": "nfd.4.19.0", "package": "nfd"},
         ]
 
-        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-nonexistent", logger)
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-nonexistent")
         self.assertIsNone(result)
 
     @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
     async def test_get_bundle_blob_from_fbc_empty_blobs(self, mock_render):
         """Test when FBC image returns no blobs."""
-        logger = MagicMock()
         fbc_component = MagicMock()
         fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
 
         mock_render.return_value = []
 
-        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0", logger)
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0")
         self.assertIsNone(result)
 
     @patch("doozerlib.backend.konflux_fbc.get_shipment_config_from_mr")
@@ -1039,7 +1049,6 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         mock_get_shipment_config,
     ):
         """Test getting assembly bundle CSV info for stream assembly."""
-        logger = MagicMock()
         metadata = MagicMock()
         metadata.distgit_key = "nfd-operator"
         metadata.runtime.get_releases_config.return_value = MagicMock()
@@ -1057,7 +1066,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         mock_extract_csv.return_value = ("nfd.4.20.0-202601280915", ">=4.8.0 <4.20.0")
         mock_get_bundle_blob.return_value = {"schema": "olm.bundle", "name": "nfd.4.20.0-202601280915"}
 
-        result = await self.rebaser._get_assembly_bundle_csv_info(metadata, logger)
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
 
         self.assertIsNotNone(result)
         self.assertIsInstance(result, AssemblyBundleCsvInfo)
@@ -1092,7 +1101,6 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             upcycle=self.upcycle,
         )
 
-        logger = MagicMock()
         metadata = MagicMock()
         metadata.distgit_key = "nfd-operator"
         metadata.runtime.get_releases_config.return_value = MagicMock()
@@ -1107,7 +1115,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         mock_extract_csv.return_value = ("nfd.4.20.13", None)
         mock_get_bundle_blob.return_value = {"schema": "olm.bundle", "name": "nfd.4.20.13"}
 
-        result = await rebaser._get_assembly_bundle_csv_info(metadata, logger)
+        result = await rebaser._get_assembly_bundle_csv_info(metadata)
 
         self.assertIsNotNone(result)
         self.assertEqual(result.csv_name, "nfd.4.20.13")
@@ -1116,21 +1124,19 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_future_release_assembly")
     async def test_get_assembly_bundle_csv_info_no_future_release(self, mock_find_future):
         """Test when no future release is found for stream assembly."""
-        logger = MagicMock()
         metadata = MagicMock()
         metadata.distgit_key = "nfd-operator"
         metadata.runtime.get_releases_config.return_value = MagicMock()
 
         mock_find_future.return_value = None
 
-        result = await self.rebaser._get_assembly_bundle_csv_info(metadata, logger)
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
         self.assertIsNone(result)
 
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_shipment_url_for_assembly")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_future_release_assembly")
     async def test_get_assembly_bundle_csv_info_no_shipment_url(self, mock_find_future, mock_get_shipment_url):
         """Test when shipment URL is not found."""
-        logger = MagicMock()
         metadata = MagicMock()
         metadata.distgit_key = "nfd-operator"
         metadata.runtime.get_releases_config.return_value = MagicMock()
@@ -1138,7 +1144,7 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         mock_find_future.return_value = "4.20.13"
         mock_get_shipment_url.return_value = None
 
-        result = await self.rebaser._get_assembly_bundle_csv_info(metadata, logger)
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
         self.assertIsNone(result)
 
 
