@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 from typing import List
@@ -35,6 +36,7 @@ class RebuildGolangRPMsPipeline:
         go_nvrs: List[str],
         force: bool = False,
         rpms: List[str] = None,
+        all: bool = False,
     ):
         if "Specfile" not in globals():
             raise RuntimeError("This pipeline requires the 'specfile' module, which is only available on Linux")
@@ -45,12 +47,85 @@ class RebuildGolangRPMsPipeline:
         self.cves = cves
         self.force = force
         self.rpms = rpms
+        self.all = all
         self.koji_session = koji.ClientSession(BREW_HUB)
+
+    async def get_rpms_from_find_bugs_golang(self):
+        """Fetch RPMs that need rebuilding using find-bugs:golang command.
+
+        This method invokes the find-bugs:golang command to identify which RPMs
+        are affected by golang security issues and returns the list of RPMs
+        that need to be rebuilt.
+
+        Returns:
+            List[str]: List of RPM names that need rebuilding
+        """
+        _LOGGER.info('Fetching RPMs affected by golang security issues from find-bugs:golang')
+
+        if not self.cves:
+            _LOGGER.warning('No CVEs provided, cannot fetch RPMs from find-bugs:golang')
+            return []
+
+        try:
+            # Build the elliott command with CVEs and golang NVRs
+            # Command: elliott --group openshift-X.Y --assembly stream find-bugs:golang --analyze --cve-id CVE1 --cve-id CVE2 --fixed-in-nvr nvr1 --fixed-in-nvr nvr2 --rpms-only -o json
+
+            # Extract major and minor version from ocp_version (e.g., "4.20" -> "4.20")
+            ocp_group = f"openshift-{self.ocp_version}"
+
+            # Build CVE arguments
+            cve_args = ' '.join([f"--cve-id {cve}" for cve in self.cves])
+
+            # Build NVR arguments
+            nvr_args = ' '.join([f"--fixed-in-nvr {nvr}" for nvr in self.go_nvrs])
+
+            # Construct the full elliott command
+            cmd = (
+                f"elliott --group {ocp_group} --assembly stream find-bugs:golang "
+                f"--analyze {cve_args} {nvr_args} --rpms-only -o json"
+            )
+
+            _LOGGER.info(f"Invoking: {cmd}")
+
+            # Execute the command and capture output
+            rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+
+            if rc != 0:
+                raise RuntimeError(f"elliott find-bugs:golang command failed with rc={rc}: {stderr}")
+
+            # Parse the JSON output
+            try:
+                unfixed_bugs = json.loads(stdout)
+            except json.JSONDecodeError as e:
+                _LOGGER.error(f"Failed to parse JSON output from find-bugs:golang: {e}")
+                _LOGGER.error(f"Output was: {stdout}")
+                raise
+
+            # Extract RPM names (pscomponent) from unfixed bugs
+            rpms_to_rebuild = set()
+            for bug in unfixed_bugs:
+                component = bug.get('pscomponent')
+                if component:
+                    rpms_to_rebuild.add(component)
+                    _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug.get('jira_id')}")
+
+            rpms_list = sorted(list(rpms_to_rebuild))
+            _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
+            return rpms_list
+
+        except Exception as e:
+            _LOGGER.error(f'Failed to fetch RPMs from find-bugs:golang: {e}')
+            raise
 
     async def run(self):
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+
+        # If all=False and rpms is empty, fetch RPMs from find-bugs:golang
+        if not self.all and not self.rpms:
+            _LOGGER.info('all=False and rpms is empty, fetching RPMs from find-bugs:golang')
+            self.rpms = await self.get_rpms_from_find_bugs_golang()
 
         # For rpms - first make sure builds are tagged and available
         _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')
@@ -285,16 +360,31 @@ class RebuildGolangRPMsPipeline:
 )
 @click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
 @click.option('--rpms', help='Only consider these rpm(s) for rebuild')
+@click.option(
+    '--all',
+    'all',
+    is_flag=True,
+    default=False,
+    help='Rebuild all rpms. By default, only rebuild rpms affected by golang security issues',
+)
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
 async def rebuild_golang_rpms(
-    runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, go_nvrs: List[str]
+    runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, all: bool, go_nvrs: List[str]
 ):
     if rpms:
         rpms = rpms.split(',')
     if cves:
         cves = cves.split(',')
+
     await RebuildGolangRPMsPipeline(
-        runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves, force=force, rpms=rpms, go_nvrs=go_nvrs
+        runtime,
+        ocp_version=ocp_version,
+        art_jira=art_jira,
+        cves=cves,
+        force=force,
+        rpms=rpms,
+        all=all,
+        go_nvrs=go_nvrs,
     ).run()
