@@ -16,7 +16,7 @@ import httpx
 import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
-from artcommonlib.assembly import AssemblyTypes, assembly_type
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -705,12 +705,8 @@ class KonfluxFbcRebaser:
                 self._logger.info("Skipping assembly %s (type=%s, expected standard)", release_name, assem_type.value)
                 continue
 
-            release_date = (
-                releases_config.releases.get(release_name, {})
-                .get("assembly", {})
-                .get("group", {})
-                .get("release_date", {})
-            )
+            resolved_group = assembly_config_struct(releases_config, release_name, "group", {})
+            release_date = resolved_group.get("release_date")
             self._logger.info(f"Got release date {release_date}")
             if release_date and artlib_util.is_future_release_date(release_date):
                 self._logger.info(

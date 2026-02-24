@@ -803,16 +803,18 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
             upcycle=self.upcycle,
         )
 
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
     @patch("doozerlib.backend.konflux_fbc.assembly_type")
-    def test_find_future_release_assembly_found(self, mock_assembly_type):
+    def test_find_future_release_assembly_found(self, mock_assembly_type, mock_assembly_config_struct):
         """Test finding a future release assembly."""
         mock_assembly_type.return_value = AssemblyTypes.STANDARD
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = ["4.20.10", "4.20.11", "4.20.12"]
-        releases_config.releases.get.side_effect = lambda name, default=None: {
-            "4.20.10": {"assembly": {"group": {"release_date": "2024-01-01"}}},  # Past
-            "4.20.11": {"assembly": {"group": {"release_date": "2099-12-31"}}},  # Future
-            "4.20.12": {"assembly": {"group": {"release_date": "2099-12-31"}}},  # Future
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "4.20.10": {"release_date": "2024-01-01"},
+            "4.20.11": {"release_date": "2099-12-31"},
+            "4.20.12": {"release_date": "2099-12-31"},
         }.get(name, default)
 
         with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
@@ -821,15 +823,17 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "4.20.11")
 
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
     @patch("doozerlib.backend.konflux_fbc.assembly_type")
-    def test_find_future_release_assembly_not_found(self, mock_assembly_type):
+    def test_find_future_release_assembly_not_found(self, mock_assembly_type, mock_assembly_config_struct):
         """Test when no future release assembly exists."""
         mock_assembly_type.return_value = AssemblyTypes.STANDARD
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = ["4.20.10", "4.20.11"]
-        releases_config.releases.get.side_effect = lambda name, default=None: {
-            "4.20.10": {"assembly": {"group": {"release_date": "2024-01-01"}}},  # Past
-            "4.20.11": {"assembly": {"group": {"release_date": "2024-06-01"}}},  # Past
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "4.20.10": {"release_date": "2024-01-01"},
+            "4.20.11": {"release_date": "2024-06-01"},
         }.get(name, default)
 
         with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
@@ -846,8 +850,9 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         result = self.rebaser._find_future_release_assembly(releases_config)
         self.assertIsNone(result)
 
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
     @patch("doozerlib.backend.konflux_fbc.assembly_type")
-    def test_find_future_release_assembly_skips_non_standard(self, mock_assembly_type):
+    def test_find_future_release_assembly_skips_non_standard(self, mock_assembly_type, mock_assembly_config_struct):
         """Test that non-standard assemblies are skipped."""
         mock_assembly_type.side_effect = lambda rc, name: {
             "artXYZ": AssemblyTypes.CUSTOM,
@@ -855,9 +860,10 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         }.get(name, AssemblyTypes.STREAM)
         releases_config = MagicMock()
         releases_config.releases.keys.return_value = ["artXYZ", "4.20.11"]
-        releases_config.releases.get.side_effect = lambda name, default=None: {
-            "artXYZ": {"assembly": {"group": {"release_date": "2099-12-31"}}},
-            "4.20.11": {"assembly": {"group": {"release_date": "2099-12-31"}}},
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "artXYZ": {"release_date": "2099-12-31"},
+            "4.20.11": {"release_date": "2099-12-31"},
         }.get(name, default)
 
         with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
