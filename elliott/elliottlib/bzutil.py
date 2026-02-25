@@ -772,7 +772,7 @@ class JIRABugTracker(BugTracker):
             return self._available_target_versions
 
         try:
-            if self._client._is_cloud:
+            if self._client.deploymentType == "Cloud":
                 target_versions = self._get_target_versions_via_createmeta()
             else:
                 target_versions = self._get_target_versions_via_project_issue_types()
