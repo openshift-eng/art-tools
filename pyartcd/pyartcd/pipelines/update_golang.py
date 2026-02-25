@@ -646,7 +646,7 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
-        release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
+        release = default_release_suffix()
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
