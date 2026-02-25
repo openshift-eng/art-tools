@@ -451,8 +451,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         pipeline.koji_session.gssapi_login.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    def test_get_content_repo_url(self, mock_konflux_db):
-        """Test get_content_repo_url method"""
+    def test_get_content_repo_url_suffix(self, mock_konflux_db):
+        """Test get_content_repo_url_suffix method"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -469,10 +469,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        url = pipeline.get_content_repo_url(8)
-        self.assertEqual(
-            url, "https://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.16-rhel-8-build/latest"
-        )
+        url = pipeline.get_content_repo_url_suffix(8)
+        self.assertEqual(url, "/brewroot/repos/rhaos-4.16-rhel-8-build/latest")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_module_tag(self, mock_konflux_db):
