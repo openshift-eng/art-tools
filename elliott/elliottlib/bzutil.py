@@ -277,7 +277,10 @@ class BugzillaBug(Bug):
 class JIRABug(Bug):
     def __getattr__(self, attr):
         if attr in self.__dict__:
-            return getattr(self, attr)
+            return self.__dict__[attr]
+        # Check if it's a property or cached_property on the class
+        if hasattr(type(self), attr):
+            return object.__getattribute__(self, attr)
         return getattr(self.bug.fields, attr)
 
     def __init__(self, bug_obj: Issue):
@@ -704,13 +707,13 @@ class JIRABugTracker(BugTracker):
 
     # There are several @property function defined, which requires the values to be available at compile time
     # We later override them at runtime, so that if the field name changes, we'll still get the updated one
-    field_target_version = 'customfield_12319940'  # "Target Version"
-    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
-    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
-    field_severity = 'customfield_12316142'  # "Severity"
-    field_cve_id = 'customfield_12324749'  # "CVE ID"
-    field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
-    field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
+    field_target_version = 'customfield_10279'  # "Target Version"
+    field_release_blocker = 'customfield_10477'  # "Release Blocker"
+    field_blocked_reason = 'customfield_10199'  # "Blocked Reason"
+    field_severity = 'customfield_10442'  # "Severity"
+    field_cve_id = 'customfield_10449'  # "CVE ID"
+    field_cve_component = 'customfield_10293'  # "Downstream Component Name"
+    field_cve_is_embargo = 'customfield_10478'  # "Embargo Status"
     field_security_levels = 'level'  # "Security Levels"
 
     @staticmethod
@@ -769,38 +772,31 @@ class JIRABugTracker(BugTracker):
             return self._available_target_versions
 
         try:
-            issue_types = self._client.project_issue_types(self._project)
-
-            bug_issue_type = None
-            for issue_type in issue_types:
-                if getattr(issue_type, 'name', None) == 'Bug':
-                    bug_issue_type = issue_type
-                    break
-
-            if not bug_issue_type:
-                logger.warning(f"Bug issue type not found in JIRA project {self._project}")
-                self._available_target_versions = []
-                return self._available_target_versions
-
-            bug_id = getattr(bug_issue_type, 'id', None)
-            fields = self._client.project_issue_fields(self._project, bug_id)
-
+            # Use createmeta API which is compatible with newer JIRA Cloud instances
+            create_meta = self._client.createmeta(projectKeys=[self._project], expand='projects.issuetypes.fields')
+            
             target_versions = []
-            for field in fields:
-                if getattr(field, 'fieldId', None) == self.field_target_version:
-                    allowed_values = getattr(field, 'allowedValues', None)
-                    if allowed_values:
-                        for v in allowed_values:
-                            version_name = getattr(v, 'name', None)
-                            if version_name:
-                                target_versions.append(version_name)
-                    break
+            
+            # Navigate through the createmeta structure to find target version field
+            if create_meta and 'projects' in create_meta:
+                for project in create_meta['projects']:
+                    if project.get('key') == self._project:
+                        for issue_type in project.get('issuetypes', []):
+                            if issue_type.get('name') == 'Bug':
+                                fields = issue_type.get('fields', {})
+                                target_field = fields.get(self.field_target_version)
+                                if target_field and 'allowedValues' in target_field:
+                                    for v in target_field['allowedValues']:
+                                        if 'name' in v:
+                                            target_versions.append(v['name'])
+                                break
+                        break
 
             self._available_target_versions = target_versions
-            logger.info(f"Found {len(self._available_target_versions)} target versions in JIRA project {self._project}")
             return self._available_target_versions
         except Exception as e:
             logger.error(f"Failed to fetch target versions for project {self._project}: {e}")
+            logger.warning(f"Could not fetch available target versions for project {self._project}. Proceeding with original query.")
             self._available_target_versions = []
             return self._available_target_versions
 
@@ -894,6 +890,7 @@ class JIRABugTracker(BugTracker):
         search_filter: str = None,
         custom_query: str = None,
     ) -> str | None:
+        
         if target_release and with_target_release:
             raise ValueError("cannot use target_release and with_target_release together")
         if not target_release and with_target_release:
@@ -923,7 +920,6 @@ class JIRABugTracker(BugTracker):
                         f"Target version filtering removed configured versions. "
                         f"Original: {target_release}, After filtering: (none)"
                     )
-                    logger.info("All configured target versions were filtered out. Returning empty result set.")
                     return None
                 elif len(valid_target_releases) < len(target_release):
                     logger.warning(
@@ -961,6 +957,7 @@ class JIRABugTracker(BugTracker):
             query += f' and ("{self.field_security_levels}" in ({val}) or "{self.field_security_levels}" is EMPTY)'
         if custom_query:
             query += custom_query
+        
         return query
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))

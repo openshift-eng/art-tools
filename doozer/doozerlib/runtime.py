@@ -824,7 +824,14 @@ class Runtime(GroupRuntime):
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
-        client = JIRA(server, token_auth=token_auth)
+        
+        # Get email for basic auth
+        jira_email = os.environ.get("JIRA_EMAIL")
+        if not jira_email:
+            raise ValueError(f"Jira activity requires JIRA_EMAIL environment variable for {server}")
+        
+        jira_options = {'server': server}
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     def build_retrying_koji_client(self):
