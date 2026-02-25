@@ -131,7 +131,7 @@ class TestJIRABugTracker(unittest.TestCase):
         config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive("_init_fields")
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 
@@ -191,7 +191,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         # Mock the login method
         flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive("_init_fields")
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         # Create tracker and perform search
         tracker = JIRABugTracker(config)
@@ -215,8 +215,8 @@ class TestJIRABugTracker(unittest.TestCase):
         self.assertIn('OCPBUGS-11111', bug_ids)
         self.assertIn('OCPBUGS-22222', bug_ids)
 
-    def test_get_available_target_versions(self):
-        """Test fetching available target versions from JIRA"""
+    def test_get_available_target_versions_server(self):
+        """Test fetching available target versions from JIRA Server/DC"""
         config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
 
         # Mock issue types response (JIRA returns objects, not dicts)
@@ -233,12 +233,58 @@ class TestJIRABugTracker(unittest.TestCase):
         field = flexmock(fieldId='customfield_12319940', allowedValues=[version1, version2, version3, version4])
         mock_fields = [field]
 
-        mock_jira_client = flexmock()
+        mock_jira_client = flexmock(_is_cloud=False)
         mock_jira_client.should_receive('project_issue_types').with_args('OCPBUGS').and_return(mock_issue_types)
         mock_jira_client.should_receive('project_issue_fields').with_args('OCPBUGS', '1').and_return(mock_fields)
 
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
+
+        tracker = JIRABugTracker(config)
+        available_versions = tracker._get_available_target_versions()
+
+        self.assertEqual(len(available_versions), 4)
+        self.assertIn('4.17.0', available_versions)
+        self.assertIn('4.17.z', available_versions)
+        self.assertIn('4.18.0', available_versions)
+        self.assertIn('4.18.z', available_versions)
+
+        # Test caching - should not call API methods again
+        available_versions_2 = tracker._get_available_target_versions()
+        self.assertEqual(available_versions, available_versions_2)
+
+    def test_get_available_target_versions_cloud(self):
+        """Test fetching available target versions from JIRA Cloud via createmeta"""
+        config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
+
+        # createmeta returns a dict structure
+        createmeta_response = {
+            'projects': [{
+                'issuetypes': [{
+                    'name': 'Bug',
+                    'fields': {
+                        'customfield_12319940': {
+                            'allowedValues': [
+                                {'name': '4.17.0'},
+                                {'name': '4.17.z'},
+                                {'name': '4.18.0'},
+                                {'name': '4.18.z'},
+                            ]
+                        }
+                    }
+                }]
+            }]
+        }
+
+        mock_jira_client = flexmock(_is_cloud=True)
+        mock_jira_client.should_receive('createmeta').with_args(
+            projectKeys='OCPBUGS',
+            issuetypeNames='Bug',
+            expand='projects.issuetypes.fields',
+        ).and_return(createmeta_response)
+
+        flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
         available_versions = tracker._get_available_target_versions()
@@ -257,11 +303,11 @@ class TestJIRABugTracker(unittest.TestCase):
         """Test error handling when fetching target versions fails"""
         config = {'project': 'OCPBUGS', 'server': JIRA_SERVER_URL}
 
-        mock_jira_client = flexmock()
+        mock_jira_client = flexmock(_is_cloud=False)
         mock_jira_client.should_receive('project_issue_types').and_raise(Exception('API error'))
 
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
         available_versions = tracker._get_available_target_versions()
@@ -275,7 +321,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 
@@ -295,7 +341,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 
@@ -315,7 +361,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 
@@ -333,7 +379,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 
@@ -352,7 +398,7 @@ class TestJIRABugTracker(unittest.TestCase):
 
         mock_jira_client = flexmock()
         flexmock(JIRABugTracker).should_receive('login').and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive('_init_fields')
+        JIRABugTracker._fields_by_name = {'Target Version': 'customfield_12319940', 'Release Blocker': 'customfield_12319743', 'Blocked Reason': 'customfield_12316544', 'Severity': 'customfield_12316142', 'CVE ID': 'customfield_12324749', 'Downstream Component Name': 'customfield_12324752', 'Embargo Status': 'customfield_12324750'}
 
         tracker = JIRABugTracker(config)
 

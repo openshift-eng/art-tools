@@ -274,7 +274,7 @@ class FindBugsKernelCli:
             "description": bug.description,
             "issuetype": {"name": "Bug"},
             "versions": [{"name": ocp_target_version[: ocp_target_version.rindex(".")]}],
-            f"{JIRABugTracker.field_target_version}": [
+            JIRABugTracker.get_field_id('Target Version'): [
                 {
                     "name": ocp_target_version,
                 }

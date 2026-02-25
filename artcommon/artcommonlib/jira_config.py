@@ -31,7 +31,7 @@ DEFAULT_JIRA_SERVER_URL = "https://issues.redhat.com"
 JIRA_SERVER_URL = os.environ.get("JIRA_SERVER_URL", DEFAULT_JIRA_SERVER_URL)
 
 # JIRA API endpoints
-JIRA_API_BASE = f"{JIRA_SERVER_URL}/rest/api/2"
+JIRA_API_BASE = f"{JIRA_SERVER_URL}/rest/api/3"
 JIRA_API_FIELD = f"{JIRA_API_BASE}/field"
 
 # Legacy domain name (without https://) for backward compatibility

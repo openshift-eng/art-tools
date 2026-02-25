@@ -13,6 +13,16 @@ from jira import JIRA, Issue
 
 class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        # Pre-populate the lazy field cache so tests don't need a live JIRA connection
+        JIRABugTracker._fields_by_name = {
+            'Target Version': 'customfield_12319940',
+            'Release Blocker': 'customfield_12319743',
+            'Blocked Reason': 'customfield_12316544',
+            'Severity': 'customfield_12316142',
+            'CVE ID': 'customfield_12324749',
+            'Downstream Component Name': 'customfield_12324752',
+            'Embargo Status': 'customfield_12324750',
+        }
         self._config = KernelBugSweepConfig.model_validate(
             {
                 "tracker_jira": {
@@ -51,7 +61,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
                 "fields.labels": ["art:cloned-kernel-bug"],
                 "fields.project.key": "OCPBUGS",
                 "fields.components": [component],
-                f"fields.{JIRABugTracker.field_target_version}": [target_release],
+                f"fields.{JIRABugTracker.get_field_id('Target Version')}": [target_release],
             },
         )
         actual = cli._get_jira_bugs(jira_client, ["FOO-1", "FOO-2", "FOO-3"], self._config)
