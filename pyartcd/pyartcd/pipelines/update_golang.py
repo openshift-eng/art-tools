@@ -268,9 +268,9 @@ class UpdateGolangPipeline:
         )
 
         if brew_missing or konflux_missing:
-            # FIXME: yuxzhu: already broken
-            # for el_v in missing_in:
-            #     self.verify_golang_builder_repo(el_v, go_version)
+            if not self.external_golang_rpms:
+                for el_v in el_nvr_map_for_images.keys():
+                    self.verify_golang_builder_repo(el_v, go_version)
 
             # Rebase and build missing images
             build_tasks = []
@@ -775,7 +775,6 @@ class UpdateGolangPipeline:
         return f'rhel-{el_v}-golang-{go_v}'
 
     def verify_golang_builder_repo(self, el_v, go_version):
-        # FIXME: yuxzhu: this is already broken
         # read group.yml from the golang branch using ghapi
         owner, repo = 'openshift-eng', 'ocp-build-data'
         branch = self.get_golang_branch(el_v, go_version)
@@ -784,7 +783,7 @@ class UpdateGolangPipeline:
         api = GhApi(owner=owner, repo=repo, token=self.github_token)
         blob = api.repos.get_content(filename, ref=branch)
         group_config = yaml.load(base64.b64decode(blob['content']))
-        content_repo_url = self.get_content_repo_url(el_v)
+        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
@@ -794,25 +793,24 @@ class UpdateGolangPipeline:
                 "name please correct it."
             )
 
-        expected = {
-            arch: f'{content_repo_url}/{arch}/' for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()
-        }
-
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        actual = {
-            arch: val.format(MAJOR=major, MINOR=minor)
-            for arch, val in group_config['repos'][golang_repo]['conf']['baseurl'].items()
-        }
+        err = False
+        for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
+            expected_suffix = f'{content_repo_url_suffix}/{arch}/'
+            actual_url = template_url.format(MAJOR=major, MINOR=minor)
+            if not actual_url.endswith(expected_suffix):
+                err = True
+                _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
 
-        if expected != actual:
+        if err:
             raise ValueError(
-                f"Did not find repo {golang_repo} to have the expected urls. \nexpected={expected}\nactual={actual}"
+                f"Content repo URLs for {golang_repo} in {branch} do not look correct. Wrong MAJOR/MINOR vars?"
             )
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_content_repo_url(self, el_v):
-        url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
+    def get_content_repo_url_suffix(self, el_v):
+        url = '/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
 
     def get_module_tag(self, nvr, el_v) -> str:
