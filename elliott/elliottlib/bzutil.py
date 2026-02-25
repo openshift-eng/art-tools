@@ -729,7 +729,14 @@ class JIRABugTracker(BugTracker):
             token_auth = os.environ.get("JIRA_TOKEN")
             if not token_auth:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_TOKEN env var ")
-        client = JIRA(self._server, token_auth=token_auth)
+        
+        # Get email for basic auth
+        jira_email = os.environ.get("JIRA_EMAIL")
+        if not jira_email:
+            raise ValueError(f"elliott requires JIRA_EMAIL environment variable for {self._server}")
+        
+        jira_options = {'server': self._server}
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
