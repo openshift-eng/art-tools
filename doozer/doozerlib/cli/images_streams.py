@@ -891,28 +891,6 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
         pr.edit(title=f"{issue}: {pr.title}")
 
 
-_jira_field_cache: Dict[str, str] = {}
-
-
-def _get_jira_field_id(jira_client: JIRA, field_name: str) -> str:
-    """
-    Get the JIRA custom field ID for a given human-readable field name.
-    Lazily loads and caches all field mappings on first call.
-
-    Arg(s):
-        jira_client (JIRA): An authenticated JIRA client instance.
-        field_name (str): Human-readable JIRA field name (e.g., 'Target Version').
-
-    Return Value(s):
-        str: The JIRA field ID (e.g., 'customfield_12319940').
-    """
-    if not _jira_field_cache:
-        _jira_field_cache.update({f['name']: f['id'] for f in jira_client.fields()})
-    if field_name not in _jira_field_cache:
-        raise ValueError(f"Unknown JIRA field: '{field_name}'")
-    return _jira_field_cache[field_name]
-
-
 def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullRequest, Optional[str]]], dry_run: bool):
     """
     Ensures there is a Jira issue open for reconciliation PRs.
@@ -1034,7 +1012,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'components': [{'name': component}],
             'summary': summary,
             'description': description,
-            "security": {"name": "Red Hat Employee"},
+            "security": {"id": "11697"},  # Restrict to Red Hat Employee
         }
 
         if not dry_run:
@@ -1046,9 +1024,8 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
                 target_version_segment = Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]
 
                 # Build the update payload using the retrieved string
-                target_version_field = _get_jira_field_id(jira_client, 'Target Version')
                 issue_update = {
-                    target_version_field: [{'name': target_version_segment}],
+                    'customfield_12319940': [{'name': target_version_segment}],
                 }
                 runtime.logger.info(
                     f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
@@ -1070,19 +1047,19 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             print(f'A JIRA issue has been opened for {pr.html_url}: {issue.key}')
             connect_issue_with_pr(pr, issue.key)
             try:
-                # Retrieve the value of the Release Notes custom fields
-                release_notes_text_field = _get_jira_field_id(jira_client, 'Release Notes Text')
-                release_notes_type_field = _get_jira_field_id(jira_client, 'Release Notes Type')
-                release_notes_text_cf_value = getattr(issue.fields, release_notes_text_field, None)
-                release_notes_type_cf_value = getattr(issue.fields, release_notes_type_field, None)
+                # Retrieve the value of the custom field
+                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
+                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
 
                 if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
+                    # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
                     issue_update = {
-                        release_notes_text_field: 'N/A',
-                        release_notes_type_field: {
+                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
+                        'customfield_12320850': {
                             'value': 'Release Note Not Required'
-                        },
+                        },  # customfield_12320850 is Release Notes Type in JIRA
                     }
+                    # Now update the issue using the retrieved issue object
                     issue.update(fields=issue_update)
             except Exception as e:
                 print(f"An error occurred while updating the issue {issue.key}: {e}")

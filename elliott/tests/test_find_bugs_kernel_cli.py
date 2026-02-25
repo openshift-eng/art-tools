@@ -15,18 +15,6 @@ from jira import JIRA, Issue
 
 
 class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        # Pre-populate the lazy field cache so tests don't need a live JIRA connection
-        JIRABugTracker._fields_by_name = {
-            'Target Version': 'customfield_12319940',
-            'Release Blocker': 'customfield_12319743',
-            'Blocked Reason': 'customfield_12316544',
-            'Severity': 'customfield_12316142',
-            'CVE ID': 'customfield_12324749',
-            'Downstream Component Name': 'customfield_12324752',
-            'Embargo Status': 'customfield_12324750',
-        }
-
     def test_find_kmaint_trackers(self):
         jira_client = MagicMock(spec=JIRA)
         issues = [MagicMock(key="FOO-1"), MagicMock(key="FOO-1")]
@@ -134,7 +122,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
-            JIRABugTracker.get_field_id('Target Version'): [{"name": "4.14.z"}],
+            f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"],
         }
         jira_client.create_issue.assert_called_once_with(expected_fields)
@@ -190,7 +178,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
-            JIRABugTracker.get_field_id('Target Version'): [{"name": "4.14.z"}],
+            f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"],
         }
         found_issues[0].update.assert_called_once_with(expected_fields)
@@ -256,7 +244,7 @@ TRACKER-1	2	N/A	Verified	test bug 2
             "description": "Cloned from https://example.com/12345 by OpenShift ART Team.\n\n----\nfake description 12345",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.12"}],
-            JIRABugTracker.get_field_id('Target Version'): [{"name": "4.12.z"}],
+            f"{JIRABugTracker.field_target_version}": [{"name": "4.12.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#12345", "art:kmaint:TRACKER-1"],
         }
         self.assertEqual(actual, expected)

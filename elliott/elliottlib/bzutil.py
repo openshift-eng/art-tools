@@ -372,7 +372,7 @@ class JIRABug(Bug):
 
     @property
     def target_release(self):
-        tr_field = getattr(self.bug.fields, JIRABugTracker.get_field_id('Target Version'))
+        tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
         if len(tr_field) > 1:
@@ -417,7 +417,7 @@ class JIRABug(Bug):
     @property
     def cve_id(self):
         if self.is_type_vulnerability():
-            return getattr(self.bug.fields, JIRABugTracker.get_field_id('CVE ID'))
+            return getattr(self.bug.fields, JIRABugTracker.field_cve_id)
         if not (self.is_tracker_bug() or self.is_flaw_bug()):
             return None
         cve_id = re.search(r'CVE-\d+-\d+', self.summary)
@@ -456,7 +456,7 @@ class JIRABug(Bug):
             return pscomponent
         # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
         if self.is_type_vulnerability() and (
-            pscomponent := getattr(self.bug.fields, JIRABugTracker.get_field_id('Downstream Component Name'), None)
+            pscomponent := getattr(self.bug.fields, JIRABugTracker.field_cve_component, None)
         ):
             return pscomponent
         # Fall back to the label "pscomponent:<component_name>"
@@ -467,19 +467,19 @@ class JIRABug(Bug):
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']
-        field = getattr(self.bug.fields, JIRABugTracker.get_field_id('Release Blocker'))
+        field = getattr(self.bug.fields, JIRABugTracker.field_release_blocker)
         if field:
             return field.value == 'Approved'
         return False
 
     def _get_blocked_reason(self):
-        field = getattr(self.bug.fields, JIRABugTracker.get_field_id('Blocked Reason'))
+        field = getattr(self.bug.fields, JIRABugTracker.field_blocked_reason)
         if field:
             return field.value
         return None
 
     def _get_severity(self):
-        field = getattr(self.bug.fields, JIRABugTracker.get_field_id('Severity'))
+        field = getattr(self.bug.fields, JIRABugTracker.field_severity)
         if field:
             if "Urgent" in field.value:
                 return "Urgent"
@@ -703,13 +703,16 @@ class JIRABugTracker(BugTracker):
     # If set to False, the JIRA queries will not filter by security level.
     ENABLE_SECURITY_LEVEL_FILTERING = True
 
-    # Lazy cache for JIRA field name -> field ID mappings.
-    # Populated on first access via get_field_id().
-    _fields_by_name: Dict[str, str] = {}
-    _jira_client_for_fields: Optional[JIRA] = None
-
-    # JQL field name for security level filtering (not a custom field)
-    field_security_levels = 'level'
+    # There are several @property function defined, which requires the values to be available at compile time
+    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
+    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
+    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
+    field_severity = 'customfield_12316142'  # "Severity"
+    field_cve_id = 'customfield_12324749'  # "CVE ID"
+    field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
+    field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
+    field_security_levels = 'level'  # "Security Levels"
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -731,50 +734,28 @@ class JIRABugTracker(BugTracker):
         if 'atlassian' in self._server:
             env_username = os.environ.get("JIRA_USER")
             username = self.config.get('user', env_username)
-            print(f"USERNAME: {username}")
             client = JIRA(server=self._server, basic_auth=(username, token_auth))
         else:
-            token_auth = token_auth
             client = JIRA(self._server, token_auth=token_auth)
         return client
 
-    @classmethod
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
-    def _load_fields(cls):
-        """
-        Fetches all field definitions from JIRA and populates the
-        class-level _fields_by_name cache. Called lazily on first
-        access via get_field_id().
-        """
-        if cls._jira_client_for_fields is None:
-            raise RuntimeError("JIRA client not initialized; cannot load field mappings")
-        cls._fields_by_name = {f['name']: f['id'] for f in cls._jira_client_for_fields.fields()}
-        logger.info(f"Loaded {len(cls._fields_by_name)} JIRA field definitions")
-
-    @classmethod
-    def get_field_id(cls, field_name: str) -> str:
-        """
-        Get the JIRA custom field ID for a given human-readable field name.
-        Lazily loads and caches all field mappings on first call.
-
-        Arg(s):
-            field_name (str): Human-readable JIRA field name (e.g., 'Target Version').
-
-        Return Value(s):
-            str: The JIRA field ID (e.g., 'customfield_12319940').
-        """
-        if not cls._fields_by_name:
-            cls._load_fields()
-        if field_name not in cls._fields_by_name:
-            raise ValueError(f"Unknown JIRA field: '{field_name}'")
-        return cls._fields_by_name[field_name]
+    def _init_fields(self):
+        for f in self._client.fields():
+            if f['name'] == 'Target Version':
+                self.field_target_version = f['id']
+            if f['name'] == 'Release Blocker':
+                self.field_release_blocker = f['id']
+            if f['name'] == 'Blocked Reason':
+                self.field_blocked_reason = f['id']
+            if f['name'] == 'Severity':
+                self.field_severity = f['id']
 
     def __init__(self, config):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
-        # Store the client at the class level so get_field_id() can lazily load fields
-        JIRABugTracker._jira_client_for_fields = self._client
+        self._init_fields()
         self._available_target_versions = None
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
@@ -821,7 +802,7 @@ class JIRABugTracker(BugTracker):
         for project in meta.get('projects', []):
             for issue_type in project.get('issuetypes', []):
                 fields = issue_type.get('fields', {})
-                tv_field = fields.get(self.get_field_id('Target Version'), {})
+                tv_field = fields.get(self.field_target_version, {})
                 for v in tv_field.get('allowedValues', []):
                     version_name = v.get('name')
                     if version_name:
@@ -853,7 +834,7 @@ class JIRABugTracker(BugTracker):
 
         target_versions = []
         for field in fields:
-            if getattr(field, 'fieldId', None) == self.get_field_id('Target Version'):
+            if getattr(field, 'fieldId', None) == self.field_target_version:
                 allowed_values = getattr(field, 'allowedValues', None)
                 if allowed_values:
                     for v in allowed_values:
@@ -918,7 +899,7 @@ class JIRABugTracker(BugTracker):
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
             'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.get_field_id('Target Version'): [{'name': self.config.get('target_release')[0]}],
+            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description,
