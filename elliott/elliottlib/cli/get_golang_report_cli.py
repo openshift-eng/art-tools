@@ -16,9 +16,10 @@ _LOGGER = logutil.get_logger(__name__)
 @cli.command("go:report", short_help="Report about golang streams configured in streams.yml")
 @click.option('--ocp-versions', help="OCP versions to show report for. e.g. `4.14`. Comma separated")
 @click.option("--ignore-rhel", is_flag=True, help="Ignore rhel version and instead only show go version")
+@click.option('--exact', is_flag=True, help="Show exact golang package instead of just major.minor")
 @click.option('-o', '--output', type=click.Choice(['json', 'text']), default='text', help='Output format')
 @click.pass_obj
-def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, output: str):
+def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, exact: bool, output: str):
     """
     Show currently configured builders in streams.yml and compilers in buildroot
 
@@ -38,7 +39,7 @@ def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, output:
         runtime.initialized = False
         runtime.initialize(mode="both")
 
-        out = golang_report_for_version(runtime, ocp_version, ignore_rhel)
+        out = golang_report_for_version(runtime, ocp_version, ignore_rhel, exact)
         results[ocp_version] = out
 
     if output == 'json':
@@ -48,7 +49,10 @@ def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, output:
             green_print(f'{ocp_version}: {result}')
 
 
-def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
+def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = False, exact: bool = False):
+    if exact and ignore_rhel:
+        raise ValueError("Cannot use exact and ignore_rhel together")
+
     if not runtime.image_metas() or not runtime.rpm_metas():
         raise ValueError("runtime is not initialized properly. use mode=both")
 
@@ -70,11 +74,16 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
             tag = image_nvr_like.split(':')[-1]
             nvr = tag.replace('golang-builder', 'openshift-golang-builder-container')
 
-        parsed_nvr = parse_nvr(nvr)
-        go_builder_nvr_map = get_golang_container_nvrs(
-            [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], _LOGGER, exact=True
-        )
-        version = list(go_builder_nvr_map.keys())[0] if go_builder_nvr_map else None
+        if exact:
+            parsed_nvr = parse_nvr(nvr)
+            go_builder_nvr_map = get_golang_container_nvrs(
+                [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], _LOGGER, exact=exact
+            )
+            exact_pkg = list(go_builder_nvr_map.keys())[0]
+            version = exact_pkg
+        else:
+            version = go_version_from_nvr_string(nvr, ignore_rhel)
+
         golang_streams[stream_name] = version
         golang_streams_images[version] = []
 
@@ -116,7 +125,8 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
     with runtime.shared_koji_client_session() as koji_session:
         for el_v in rpm_rhel_target_map.keys():
             nvr = latest_go_build_in_buildroot(ocp_version, el_v, koji_session)
-            golang_streams_rpms[nvr] = rpm_rhel_target_map[el_v]
+            version = nvr if exact else go_version_from_nvr_string(nvr, ignore_rhel)
+            golang_streams_rpms[version] = rpm_rhel_target_map[el_v]
 
     # Add result
     out = []
