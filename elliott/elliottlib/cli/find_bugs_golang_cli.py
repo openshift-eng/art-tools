@@ -1,6 +1,7 @@
 import functools
 import logging
 import re
+from datetime import datetime
 from typing import Dict, List, Set, Tuple, Union
 
 import click
@@ -91,6 +92,7 @@ class FindBugsGolangCli:
         dry_run: bool,
         output_format: str = None,
         rpms_only: bool = False,
+        skip_comment: bool = False,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -107,6 +109,7 @@ class FindBugsGolangCli:
         self.dry_run = dry_run
         self.output_format = output_format
         self.rpms_only = rpms_only
+        self.skip_comment = skip_comment
 
         # cache
         self.pullspec = pullspec
@@ -401,10 +404,69 @@ class FindBugsGolangCli:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
     def move_bug_and_comment(self, bug: JIRABug, comment: str):
-        if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
-            self.jira_tracker.update_bug_status(bug, 'VERIFIED', comment=comment, noop=self.dry_run)
+        if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_QA']:
+            self.jira_tracker.update_bug_status(
+                bug,
+                'VERIFIED',
+                comment=None if self.skip_comment else comment,
+                log_comment=not self.skip_comment,
+                noop=self.dry_run,
+            )
         else:
-            self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
+            if not self.skip_comment:
+                self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
+
+    def _get_cves_from_nvr_changelogs(self) -> Set[str]:
+        """Return a set of CVE IDs found in the changelog entries for the
+        golang NVRs stored in ``self.fixed_in_nvrs``.
+
+        The changelog is fetched via a brew session's ``getChangelogEntries``
+        method.  Only NVRs that look like golang builds are queried; failures
+        are logged and ignored.  If no CVEs are found an empty set is
+        returned.
+        """
+        if not self.fixed_in_nvrs:
+            return None
+
+        cves_map = {}
+        for nvr in self.fixed_in_nvrs:
+            cves_map[nvr] = set()
+
+        brew_session = self._runtime.build_retrying_koji_client(caching=True)
+        for nvr in self.fixed_in_nvrs:
+            try:
+                entries = brew_session.getChangelogEntries(nvr)
+            except Exception as e:
+                self._logger.warning(f"Could not fetch changelog entries for {nvr}: {e}")
+                continue
+            for entry in entries or []:
+                # some versions of koji return a dict with a 'text' key, others
+                # may use 'changelog'; fall back to str(entry) to be safe.
+                text = entry.get('text') if isinstance(entry, dict) else None
+                if not text and isinstance(entry, dict):
+                    text = entry.get('changelog')
+                if not text:
+                    text = str(entry)
+                for cve in re.findall(r'CVE-\d{4}-\d+', text, flags=re.IGNORECASE):
+                    # parse the year of CVE ID
+                    cve_year = int(cve.split('-')[1])
+                    # only consider present and past year to avoid picking up on irrelevant CVEIDs
+                    last_year = datetime.now().year - 1
+                    if cve_year >= last_year:
+                        cves_map[nvr].add(cve.upper())
+
+        items = list(cves_map.items())
+        if not all(v == items[0][1] for _, v in items):
+            if len(cves_map) == 2:
+                # do a diff
+                LOGGER.error(
+                    f"Inconsistent CVEs. Found extra in {items[0][0]}: {items[0][1] - items[1][1]} \n Found extra in {items[1][0]}: {items[1][1] - items[0][1]}"
+                )
+            raise ElliottFatalError(
+                f"Found inconsistent CVE IDs in changelogs for fixed in NVRs: {cves_map}. Please investigate and ensure changelogs are correct and consistent, or specify CVE IDs with --cve-ids."
+            )
+
+        return list(cves_map.values())[0]
 
     @staticmethod
     def valid_go_report_entry(bug, entry):
@@ -435,7 +497,15 @@ class FindBugsGolangCli:
 
         if not self.cve_ids:
             # fetch CVE IDs from nvr changelogs, use brew.py getChangelogEntries to parse out CVE IDs
-            pass
+            cves = self._get_cves_from_nvr_changelogs()
+            if cves:
+                # convert to tuple and uppercase for consistency
+                self.cve_ids = tuple(sorted(cves))
+                logger.info(f"Determined CVE IDs from changelogs: {self.cve_ids}")
+            else:
+                raise ElliottFatalError(
+                    "Could not determine CVE IDs from changelogs of fixed in NVRs. Please investigate and specify CVE IDs with --cve-ids or fix the changelog entries for the NVRs."
+                )
 
         if self.tracker_ids:
             logger.info(f"Fetching {len(self.tracker_ids)} given tracker(s)")
@@ -799,6 +869,12 @@ class FindBugsGolangCli:
 @click.option(
     "--rpms-only", is_flag=True, default=False, help="Ignore builder container bugs and only analyze RPM trackers"
 )
+@click.option(
+    "--skip-comment",
+    is_flag=True,
+    default=False,
+    help="When updating tracker, skip adding comment with analysis and just update status. Only applicable if --update-tracker is set.",
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_golang_cli(
@@ -817,6 +893,7 @@ async def find_bugs_golang_cli(
     dry_run: bool,
     output_format: str,
     rpms_only: bool,
+    skip_comment: bool = False,
 ):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -898,6 +975,12 @@ async def find_bugs_golang_cli(
     if update_tracker and not analyze:
         raise click.BadParameter('Cannot use --update-tracker without --analyze')
 
+    if rpms_only and components:
+        raise click.BadParameter('Cannot use --rpms-only with --component. Please specify one or the other, not both.')
+
+    if skip_comment and not update_tracker:
+        raise click.BadParameter('Cannot use --skip-comment without --update-tracker')
+
     if force_update_tracker and not update_tracker:
         raise click.BadParameter('Cannot use --force-update-tracker without --update-tracker')
 
@@ -931,5 +1014,6 @@ async def find_bugs_golang_cli(
         dry_run=dry_run,
         output_format=output_format,
         rpms_only=rpms_only,
+        skip_comment=skip_comment,
     )
     await cli.run()
