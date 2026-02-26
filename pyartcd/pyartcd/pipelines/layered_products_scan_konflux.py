@@ -118,7 +118,7 @@ class LayeredProductsScanPipeline:
 
         # Trigger layered product build
         self.logger.info('Triggering a layered products %s build', self.group)
-        jenkins.start_oadp(
+        jenkins.start_layered_products(
             group=self.group,
             assembly=self.assembly,
             image_list=image_list,
