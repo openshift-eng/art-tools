@@ -18,8 +18,8 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, load_group_config
 
 
-class BuildOadpPipeline:
-    """Rebase and build OADP for an assembly"""
+class BuildLayeredProductsPipeline:
+    """Rebase and build layered products for an assembly"""
 
     def __init__(
         self,
@@ -103,7 +103,7 @@ class BuildOadpPipeline:
             return record_log
 
     async def run(self):
-        """Run the OADP rebase and build pipeline"""
+        """Run the layered products rebase and build pipeline"""
         # Load group config once for both version and product information
         group_config = await load_group_config(
             group=self.group,
@@ -125,7 +125,7 @@ class BuildOadpPipeline:
         self.trigger_bundle_build()
 
     async def _rebase_and_build(self, product: str):
-        """Rebase and build OADP image"""
+        """Rebase and build layered product image"""
         release = default_release_suffix()
 
         group_param = f"--group={self.group}"
@@ -136,7 +136,7 @@ class BuildOadpPipeline:
         if self.skip_rebase:
             self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
         else:
-            # Rebase OADP image
+            # Rebase layered product image
             self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
 
             rebase_cmd = [
@@ -161,7 +161,7 @@ class BuildOadpPipeline:
             await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
             self._logger.info(f"Successfully rebased {self.image_list}")
 
-        # Build OADP image
+        # Build layered product image
         self._logger.info(f"Building {self.image_list} image for assembly {self.assembly}")
         build_cmd = [
             "doozer",
@@ -218,7 +218,7 @@ class BuildOadpPipeline:
         self._logger.info(f"Successfully built {self.image_list}")
 
 
-@cli.command("build-oadp")
+@cli.command("build-layered-products")
 @click.option(
     "--data-path",
     metavar='BUILD_DATA',
@@ -236,7 +236,7 @@ class BuildOadpPipeline:
     "--version",
     metavar='NAME',
     required=False,
-    help="OADP version (if not provided, will be read from group config)",
+    help="Layered product version (if not provided, will be read from group config)",
 )
 @click.option(
     "--assembly",
@@ -272,7 +272,7 @@ class BuildOadpPipeline:
 )
 @pass_runtime
 @click_coroutine
-async def build_oadp(
+async def build_layered_products(
     runtime: Runtime,
     data_path: str,
     group: str,
@@ -287,9 +287,9 @@ async def build_oadp(
     ignore_locks: bool,
     plr_template: str,
 ):
-    """Rebase and build OADP image for an assembly"""
+    """Rebase and build layered product image for an assembly"""
     try:
-        pipeline = BuildOadpPipeline(
+        pipeline = BuildLayeredProductsPipeline(
             runtime=runtime,
             group=group,
             version=version,
@@ -316,6 +316,6 @@ async def build_oadp(
                 lock_id=lock_identifier,
             )
     except Exception as err:
-        error_message = f"build-oadp pipeline encountered error: {err}\n{traceback.format_exc()}"
+        error_message = f"build-layered-products pipeline encountered error: {err}\n{traceback.format_exc()}"
         runtime.logger.error(error_message)
         raise

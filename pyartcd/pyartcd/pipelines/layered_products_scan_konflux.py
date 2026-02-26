@@ -11,7 +11,7 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 
 
-class OadpScanPipeline:
+class LayeredProductsScanPipeline:
     def __init__(self, runtime, group, data_path, assembly, data_gitref, image_list):
         self.runtime = runtime
         self.group = group
@@ -41,7 +41,9 @@ class OadpScanPipeline:
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
-        scan_info = f'Scanning OADP group {self.group}, assembly {self.assembly}, data path {self.data_path}'
+        scan_info = (
+            f'Scanning layered products group {self.group}, assembly {self.assembly}, data path {self.data_path}'
+        )
 
         if self.data_gitref:
             scan_info += f'@{self.data_gitref}'
@@ -49,7 +51,7 @@ class OadpScanPipeline:
 
         self.check_params()
 
-        # Scan for changes (OADP only has images/RPMs, no RHCOS)
+        # Scan for changes (layered products only have images/RPMs, no RHCOS)
         await self.get_changes()
 
         # Handle image source changes
@@ -95,27 +97,27 @@ class OadpScanPipeline:
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
-            self.logger.info('No changes detected in OADP RPMs or images')
+            self.logger.info('No changes detected in layered products RPMs or images')
 
     def handle_source_changes(self):
         if not self.changes:
             return
 
         jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated OADP image')
+        self.logger.info('Detected at least one updated layered product image')
 
         image_list = self.changes.get('images', [])
 
         # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:
-            self.logger.info('Would have triggered an OADP %s build', self.group)
+            self.logger.info('Would have triggered a layered products %s build', self.group)
             return
 
         # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} OADP images<br/>')
+        jenkins.update_description(f'Changed {len(image_list)} layered product images<br/>')
 
-        # Trigger OADP build
-        self.logger.info('Triggering an OADP %s build', self.group)
+        # Trigger layered product build
+        self.logger.info('Triggering a layered products %s build', self.group)
         jenkins.start_oadp(
             group=self.group,
             assembly=self.assembly,
@@ -123,8 +125,8 @@ class OadpScanPipeline:
         )
 
 
-@cli.command('beta:konflux:oadp-scan')
-@click.option('--group', required=True, help='OADP group to scan (e.g., oadp-1.5)')
+@cli.command('beta:konflux:layered-products-scan')
+@click.option('--group', required=True, help='Layered products group to scan (e.g., oadp-1.5)')
 @click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
 @click.option(
     '--data-path',
@@ -136,14 +138,16 @@ class OadpScanPipeline:
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
 @pass_runtime
 @click_coroutine
-async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str):
+async def layered_products_scan(
+    runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str
+):
     # KUBECONFIG env var must be defined in order to scan sources
     if not os.getenv('KUBECONFIG'):
         raise RuntimeError('Environment variable KUBECONFIG must be defined')
 
     jenkins.init_jenkins()
 
-    pipeline = OadpScanPipeline(
+    pipeline = LayeredProductsScanPipeline(
         runtime=runtime,
         group=group,
         assembly=assembly,

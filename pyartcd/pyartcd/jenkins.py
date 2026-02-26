@@ -755,7 +755,7 @@ def start_oadp(
     )
 
 
-def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
+def start_layered_products_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
     params = {
         'GROUP': group,
         'ASSEMBLY': assembly,
