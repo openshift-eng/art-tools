@@ -125,7 +125,7 @@ class LayeredProductsScanPipeline:
         )
 
 
-@cli.command('beta:konflux:layered-products-scan')
+@cli.command('layered-products-scan')
 @click.option('--group', required=True, help='Layered products group to scan (e.g., oadp-1.5)')
 @click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
 @click.option(
