@@ -10,7 +10,7 @@ Run with:
 """
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from doozerlib.cli.images_streams import reconcile_jira_issues
 

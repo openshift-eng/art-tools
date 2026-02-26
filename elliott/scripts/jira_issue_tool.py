@@ -35,12 +35,9 @@ import argparse
 import json
 import os
 import sys
-from typing import Optional
-
-from jira import JIRA
-import ipdb
 
 from artcommonlib.jira_config import JIRA_SERVER_URL
+from jira import JIRA
 
 
 def _build_jira_client() -> JIRA:
@@ -129,7 +126,7 @@ def _cmd_read(client: JIRA, args: argparse.Namespace) -> None:
     id_to_name = field_map
     name_to_id = {v: k for k, v in id_to_name.items()}
 
-    print(f"\n--- ART-relevant Custom Fields ---")
+    print("\n--- ART-relevant Custom Fields ---")
     for field_name in art_fields:
         field_id = name_to_id.get(field_name)
         if field_id:
@@ -141,7 +138,7 @@ def _cmd_read(client: JIRA, args: argparse.Namespace) -> None:
             print(f"  {field_name}: (field not found on server)")
 
     if args.show_custom_fields:
-        print(f"\n--- All Custom Fields ---")
+        print("\n--- All Custom Fields ---")
         for field_id, field_name in sorted(id_to_name.items()):
             if field_id.startswith('customfield_'):
                 value = getattr(issue.fields, field_id, None)
@@ -221,7 +218,7 @@ def _cmd_update(client: JIRA, args: argparse.Namespace) -> None:
         sys.exit(0)
 
     print(f"\nIssue: {issue_key}")
-    print(f"Fields to update:")
+    print("Fields to update:")
     for field_id, value in update_fields.items():
         # Reverse lookup for display
         field_name = next((n for n, i in name_to_id.items() if i == field_id), field_id)
@@ -237,7 +234,7 @@ def _cmd_update(client: JIRA, args: argparse.Namespace) -> None:
 
     # Verify the update by re-reading
     issue = client.issue(issue_key)
-    print(f"\nVerification — current values after update:")
+    print("\nVerification — current values after update:")
     for field_id in update_fields:
         field_name = next((n for n, i in name_to_id.items() if i == field_id), field_id)
         value = getattr(issue.fields, field_id, None)

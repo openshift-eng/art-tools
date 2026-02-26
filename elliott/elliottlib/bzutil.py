@@ -732,8 +732,10 @@ class JIRABugTracker(BugTracker):
             if not token_auth:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_TOKEN env var ")
         if 'atlassian' in self._server:
-            env_username = os.environ.get("JIRA_USER")
+            env_username = os.environ.get("JIRA_EMAIL")
             username = self.config.get('user', env_username)
+            if username is None:
+                raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_EMAIL env var ")
             client = JIRA(server=self._server, basic_auth=(username, token_auth))
         else:
             client = JIRA(self._server, token_auth=token_auth)
@@ -792,21 +794,24 @@ class JIRABugTracker(BugTracker):
         Return Value(s):
             list[str]: List of target version names for the Bug issue type.
         """
-        meta = self._client.createmeta(
-            projectKeys=self._project,
-            issuetypeNames='Bug',
-            expand='projects.issuetypes.fields',
-        )
+        # Use createmeta API which is compatible with newer JIRA Cloud instances
+        create_meta = self._client.createmeta(projectKeys=[self._project], expand='projects.issuetypes.fields')
 
         target_versions = []
-        for project in meta.get('projects', []):
-            for issue_type in project.get('issuetypes', []):
-                fields = issue_type.get('fields', {})
-                tv_field = fields.get(self.field_target_version, {})
-                for v in tv_field.get('allowedValues', []):
-                    version_name = v.get('name')
-                    if version_name:
-                        target_versions.append(version_name)
+        # Navigate through the createmeta structure to find target version field
+        if create_meta and 'projects' in create_meta:
+            for project in create_meta['projects']:
+                if project.get('key') == self._project:
+                    for issue_type in project.get('issuetypes', []):
+                        if issue_type.get('name') == 'Bug':
+                            fields = issue_type.get('fields', {})
+                            target_field = fields.get(self.field_target_version)
+                            if target_field and 'allowedValues' in target_field:
+                                for v in target_field['allowedValues']:
+                                    if 'name' in v:
+                                        target_versions.append(v['name'])
+                            break
+                    break
         return target_versions
 
     def _get_target_versions_via_project_issue_types(self) -> list[str]:

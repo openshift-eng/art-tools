@@ -26,12 +26,12 @@ import os
 # Default JIRA server URL
 # This can be overridden by setting the JIRA_SERVER_URL environment variable
 DEFAULT_JIRA_SERVER_URL = "https://issues.redhat.com"
-
+DEFAULT_JIRA_EMAIL = "aos-team-art-private+openshift-art-jira-bot@redhat.com"
 # Get the JIRA server URL (check environment variable first, then use default)
 JIRA_SERVER_URL = os.environ.get("JIRA_SERVER_URL", DEFAULT_JIRA_SERVER_URL)
-
+JIRA_EMAIL = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 # JIRA API endpoints
-JIRA_API_BASE = f"{JIRA_SERVER_URL}/rest/api/3"
+JIRA_API_BASE = f"{JIRA_SERVER_URL}/rest/api/2"
 JIRA_API_FIELD = f"{JIRA_API_BASE}/field"
 
 # Legacy domain name (without https://) for backward compatibility

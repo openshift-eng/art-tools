@@ -33,9 +33,8 @@ import os
 import sys
 from unittest.mock import MagicMock
 
-from jira import JIRA
-
 from artcommonlib.jira_config import JIRA_SERVER_URL
+from jira import JIRA
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
