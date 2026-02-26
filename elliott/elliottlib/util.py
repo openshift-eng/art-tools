@@ -443,19 +443,19 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger, exact=Fa
 
     if build_system is None and golang_builder_nvrs:
         try:
-            golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger)
+            golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger, exact=exact)
         except Exception as e:
             logger.info(f'Failed to find golang builder nvrs in ART build DB: {e}')
-            golang_map = get_golang_container_nvrs_brew(golang_builder_nvrs, logger)
+            golang_map = get_golang_container_nvrs_brew(golang_builder_nvrs, logger, exact=exact)
         return golang_map
 
     if build_system == 'brew':
-        return get_golang_container_nvrs_brew(nvrs, logger)
+        return get_golang_container_nvrs_brew(nvrs, logger, exact=exact)
     elif build_system == 'konflux':
         return get_golang_container_nvrs_konflux(nvrs, logger, exact=exact)
 
 
-def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exact=False) -> Dict[str, Dict[str, str]]:
     """
     :param nvrs: a list of tuples containing (name, version, release) in order
     :param logger: logger
@@ -476,6 +476,8 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> 
         name = nvr[0]
         if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
             go_version = golang_builder_version(nvr, logger)
+            if exact:
+                go_version = f"golang-{go_version}"
             if not go_version:
                 raise ValueError(f'Cannot find go version for {name}')
             if go_version not in go_nvr_map:
@@ -615,7 +617,7 @@ def golang_builder_version(nvr, logger):
     return go_version
 
 
-def get_golang_rpm_nvrs(nvrs, logger):
+def get_golang_rpm_nvrs(nvrs, logger, exact=False):
     go_nvr_map = {}
     for nvr in nvrs:
         go_version = None
@@ -637,6 +639,9 @@ def get_golang_rpm_nvrs(nvrs, logger):
 
         if not go_version:
             continue
+
+        if exact:
+            go_version = f'golang-{go_version}'
 
         if go_version not in go_nvr_map:
             go_nvr_map[go_version] = set()
