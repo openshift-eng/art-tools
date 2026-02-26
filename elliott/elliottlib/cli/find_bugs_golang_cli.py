@@ -40,8 +40,8 @@ def get_fixed_in_version_go_db(go_vuln_id: str):
     go_vuln_db_api_url = f"https://vuln.go.dev/ID/{go_vuln_id}.json"
     res = requests.get(go_vuln_db_api_url)
     for entry in res.json()['affected']:
-        if entry['package']['ecosystem'] != "Go" or entry['package']['name'] != "stdlib":
-            LOGGER.info(f"[{go_vuln_id}] Skipping {entry['package']['name']} because it's not stdlib")
+        if entry['package']['ecosystem'] != "Go" or entry['package']['name'] not in ["stdlib", "toolchain"]:
+            LOGGER.info(f"[{go_vuln_id}] Skipping {entry['package']['name']} because it's not stdlib or toolchain")
             continue
         for r in entry['ranges']:
             if r['type'] == "SEMVER":
@@ -149,7 +149,7 @@ class FindBugsGolangCli:
             if fixed_in_versions:
                 fixed_in_versions = {f"{v}.0" for v in fixed_in_versions}
             else:
-                self._logger.warning(f"{flaw_bug.id} doesn't have valid fixed_in value: {fixed_in}")
+                self._logger.debug(f"#bz{flaw_bug.id} doesn't have valid fixed_in value: {fixed_in}")
                 return None
         return {Version.parse(v) for v in set(fixed_in_versions)}
 
@@ -423,7 +423,19 @@ class FindBugsGolangCli:
         major, minor = self._runtime.get_major_minor()
         ocp_version = f"{major}.{minor}"
         golang_report: List[Dict] = golang_report_for_version(self._runtime, ocp_version, ignore_rhel=True)
-        logger.info(f"Current golang versions being used in {ocp_version}: {golang_report}")
+        logger.info(f"Current golang rpms being used in {ocp_version}: {golang_report}")
+
+        if not self.fixed_in_nvrs:
+            # only consider golang rpms that are building a significant amount of images
+            # as we want to ship a bug if the fix is in the majority of images
+            self.fixed_in_nvrs = [entry['go_version'] for entry in golang_report if entry['building_image_count'] > 5]
+            logger.info(
+                f"No fixed in NVRs specified, using golang versions from report as fixed in versions: {self.fixed_in_nvrs}"
+            )
+
+        if not self.cve_ids:
+            # fetch CVE IDs from nvr changelogs, use brew.py getChangelogEntries to parse out CVE IDs
+            pass
 
         if self.tracker_ids:
             logger.info(f"Fetching {len(self.tracker_ids)} given tracker(s)")
@@ -469,20 +481,25 @@ class FindBugsGolangCli:
 
             # if cve_ids are given, only operate on those
             if self.cve_ids and b.cve_id not in self.cve_ids:
+                logger.debug(f"{b.id} CVE {b.cve_id} not in specified CVEs. Skipping")
                 return False
 
             # if components are given, only operate on those
             if self.components and comp not in self.components:
+                logger.debug(f"{b.id} component {comp} not in specified components. Skipping")
                 return False
 
             # Do not operate on embargoed bugs
             if b.bug.fields.security.name == "Embargoed Security Issue":
+                logger.info(f"{b.id} is embargoed. Skipping")
                 return False
 
             not_art = ["sandboxed-containers"]
             if comp in not_art:
+                logger.info(f"{b.id} is for a component that is not built by ART: {comp}. Skipping")
                 return False
             if comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT:
+                logger.info(f"{b.id} is for a non-builder image: {comp}. Skipping")
                 return False
             return True
 
@@ -667,9 +684,10 @@ class FindBugsGolangCli:
                 # this is a hacky way to determine if backport compiler build is needed
                 # if it is an rpm tracker, then check if there is a compatible golang version in buildroot
                 # compatible means that the golang version is the same major and minor version
-                for go_version in [
+                for go_rpm in [
                     entry['go_version'] for entry in golang_report if self.valid_go_report_entry(bug, entry)
                 ]:
+                    go_version = parse_nvr(go_rpm)['version']
                     go_v = Version.parse(go_version)
                     if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
                         logger.info(
@@ -873,6 +891,9 @@ async def find_bugs_golang_cli(
             raise click.BadParameter('Cannot use --fixed-in-nvr without --analyze')
         if not cve_ids and not tracker_ids:
             raise click.BadParameter('Cannot use --fixed-in-nvr without --cve-id or --tracker-id')
+
+    if cve_ids and tracker_ids:
+        raise click.BadParameter('Cannot use --cve-id with --tracker-id. Please specify one or the other, not both.')
 
     if update_tracker and not analyze:
         raise click.BadParameter('Cannot use --update-tracker without --analyze')

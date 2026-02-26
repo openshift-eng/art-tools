@@ -8,6 +8,7 @@ from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 
 from elliottlib.cli.common import cli
+from elliottlib.util import get_golang_container_nvrs
 
 _LOGGER = logutil.get_logger(__name__)
 
@@ -61,9 +62,19 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
         if 'golang-builder' not in image_nvr_like:
             continue
 
-        name, vr = image_nvr_like.split(':')
-        nvr = f"{name.replace('/', '-')}-container-{vr}"
-        version = go_version_from_nvr_string(nvr, ignore_rhel)
+        if image_nvr_like.startswith('openshift/golang-builder:'):
+            # handle legacy format openshift/golang-builder:v1.23.9-202506111225.g6c23478.el9
+            nvr = image_nvr_like.replace('openshift/golang-builder:', 'openshift-golang-builder-container-')
+        else:
+            # handle new pullspec format quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.23.10-202602241801.p2.gd0321dd.el9
+            tag = image_nvr_like.split(':')[-1]
+            nvr = tag.replace('golang-builder', 'openshift-golang-builder-container')
+
+        parsed_nvr = parse_nvr(nvr)
+        go_builder_nvr_map = get_golang_container_nvrs(
+            [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], _LOGGER, exact=True
+        )
+        version = list(go_builder_nvr_map.keys())[0] if go_builder_nvr_map else None
         golang_streams[stream_name] = version
         golang_streams_images[version] = []
 
@@ -105,8 +116,7 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
     with runtime.shared_koji_client_session() as koji_session:
         for el_v in rpm_rhel_target_map.keys():
             nvr = latest_go_build_in_buildroot(ocp_version, el_v, koji_session)
-            version = go_version_from_nvr_string(nvr, ignore_rhel)
-            golang_streams_rpms[version] = rpm_rhel_target_map[el_v]
+            golang_streams_rpms[nvr] = rpm_rhel_target_map[el_v]
 
     # Add result
     out = []
