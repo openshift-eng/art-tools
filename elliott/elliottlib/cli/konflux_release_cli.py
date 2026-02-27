@@ -1,12 +1,12 @@
+import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
 from typing import List, Optional, Set
 
 import aiohttp
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE, KONFLUX_RELEASE_DATA_RPA_BASE_URL
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_RPA_BASE_URL
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -272,7 +272,7 @@ class CreateReleaseCli:
             )
 
         LOGGER.info(f"All {len(snapshot_components)} components validated successfully")
-    
+
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
         Create a Konflux Snapshot manifest from the given shipment's snapshot spec.
