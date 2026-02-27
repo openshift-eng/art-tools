@@ -42,7 +42,7 @@ class Runtime:
         if not jira_email:
             raise ValueError("JIRA_EMAIL environment variable is not set")
 
-        if  self.config["jira"]["url"].endswith("atlassian.net"):
+        if self.config["jira"]["url"].endswith("atlassian.net"):
             return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
         else:
             return JIRAClient.from_url(self.config["jira"]["url"], token_auth=jira_token)
