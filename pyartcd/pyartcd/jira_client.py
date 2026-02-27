@@ -17,6 +17,7 @@ class JIRAClient:
         else:
             # Fallback to old token_auth method for compatibility
             client = JIRA(server_url, token_auth=token_auth)
+        return client
 
     def __init__(self, jira: JIRA) -> None:
         self._client = jira
