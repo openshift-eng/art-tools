@@ -91,7 +91,7 @@ def _cmd_read(client: JIRA, args: argparse.Namespace) -> None:
     print(f"\nFetching issue: {issue_key}")
     issue = client.issue(issue_key)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Key:        {issue.key}")
     print(f"Summary:    {issue.fields.summary}")
     print(f"Status:     {issue.fields.status.name}")
@@ -263,7 +263,7 @@ def _cmd_dump_fields(client: JIRA, args: argparse.Namespace) -> None:
         fields_sorted = [f for f in fields_sorted if f['id'].startswith('customfield_')]
 
     print(f"\n{'Field Name':<45} {'Field ID':<30} {'Custom'}")
-    print(f"{'-'*45} {'-'*30} {'-'*6}")
+    print(f"{'-' * 45} {'-' * 30} {'-' * 6}")
     for f in fields_sorted:
         is_custom = 'Yes' if f['id'].startswith('customfield_') else ''
         print(f"{f['name']:<45} {f['id']:<30} {is_custom}")
@@ -287,7 +287,8 @@ def _build_parser() -> argparse.ArgumentParser:
     read_parser = subparsers.add_parser('read', help='Read a JIRA issue and display its fields')
     read_parser.add_argument('issue_key', help='JIRA issue key (e.g., OCPBUGS-12345)')
     read_parser.add_argument(
-        '--show-custom-fields', action='store_true',
+        '--show-custom-fields',
+        action='store_true',
         help='Show all custom fields that have values',
     )
 
@@ -296,8 +297,12 @@ def _build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument('issue_key', help='JIRA issue key (e.g., OCPBUGS-12345)')
     update_parser.add_argument('--target-version', help='Set Target Version (e.g., "4.18.z")')
     update_parser.add_argument('--release-notes-text', help='Set Release Notes Text (e.g., "N/A")')
-    update_parser.add_argument('--release-notes-type', help='Set Release Notes Type (e.g., "Release Note Not Required")')
-    update_parser.add_argument('--dry-run', action='store_true', help='Show what would be updated without making changes')
+    update_parser.add_argument(
+        '--release-notes-type', help='Set Release Notes Type (e.g., "Release Note Not Required")'
+    )
+    update_parser.add_argument(
+        '--dry-run', action='store_true', help='Show what would be updated without making changes'
+    )
 
     # dump-fields command
     dump_parser = subparsers.add_parser('dump-fields', help='Dump all JIRA field name-to-ID mappings')

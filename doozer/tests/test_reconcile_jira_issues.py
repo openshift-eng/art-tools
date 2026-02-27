@@ -226,7 +226,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         immediately without doing anything.
         """
         runtime, pr_map, mock_issue, mock_jira_client = _build_mocks(
-            major=4, minor=15,
+            major=4,
+            minor=15,
         )
 
         reconcile_jira_issues(runtime, pr_map, dry_run=False)

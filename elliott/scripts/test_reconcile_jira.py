@@ -66,9 +66,9 @@ def _build_jira_client() -> JIRA:
     return client
 
 
-def _build_mock_runtime(jira_client: JIRA, major: int, minor: int,
-                        project: str, component: str,
-                        target_release: str) -> MagicMock:
+def _build_mock_runtime(
+    jira_client: JIRA, major: int, minor: int, project: str, component: str, target_release: str
+) -> MagicMock:
     """
     Build a mock runtime object with enough structure for reconcile_jira_issues().
 
@@ -202,31 +202,40 @@ def _build_parser() -> argparse.ArgumentParser:
         description='Invoke reconcile_jira_issues() to test customfield updates.',
     )
     parser.add_argument(
-        '--dry-run', action='store_true',
+        '--dry-run',
+        action='store_true',
         help='Preview what would be created without making changes',
     )
     parser.add_argument(
-        '--project', default='OCPBUGS',
+        '--project',
+        default='OCPBUGS',
         help='JIRA project key (default: OCPBUGS)',
     )
     parser.add_argument(
-        '--component', default='Release',
+        '--component',
+        default='Release',
         help='JIRA component name (default: Release)',
     )
     parser.add_argument(
-        '--major', type=int, default=4,
+        '--major',
+        type=int,
+        default=4,
         help='OCP major version (default: 4)',
     )
     parser.add_argument(
-        '--minor', type=int, default=18,
+        '--minor',
+        type=int,
+        default=18,
         help='OCP minor version (default: 18)',
     )
     parser.add_argument(
-        '--target-release', default='4.18.z',
+        '--target-release',
+        default='4.18.z',
         help='Target version string for the issue (default: 4.18.z)',
     )
     parser.add_argument(
-        '--cleanup', metavar='ISSUE_KEY',
+        '--cleanup',
+        metavar='ISSUE_KEY',
         help='Delete a JIRA issue created by a previous test run',
     )
     return parser

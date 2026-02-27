@@ -259,21 +259,25 @@ class TestJIRABugTracker(unittest.TestCase):
 
         # createmeta returns a dict structure
         createmeta_response = {
-            'projects': [{
-                'issuetypes': [{
-                    'name': 'Bug',
-                    'fields': {
-                        'customfield_12319940': {
-                            'allowedValues': [
-                                {'name': '4.17.0'},
-                                {'name': '4.17.z'},
-                                {'name': '4.18.0'},
-                                {'name': '4.18.z'},
-                            ]
+            'projects': [
+                {
+                    'issuetypes': [
+                        {
+                            'name': 'Bug',
+                            'fields': {
+                                'customfield_12319940': {
+                                    'allowedValues': [
+                                        {'name': '4.17.0'},
+                                        {'name': '4.17.z'},
+                                        {'name': '4.18.0'},
+                                        {'name': '4.18.z'},
+                                    ]
+                                }
+                            },
                         }
-                    }
-                }]
-            }]
+                    ]
+                }
+            ]
         }
 
         mock_jira_client = flexmock(_is_cloud=True)

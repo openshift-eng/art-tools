@@ -449,9 +449,7 @@ class JIRABug(Bug):
         labels = getattr(self.bug.fields, 'labels', None) or []
         # If label "art:pscomponent:<component_name>" is set,
         # return the component name from the label
-        pscomponent = next(
-            (m.group(1) for label in labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None
-        )
+        pscomponent = next((m.group(1) for label in labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None)
         if pscomponent:
             return pscomponent
         # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
@@ -460,9 +458,7 @@ class JIRABug(Bug):
         ):
             return pscomponent
         # Fall back to the label "pscomponent:<component_name>"
-        pscomponent = next(
-            (m.group(1) for label in labels if (m := self._PSCOMPONENT_RE.match(label))), None
-        )
+        pscomponent = next((m.group(1) for label in labels if (m := self._PSCOMPONENT_RE.match(label))), None)
         return pscomponent
 
     def _get_release_blocker(self):

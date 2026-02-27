@@ -10,9 +10,13 @@ _LOGGER = logging.getLogger(__name__)
 
 class JIRAClient:
     @classmethod
-    def from_url(cls, server_url: str, token_auth: Optional[str] = None):
-        client = JIRA(server_url, token_auth=token_auth)
-        return JIRAClient(client)
+    def from_url(cls, server_url: str, token_auth: Optional[str] = None, basic_auth: Optional[tuple] = None):
+        if basic_auth:
+            jira_options = {'server': server_url}
+            client = JIRA(options=jira_options, basic_auth=basic_auth)
+        else:
+            # Fallback to old token_auth method for compatibility
+            client = JIRA(server_url, token_auth=token_auth)
 
     def __init__(self, jira: JIRA) -> None:
         self._client = jira

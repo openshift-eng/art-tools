@@ -37,7 +37,15 @@ class Runtime:
             jira_token = os.environ.get("JIRA_TOKEN")
             if not jira_token:
                 raise ValueError("JIRA_TOKEN environment variable is not set")
-        return JIRAClient.from_url(self.config["jira"]["url"], token_auth=jira_token)
+
+        jira_email = os.environ.get("JIRA_EMAIL")
+        if not jira_email:
+            raise ValueError("JIRA_EMAIL environment variable is not set")
+
+        if  self.config["jira"]["url"].endswith("atlassian.net"):
+            return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
+        else:
+            return JIRAClient.from_url(self.config["jira"]["url"], token_auth=jira_token)
 
     def new_slack_client(self, token: Optional[str] = None):
         if not token and not self.dry_run:
