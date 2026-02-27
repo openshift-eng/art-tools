@@ -34,7 +34,13 @@ class ScanFips:
         self.all_images = all_images
 
         #  Call JIRAClient.from_url() directly because Runtime.new_jira_client() does not work currently
-        self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, token_auth=os.environ["JIRA_TOKEN"])
+        jira_email = os.environ.get("JIRA_EMAIL")
+        jira_token = os.environ.get("JIRA_TOKEN")
+        if not jira_email:
+            raise ValueError("JIRA_EMAIL environment variable is not set")
+        if not jira_token:
+            raise ValueError("JIRA_TOKEN environment variable is not set")
+        self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, basic_auth=(jira_email, jira_token))
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
