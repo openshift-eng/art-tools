@@ -459,6 +459,16 @@
     "okd": {
       "type": "object",
       "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "branch!": {
+          "$ref": "#/properties/okd/properties/branch"
+        },
+        "branch?": {
+          "$ref": "#/properties/okd/properties/branch"
+        },
+        "branch-": {},
         "konflux": {
           "type": "object",
           "properties": {
