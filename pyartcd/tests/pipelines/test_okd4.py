@@ -761,3 +761,181 @@ class TestBuildPlan(IsolatedAsyncioTestCase):
         self.assertIn('image1', result)
         self.assertIn('image2', result)
         self.assertIn('"active_image_count": 10', result)
+
+
+class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
+    def setUp(self):
+        """
+        Set up common test fixtures.
+        """
+
+        self.mock_runtime = MagicMock()
+        self.mock_runtime.working_dir = MagicMock()
+        self.mock_runtime.logger = MagicMock()
+        self.mock_runtime.dry_run = False
+        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+
+        mock_slack_client = MagicMock()
+        mock_slack_client.say = AsyncMock()
+        mock_slack_client.bind_channel = MagicMock()
+
+        self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
+
+        self.pipeline = KonfluxOkdPipeline(
+            runtime=self.mock_runtime,
+            image_build_strategy='all',
+            image_list=None,
+            assembly='stream',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            data_gitref='',
+            version='4.22',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='origin',
+        )
+
+    async def test_detect_embargoed_builds_missing_rebase_results(self):
+        """
+        Test that pipeline crashes when rebase results are missing (fail-safe).
+        """
+
+        # given
+        with patch.object(self.pipeline, 'load_state_yaml', return_value={}):
+            # when/then
+            with self.assertRaises(RuntimeError) as context:
+                await self.pipeline.detect_embargoed_builds()
+
+            self.assertIn('EMBARGO SAFETY', str(context.exception))
+            self.assertIn('no rebase results', str(context.exception))
+
+    async def test_detect_embargoed_builds_public_images_only(self):
+        """
+        Test that public images (private_fix=False) are allowed through.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'success', 'private_fix': False},
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(self.pipeline.embargoed_builds, [])
+
+    async def test_detect_embargoed_builds_detects_private_fixes(self):
+        """
+        Test that embargoed images (private_fix=True) are detected and excluded.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'success', 'private_fix': True},
+                }
+            }
+        }
+
+        with (
+            patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state),
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+        ):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(len(self.pipeline.embargoed_builds), 1)
+            self.assertEqual(self.pipeline.embargoed_builds[0]['name'], 'installer')
+
+            # Jenkins should be updated with warning
+            mock_jenkins.update_description.assert_called_once()
+            call_args = mock_jenkins.update_description.call_args[0][0]
+            self.assertIn('EMBARGOED', call_args)
+            self.assertIn('installer', call_args)
+
+    async def test_detect_embargoed_builds_missing_private_fix_field(self):
+        """
+        Test that pipeline crashes when private_fix field is missing (fail-safe).
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success'},  # Missing private_fix field
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when/then
+            with self.assertRaises(RuntimeError) as context:
+                await self.pipeline.detect_embargoed_builds()
+
+            self.assertIn('EMBARGO SAFETY', str(context.exception))
+            self.assertIn('missing required fields', str(context.exception))
+
+    async def test_detect_embargoed_builds_multiple_embargoed_images(self):
+        """
+        Test detection with multiple embargoed images.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'image1': {'status': 'success', 'private_fix': True},
+                    'image2': {'status': 'success', 'private_fix': True},
+                    'image3': {'status': 'success', 'private_fix': False},
+                }
+            }
+        }
+
+        with (
+            patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state),
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+        ):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(len(self.pipeline.embargoed_builds), 2)
+            embargoed_names = {img['name'] for img in self.pipeline.embargoed_builds}
+            self.assertEqual(embargoed_names, {'image1', 'image2'})
+
+            mock_jenkins.update_description.assert_called_once()
+
+    async def test_detect_embargoed_builds_skips_failed_images(self):
+        """
+        Test that failed/skipped images are ignored during embargo detection.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'failure', 'private_fix': True},
+                    'operator': {'status': 'skipped', 'private_fix': False},
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            # Only successful images are checked; failed/skipped are ignored
+            self.assertEqual(len(self.pipeline.embargoed_builds), 0)
