@@ -2511,7 +2511,7 @@ class KonfluxRebaser:
             self._logger.info(f"Resolving digest for external image {target}")
             try:
                 registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
-                image_info = await util.oc_image_info_for_arch_async__caching(target, registry_config=registry_auth)
+                image_info = await util.oc_image_info_for_arch_async(target, registry_config=registry_auth)
                 # Use listDigest for multi-arch images, if no listDigest, use digest
                 digest = image_info.get('listDigest')
                 if not digest:

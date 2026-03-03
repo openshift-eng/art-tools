@@ -26,6 +26,10 @@ from artcommonlib.constants import (
 )
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
+from artcommonlib.oc_image_info import (
+    oc_image_info__cached__lru,
+    oc_image_info__cached_async__lru,
+)
 from artcommonlib.release_util import isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -1027,3 +1031,138 @@ async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[s
         if failures_list is not None:
             failures_list.append((func.__name__, e))
         return None
+
+
+# ===============================================================================
+# oc image info wrapper functions
+# ===============================================================================
+# These functions provide convenient wrappers around the low-level caching
+# functions in artcommonlib.oc_image_info, adding JSON parsing, error handling,
+# and common use-case helpers (e.g., --filter-by-os, --show-multiarch).
+# ===============================================================================
+
+
+def oc_image_info(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching
+    (for all pullspecs within the process lifetime), avoiding redundant registry lookups.
+
+    :param pullspec: Image pullspec (e.g., 'registry.io/repo/image:tag' or 'registry.io/repo/image@sha256:...')
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :param strict: If True, raise IOError on errors. If False, return None for "manifest unknown" errors.
+    :return: Parsed JSON output (dict or list) or None if strict=False and image doesn't exist
+    :raises IOError: If command fails and strict=True
+    """
+    try:
+        out = oc_image_info__cached__lru(pullspec, *options, registry_config=registry_config)
+    except ChildProcessError as e:
+        err_msg = str(e)
+        if not strict and 'manifest unknown' in err_msg.lower():
+            return None
+        raise IOError(err_msg) from e
+
+    return json.loads(out)
+
+
+def oc_image_info_for_arch(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, None]:
+    """
+    Get image info filtered by architecture.
+
+    Adds --filter-by-os flag because multi-arch manifest lists cause
+    oc image info to error without filtering.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict of image info or None if strict=False and image doesn't exist
+    :raises AssertionError: If result is not a dict (should never happen with --filter-by-os)
+    """
+    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
+    if result is None:
+        return None
+    assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
+    return result
+
+
+def oc_image_info_show_multiarch(
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Get image info with --show-multiarch flag.
+
+    For single-arch images: returns a dict representing the manifest.
+    For multi-arch images: returns a list of dicts, one per architecture.
+
+    :param pullspec: Image pullspec
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict or list of dicts, or None if strict=False and image doesn't exist
+    """
+    return oc_image_info(
+        pullspec,
+        '--show-multiarch',
+        registry_config=registry_config,
+        strict=strict,
+    )
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+async def oc_image_info_async(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+) -> Union[Dict, List]:
+    """
+    Async version of oc_image_info.
+
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching.
+
+    Retries up to 3 times (with 10s wait) before giving up.
+
+    :param pullspec: Image pullspec
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :return: Parsed JSON output (dict or list)
+    :raises ChildProcessError: If command fails after all retry attempts
+    """
+    out = await oc_image_info__cached_async__lru(pullspec, *options, registry_config=registry_config)
+    return json.loads(out)
+
+
+async def oc_image_info_for_arch_async(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+) -> Dict:
+    """
+    Async version of oc_image_info_for_arch.
+
+    Get image info filtered by architecture using --filter-by-os flag.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :return: Dict of image info for the specified architecture
+    """
+    return await oc_image_info_async(
+        pullspec,
+        f'--filter-by-os={go_arch}',
+        registry_config=registry_config,
+    )

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import yaml
 from artcommonlib import exectools, pushd
 from artcommonlib.brew import BuildStates
-from artcommonlib.oc_image_info import oc_image_info__cached
+from artcommonlib.oc_image_info import oc_image_info__cached__lru
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -473,7 +473,7 @@ class OLMBundle(object):
 
         pull_spec = '{}/{}'.format(registry, image)
         try:
-            image_info = util.oc_image_info_for_arch__caching(pull_spec)
+            image_info = util.oc_image_info_for_arch(pull_spec)
         except:
             self.runtime.logger.error(
                 f'Unable to find image from CSV: {pull_spec}. Image may have failed to build after CSV rebase.'
@@ -665,7 +665,7 @@ class OLMBundle(object):
 
     def delivery_labels_match(self, bundle_image_pullspec):
         try:
-            out = oc_image_info__cached(bundle_image_pullspec)
+            out = oc_image_info__cached__lru(bundle_image_pullspec)
         except ChildProcessError as e:
             raise ValueError(f"Error running oc image info for {bundle_image_pullspec}: {e}") from e
         image_info = json.loads(out)

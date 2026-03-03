@@ -41,7 +41,7 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import oc_image_info_for_arch_async__caching
+from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
 TASK_BUNDLE_AGE_THRESHOLD_DAYS = 10
@@ -811,7 +811,7 @@ class ConfigScanSources:
             else self.registry_auth_file
         )
         latest_builder_image_info = Model(
-            await oc_image_info_for_arch_async__caching(builder_image_url, registry_config=builder_auth_file)
+            await oc_image_info_for_arch_async(builder_image_url, registry_config=builder_auth_file)
         )
         builder_info_labels = latest_builder_image_info.config.config.Labels
         builder_nvr_list = [

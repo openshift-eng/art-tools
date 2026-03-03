@@ -613,7 +613,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs, ref_pullspecs)
         self.assertEqual(len(result["spec"]["imageDigestMirrors"]), 4)
 
-    @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
+    @patch("doozerlib.util.oc_image_info_for_arch_async", new_callable=AsyncMock)
     async def test_fetch_olm_bundle_image_info(self, mock_oc_image_info):
         bundle_build = MagicMock(spec=KonfluxBundleBuildRecord)
         bundle_build.image_pullspec = "test-image-pullspec"
@@ -1207,9 +1207,9 @@ class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
                 logger=self.logger,
             )
 
-    @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
+    @patch("doozerlib.util.oc_image_info_for_arch_async", new_callable=AsyncMock)
     @patch("httpx.AsyncClient", autospec=True)
-    async def test_merge_idms(self, mock_async_client: Mock, mock_oc_image_info_for_arch_async__caching: AsyncMock):
+    async def test_merge_idms(self, mock_async_client: Mock, mock_oc_image_info_for_arch_async: AsyncMock):
         http_client = mock_async_client.return_value.__aenter__.return_value = AsyncMock()
         http_client.get.side_effect = [
             MagicMock(
@@ -1232,7 +1232,7 @@ spec:
             )
             for idx in range(3)
         ]
-        mock_oc_image_info_for_arch_async__caching.return_value = {
+        mock_oc_image_info_for_arch_async.return_value = {
             "config": {
                 "config": {
                     "Labels": {
