@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import re
 import shutil
 import string
 from datetime import datetime
@@ -328,7 +327,7 @@ async def build_plashets(
             signing_mode=signing_mode,
             signing_advisory=signing_advisory,
             embargoed_tags=config.source.embargoed_tags,
-            tag_pvs=((config.source.from_tags[0].name, config.source.from_tags[0].product_version),),
+            tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
             include_previous_packages=config.include_previous_packages,
             repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,

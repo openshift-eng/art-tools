@@ -2,6 +2,7 @@ import asyncio
 import json
 import os.path
 import shutil
+from pathlib import Path
 
 import click
 import yaml
@@ -118,6 +119,7 @@ class OcpPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='brew',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
@@ -902,9 +904,7 @@ async def ocp(
     ignore_locks: bool,
     comment_on_pr: bool,
 ):
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+    lock_identifier = jenkins.get_build_path_or_random()
 
     pipeline = OcpPipeline(
         runtime=runtime,

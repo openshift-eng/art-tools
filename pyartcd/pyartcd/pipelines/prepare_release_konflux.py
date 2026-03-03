@@ -18,11 +18,11 @@ from urllib.parse import urlparse
 import aiohttp
 import asyncstdlib as a
 import click
-import gitlab
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
@@ -67,12 +67,14 @@ class PrepareReleaseKonfluxPipeline:
         build_data_repo_url: Optional[str] = None,
         shipment_data_repo_url: Optional[str] = None,
         inject_build_data_repo: bool = False,
+        plr_template: str | None = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.assembly = assembly
         self.group = group
         self.inject_build_data_repo = inject_build_data_repo
+        self.plr_template = plr_template
 
         self._slack_client = slack_client
 
@@ -181,10 +183,8 @@ class PrepareReleaseKonfluxPipeline:
         return AsyncErrataAPI()
 
     @cached_property
-    def _gitlab(self) -> gitlab.Gitlab:
-        gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
-        gl.auth()
-        return gl
+    def _gitlab(self) -> GitLabClient:
+        return GitLabClient(self.gitlab_url, self.gitlab_token, self.dry_run)
 
     @cached_property
     def release_name(self) -> str:
@@ -681,6 +681,12 @@ class PrepareReleaseKonfluxPipeline:
             f"--message={message}",
             "--output=json",
         ]
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = self.plr_template.split("@")
+            plr_template_url = constants.KONFLUX_FBC_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            cmd += ["--plr-template", plr_template_url]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
@@ -744,6 +750,12 @@ class PrepareReleaseKonfluxPipeline:
             f'--konflux-kubeconfig={kubeconfig}',
             "--output=json",
         ]
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = self.plr_template.split("@")
+            plr_template_url = constants.KONFLUX_BUNDLE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            cmd += ["--plr-template", plr_template_url]
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
@@ -796,7 +808,7 @@ class PrepareReleaseKonfluxPipeline:
         mr_id = parsed_url.path.split('/')[-1]
 
         # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
+        project = self._gitlab.get_project(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
         # Make sure MR is valid
@@ -809,7 +821,7 @@ class PrepareReleaseKonfluxPipeline:
                 f"MR target project {target_project_path} does not match the pull repo {self.shipment_data_repo_pull_url}"
             )
 
-        source_project_path = self._gitlab.projects.get(mr.source_project_id).path_with_namespace
+        source_project_path = self._gitlab.get_project(mr.source_project_id).path_with_namespace
         if source_project_path not in self.shipment_data_repo_push_url:
             raise ValueError(
                 f"MR source project {source_project_path} does not match the push repo {self.shipment_data_repo_push_url}"
@@ -1038,7 +1050,7 @@ class PrepareReleaseKonfluxPipeline:
         def _get_project(url):
             parsed_url = urlparse(url)
             project_path = parsed_url.path.strip('/').removesuffix('.git')
-            return self._gitlab.projects.get(project_path)
+            return self._gitlab.get_project(project_path)
 
         source_project = _get_project(self.shipment_data_repo_push_url)
         target_project = _get_project(self.shipment_data_repo_pull_url)
@@ -1089,7 +1101,7 @@ class PrepareReleaseKonfluxPipeline:
         mr_id = parsed_url.path.split('/')[-1]
 
         # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
+        project = self._gitlab.get_project(target_project_path)
         mr = project.mergerequests.get(mr_id)
 
         # Store the MR URL for later use
@@ -1122,75 +1134,30 @@ class PrepareReleaseKonfluxPipeline:
         return True
 
     async def set_shipment_mr_ready(self):
-        """Mark the shipment MR as ready by removing the Draft prefix from the title.
+        """
+        Mark the shipment MR as ready by removing the Draft prefix from the title.
         This should be called at the end of the pipeline when all work is complete.
         """
-        if not self.shipment_mr_url:
-            self.logger.info("No shipment MR URL stored, skipping setting to ready")
-            return
+        mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
 
-        self.logger.info("Setting shipment MR to ready: %s", self.shipment_mr_url)
+        if mr and not self.dry_run:
+            await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
 
-        # Parse the shipment URL to extract project and MR details
-        parsed_url = urlparse(self.shipment_mr_url)
-        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+            # Trigger CI pipeline after marking as ready
+            # wait for 30 seconds to ensure the MR is updated
+            self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
+            await asyncio.sleep(30)
 
-        # Load the existing MR
-        project = self._gitlab.projects.get(target_project_path)
-        mr = project.mergerequests.get(mr_id)
-
-        # Remove draft prefix from title
-        if mr.title.startswith("Draft: "):
-            mr.title = mr.title.removeprefix("Draft: ")
-            if self.dry_run:
-                self.logger.info("[DRY-RUN] Would have set MR to ready with title: %s", mr.title)
-            else:
-                mr.save()
-                self.logger.info("Shipment MR marked as ready: %s", self.shipment_mr_url)
-                await self._slack_client.say_in_thread(f"Shipment MR marked as ready: {self.shipment_mr_url}")
-
-                # Trigger CI pipeline after marking as ready
-                # wait for 30 seconds to ensure the MR is updated
-                self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
-                await asyncio.sleep(30)
-                await self.trigger_ci_pipeline(mr)
-        else:
-            self.logger.info("MR is already ready (no draft prefix found)")
-
-    async def trigger_ci_pipeline(self, mr):
-        """Trigger a GitLab Merge Request pipeline using the MR API.
-
-        Args:
-            mr: GitLab merge request object
-        """
-        try:
-            self.logger.info(
-                "Triggering CI pipeline for MR !%s on branch %s",
-                mr.iid,
-                mr.source_branch,
-            )
-
-            if self.dry_run:
-                self.logger.info(
-                    "[DRY-RUN] Would have triggered MR pipeline for MR !%s (branch: %s)",
-                    mr.iid,
-                    mr.source_branch,
-                )
-                return
-
-            # Create a new pipeline for this merge request using MR API
-            pipeline = mr.pipelines.create({'ref': mr.source_branch})
-
-            pipeline_url = pipeline.web_url
-            self.logger.info("CI MR pipeline triggered successfully: %s", pipeline_url)
-            await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
-
-        except Exception as ex:
-            self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {ex}")
-            await self._slack_client.say_in_thread(
-                f"Failed to trigger CI pipeline for MR branch {mr.source_branch}: {ex}"
-            )
+            try:
+                pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+                if pipeline_url:
+                    await self._slack_client.say_in_thread(f"CI pipeline triggered: {pipeline_url}")
+                else:
+                    await self._slack_client.say_in_thread(
+                        f"Failed to trigger CI pipeline for MR branch {mr.source_branch}"
+                    )
+            except Exception as e:
+                self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -1463,15 +1430,20 @@ class PrepareReleaseKonfluxPipeline:
         nightlies = get_assembly_basis(self.releases_config, self.assembly).get("reference_releases", {}).values()
         candidate_nightlies = nightlies_with_pullspecs(nightlies)
 
+        # Convert MissingModel to empty string to avoid Jinja2 rendering errors
+        rhcos_advisory = self.updated_assembly_group_config.advisories.rhcos or ''
+        rpm_advisory = self.updated_assembly_group_config.advisories.rpm or ''
+        shipment_url = self.updated_assembly_group_config.shipment.url or ''
+
         return {
             "release_name": self.release_name,
             "x": self.release_version[0],
             "y": self.release_version[1],
             "z": self.release_version[2],
             "release_date": self.release_date,
-            "rhcos_advisory": self.updated_assembly_group_config.advisories['rhcos'],
-            "rpm_advisory": self.updated_assembly_group_config.advisories['rpm'],
-            "shipment_url": self.updated_assembly_group_config.shipment.url,
+            "rhcos_advisory": rhcos_advisory,
+            "rpm_advisory": rpm_advisory,
+            "shipment_url": shipment_url,
             "candidate_nightlies": candidate_nightlies,
         }
 
@@ -1625,6 +1597,12 @@ class PrepareReleaseKonfluxPipeline:
     '--shipment-data-repo-url',
     help='shipment-data repo to use for reading and as shipment MR target. Defaults to main branch. Should reside in gitlab.cee.redhat.com',
 )
+@click.option(
+    '--plr-template',
+    required=False,
+    default=None,
+    help='Override the Konflux PipelineRun template for FBC and bundle builds. Format: <owner>@<branch>',
+)
 @pass_runtime
 @click_coroutine
 async def prepare_release(
@@ -1634,6 +1612,7 @@ async def prepare_release(
     build_data_repo_url: Optional[str],
     inject_build_data_repo: bool,
     shipment_data_repo_url: Optional[str],
+    plr_template: str | None = None,
 ):
     # Check if assembly is valid
     if assembly == "stream":
@@ -1653,6 +1632,7 @@ async def prepare_release(
             build_data_repo_url=build_data_repo_url,
             shipment_data_repo_url=shipment_data_repo_url,
             inject_build_data_repo=inject_build_data_repo,
+            plr_template=plr_template,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release-konflux for {assembly} completes.")

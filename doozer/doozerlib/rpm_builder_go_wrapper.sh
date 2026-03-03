@@ -1,4 +1,3 @@
-#!/bin/sh
 export GOEXPERIMENT=strictfipsruntime
 export GOTOOLCHAIN=local
 
@@ -46,7 +45,9 @@ FORCE_FOD_MODE=1
 FORCE_OPENSSL=1
 FORCE_DYNAMIC=1
 IN_RUN=0
+IN_BUILD=0
 IN_TAGS=0
+COVERAGE_ADDED=0  # Track whether coverage_server.go has been added to the args
 ARGS=()  # We need to rebuild the argument list.
 # Compilation with -extldflags "-static" is problematic with
 # CGO_ENABLED=1 because compilation tries to link against
@@ -61,17 +62,26 @@ for arg in "$@"; do
 
     # prior to detecting 'IN_RUN', grafana failed because it ran
     # 'go run build.go build' which caused the script to exec 'go run build.go build -tags strictfipsruntime'
-    if [[ "${arg}" == "build" && "${IN_RUN}" == "0" ]]; then
+    # 'go install ...' can also trigger builds (e.g. Kubernetes uses `go install` instead of `go build`).
+    if [[ ( "${arg}" == "build" || "${arg}" == "install" ) && "${IN_RUN}" == "0" ]]; then
       # -tags apparently cannot come after a build path
       # e.g. "build ./cmd/cluster-openshift-apiserver-operator -tags strictfipsruntime" is invalid.
       # So, if we see "build" and no "-tags" ahead, then go ahead and force FOD tag.
 
-      ARGS+=("${arg}") # Add "build"
+      IN_BUILD="1"  # This is a go build invocation
+      ARGS+=("${arg}") # Add "build" or "install"
+
+      if [[ "${GO_COMPLIANCE_COVER:-}" == "1" ]]; then
+        echoerr "adding -cover for build or install operation"
+        ARGS+=("-cover")
+        ARGS+=("-covermode=atomic")
+      fi
+
       if [[ "${FORCE_FOD_MODE}" == "1" && "${HAS_TAGS}" == "0" ]]; then
         ARGS+=("-tags")
         ARGS+=("strictfipsruntime")
       fi
-      continue  # We've already added 'build', so don't reach the bottom of the loop where it would be added again.
+      continue  # We've already added 'build' or 'install', so don't reach the bottom of the loop where it would be added again.
     fi
 
     if [[ ( "${arg}" == "-tags="* || "${arg}" == "--tags="* ) && "${FORCE_FOD_MODE}" == "1" ]]; then
@@ -134,6 +144,23 @@ for arg in "$@"; do
       fi
     fi
     ARGS+=("${arg}")
+
+    # When coverage is enabled and explicit .go files are being compiled,
+    # ensure coverage_server.go is included if it exists alongside them.
+    # Package-path builds (e.g. ./cmd/...) don't need this since Go
+    # automatically includes all .go files in the package.
+    if [[ "${GO_COMPLIANCE_COVER:-}" == "1" && "${IN_BUILD}" == "1" && "${COVERAGE_ADDED}" == "0" && "${arg}" == *.go ]]; then
+      if [[ "$(basename "${arg}")" == "coverage_server.go" ]]; then
+        COVERAGE_ADDED=1
+      else
+        coverage_path="$(dirname "${arg}")/coverage_server.go"
+        if [[ -f "${coverage_path}" ]]; then
+          echoerr "adding ${coverage_path} to build for coverage instrumentation"
+          ARGS+=("${coverage_path}")
+          COVERAGE_ADDED=1
+        fi
+      fi
+    fi
 done
 
 echo 1>&2

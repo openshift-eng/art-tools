@@ -2,7 +2,6 @@
 Test the Dir() class.  Verify that it works as a context_manager.
 """
 
-import os
 import unittest
 from multiprocessing.dummy import Pool
 

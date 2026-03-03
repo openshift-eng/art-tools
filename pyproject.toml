@@ -186,10 +186,6 @@ select = [
     # "SIM",
 ]
 ignore = [
-    # imported but unused
-    # __init__ often imports to make available
-    # but does not use
-    "F401",
     # bare except
     "E722",
     # ignore pyflakes lint warning about line too long
@@ -205,6 +201,16 @@ unfixable = []
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files import to re-export symbols for the package
+"__init__.py" = ["F401"]
+# CLI __main__.py files import commands to register them via decorators (side effects)
+"**/cli/__main__.py" = ["F401"]
+# Test files may import modules to trigger side effects (CLI command registration)
+"**/tests/test_*_cli.py" = ["F401"]
+# constants.py files import to re-export symbols from other modules
+"**/constants.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "preserve"

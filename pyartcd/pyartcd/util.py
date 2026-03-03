@@ -5,7 +5,7 @@ import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, Union, cast
@@ -19,9 +19,10 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
 from doozerlib import util as doozerutil
+from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 
-from pyartcd import constants, jenkins, record
+from pyartcd import constants, record
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,46 @@ def default_release_suffix():
     return f'{datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")}.p?'
 
 
+def build_history_link_url(group: str, assembly: str, days: int = 2, job_url: str = '') -> str:
+    """
+    Construct a URL for art-build-history with proper encoding.
+    Shows both successful and failed builds from a specific job.
+
+    Arg(s):
+        group (str): Group name (e.g., 'openshift-4.17' or 'okd-5.0')
+        assembly (str): Assembly name (e.g., 'stream')
+        days (int): Number of days to look back for build history (default: 2)
+        job_url (str): Jenkins BUILD_URL to filter builds (default: '')
+
+    Return Value(s):
+        str: Complete art-build-history URL with all parameters
+    """
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+    end_date = (datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+
+    # Build URL with parameters in correct order and include empty parameters
+    build_history_url = (
+        f'{ART_BUILD_HISTORY_URL}/?name=&group={group}&assembly={assembly}'
+        f'&outcome=success&outcome=failure&engine=konflux'
+        f'&dateRange={start_date}+to+{end_date}'
+        f'&nvr=&record_id=&image_sha_tag=&source_repo=&commitish='
+    )
+
+    if job_url:
+        # Jenkins BUILD_URL has single-encoded job paths (build%2Fokd).
+        # Art-build-history needs double-encoded paths (build%252Fokd) after URL decoding.
+        # To achieve this:
+        # 1. Replace %2F with %252F to get build%252Fokd
+        # 2. URL-encode the entire string so %252F becomes %25252F in the parameter
+        # 3. When art-build-history decodes, %25252F becomes %252F, giving us build%252Fokd
+        job_url = job_url.replace('%2F', '%252F')
+        # Manually encode to ensure % is encoded as %25
+        encoded_job_url = job_url.replace('%', '%25').replace('/', '%2F').replace(':', '%3A')
+        build_history_url += f'&art-job-url={encoded_job_url}'
+
+    return build_history_url
+
+
 def dockerfile_url_for(url, branch, sub_path) -> str:
     if not url or not branch:
         return ''
@@ -824,6 +865,7 @@ async def get_group_images(
     group: str,
     assembly: str,
     build_system: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     load_okd_only: bool = False,
@@ -834,41 +876,43 @@ async def get_group_images(
     :param group: The group name (e.g. 'openshift-4.21')
     :param assembly: The assembly name (e.g. 'stream', 'rc.1')
     :param build_system: Build system to use ('brew' or 'konflux'). If empty string, doozer will use its default.
+    :param working_dir: Working directory for doozer
     :param doozer_data_path: Path to ocp-build-data repository
     :param doozer_data_gitref: Git reference to use in ocp-build-data
     :param load_okd_only: Whether to load OKD-only images (mode: disabled, okd.mode: enabled)
     :return: List of image distgit keys
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
+    working_dir.mkdir(parents=True, exist_ok=True)
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+    ]
+    if load_okd_only:
+        command.append('--load-okd-only')
+    if build_system:
+        command.append(f'--build-system={build_system}')
+    command.extend(
+        [
+            group_param,
+            '--assembly',
+            assembly,
+            'images:list',
+            '--json',
         ]
-        if load_okd_only:
-            command.append('--load-okd-only')
-        if build_system:
-            command.append(f'--build-system={build_system}')
-        command.extend(
-            [
-                group_param,
-                '--assembly',
-                assembly,
-                'images:list',
-                '--json',
-            ]
-        )
-        _, out, _ = await exectools.cmd_gather_async(command)
-        return json.loads(out)['images']
+    )
+    _, out, _ = await exectools.cmd_gather_async(command)
+    return json.loads(out)['images']
 
 
 async def get_group_rpms(
     group: str,
     assembly: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
 ) -> List[str]:
@@ -876,23 +920,24 @@ async def get_group_rpms(
     Get the list of RPMs for a given group and assembly.
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
-            group_param,
-            f'--assembly={assembly}',
-            'rpms:print',
-            '--output=rpms.txt',
-        ]
-        await exectools.cmd_assert_async(command)
-        with open('rpms.txt', 'r') as f:
-            out = f.read()
-        return out.splitlines()
+    working_dir.mkdir(parents=True, exist_ok=True)
+    rpms_file = working_dir / 'rpms.txt'
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+        group_param,
+        f'--assembly={assembly}',
+        'rpms:print',
+        f'--output={rpms_file}',
+    ]
+    await exectools.cmd_assert_async(command)
+    with open(rpms_file, 'r') as f:
+        out = f.read()
+    return out.splitlines()
 
 
 async def increment_rebase_fail_counter(image, version, build_system, branch='rebase-failure', job_url=None):

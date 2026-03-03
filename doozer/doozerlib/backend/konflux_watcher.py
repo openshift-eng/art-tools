@@ -8,14 +8,11 @@ import time
 import traceback
 from typing import Dict, List, Optional, Tuple
 
-from artcommonlib import exectools
-from artcommonlib import util as art_util
 from dateutil import parser
-from kubernetes import config
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
-from kubernetes.dynamic import DynamicClient, exceptions, resource
+from kubernetes.dynamic import DynamicClient
 
-from .pipelinerun_utils import ContainerInfo, PipelineRunInfo, PodInfo
+from .pipelinerun_utils import PipelineRunInfo, PodInfo
 
 LOGGER = logging.getLogger(__name__)
 

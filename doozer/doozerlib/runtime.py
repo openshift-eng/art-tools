@@ -3,7 +3,6 @@ import datetime
 import io
 import itertools
 import os
-import pathlib
 import re
 import shutil
 import signal
@@ -26,11 +25,10 @@ from artcommonlib.assembly import (
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.config.plashet import PlashetConfig
 from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
-from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
+from artcommonlib.util import isolate_el_version_in_brew_tag
 from jira import JIRA
 from semver import Version
 
@@ -111,6 +109,9 @@ class Runtime(GroupRuntime):
         self._build_status_detector = None
         self.disable_gssapi = False
         self._build_data_product_cache: Model = None
+        # Defaults for cloning behavior (updated in initialize())
+        self.prevent_cloning = False
+        self.clone_source = None
 
         # init cli options
         self.group = None
@@ -371,6 +372,9 @@ class Runtime(GroupRuntime):
             exit(1)
 
         self.mode = mode
+        # Store initialization parameters for use by late_resolve_image
+        self.prevent_cloning = prevent_cloning
+        self.clone_source = clone_source
 
         # We could mark these as required and the click library would do this for us,
         # but this seems to prevent getting help from the various commands (unless you
@@ -809,11 +813,13 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
+        from artcommonlib.jira_config import JIRA_SERVER_URL
+
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
             raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
         bug_config = Model(self.get_bug_config())
-        server = bug_config.jira_config.server or 'https://issues.redhat.com'
+        server = bug_config.jira_config.server or JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
@@ -1080,7 +1086,7 @@ class Runtime(GroupRuntime):
         if distgit_name not in self.image_map:
             if not required:
                 return None
-            raise DoozerFatalError("Unable to find image metadata in group / included images: %s" % distgit_name)
+            raise IOError("Unable to find image metadata in group / included images: %s" % distgit_name)
         return self.image_map[distgit_name]
 
     def late_resolve_image(self, distgit_name, add=False, required=True):
@@ -1123,8 +1129,14 @@ class Runtime(GroupRuntime):
         # Only process dependents if this image will be added to image_map.
         # When add=False, we're just loading the image to query its latest build,
         # so we should not trigger loading its dependents as a side effect.
+        # Use the same clone_source and prevent_cloning settings as the main initialization
         meta = ImageMetadata(
-            self, data_obj, self.upstream_commitish_overrides.get(data_obj.key), process_dependents=add
+            self,
+            data_obj,
+            self.upstream_commitish_overrides.get(data_obj.key),
+            clone_source=self.clone_source,
+            prevent_cloning=self.prevent_cloning,
+            process_dependents=add,
         )
         if add:
             self.image_map[distgit_name] = meta

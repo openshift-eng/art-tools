@@ -8,7 +8,6 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.metadata import MetadataBase
-from artcommonlib.model import Model
 
 
 class TestGetLatestKonfluxBuildEnforceNetworkMode(IsolatedAsyncioTestCase):

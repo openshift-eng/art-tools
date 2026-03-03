@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
+from typing import List, Tuple
 
 import koji
 from errata_tool import ErrataException, Erratum

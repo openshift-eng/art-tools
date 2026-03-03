@@ -2,10 +2,9 @@ import base64
 import hmac
 import ipaddress
 import os.path
-from typing import Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import quote, unquote
 
-import boto3
 from botocore.exceptions import ClientError
 from lambda_r2_lib import S3_BUCKET_NAME, get_r2_s3_client, get_secrets_manager_secret_dict
 

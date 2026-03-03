@@ -8,7 +8,7 @@ from typing import Awaitable, Dict, List, Optional, Tuple, Union, cast
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import to_nevra
 

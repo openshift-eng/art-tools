@@ -3,7 +3,6 @@ import logging
 import threading
 import uuid
 import warnings
-import weakref
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 

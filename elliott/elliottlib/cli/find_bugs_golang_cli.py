@@ -10,7 +10,7 @@ from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from prettytable import PrettyTable
-from pyartcd.util import get_release_name_for_assembly, load_releases_config
+from pyartcd.util import get_release_name_for_assembly
 from semver.version import Version
 
 from elliottlib import Runtime, constants, errata
@@ -89,7 +89,8 @@ class FindBugsGolangCli:
         exclude_bug_statuses: List[str],
         jql_filter: str,
         dry_run: bool,
-        csv_output: bool,
+        output_format: str = None,
+        rpms_only: bool = False,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -104,7 +105,8 @@ class FindBugsGolangCli:
         self.exclude_bug_statuses = exclude_bug_statuses
         self.jql_filter = jql_filter
         self.dry_run = dry_run
-        self.csv_output = csv_output
+        self.output_format = output_format
+        self.rpms_only = rpms_only
 
         # cache
         self.pullspec = pullspec
@@ -392,15 +394,15 @@ class FindBugsGolangCli:
                     f"{bug.cve_id} is fixed in golang builder(s) {fixed_in_builds} which are found to be "
                     f"the parent images in {self.pullspec}. Bug is considered fixed."
                 )
-                return True, comment, f"{len(fixed_builds)}/{total_builds} fixed builds", fixed_in_builds
+                return True, comment, f"{fixed_builds}/{total_builds} fixed builds", fixed_in_builds
 
-            return False, '', f"{len(fixed_builds)}/{total_builds} fixed builds", "N/A"
+            return False, '', f"{fixed_builds}/{total_builds} fixed builds", "N/A"
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
-    def move_to_qa_and_comment(self, bug: JIRABug, comment: str):
+    def move_bug_and_comment(self, bug: JIRABug, comment: str):
         if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
-            self.jira_tracker.update_bug_status(bug, 'ON_QA', comment=comment, noop=self.dry_run)
+            self.jira_tracker.update_bug_status(bug, 'VERIFIED', comment=comment, noop=self.dry_run)
         else:
             self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
 
@@ -496,6 +498,25 @@ class FindBugsGolangCli:
         logger.info(f"After filtering invalid bugs: {len(bugs)}/{initial_bug_count} remaining")
         if filtered_bugs:
             logger.info(f"Filtered out bugs: {filtered_bugs}")
+
+        # If rpms_only is set, filter out builder container bugs and image components
+        if self.rpms_only:
+            initial_bug_count = len(bugs)
+            filtered_bugs_rpms_only = []
+            for b in bugs:
+                # Skip builder container bugs
+                if b.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+                    continue
+                # Skip image components (those that start with "openshift<digit>/")
+                if re.match(r'^openshift\d+/', b.whiteboard_component):
+                    continue
+                filtered_bugs_rpms_only.append(b)
+
+            filtered_out = initial_bug_count - len(filtered_bugs_rpms_only)
+            bugs = filtered_bugs_rpms_only
+            if filtered_out > 0:
+                logger.info(f"Filtered out {filtered_out} builder/image component bug(s) due to --rpms-only flag")
+
         if not bugs:
             return
 
@@ -600,17 +621,17 @@ class FindBugsGolangCli:
         table = PrettyTable()
         table.align = "l"
         table.field_names = [
-            "Jira ID",
-            "Target Version",
-            "CVE",
+            "id",
+            "target_version",
+            "cve",
             "pscomponent",
-            "Status",
-            "Fixed",
-            "ART managed",
-            "Backported compiler build needed",
-            "NVRs",
-            "Expected Golang",
-            "Actual Golang",
+            "status",
+            "fixed",
+            "art_managed",
+            "backport_needed",
+            "nvrs",
+            "golang_expected",
+            "golang_actual",
         ]
 
         fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
@@ -681,11 +702,11 @@ class FindBugsGolangCli:
             if fixed:
                 if self.update_tracker:
                     comment = f"{comment} {art_ticket_message}"
-                    self.move_to_qa_and_comment(bug, comment)
+                    self.move_bug_and_comment(bug, comment)
                     updated_bugs.append(bug.id)
                 fixed_bugs.append(bug.id)
             elif self.force_update_tracker:
-                self.move_to_qa_and_comment(bug, art_ticket_message)
+                self.move_bug_and_comment(bug, art_ticket_message)
                 updated_bugs.append(bug.id)
             else:
                 unfixed_bugs.append(bug.id)
@@ -698,8 +719,9 @@ class FindBugsGolangCli:
             self._logger.info(f'{"DRY-RUN: " if self.dry_run else ""}Bugs updated: {sorted(updated_bugs)}')
 
         self._logger.info(f"\n{table}")
-        if self.csv_output:
-            print(table.get_formatted_string("csv"))
+        if self.output_format:
+            header = True if self.output_format == 'csv' else False
+            print(table.get_formatted_string(self.output_format, header=header))
 
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
@@ -725,13 +747,13 @@ class FindBugsGolangCli:
     "--update-tracker",
     is_flag=True,
     default=False,
-    help="If a tracker bug is fixed then comment with analysis and move to ON_QA",
+    help="If a tracker bug is fixed then comment with analysis and move to VERIFIED",
 )
 @click.option(
     "--force-update-tracker",
     is_flag=True,
     default=False,
-    help="Move to ON_QA even if tracker bug is not determined to be fixed",
+    help="Move to VERIFIED even if tracker bug is not determined to be fixed",
 )
 @click.option(
     "--component",
@@ -743,12 +765,22 @@ class FindBugsGolangCli:
 @click.option(
     "--exclude-bug-statuses",
     default=None,
-    help="Exclude bugs in these statuses. By default Verified,ON_QA are excluded."
+    help="Exclude bugs in these statuses. By default VERIFIED bugs are excluded."
     "Pass empty string to include all open statuses or comma separated list of statuses to exclude",
 )
 @click.option("--jql-filter", help="JQL filter to apply to the search")
 @click.option("--dry-run", "--noop", is_flag=True, default=False, help="Don't change anything")
-@click.option("--csv-output", is_flag=True, default=False, help="Output in CSV format")
+@click.option(
+    "--output",
+    "-o",
+    "output_format",
+    type=click.Choice(["json", "csv"]),
+    default=None,
+    help="Output format for unfixed bugs table (json or csv)",
+)
+@click.option(
+    "--rpms-only", is_flag=True, default=False, help="Ignore builder container bugs and only analyze RPM trackers"
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_golang_cli(
@@ -765,7 +797,8 @@ async def find_bugs_golang_cli(
     exclude_bug_statuses: str,
     jql_filter: str,
     dry_run: bool,
-    csv_output: bool,
+    output_format: str,
+    rpms_only: bool,
 ):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -787,10 +820,10 @@ async def find_bugs_golang_cli(
 
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
 
-    --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to ON_QA
+    --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to VERIFIED.
 
-    --force-update-tracker: Move to ON_QA even if tracker bug is not determined to be fixed. This is useful in case of
-    bugs like openshift-golang-builder where we want to move the bug to ON_QA after or close to when mass rebuild is
+    --force-update-tracker: Move to VERIFIED even if tracker bug is not determined to be fixed. This is useful in case of
+    bugs like openshift-golang-builder where we want to move the bug to VERIFIED after or close to when mass rebuild is
     triggered.
 
     --component: Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container.
@@ -830,7 +863,7 @@ async def find_bugs_golang_cli(
     exclude_bug_statuses = (
         exclude_bug_statuses.split(',')
         if exclude_bug_statuses
-        else ['Verified', 'ON_QA']
+        else ['Verified']
         if exclude_bug_statuses is None
         else []
     )
@@ -875,6 +908,7 @@ async def find_bugs_golang_cli(
         exclude_bug_statuses=exclude_bug_statuses,
         jql_filter=jql_filter,
         dry_run=dry_run,
-        csv_output=csv_output,
+        output_format=output_format,
+        rpms_only=rpms_only,
     )
     await cli.run()

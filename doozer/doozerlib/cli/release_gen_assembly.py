@@ -1,5 +1,4 @@
 import asyncio
-import json
 import re
 import sys
 from datetime import datetime
@@ -11,9 +10,9 @@ from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import (
     get_art_prod_image_repo_for_version,

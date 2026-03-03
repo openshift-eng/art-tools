@@ -35,7 +35,7 @@ import sys
 from typing import List, Optional
 
 import click
-from pyartcd.signatory import ReleaseImageInfo, SigstoreSignatory
+from pyartcd.signatory import SigstoreSignatory
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')

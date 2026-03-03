@@ -1,10 +1,9 @@
 import datetime
 import logging
-import pathlib
 import sys
 import traceback
 import unittest
-from multiprocessing import Lock, RLock, Semaphore
+from multiprocessing import RLock
 
 from doozerlib.dblib import DB, Record
 

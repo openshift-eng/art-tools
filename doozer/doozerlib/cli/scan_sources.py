@@ -16,7 +16,6 @@ from artcommonlib.util import uses_konflux_imagestream_override
 from doozerlib import brew, rhcos, util
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
-from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime

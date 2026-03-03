@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 import click
 import yaml
 from artcommonlib import exectools, gitdata
-from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
+from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_type
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Missing, Model

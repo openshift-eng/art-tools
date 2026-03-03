@@ -3,7 +3,6 @@ import os
 import shlex
 import shutil
 import tempfile
-from typing import Dict, Set
 
 import click
 import koji

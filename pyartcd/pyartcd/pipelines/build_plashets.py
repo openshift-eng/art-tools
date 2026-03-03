@@ -1,5 +1,4 @@
 import json
-import re
 import traceback
 
 import click
@@ -174,9 +173,7 @@ async def build_plashets_cli(
 
     lock = Lock.PLASHET
     lock_name = lock.value.format(assembly=assembly, group=group)
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+    lock_identifier = jenkins.get_build_path_or_random()
 
     await locks.run_with_lock(
         coro=pipeline.run(),

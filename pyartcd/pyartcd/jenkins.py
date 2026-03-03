@@ -2,6 +2,7 @@ import functools
 import logging
 import os
 import time
+import uuid
 from enum import Enum
 from typing import Optional
 from urllib.parse import unquote, urlparse
@@ -44,9 +45,10 @@ class Jobs(Enum):
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
-    OADP = 'aos-cd-builds/build%2Foadp'
-    OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
+    LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
+    LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
+    SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
 
 
 def get_jenkins_url():
@@ -97,6 +99,19 @@ def get_build_path():
 
     url = get_build_url()
     return '/'.join(url.split('/')[3:]) if url else None
+
+
+def get_build_path_or_random():
+    """
+    Returns the build path if BUILD_URL env var is set, otherwise generates a random UUID.
+    This is useful for lock identifiers when running outside of Jenkins.
+    """
+
+    build_path = get_build_path()
+    if not build_path:
+        logger.warning('Env var BUILD_URL has not been defined: using a random identifier for the locks')
+        return f'random-{uuid.uuid4()}'
+    return build_path
 
 
 def get_build_id() -> str:
@@ -718,7 +733,7 @@ def start_build_fbc(
     )
 
 
-def start_oadp(
+def start_layered_products(
     group: str,
     assembly: str,
     image_list: list = None,
@@ -734,20 +749,32 @@ def start_oadp(
         params['IMAGE_LIST'] = ','.join(image_list)
 
     return start_build(
-        job=Jobs.OADP,
+        job=Jobs.LAYERED_PRODUCTS,
         params=params,
         **kwargs,
     )
 
 
-def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
+def start_layered_products_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
     params = {
         'GROUP': group,
         'ASSEMBLY': assembly,
     }
 
     return start_build(
-        job=Jobs.OADP_SCAN,
+        job=Jobs.LAYERED_PRODUCTS_SCAN,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_scan_operator(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+
+    return start_build(
+        job=Jobs.SCAN_OPERATOR,
         params=params,
         **kwargs,
     )

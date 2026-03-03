@@ -553,10 +553,8 @@ class MetadataBase(object):
 
         if not build_record:
             self.logger.warning(
-                'No build found for %s in group and %s assembly %s',
-                self.distgit_key,
-                query_group,
-                self.runtime.assembly,
+                f"No build found for {self.distgit_key} in group {query_group} and assembly {assembly} with parameters: "
+                f"outcome={outcome}, el_target={el_target}, extra_patterns={extra_patterns}"
             )
             return default
         return build_record

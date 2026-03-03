@@ -519,14 +519,14 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
     """Test the get_task_bundle_age_days method."""
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
-    async def test_get_task_bundle_age_days_success(self, mock_cmd_gather):
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
+    async def test_get_task_bundle_age_days_success(self, mock_oc_image_info):
         """Test successful calculation of task bundle age."""
         # Mock oc image info output
         created_time = "2024-01-01T10:00:00Z"
         mock_image_info = {"config": {"created": created_time}}
 
-        mock_cmd_gather.return_value = (0, json.dumps(mock_image_info), "")
+        mock_oc_image_info.return_value = json.dumps(mock_image_info)
 
         # Mock current time to be 35 days after creation
         with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
@@ -538,42 +538,41 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 
         self.assertEqual(result, 35)
 
-        # Verify correct command was called
+        # Verify correct pullspec was queried
         expected_pullspec = "quay.io/konflux-ci/tekton-catalog/test-task@sha256:abc123"
-        expected_cmd = f"oc image info {expected_pullspec} -o json"
-        mock_cmd_gather.assert_called_once_with(expected_cmd)
+        mock_oc_image_info.assert_called_once_with(expected_pullspec)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
-    async def test_get_task_bundle_age_days_missing_created_field(self, mock_cmd_gather):
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
+    async def test_get_task_bundle_age_days_missing_created_field(self, mock_oc_image_info):
         """Test handling when created field is missing from image info."""
         mock_image_info = {"config": {}}  # Missing 'created' field
 
-        mock_cmd_gather.return_value = (0, json.dumps(mock_image_info), "")
+        mock_oc_image_info.return_value = json.dumps(mock_image_info)
 
         result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
-    async def test_get_task_bundle_age_days_command_failure(self, mock_cmd_gather):
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
+    async def test_get_task_bundle_age_days_command_failure(self, mock_oc_image_info):
         """Test handling when oc image info command fails."""
-        mock_cmd_gather.side_effect = Exception("Command failed")
+        mock_oc_image_info.side_effect = Exception("Command failed")
 
         result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
-    async def test_get_task_bundle_age_days_invalid_json(self, mock_cmd_gather):
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
+    async def test_get_task_bundle_age_days_invalid_json(self, mock_oc_image_info):
         """Test handling when oc command returns invalid JSON."""
-        mock_cmd_gather.return_value = (0, "invalid json", "")
+        mock_oc_image_info.return_value = "invalid json"
 
         result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
 
         self.assertIsNone(result)
 
-    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async')
-    async def test_get_task_bundle_age_days_timezone_handling(self, mock_cmd_gather):
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
+    async def test_get_task_bundle_age_days_timezone_handling(self, mock_oc_image_info):
         """Test proper timezone handling in age calculation."""
         # Test with different timezone formats
         test_cases = [
@@ -584,7 +583,7 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
         for created_time in test_cases:
             with self.subTest(created_time=created_time):
                 mock_image_info = {"config": {"created": created_time}}
-                mock_cmd_gather.return_value = (0, json.dumps(mock_image_info), "")
+                mock_oc_image_info.return_value = json.dumps(mock_image_info)
 
                 with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
                     mock_now = datetime(2024, 1, 11, 10, 0, 0, tzinfo=timezone.utc)

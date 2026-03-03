@@ -34,7 +34,6 @@ from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
-from kubernetes.dynamic import resource
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
@@ -406,9 +405,9 @@ class KonfluxFbcFragmentMerger:
             logger.info("Dry run enabled, not pushing changes.")
 
         # Start the build
-        retries = 3
-        for attempt in range(retries):
-            logger.info(f"Attempt {attempt + 1} of {retries} to start the build...")
+        build_attempts = self.group_config.get("konflux", {}).get("build_attempts", 3)
+        for attempt in range(build_attempts):
+            logger.info(f"Attempt {attempt + 1} of {build_attempts} to start the build...")
             error = None
             created_plr = await self._start_build(
                 build_repo=build_repo,
@@ -439,7 +438,7 @@ class KonfluxFbcFragmentMerger:
                 error = None
                 break
         if error:
-            logger.error("Build failed after %d attempts: %s", retries, error)
+            logger.error("Build failed after %d attempts: %s", build_attempts, error)
             raise error
 
     @staticmethod
@@ -677,6 +676,8 @@ class KonfluxFbcRebaser:
         nvrs = {bundle_build.operator_nvr}
         if bundle_build.operand_nvrs:
             nvrs |= set(bundle_build.operand_nvrs)
+        # Filter out "external" image NVRs - these are external images we consume but do not necessarly build (i.e postgresql, etc)
+        nvrs = {nvr for nvr in nvrs if nvr != "external"}
         assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
         ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs), exclude_large_columns=True)
         return ref_builds
@@ -772,14 +773,40 @@ class KonfluxFbcRebaser:
                 (it for it in channel['entries'] if it.get('skips')), None
             )  # Find which bundle has the skips field
             if bundle_with_skips is not None:
+                # the channel already has skips like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # - name: clusterresourceoverride-operator.v4.21.0-202602091142
+                #   skipRange: '>=4.3.0 <4.21.0-202602091142'
+                #   skips:
+                #   - clusterresourceoverride-operator.v4.21.0-202601292040
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
                 # Then we move the skips field to the new bundle
                 # and add the bundle name of bundle_with_skips to the skips field
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
             elif len(channel['entries']) == 1:
+                # The channel only has one entry like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
                 # In case the channel only contain one single entry, that bundle should
                 # become the only member of new-entry's `skip`.
-                skips = {channel['entries'][0]['name']}
+                only_entry_name = channel['entries'][0]['name']
+                if only_entry_name != olm_bundle_name:
+                    # Only if the new bundle build don't have the same name as the only_entry_name one
+                    # if the new build have the same name like 202601292040 we should do nothing(no skips)
+                    skips = {only_entry_name}
 
             # For an operator bundle that uses replaces -- such as OADP
             # Update "replaces" in the channel
@@ -1287,7 +1314,7 @@ class KonfluxFbcBuilder:
 
             # Start FBC build
             logger.info("Starting FBC build...")
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             name = dfp.labels.get('com.redhat.art.name')
             if not name:
                 raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
@@ -1331,8 +1358,8 @@ class KonfluxFbcBuilder:
             else:
                 arches = metadata.get_arches()
 
-            for attempt in range(1, retries + 1):
-                logger.info("Build attempt %d/%d", attempt, retries)
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,

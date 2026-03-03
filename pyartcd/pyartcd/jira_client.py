@@ -128,14 +128,16 @@ class JIRAClient:
 
     @staticmethod
     def render_jira_template(fields: Dict, template_vars: Dict):
+        # autoescape=False because JIRA uses its own markup format, not HTML.
+        # Autoescaping also breaks with MissingModel objects from artcommonlib.model.
         fields.copy()
         try:
-            fields["summary"] = jinja2.Template(fields["summary"], autoescape=True).render(template_vars)
+            fields["summary"] = jinja2.Template(fields["summary"], autoescape=False).render(template_vars)
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         try:
             fields["description"] = (
-                jinja2.Template(fields["description"], autoescape=True).render(template_vars).strip()
+                jinja2.Template(fields["description"], autoescape=False).render(template_vars).strip()
             )
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)

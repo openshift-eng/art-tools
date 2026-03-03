@@ -1,11 +1,9 @@
-import os
 import sys
 from dataclasses import dataclass
 from typing import Optional
 
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.format_util import green_print, red_print
 from artcommonlib.util import (
     get_utc_now_formatted_str,
@@ -21,7 +19,6 @@ from doozerlib.backend.konflux_client import (
     KIND_SNAPSHOT,
     KonfluxClient,
 )
-from doozerlib.constants import KONFLUX_UI_HOST
 from kubernetes.dynamic import ResourceInstance, exceptions
 
 from elliottlib.cli.common import cli, click_coroutine

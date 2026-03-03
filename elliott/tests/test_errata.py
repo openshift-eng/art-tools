@@ -9,7 +9,7 @@ from unittest import mock
 from unittest.mock import Mock, patch
 
 import errata_tool
-from elliottlib import brew, constants, errata, exceptions
+from elliottlib import errata
 from flexmock import flexmock
 
 from . import test_structures

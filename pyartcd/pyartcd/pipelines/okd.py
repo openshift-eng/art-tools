@@ -22,6 +22,7 @@ from pyartcd.locks import Lock
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy, EnumEncoder
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
+    build_history_link_url,
     default_release_suffix,
     get_group_images,
     increment_rebase_fail_counter,
@@ -117,6 +118,7 @@ class KonfluxOkdPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
             load_okd_only=True,
@@ -490,25 +492,41 @@ class KonfluxOkdPipeline:
         Mirrors:
         - origin/scos-{version}:stream-coreos -> origin/scos-{version}-art:stream-coreos
         - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+
+        Special cases:
+        - 4.21 and 4.22: Skip mirroring (handled by https://github.com/openshift/release/pull/74529/)
+        - 4.23 and 5.0: Use 4.22 as the source
         """
 
         if self.assembly != 'stream':
             self.logger.info('Assembly is not "stream"; skipping CoreOS imagestream mirroring')
             return
 
+        if not self.built_images:
+            self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
+            return
+
+        # Skip mirroring for 4.21 and 4.22 as it's handled by openshift/release PR #74529
+        if self.version in ['4.21', '4.22']:
+            self.logger.info('Version %s: CoreOS mirroring is handled by openshift/release; skipping', self.version)
+            return
+
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
+
+        # For OKD 4.23 and 5.0, use 4.22 as the source
+        source_version = '4.22' if self.version in ['4.23', '5.0'] else self.version
 
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
-                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{self.version}:{tag}')
+                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{source_version}:{tag}')
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
 
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_tag = f'{self.imagestream_namespace}/scos-{self.version}:{tag}'
+            source_tag = f'{self.imagestream_namespace}/scos-{source_version}:{tag}'
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
             self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_tag, target_tag)
@@ -595,6 +613,13 @@ class KonfluxOkdPipeline:
             raise ValueError(f'Invalid build strategy: {build_strategy}')
 
     def finalize(self):
+        # Add link to art-build-history at the end of the job
+        # OKD uses okd-X.Y for the group name in art-build-history
+        okd_group = f'okd-{self.version}'
+        job_url = os.getenv('BUILD_URL', '')
+        build_history_url = build_history_link_url(group=okd_group, assembly=self.assembly, days=2, job_url=job_url)
+        jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
+
         state = self.load_state_yaml()
         if state.get('status') != STATE_PASS:
             sys.exit(1)
@@ -666,9 +691,7 @@ async def okd(
     build_priority: Optional[str],
     imagestream_namespace: str,
 ):
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+    lock_identifier = jenkins.get_build_path_or_random()
 
     pipeline = KonfluxOkdPipeline(
         runtime=runtime,

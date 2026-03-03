@@ -4,7 +4,6 @@ from typing import Dict, List, Optional
 
 import click
 import koji
-from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_rhcos_config, assembly_type
 

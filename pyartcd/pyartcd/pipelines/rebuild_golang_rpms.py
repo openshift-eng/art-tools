@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 from typing import List
@@ -11,8 +12,9 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
 from ghapi.all import GhApi
+from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, jenkins
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.pipelines.update_golang import extract_and_validate_golang_nvrs, is_latest_and_available, move_golang_bugs
 from pyartcd.runtime import Runtime
@@ -35,6 +37,7 @@ class RebuildGolangRPMsPipeline:
         go_nvrs: List[str],
         force: bool = False,
         rpms: List[str] = None,
+        all: bool = False,
     ):
         if "Specfile" not in globals():
             raise RuntimeError("This pipeline requires the 'specfile' module, which is only available on Linux")
@@ -45,12 +48,74 @@ class RebuildGolangRPMsPipeline:
         self.cves = cves
         self.force = force
         self.rpms = rpms
+        self.all = all
         self.koji_session = koji.ClientSession(BREW_HUB)
+
+    async def get_rpms_from_open_trackers(self) -> List[str]:
+        """Fetch RPMs that need rebuilding using find-bugs:golang command.
+
+        This method invokes the find-bugs:golang command to identify which RPMs
+        are affected by golang security issues and returns the list of RPMs
+        that need to be rebuilt.
+
+        Returns:
+            List[str]: List of RPM names that need rebuilding
+        """
+        _LOGGER.info('Fetching RPMs affected by golang security issues from find-bugs:golang')
+
+        cve_args = ""
+        if self.cves:
+            cve_args = ' '.join([f"--cve-id {cve}" for cve in self.cves])
+
+        nvr_args = ""
+        if self.go_nvrs:
+            nvr_args = ' '.join([f"--fixed-in-nvr {nvr}" for nvr in self.go_nvrs])
+
+        cmd = (
+            f"elliott --group openshift-{self.ocp_version} --assembly stream find-bugs:golang "
+            f"--analyze {cve_args} {nvr_args} --rpms-only -o json"
+        )
+
+        # Execute the command and capture output
+        _, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        if stderr:
+            _LOGGER.info("Command stderr:\n %s", stderr)
+        if stdout:
+            _LOGGER.info("Command stdout:\n %s", stdout)
+
+        if not stdout or not stdout.strip():
+            _LOGGER.info('No output from find-bugs:golang command, no unfixed bugs found')
+            return []
+
+        json_data = json.loads(stdout)
+        if not json_data:
+            _LOGGER.info('No unfixed bugs found in find-bugs:golang output')
+            return []
+
+        # Extract RPM names (pscomponent) from unfixed bugs
+        rpms_to_rebuild = set()
+        for bug in json_data:
+            # better to panic here if pscomponent is missing since it means find-bugs:golang output format has changed in an unexpected way
+            component = bug['pscomponent']
+            rpms_to_rebuild.add(component)
+            _LOGGER.info(f"Adding RPM {component} from unfixed bug {bug['id']}")
+
+        rpms_list = sorted(list(rpms_to_rebuild))
+        _LOGGER.info(f'Found {len(rpms_list)} RPMs to rebuild from find-bugs:golang: {rpms_list}')
+        return rpms_list
 
     async def run(self):
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+
+        # If all=False and rpms is empty, fetch RPMs from find-bugs:golang
+        if not self.all and not self.rpms:
+            _LOGGER.info('all=False and rpms is empty, fetching RPMs from find-bugs:golang')
+            self.rpms = await self.get_rpms_from_open_trackers()
+            if not self.rpms:
+                _LOGGER.info('No open rpm trackers found, exiting pipeline')
+                return
 
         # For rpms - first make sure builds are tagged and available
         _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')
@@ -140,20 +205,28 @@ class RebuildGolangRPMsPipeline:
             ],
             return_exceptions=True,
         )
-        list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
-        failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
+        list_of_rpms = [rpm for _, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
+        failed_rpms_with_results = [
+            (rpm, result) for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)
+        ]
+        failed_rpms = [rpm for rpm, _ in failed_rpms_with_results]
         if failed_rpms:
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
+            for rpm, result in failed_rpms_with_results:
+                _LOGGER.error(f'Error for {rpm}: {result}')
             await self.notify_failed_rpms(failed_rpms)
 
         # bugs will only be moved if good builds are found
         # so we can run this even if some rpms failed
-        await move_golang_bugs(
-            ocp_version=self.ocp_version,
-            cves=self.cves,
-            nvrs=self.go_nvrs if self.cves else None,
-            dry_run=self.runtime.dry_run,
-        )
+        # skip if all rpms failed
+        if len(failed_rpms) < len(list_of_rpms):
+            await move_golang_bugs(
+                ocp_version=self.ocp_version,
+                cves=self.cves,
+                nvrs=self.go_nvrs if self.cves else None,
+                rpms_only=True,
+                dry_run=self.runtime.dry_run,
+            )
 
         if failed_rpms:
             raise RuntimeError(f'Bumping and rebuilding failed for these rpms: {failed_rpms}')
@@ -186,13 +259,25 @@ class RebuildGolangRPMsPipeline:
             dry_run=self.runtime.dry_run,
         )
 
-    async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
+    @staticmethod
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    async def rhpkg_clone(branch, rpm, dg_dir):
+        cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
+        await exectools.cmd_assert_async(cmd)
+
+    async def bump_and_rebuild_rpm(self, rpm, el_v, author, email) -> bool:
+        """
+        Try to bump and rebuild the given rpm for the given el version.
+
+        Return True if the build is successful.
+        Exception is raised if there was an error during the process.
+        """
+
         branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
         dg_dir = f'{rpm}-{el_v}'
         # check if dir exists
         if not os.path.isdir(dg_dir):
-            cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
-            await exectools.cmd_assert_async(cmd)
+            await self.rhpkg_clone(branch, rpm, dg_dir)
         else:
             await exectools.cmd_assert_async('git reset --hard', cwd=dg_dir)
             await exectools.cmd_assert_async('git fetch --all', cwd=dg_dir)
@@ -200,48 +285,57 @@ class RebuildGolangRPMsPipeline:
         await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=dg_dir)
 
         # get last commit message on this branch
+        skip_bump = False
         bump_msg = f'Bump and rebuild with latest golang, resolves {self.art_jira}'
         rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=dg_dir)
         if rc != 0:
             raise ValueError(f'Cannot get last commit message for {rpm} for {branch}')
         if bump_msg in commit_message:
-            _LOGGER.info(f'{dg_dir}/{branch} - Bump commit exists on branch, build in queue? skipping')
-            return
+            _LOGGER.warning(f'{dg_dir}/{branch} - Bump commit exists on branch, build in queue?')
+            if not self.force:
+                raise ValueError(
+                    f'Bump commit already exists for {rpm} for {branch}. Use --force to trigger another build anyway'
+                )
+            else:
+                _LOGGER.warning('Forcing another build since --force flag is set')
+                skip_bump = True
 
-        # get all .spec files
-        specs = [f for f in os.listdir(dg_dir) if f.endswith('.spec')]
-        if len(specs) != 1:
-            raise ValueError(f'Expected to find only 1 .spec file in {dg_dir}, found: {specs}')
+        if not skip_bump:
+            # get all .spec files
+            specs = [f for f in os.listdir(dg_dir) if f.endswith('.spec')]
+            if len(specs) != 1:
+                raise ValueError(f'Expected to find only 1 .spec file in {dg_dir}, found: {specs}')
 
-        spec = Specfile(os.path.join(dg_dir, specs[0]))
+            spec = Specfile(os.path.join(dg_dir, specs[0]))
+            _LOGGER.info(f'{dg_dir}/{branch} - Bumping release in specfile')
+            _LOGGER.info(f'{dg_dir}/{branch} - Current release in specfile: {spec.release}')
+            spec.release = self.bump_release(spec.release)
+            _LOGGER.info(f'{dg_dir}/{branch} - New release in specfile: {spec.release}')
+            _LOGGER.info(f'{dg_dir}/{branch} - Adding changelog entry in specfile')
+            spec.add_changelog_entry(
+                bump_msg,
+                author=author,
+                email=email,
+                timestamp=datetime.date.today(),
+            )
 
-        _LOGGER.info(f'{dg_dir}/{branch} - Bumping release in specfile')
-
-        _LOGGER.info(f'{dg_dir}/{branch} - Current release in specfile: {spec.release}')
-
-        spec.release = self.bump_release(spec.release)
-
-        _LOGGER.info(f'{dg_dir}/{branch} - New release in specfile: {spec.release}')
-
-        _LOGGER.info(f'{dg_dir}/{branch} - Adding changelog entry in specfile')
-        spec.add_changelog_entry(
-            bump_msg,
-            author=author,
-            email=email,
-            timestamp=datetime.date.today(),
-        )
+            if self.runtime.dry_run:
+                _LOGGER.info(f'{dg_dir}/{branch} - Dry run, would have added changelog entry and pushed commit')
+            else:
+                spec.save()
+                cmd = f'git commit -am "{bump_msg}"'
+                await exectools.cmd_assert_async(cmd, cwd=dg_dir)
+                cmd = 'git push'
+                await exectools.cmd_assert_async(cmd, cwd=dg_dir)
 
         if self.runtime.dry_run:
-            _LOGGER.info(f"{dg_dir}/{branch} - Dry run, would've committed changes and triggered build")
-            return
+            _LOGGER.info(f'{dg_dir}/{branch} - Dry run, would have triggered build')
+        else:
+            cmd = 'rhpkg build'
+            await exectools.cmd_assert_async(cmd, cwd=dg_dir)
 
-        spec.save()
-        cmd = f'git commit -am "{bump_msg}"'
-        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
-        cmd = 'git push'
-        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
-        cmd = 'rhpkg build'
-        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
+        _LOGGER.info(f'{dg_dir}/{branch} - Successfully built rpm {rpm}')
+        return True
 
     def get_rpms(self, el_v):
         # get all the go rpms from the candidate tag
@@ -285,16 +379,36 @@ class RebuildGolangRPMsPipeline:
 )
 @click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
 @click.option('--rpms', help='Only consider these rpm(s) for rebuild')
+@click.option(
+    '--all',
+    'all',
+    is_flag=True,
+    default=False,
+    help='Rebuild all rpms. By default, only rebuild rpms affected by golang security issues',
+)
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
 async def rebuild_golang_rpms(
-    runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, go_nvrs: List[str]
+    runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, all: bool, go_nvrs: List[str]
 ):
+    if all and rpms:
+        raise ValueError(
+            "Cannot specify --rpms when --all is set since --all means to rebuild all rpms regardless of what is specified in --rpms"
+        )
+
     if rpms:
         rpms = rpms.split(',')
     if cves:
         cves = cves.split(',')
+
     await RebuildGolangRPMsPipeline(
-        runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves, force=force, rpms=rpms, go_nvrs=go_nvrs
+        runtime,
+        ocp_version=ocp_version,
+        art_jira=art_jira,
+        cves=cves,
+        force=force,
+        rpms=rpms,
+        all=all,
+        go_nvrs=go_nvrs,
     ).run()

@@ -1,17 +1,13 @@
-import asyncio
 import logging
 import shutil
 import urllib.parse
 from pathlib import Path
-from typing import List, Optional, Sequence, Union, cast
+from typing import Optional, Union
 
 import aiofiles
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
 from artcommonlib.telemetry import start_as_current_span_async
-from doozerlib import constants
-from doozerlib.image import ImageMetadata
-from doozerlib.source_resolver import SourceResolution
 from opentelemetry import trace
 
 LOGGER = logging.getLogger(__name__)

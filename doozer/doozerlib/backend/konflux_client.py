@@ -8,12 +8,10 @@ import re
 import tempfile
 import threading
 import time
-import traceback
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Union, cast
 from urllib.parse import parse_qs, urlparse
 
-import aiohttp
 import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
@@ -26,7 +24,6 @@ from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)

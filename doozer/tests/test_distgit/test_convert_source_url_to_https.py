@@ -1,7 +1,6 @@
 import unittest
 
 import artcommonlib.util
-from doozerlib import util
 
 
 class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):

@@ -1,21 +1,20 @@
 import asyncio
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import total_ordering
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 import aiohttp
 import yaml
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.rpm_utils import compare_nvr
 from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
-from doozerlib.repodata import Repodata, Rpm, RpmModule
+from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)
@@ -731,8 +730,7 @@ class ArtifactLockfileGenerator:
 
         artifact_infos = []
         async with aiohttp.ClientSession() as session:
-            for url in required_artifact_urls:
-                artifact_resource = {'name': self._extract_filename_from_url(url), 'url': url}
+            for artifact_resource in required_artifact_urls:
                 artifact_info = await self._download_and_compute_checksum(session, artifact_resource)
                 artifact_infos.append(artifact_info)
 
@@ -750,12 +748,13 @@ class ArtifactLockfileGenerator:
 
         Args:
             session (aiohttp.ClientSession): HTTP session for downloads.
-            artifact_resource (dict): Resource definition with 'name' and 'url' keys.
+            artifact_resource (dict): Resource definition with 'url' and optional 'filename' keys.
 
         Returns:
             ArtifactInfo: Artifact metadata with checksum.
         """
         url = artifact_resource['url']
+        custom_filename = artifact_resource.get('filename')
 
         self.logger.debug(f"Downloading artifact from {url}")
 
@@ -765,18 +764,12 @@ class ArtifactLockfileGenerator:
 
         checksum = hashlib.sha256(content).hexdigest()
 
-        # Extract filename from URL
-        try:
-            from urllib.parse import urlparse
-
-            parsed_url = urlparse(url)
-            filename = parsed_url.path.split('/')[-1]
-            if not filename:
-                # Fallback if URL doesn't end with a filename
-                filename = f"{artifact_resource['name']}-artifact"
-        except Exception:
-            # Fallback if URL parsing fails
-            filename = f"{artifact_resource['name']}-artifact"
+        # Use custom filename if provided, otherwise extract from URL
+        if custom_filename:
+            filename = custom_filename
+            self.logger.info(f"Using custom destination filename: {filename} for {url}")
+        else:
+            filename = self._extract_filename_from_url(url)
 
         return ArtifactInfo(url=url, checksum=f"sha256:{checksum}", filename=filename)
 

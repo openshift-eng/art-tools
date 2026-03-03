@@ -26,6 +26,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
+    build_history_link_url,
     get_group_images,
     get_group_rpms,
     increment_rebase_fail_counter,
@@ -84,6 +85,7 @@ class KonfluxOcpPipeline:
         kubeconfig: Optional[str] = None,
         skip_rebase: bool = None,
         skip_bundle_build: bool = None,
+        skip_build_sync_konflux: bool = False,
         arches: Tuple[str, ...] = None,
         plr_template: str = None,
         lock_identifier: str = None,
@@ -102,6 +104,7 @@ class KonfluxOcpPipeline:
         self.arches = arches
         self.skip_rebase = skip_rebase
         self.skip_bundle_build = skip_bundle_build
+        self.skip_build_sync_konflux = skip_build_sync_konflux
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.skip_plashets = skip_plashets
@@ -353,6 +356,10 @@ class KonfluxOcpPipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
             return
 
+        if self.skip_build_sync_konflux:
+            LOGGER.warning("Skipping build-sync-konflux step because --skip-build-sync-konflux flag is set")
+            return
+
         # Determine arches to be excluded as the difference between the group configured arches,
         # and the arches selected from current build. If self.arches is empty, it means that we're building all arches
         # and no arches should be excluded
@@ -374,7 +381,7 @@ class KonfluxOcpPipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD="false",
+            SKIP_MULTI_ARCH_PAYLOAD="auto",
         )
 
     async def mirror_streams_to_ci(self):
@@ -468,6 +475,7 @@ class KonfluxOcpPipeline:
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
@@ -477,6 +485,7 @@ class KonfluxOcpPipeline:
         group_rpms = await get_group_rpms(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
+            working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
         )
@@ -754,7 +763,15 @@ class KonfluxOcpPipeline:
             await run_safe(self.mirror_images, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
-            await self.clean_up()
+            try:
+                await self.clean_up()
+            finally:
+                # Add link to art-build-history at the end of the job
+                job_url = os.getenv('BUILD_URL', '')
+                build_history_url = build_history_link_url(
+                    group=f'openshift-{self.version}', assembly=self.assembly, days=2, job_url=job_url
+                )
+                jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
 
             # Re-raise to mark build as UNSTABLE if any critical operations failed
             if critical_failures:
@@ -849,6 +866,7 @@ class KonfluxOcpPipeline:
 )
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
+@click.option("--skip-build-sync-konflux", is_flag=True, help="(For testing) Skip the build-sync-konflux step")
 @click.option(
     "--arch", "arches", metavar="TAG", multiple=True, help="(Optional) [MULTIPLE] Limit included arches to this list"
 )
@@ -899,6 +917,7 @@ async def ocp4(
     ignore_locks: bool,
     skip_rebase: bool,
     skip_bundle_build: bool,
+    skip_build_sync_konflux: bool,
     arches: Tuple[str, ...],
     plr_template: str,
     skip_plashets,
@@ -909,9 +928,7 @@ async def ocp4(
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+    lock_identifier = jenkins.get_build_path_or_random()
 
     pipeline = KonfluxOcpPipeline(
         runtime=runtime,
@@ -926,6 +943,7 @@ async def ocp4(
         kubeconfig=kubeconfig,
         skip_rebase=skip_rebase,
         skip_bundle_build=skip_bundle_build,
+        skip_build_sync_konflux=skip_build_sync_konflux,
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,

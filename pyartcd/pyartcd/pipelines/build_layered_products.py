@@ -1,7 +1,6 @@
 import logging
 import os
 import traceback
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -19,8 +18,8 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, load_group_config
 
 
-class BuildOadpPipeline:
-    """Rebase and build OADP for an assembly"""
+class BuildLayeredProductsPipeline:
+    """Rebase and build layered products for an assembly"""
 
     def __init__(
         self,
@@ -35,6 +34,7 @@ class BuildOadpPipeline:
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
         network_mode: Optional[str] = None,
+        plr_template: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -47,6 +47,7 @@ class BuildOadpPipeline:
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
         self.network_mode = network_mode
+        self.plr_template = plr_template
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -102,7 +103,7 @@ class BuildOadpPipeline:
             return record_log
 
     async def run(self):
-        """Run the OADP rebase and build pipeline"""
+        """Run the layered products rebase and build pipeline"""
         # Load group config once for both version and product information
         group_config = await load_group_config(
             group=self.group,
@@ -124,7 +125,7 @@ class BuildOadpPipeline:
         self.trigger_bundle_build()
 
     async def _rebase_and_build(self, product: str):
-        """Rebase and build OADP image"""
+        """Rebase and build layered product image"""
         release = default_release_suffix()
 
         group_param = f"--group={self.group}"
@@ -135,7 +136,7 @@ class BuildOadpPipeline:
         if self.skip_rebase:
             self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
         else:
-            # Rebase OADP image
+            # Rebase layered product image
             self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
 
             rebase_cmd = [
@@ -160,7 +161,7 @@ class BuildOadpPipeline:
             await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
             self._logger.info(f"Successfully rebased {self.image_list}")
 
-        # Build OADP image
+        # Build layered product image
         self._logger.info(f"Building {self.image_list} image for assembly {self.assembly}")
         build_cmd = [
             "doozer",
@@ -194,6 +195,14 @@ class BuildOadpPipeline:
                 kubeconfig,
             ]
         )
+        if self.plr_template:
+            plr_template_owner, plr_template_branch = (
+                self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
+            )
+            plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                owner=plr_template_owner, branch_name=plr_template_branch
+            )
+            build_cmd.extend(['--plr-template', plr_template_url])
         if self.network_mode:
             build_cmd.extend(['--network-mode', self.network_mode])
         if self.runtime.dry_run:
@@ -209,7 +218,7 @@ class BuildOadpPipeline:
         self._logger.info(f"Successfully built {self.image_list}")
 
 
-@cli.command("build-oadp")
+@cli.command("build-layered-products")
 @click.option(
     "--data-path",
     metavar='BUILD_DATA',
@@ -227,7 +236,7 @@ class BuildOadpPipeline:
     "--version",
     metavar='NAME',
     required=False,
-    help="OADP version (if not provided, will be read from group config)",
+    help="Layered product version (if not provided, will be read from group config)",
 )
 @click.option(
     "--assembly",
@@ -255,9 +264,15 @@ class BuildOadpPipeline:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
+@click.option(
+    '--plr-template',
+    required=False,
+    default='',
+    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+)
 @pass_runtime
 @click_coroutine
-async def build_oadp(
+async def build_layered_products(
     runtime: Runtime,
     data_path: str,
     group: str,
@@ -270,10 +285,11 @@ async def build_oadp(
     data_gitref: Optional[str],
     network_mode: Optional[str],
     ignore_locks: bool,
+    plr_template: str,
 ):
-    """Rebase and build OADP image for an assembly"""
+    """Rebase and build layered product image for an assembly"""
     try:
-        pipeline = BuildOadpPipeline(
+        pipeline = BuildLayeredProductsPipeline(
             runtime=runtime,
             group=group,
             version=version,
@@ -285,13 +301,10 @@ async def build_oadp(
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
             network_mode=network_mode,
+            plr_template=plr_template,
         )
 
-        lock_identifier = jenkins.get_build_path()
-        if not lock_identifier:
-            runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
-            )
+        lock_identifier = jenkins.get_build_path_or_random()
 
         if ignore_locks:
             await pipeline.run()
@@ -303,6 +316,6 @@ async def build_oadp(
                 lock_id=lock_identifier,
             )
     except Exception as err:
-        error_message = f"build-oadp pipeline encountered error: {err}\n{traceback.format_exc()}"
+        error_message = f"build-layered-products pipeline encountered error: {err}\n{traceback.format_exc()}"
         runtime.logger.error(error_message)
         raise

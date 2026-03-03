@@ -15,7 +15,7 @@ from artcommonlib.rhcos import RhcosMissingContainerException, get_container_con
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
-from doozerlib import Runtime, brew, util
+from doozerlib import Runtime, brew
 from doozerlib.build_info import BuildRecordInspector
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
@@ -44,7 +44,7 @@ class AssemblyInspector:
             str, Dict[str, Optional[Dict]]
         ] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
-        self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
+        self._rpm_deliveries: Dict[str, List[RPMDelivery]] = {}  # Dict[package_name] => list of RpmDelivery configs
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
 
     async def initialize(self, lookup_mode: Optional[str] = "both"):
@@ -79,9 +79,7 @@ class AssemblyInspector:
             for entry in rpm_deliveries:
                 packages = entry.packages
                 for package in packages:
-                    if package in self._rpm_deliveries:
-                        raise ValueError(f"Duplicate package {package} defined in rpm_deliveries config")
-                    self._rpm_deliveries[package] = entry
+                    self._rpm_deliveries.setdefault(package, []).append(entry)
 
     def get_type(self) -> AssemblyTypes:
         return self.assembly_type
@@ -117,22 +115,22 @@ class AssemblyInspector:
         issues: List[AssemblyIssue] = []
         for package_name, rpm_build in rpm_packages.items():
             if package_name in self._rpm_deliveries:
-                rpm_delivery_config = self._rpm_deliveries[package_name]
                 self.runtime.logger.info("Getting tags for rpm build %s...", rpm_build['nvr'])
                 tag_names = {
                     tag["name"]
                     for tag in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=rpm_build["id"])
                 }
-                # If the rpm is tagged into the stop-ship tag, it is never permissible
-                if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
-                    issues.append(
-                        AssemblyIssue(
-                            f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
-                            component=component,
-                            code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
+                for rpm_delivery_config in self._rpm_deliveries[package_name]:
+                    # If the rpm is tagged into the stop-ship tag, it is never permissible
+                    if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
+                        issues.append(
+                            AssemblyIssue(
+                                f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
+                                component=component,
+                                code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
+                            )
                         )
-                    )
-                    continue
+                        continue
         return issues
 
     def check_installed_rpms_in_image(

@@ -1,5 +1,4 @@
 import asyncio
-import os
 import sys
 from collections import defaultdict
 from functools import lru_cache
@@ -25,7 +24,6 @@ from artcommonlib.util import (
     resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
-from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
 from doozerlib.util import oc_image_info_for_arch_async

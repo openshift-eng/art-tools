@@ -4,7 +4,6 @@ import io
 import logging
 import os
 import re
-from datetime import datetime, timezone
 from typing import List, cast
 
 import click
@@ -17,18 +16,15 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.brew import watch_task_async
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from ghapi.all import GhApi
-from github import Github, GithubException
-from ruamel.yaml import YAML
+from github import Github
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.constants import GITHUB_OWNER
-from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
+from pyartcd.util import default_release_suffix
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -84,8 +80,9 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     if (major, minor) < (4, 12):
         raise ValueError(f'Only OCP 4.12+ is supported, found: {ocp_version}')
 
-    # only rhel 8 and 9 are supported 4.12 onwards
     supported_els = {8, 9}
+    if (major, minor) >= (4, 21):
+        supported_els.add(10)
 
     if len(go_nvrs) > len(supported_els):
         raise click.BadParameter(f'There should be max 1 nvr for each supported rhel version: {supported_els}')
@@ -124,6 +121,7 @@ async def move_golang_bugs(
     nvrs: list[str] | None = None,
     components: list[str] | None = None,
     force_update_tracker: bool = False,
+    rpms_only: bool = False,
     dry_run: bool = False,
 ):
     cmd = [
@@ -147,6 +145,8 @@ async def move_golang_bugs(
             cmd.extend(['--component', component])
     if force_update_tracker:
         cmd.append('--force-update-tracker')
+    if rpms_only:
+        cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
     await exectools.cmd_assert_async(cmd)
@@ -209,6 +209,11 @@ class UpdateGolangPipeline:
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+
+        # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
+        el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
+        if el_nvr_map.keys() - el_nvr_map_for_images.keys():
+            _LOGGER.info("RHEL 10 NVRs will only be used for build root tagging, not for golang-builder images")
         self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
@@ -244,22 +249,27 @@ class UpdateGolangPipeline:
             await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
+        # Only for RHEL versions that support golang-builder images (excludes el10 for now)
         brew_nvrs = {}
         konflux_nvrs = {}
         if not self.force_image_build:
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
         # Determine which rhel versions need builds
-        brew_missing = el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-        konflux_missing = el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+        brew_missing = (
+            el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+        )
+        konflux_missing = (
+            el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+        )
 
         if brew_missing or konflux_missing:
-            # FIXME: yuxzhu: already broken
-            # for el_v in missing_in:
-            #     self.verify_golang_builder_repo(el_v, go_version)
+            if not self.external_golang_rpms:
+                for el_v in el_nvr_map_for_images.keys():
+                    self.verify_golang_builder_repo(el_v, go_version)
 
             # Rebase and build missing images
             build_tasks = []
@@ -268,22 +278,26 @@ class UpdateGolangPipeline:
             if self.build_system in ['both', 'konflux'] and konflux_missing:
                 build_tasks.extend([self._rebase_and_build_konflux(el_v, go_version) for el_v in konflux_missing])
             if build_tasks:
-                await asyncio.gather(*build_tasks)
+                results = await asyncio.gather(*build_tasks, return_exceptions=True)
+            errors = [r for r in results if isinstance(r, Exception)]
+            if errors:
+                error_msgs = "\n".join([str(e) for e in errors])
+                raise RuntimeError(f"{len(errors)} image build(s) failed:\n{error_msgs}")
 
-            # Now all builders should be available, try to fetch again
+            # Now all builders should be available, fetch again
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map, go_version)
+                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
-            # Check if we still have missing builds
             brew_still_missing = (
-                el_nvr_map.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
+                el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
             )
             konflux_still_missing = (
-                el_nvr_map.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+                el_nvr_map_for_images.keys() - konflux_nvrs.keys()
+                if self.build_system in ['both', 'konflux']
+                else set()
             )
-
             if brew_still_missing or konflux_still_missing:
                 error_parts = []
                 if brew_still_missing:
@@ -445,7 +459,11 @@ class UpdateGolangPipeline:
         go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(found_records.values(), _LOGGER)
         for builder_go_vr, nvrs in go_nvr_map.items():
             for el_v, go_nvr in el_nvr_map.items():
-                if builder_go_vr in go_nvr:
+                # Strip RHEL minor version suffix (e.g. el9_5 -> el9) from both sides,
+                # since installed RPMs may have a more specific dist tag than the input NVR
+                normalized_builder = re.sub(r'\.el(\d+)_\d+$', r'.el\1', builder_go_vr)
+                normalized_input = re.sub(r'\.el(\d+)_\d+$', r'.el\1', go_nvr)
+                if normalized_builder in normalized_input:
                     for nvr in nvrs:
                         nvr_str = f"{nvr[0]}-{nvr[1]}-{nvr[2]}"
                         _LOGGER.info(f"Found existing builder image in Konflux: {nvr_str} built with {go_nvr}")
@@ -627,7 +645,7 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
-        release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
+        release = default_release_suffix()
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
@@ -691,7 +709,7 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             branch += f'@{self.data_gitref}'
         version = f"v{go_version}"
-        release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
+        release = default_release_suffix()
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-konflux-{el_v}",
@@ -756,7 +774,6 @@ class UpdateGolangPipeline:
         return f'rhel-{el_v}-golang-{go_v}'
 
     def verify_golang_builder_repo(self, el_v, go_version):
-        # FIXME: yuxzhu: this is already broken
         # read group.yml from the golang branch using ghapi
         owner, repo = 'openshift-eng', 'ocp-build-data'
         branch = self.get_golang_branch(el_v, go_version)
@@ -765,7 +782,7 @@ class UpdateGolangPipeline:
         api = GhApi(owner=owner, repo=repo, token=self.github_token)
         blob = api.repos.get_content(filename, ref=branch)
         group_config = yaml.load(base64.b64decode(blob['content']))
-        content_repo_url = self.get_content_repo_url(el_v)
+        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
@@ -775,25 +792,24 @@ class UpdateGolangPipeline:
                 "name please correct it."
             )
 
-        expected = {
-            arch: f'{content_repo_url}/{arch}/' for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()
-        }
-
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        actual = {
-            arch: val.format(MAJOR=major, MINOR=minor)
-            for arch, val in group_config['repos'][golang_repo]['conf']['baseurl'].items()
-        }
+        err = False
+        for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
+            expected_suffix = f'{content_repo_url_suffix}/{arch}/'
+            actual_url = template_url.format(MAJOR=major, MINOR=minor)
+            if not actual_url.endswith(expected_suffix):
+                err = True
+                _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
 
-        if expected != actual:
+        if err:
             raise ValueError(
-                f"Did not find repo {golang_repo} to have the expected urls. \nexpected={expected}\nactual={actual}"
+                f"Content repo URLs for {golang_repo} in {branch} do not look correct. Wrong MAJOR/MINOR vars?"
             )
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_content_repo_url(self, el_v):
-        url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
+    def get_content_repo_url_suffix(self, el_v):
+        url = '/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
 
     def get_module_tag(self, nvr, el_v) -> str:

@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.model import Model
 from doozerlib import rhcos
-from doozerlib.repodata import Repodata, Rpm
-from doozerlib.repos import Repos
+from doozerlib.repodata import Repodata
 
 
 class TestRhcosOptimized(unittest.TestCase):
