@@ -704,7 +704,7 @@ class KonfluxOcpPipeline:
             release = build["nvrs"].split("-")[-1]
             image_pullspec = build["image_pullspec"]
 
-            if self.assembly != "stream":
+            if self.assembly not in ("stream", "test"):
                 LOGGER.info(f"Not syncing {image_pullspec} because assembly {self.assembly} != stream")
                 return
 

@@ -104,7 +104,12 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
     nvr1["epoch"] = nvr1.get("epoch", None)
     nvr2["epoch"] = nvr2.get("epoch", None)
 
-    if nvr1["name"] != nvr2["name"]:
+    # Normalize package names by removing -container suffix for comparison
+    # This handles legacy vs new naming conventions
+    name1 = nvr1["name"].removesuffix("-container")
+    name2 = nvr2["name"].removesuffix("-container")
+
+    if name1 != name2:
         raise ValueError("Package names doesn't match: %s, %s" % (nvr1["name"], nvr2["name"]))
 
     if ignore_epoch:
