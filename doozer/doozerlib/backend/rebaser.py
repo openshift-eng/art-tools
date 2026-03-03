@@ -858,7 +858,21 @@ class KonfluxRebaser:
 
         el_ver = 0
         try:
-            el_ver = metadata.branch_el_target()
+            # For OKD builds, use okd.branch from group config if available
+            # This allows a single setting in group.yml to control the scos version
+            # for all OKD builds (e.g., okd.branch: rhaos-{MAJOR}.{MINOR}-rhel-10)
+            if self.variant is BuildVariant.OKD:
+                okd_branch = self._runtime.group_config.get('okd', {}).get('branch')
+                if okd_branch:
+                    # Extract RHEL version from okd.branch (e.g., "rhaos-5.0-rhel-10" -> 10)
+                    # This will be used as the scos version (e.g., ".scos10")
+                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(okd_branch))
+                    if target_match:
+                        el_ver = int(target_match.group(1))
+
+            # If not OKD or okd.branch not found, use the image-specific branch
+            if not el_ver:
+                el_ver = metadata.branch_el_target()
         except ValueError:
             pass
         if el_ver:
