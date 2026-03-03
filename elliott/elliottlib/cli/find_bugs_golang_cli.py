@@ -550,10 +550,6 @@ class FindBugsGolangCli:
                     parsed_nvr = parse_nvr(nvr)
                     release_without_el = split_el_suffix_in_release(parsed_nvr['release'])[0]
                     version = Version.parse(f"{parsed_nvr['version']}-{release_without_el}")
-                    if go_version and version != go_version:
-                        raise ValueError(
-                            f"Multiple golang versions found in fixed in NVRs: {go_version} and {version}. Please investigate"
-                        )
                     go_version = version
                 fixed_in_version_cve_id = {go_version} if go_version else set()
                 logger.info(
