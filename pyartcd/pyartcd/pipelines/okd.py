@@ -80,6 +80,7 @@ class KonfluxOkdPipeline:
         self.slack_client = runtime.new_slack_client()
 
         self.built_images = []
+        self.embargoed_builds = []  # Track images with embargoed fixes that must not be built or released
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -171,6 +172,7 @@ class KonfluxOkdPipeline:
 
     async def rebase_and_build_images(self):
         await self.rebase_images(f"v{self.version}.0", self.release)
+        await self.detect_embargoed_builds()
         await self.build_images()
 
     async def rebase_images(self, version: str, input_release: str):
@@ -211,7 +213,11 @@ class KonfluxOkdPipeline:
         state = self.load_state_yaml()
 
         # Some images failed to rebase: log them, and track them in Redis
-        rebase_failures = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'failure']
+        rebase_failures = [
+            image
+            for image, image_state in state['images:okd:rebase']['images'].items()
+            if image_state.get('status') == 'failure'
+        ]
 
         if rebase_failures:
             self.logger.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
@@ -221,7 +227,11 @@ class KonfluxOkdPipeline:
                 jenkins.update_description(f'Rebase failures: {len(rebase_failures)} images.<br>')
 
         # OKD disabled images have not been rebased and must not be built
-        skipped_images = [image for image, state in state['images:okd:rebase']['images'].items() if state == 'skipped']
+        skipped_images = [
+            image
+            for image, image_state in state['images:okd:rebase']['images'].items()
+            if image_state.get('status') == 'skipped'
+        ]
         if skipped_images:
             self.logger.warning(
                 f'Following images are disabled in OKD and have not been rebased: {",".join(skipped_images)}'
@@ -298,6 +308,27 @@ class KonfluxOkdPipeline:
         if not self.building_images():
             self.logger.warning('No images will be built')
             return
+
+        # Exclude embargoed images from the build
+        if self.embargoed_builds:
+            embargoed_names = [img['name'] for img in self.embargoed_builds]
+            self.logger.info(
+                'Excluding %d embargoed images from build: %s', len(embargoed_names), ', '.join(embargoed_names)
+            )
+
+            # Add embargoed images to the exclusion list
+            if self.build_plan.image_build_strategy == BuildStrategy.ALL:
+                # Switch to EXCEPT strategy and exclude embargoed images
+                self.build_plan.image_build_strategy = BuildStrategy.EXCEPT
+                self.build_plan.images_excluded = embargoed_names
+            elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
+                # Remove embargoed images from the include list
+                self.build_plan.images_included = [
+                    img for img in self.build_plan.images_included if img not in embargoed_names
+                ]
+            elif self.build_plan.image_build_strategy == BuildStrategy.EXCEPT:
+                # Add embargoed images to existing exclusion list
+                self.build_plan.images_excluded.extend(embargoed_names)
 
         self.logger.info(f'Building images for OCP {self.version} with release {self.release}')
 
@@ -376,6 +407,76 @@ class KonfluxOkdPipeline:
                 jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
             else:
                 jenkins.update_description(f'Build failures: {len(failed_images)} images<br>')
+
+    async def detect_embargoed_builds(self):
+        """
+        Detect embargoed builds by checking the private_fix flag set during rebase.
+        Embargoed images are identified and will be excluded from the build plan.
+
+        This prevents the accidental release of security fixes from openshift-priv repos
+        that have not yet been published to the public openshift repos.
+
+        CRITICAL: If embargo status cannot be determined, the pipeline will fail-safe and crash
+        rather than risk releasing embargoed content.
+        """
+        state = self.load_state_yaml()
+
+        # Fail-safe: crash if we don't have rebase results
+        if 'images:okd:rebase' not in state:
+            raise RuntimeError(
+                'EMBARGO SAFETY: Cannot determine embargo status - no rebase results found in state.yaml. '
+                'Pipeline must abort to prevent accidental release of embargoed content.'
+            )
+
+        rebase_results = state['images:okd:rebase'].get('images', {})
+        if not rebase_results:
+            raise RuntimeError(
+                'EMBARGO SAFETY: Cannot determine embargo status - rebase results are empty. '
+                'Pipeline must abort to prevent accidental release of embargoed content.'
+            )
+
+        self.logger.info('Checking %d rebased images for embargoed content...', len(rebase_results))
+
+        embargoed_builds = []
+
+        for image_name, image_state in rebase_results.items():
+            # Skip failed or skipped images
+            if image_state['status'] != 'success':
+                continue
+
+            # Check if this image contains private fixes
+            if image_state['private_fix']:
+                self.logger.warning(
+                    'EMBARGO DETECTED: Image %s contains private fixes and will NOT be built or released to public OKD',
+                    image_name,
+                )
+                embargoed_builds.append({'name': image_name})
+
+        if not embargoed_builds:
+            self.logger.info('No embargoed images detected; all rebased images are safe for public release')
+            return
+
+        self.embargoed_builds = embargoed_builds
+        embargoed_names = [img['name'] for img in embargoed_builds]
+
+        # Log summary
+        self.logger.warning(
+            'Detected %d embargoed images that will be excluded from public OKD release: %s',
+            len(embargoed_builds),
+            ', '.join(embargoed_names),
+        )
+
+        # Update Jenkins description
+        if len(embargoed_builds) <= 10:
+            warning_msg = (
+                f'<span style="color:red;font-weight:bold">⚠️ EMBARGOED IMAGES EXCLUDED: '
+                f'{", ".join(embargoed_names)}</span><br>'
+            )
+
+        else:
+            warning_msg = f'<span style="color:red;font-weight:bold">⚠️ {len(embargoed_builds)} EMBARGOED IMAGES EXCLUDED FROM BUILD</span><br>'
+
+        jenkins.update_description(warning_msg)
 
     def _get_payload_tag_name(self, image_distgit_key: str, image_metadata: dict) -> str:
         """

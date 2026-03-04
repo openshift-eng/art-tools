@@ -142,7 +142,10 @@ class OkdRebaseCli:
             self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_name)
             image_meta.rebase_status = True
             image_meta.rebase_event.set()
-            self.state[image_name] = 'skipped'
+            self.state[image_name] = {
+                'status': 'skipped',
+                'private_fix': False,
+            }
             return
 
         try:
@@ -154,11 +157,17 @@ class OkdRebaseCli:
                 commit_message=self.message,
                 push=self.push,
             )
-            self.state[image_name] = 'success'
+            self.state[image_name] = {
+                'status': 'success',
+                'private_fix': image_meta.private_fix if image_meta.private_fix else False,
+            }
 
         except Exception as e:
             self.logger.warning('Failed rebasing %s: %s', image_name, e)
-            self.state[image_name] = 'failure'
+            self.state[image_name] = {
+                'status': 'failure',
+                'private_fix': False,
+            }
 
     def get_okd_image_config(self, image_meta: ImageMetadata):
         image_config = copy(image_meta.config)
