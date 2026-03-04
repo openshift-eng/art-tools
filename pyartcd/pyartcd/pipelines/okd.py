@@ -81,6 +81,7 @@ class KonfluxOkdPipeline:
 
         self.built_images = []
         self.embargoed_builds = []  # Track images with embargoed fixes that must not be built or released
+        self.rebase_failures = []  # Track images that failed to rebase
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -213,18 +214,20 @@ class KonfluxOkdPipeline:
         state = self.load_state_yaml()
 
         # Some images failed to rebase: log them, and track them in Redis
-        rebase_failures = [
+        self.rebase_failures = [
             image
             for image, image_state in state['images:okd:rebase']['images'].items()
             if image_state.get('status') == 'failure'
         ]
 
-        if rebase_failures:
-            self.logger.warning(f'Following images failed to rebase and won\'t be built: {",".join(rebase_failures)}')
-            if len(rebase_failures) <= 10:
-                jenkins.update_description(f'Rebase failures: {", ".join(rebase_failures)}<br>')
+        if self.rebase_failures:
+            self.logger.warning(
+                f'Following images failed to rebase and won\'t be built: {",".join(self.rebase_failures)}'
+            )
+            if len(self.rebase_failures) <= 10:
+                jenkins.update_description(f'Rebase failures: {", ".join(self.rebase_failures)}<br>')
             else:
-                jenkins.update_description(f'Rebase failures: {len(rebase_failures)} images.<br>')
+                jenkins.update_description(f'Rebase failures: {len(self.rebase_failures)} images.<br>')
 
         # OKD disabled images have not been rebased and must not be built
         skipped_images = [
@@ -242,23 +245,23 @@ class KonfluxOkdPipeline:
                 jenkins.update_description(f'Skipped {len(skipped_images)} images.<br>')
 
         # Update rebase fail counters in Redis
-        await self.update_rebase_fail_counters(rebase_failures)
+        await self.update_rebase_fail_counters(self.rebase_failures)
 
         # Exclude images that were skipped or failed during rebase from the build step
         if self.build_plan.image_build_strategy == BuildStrategy.ALL:
             # Move from building all to excluding failed images
             self.build_plan.image_build_strategy = BuildStrategy.EXCEPT
-            self.build_plan.images_excluded = rebase_failures + skipped_images
+            self.build_plan.images_excluded = self.rebase_failures + skipped_images
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
             # Remove failed images from included ones
             self.build_plan.images_included = [
-                i for i in self.build_plan.images_included if i not in rebase_failures + skipped_images
+                i for i in self.build_plan.images_included if i not in self.rebase_failures + skipped_images
             ]
 
         else:  # strategy = EXCLUDE
             # Append failed images to excluded ones
-            self.build_plan.images_excluded.extend(rebase_failures + skipped_images)
+            self.build_plan.images_excluded.extend(self.rebase_failures + skipped_images)
 
     async def update_rebase_fail_counters(self, failed_images):
         """
@@ -723,6 +726,12 @@ class KonfluxOkdPipeline:
 
         state = self.load_state_yaml()
         if state.get('status') != STATE_PASS:
+            sys.exit(1)
+
+        # Exit with non-zero status if there were rebase failures
+        # This will cause Jenkins to mark the build as UNSTABLE (yellow)
+        if self.rebase_failures:
+            self.logger.warning(f'Pipeline completed but {len(self.rebase_failures)} image(s) failed to rebase')
             sys.exit(1)
 
     def load_state_yaml(self) -> dict:
