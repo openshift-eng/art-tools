@@ -6,6 +6,56 @@
         "repo": {
             "type": "object",
             "properties": {
+                "content_set": {
+                    "type": "object",
+                    "properties": {
+                        "default": {
+                            "type": "string"
+                        },
+                        "x86_64": {
+                            "type": "string"
+                        },
+                        "aarch64": {
+                            "type": "string"
+                        },
+                        "ppc64le": {
+                            "type": "string"
+                        },
+                        "s390x": {
+                            "type": "string"
+                        },
+                        "optional": {
+                            "type": "boolean"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "content_set!": {
+                    "$ref": "#/$defs/repo/properties/content_set"
+                },
+                "content_set?": {
+                    "$ref": "#/$defs/repo/properties/content_set"
+                },
+                "content_set-": {},
+                "reposync": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "latest_only": {
+                            "type": "boolean"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "reposync!": {
+                    "$ref": "#/$defs/repo/properties/reposync"
+                },
+                "reposync?": {
+                    "$ref": "#/$defs/repo/properties/reposync"
+                },
+                "reposync-": {},
                 "conf": {
                     "type": "object",
                     "properties": {
@@ -17,7 +67,63 @@
                         },
                         "baseurl?": {
                             "$ref": "#/$defs/repo/properties/conf/properties/baseurl"
-                        }
+                        },
+                        "ci_alignment": {
+                            "type": "object",
+                            "properties": {
+                                "profiles": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "localdev": {
+                                    "type": "object",
+                                    "properties": {
+                                        "enabled": {
+                                            "type": "boolean"
+                                        }
+                                    },
+                                    "additionalProperties": false
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "ci_alignment!": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/ci_alignment"
+                        },
+                        "ci_alignment?": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/ci_alignment"
+                        },
+                        "ci_alignment-": {},
+                        "extra_options": {
+                            "type": "object",
+                            "properties": {
+                                "module_hotfixes": {
+                                    "type": "integer"
+                                },
+                                "excludepkgs": {
+                                    "type": "string"
+                                },
+                                "includepkgs": {
+                                    "type": "string"
+                                },
+                                "gpgcheck": {
+                                    "oneOf": [
+                                        {"type": "string"},
+                                        {"type": "integer"}
+                                    ]
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "extra_options!": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/extra_options"
+                        },
+                        "extra_options?": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/extra_options"
+                        },
+                        "extra_options-": {}
                     },
                     "anyOf": [
                         {

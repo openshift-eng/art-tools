@@ -540,6 +540,7 @@
     "multi_arch": {"type": "object"},
     "new_payload_versioning_scheme": {"type": "boolean"},
     "operator_image_ref_mode": {"type": "string"},
+    "operator_channel_stable": {"type": "string"},
     "signing_advisory": {"type": "integer"},
     "assemblies": {"type": "object"},
     "check_external_packages": {"type": "array"},
