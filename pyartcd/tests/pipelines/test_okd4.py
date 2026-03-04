@@ -879,12 +879,28 @@ class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
         }
 
         with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
-            # when/then
-            with self.assertRaises(RuntimeError) as context:
+            # when/then - expect KeyError when private_fix is missing
+            with self.assertRaises(KeyError):
                 await self.pipeline.detect_embargoed_builds()
 
-            self.assertIn('EMBARGO SAFETY', str(context.exception))
-            self.assertIn('missing required fields', str(context.exception))
+    async def test_detect_embargoed_builds_missing_status_field(self):
+        """
+        Test that pipeline crashes when status field is missing (fail-safe).
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'private_fix': False},  # Missing status field
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when/then - expect KeyError when status is missing
+            with self.assertRaises(KeyError):
+                await self.pipeline.detect_embargoed_builds()
 
     async def test_detect_embargoed_builds_multiple_embargoed_images(self):
         """
