@@ -373,8 +373,8 @@ class ReleaseFromFbcPipeline:
         data = None
         if kind == 'image' and self.group.startswith('openshift-'):
             # Special case: This is NOT the normal usage for release-from-fbc, print warning
-            self.logger.warning(
-                f"Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
+            self.logger.info(
+                f"[Warning] Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
                 f"to satisfy shipment validation requirements. This is a special situation case, "
                 f"PLEASE REVIEW!!"
             )
