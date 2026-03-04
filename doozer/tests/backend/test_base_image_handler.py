@@ -1,4 +1,3 @@
-import asyncio
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,16 +22,14 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.nvr = "test-base-container-v1.0.0-1.el9"
         self.image_pullspec = "quay.io/test/test-base:latest"
 
-    @patch("doozerlib.backend.base_image_handler.cmd_gather_async")
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
-    @patch("artcommonlib.util.resolve_konflux_namespace_by_product")
-    @patch("artcommonlib.util.resolve_konflux_kubeconfig_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_process_base_image_completion_success(
-        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init, mock_cmd_gather
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):
         mock_namespace.return_value = "ocp-art-tenant"
         mock_kubeconfig.return_value = "/path/to/kubeconfig"
-        mock_cmd_gather.return_value = (0, "", "")
 
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
@@ -48,8 +45,8 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.assertEqual(result, ("test-release", "test-snapshot"))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
-    @patch("artcommonlib.util.resolve_konflux_namespace_by_product")
-    @patch("artcommonlib.util.resolve_konflux_kubeconfig_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_process_base_image_completion_failure(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):
