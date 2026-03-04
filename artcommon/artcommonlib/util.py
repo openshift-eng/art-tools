@@ -804,6 +804,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         # OCP uses 'openshift4' namespace in registry.redhat.io
         product_to_namespace = {
             'ocp': 'openshift4',
+            'openshift': 'openshift4',
         }
         registry_namespace = product_to_namespace.get(product, product)
         LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
