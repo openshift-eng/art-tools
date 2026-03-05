@@ -7,6 +7,7 @@ from artcommonlib.format_util import green_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 
+from elliottlib.runtime import Runtime
 from elliottlib.cli.common import cli
 from elliottlib.util import get_golang_container_nvrs
 
@@ -19,7 +20,7 @@ _LOGGER = logutil.get_logger(__name__)
 @click.option('--exact', is_flag=True, help="Show exact golang package instead of just major.minor")
 @click.option('-o', '--output', type=click.Choice(['json', 'text']), default='text', help='Output format')
 @click.pass_obj
-def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, exact: bool, output: str):
+def get_golang_report_cli(runtime: Runtime, ocp_versions: str, ignore_rhel: bool, exact: bool, output: str):
     """
     Show currently configured builders in streams.yml and compilers in buildroot
 
@@ -31,7 +32,9 @@ def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, exact: 
     results = {}
 
     for ocp_version in ocp_versions.split(","):
+        _LOGGER.info(f"Generating report for OCP {ocp_version}...")
         runtime.group = f"openshift-{ocp_version}"
+        runtime.group_commitish = None
         runtime.image_map = {}
         runtime.rpm_map = {}
         runtime._group_config = None
