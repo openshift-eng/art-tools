@@ -22,10 +22,10 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.util import extract_related_images_from_fbc
-from build.lib.elliottlib.util import get_golang_version_from_build_log
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
+from elliottlib.util import get_golang_version_from_build_log
 
 # -----------------------------------------------------------------------------
 # Constants and defaults
