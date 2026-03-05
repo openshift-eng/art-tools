@@ -379,8 +379,7 @@ class ReleaseFromFbcPipeline:
                 f"PLEASE REVIEW!!"
             )
             release_notes = ReleaseNotes(
-                type='RHBA',
-                synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}'
+                type='RHBA', synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}'
             )
             data = Data(releaseNotes=release_notes)
 
