@@ -74,6 +74,11 @@ class AssemblyIssueCode(Enum):
     # this code will be emitted:
     UNSHIPPABLE_KERNEL = 11
 
+    # A build (image or RHCOS) was built for a different OCP version (Y-stream)
+    # than the one this assembly targets — e.g. a 4.12 build pinned in a 4.22
+    # assembly.
+    VERSION_MISMATCH = 12
+
 
 class AssemblyIssue:
     """
