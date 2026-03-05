@@ -601,11 +601,11 @@ def get_golang_container_nvrs_for_konflux_record(
 
 
 def get_parent_golang_from_brew(nvr: Tuple[str, str, str]) -> Optional[str]:
-    build_log = brew.get_nvr_arch_log(*nvr)
+    build_log, log_url = brew.get_nvr_arch_log(*nvr)
     try:
         go_version = get_golang_version_from_build_log(build_log)
     except Exception as e:
-        raise ValueError(f'Could not find go version in build log for {nvr}: {e}') from e
+        raise ValueError(f'Could not find go version at {log_url} for {"-".join(nvr)}: {e}') from e
     return go_version
 
 
