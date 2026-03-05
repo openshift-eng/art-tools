@@ -3,6 +3,18 @@ from enum import Enum
 from typing import Optional, Tuple
 
 
+def get_patch_from_release(release: str) -> Optional[int]:
+    """
+    Given a release field, determines whether is contains
+    a patch number. If it does, it returns the patch number.
+    If it is not found, None is returned.
+    """
+    match = re.search(r"(\d+)(.*)", release)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
     """
     Given a release field, this will method will split out any

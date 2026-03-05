@@ -25,7 +25,6 @@ from artcommonlib.util import extract_related_images_from_fbc
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
-from elliottlib.exceptions import BrewBuildException
 
 # -----------------------------------------------------------------------------
 # Constants and defaults
@@ -226,27 +225,32 @@ def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional
     return None
 
 
-def get_golang_version_from_build_log(log):
+def get_golang_version_from_log(log, log_url):
     # TODO add a test for this
     # Based on below greps:
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang-(bin-|))[0-9]+.[0-9]+.[0-9]+[^ ]*' ./3.11/*.log | sed 's/:.*\([0-9]\+\.[0-9]\+\.[0-9]\+.*\)/: \1/'
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang.*module[^ ]*).*[0-9]+.[0-9]+.[0-9]+[^ ]*' ./4.5/*.log | sed 's/\:.*\([^a-z][0-9]\+\.[0-9]\+\.[0-9]\+[^ ]*\)/:\ \1/'
-    m = re.search(r'(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*', log)
-    s = m.group(0).split()
+    go_version = None
 
-    # if we get a result like:
-    #   "golang-bin               x86_64  1.14.12-1.module+el8.3.0+8784+380394dc"
-    if len(s) > 1:
-        go_version = s[-1]
-    else:
-        # if we get a result like (more common for RHEL7 build logs):
-        #   "go-toolset-1.14-golang-1.14.9-2.el7.x86_64"
-        go_version = s[0]
-        # extract version and release
-        m = re.search(r'[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$', s[0])
+    try:
+        m = re.search(r'(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*', log)
         s = m.group(0).split()
-        if len(s) == 1:
+
+        # if we get a result like:
+        #   "golang-bin               x86_64  1.14.12-1.module+el8.3.0+8784+380394dc"
+        if len(s) > 1:
+            go_version = s[-1]
+        else:
+            # if we get a result like (more common for RHEL7 build logs):
+            #   "go-toolset-1.14-golang-1.14.9-2.el7.x86_64"
             go_version = s[0]
+            # extract version and release
+            m = re.search(r'[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$', s[0])
+            s = m.group(0).split()
+            if len(s) == 1:
+                go_version = s[0]
+    except Exception as e:
+        raise ValueError(f'Could not find go rpm version in log {log_url}: {e}')
 
     return go_version
 
@@ -405,7 +409,7 @@ def isolate_timestamp_in_release(release: str) -> Optional[str]:
     return None
 
 
-def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger, exact=False) -> Dict[str, Dict[str, str]]:
     """
     :param nvrs: a list of tuples containing (name, version, release) in order
     :param logger: logger
@@ -416,17 +420,21 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
     build_system = None
     golang_builder_nvrs = []
     for nvr in nvrs:
+        if len(nvr) != 3:
+            raise ValueError(f'NVR tuple should contain exactly 3 elements (name, version, release), but got {nvr}')
+
         # release is something like 202508201021.p2.gb7cfbf8.assembly.stream.el8
         # we just want the p2 part
         try:
             nvr_build_system = get_build_system(nvr[2].split('.')[1])
-        except ValueError:
+        except Exception as e:
             # golang builder NVRs are a special case
             # They historically did not have build visibility suffix
             # so for backward compatibility we will try fetching nvrs from both brew and konflux
+            error_message = f'Could not determine build system from nvr {nvr}: {e}'
+            logger.debug(error_message)
             if GOLANG_BUILDER_IMAGE_NAME not in nvr[0]:
-                raise
-            logger.debug(f'Could not determine build system from release {nvr[2]} for {nvr}')
+                raise ValueError(error_message)
             golang_builder_nvrs.append(nvr)
             continue
 
@@ -439,19 +447,19 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
 
     if build_system is None and golang_builder_nvrs:
         try:
-            golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger)
+            golang_map = get_golang_container_nvrs_konflux(golang_builder_nvrs, logger, exact=exact)
         except Exception as e:
             logger.info(f'Failed to find golang builder nvrs in ART build DB: {e}')
-            golang_map = get_golang_container_nvrs_brew(golang_builder_nvrs, logger)
+            golang_map = get_golang_container_nvrs_brew(golang_builder_nvrs, logger, exact=exact)
         return golang_map
 
     if build_system == 'brew':
-        return get_golang_container_nvrs_brew(nvrs, logger)
+        return get_golang_container_nvrs_brew(nvrs, logger, exact=exact)
     elif build_system == 'konflux':
-        return get_golang_container_nvrs_konflux(nvrs, logger)
+        return get_golang_container_nvrs_konflux(nvrs, logger, exact=exact)
 
 
-def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> Dict[str, Dict[str, str]]:
+def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exact=False) -> Dict[str, Dict[str, str]]:
     """
     :param nvrs: a list of tuples containing (name, version, release) in order
     :param logger: logger
@@ -471,9 +479,11 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> 
             raise
         name = nvr[0]
         if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
-            go_version = golang_builder_version(nvr, logger)
+            go_version = get_parent_golang_from_brew(nvr)
             if not go_version:
-                raise ValueError(f'Cannot find go version for {name}')
+                raise ValueError(f'Could not find go version for golang builder {nvr}')
+            if exact:
+                go_version = f"golang-{go_version}"
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
@@ -501,7 +511,9 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger) -> 
     return go_nvr_map
 
 
-def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) -> dict[str, set[tuple[str, str, str]]]:
+def get_golang_container_nvrs_konflux(
+    nvrs: List[Tuple[str, str, str]], logger, exact=False
+) -> dict[str, set[tuple[str, str, str]]]:
     """
     :param nvrs: a list of tuples containing (name, version, release) in order
     :param logger: logger
@@ -518,11 +530,15 @@ def get_golang_container_nvrs_konflux(nvrs: List[Tuple[str, str, str]], logger) 
         lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
     ).result()
 
-    return get_golang_container_nvrs_for_konflux_record(cast(list[KonfluxBuildRecord], all_build_objs), logger)
+    return get_golang_container_nvrs_for_konflux_record(
+        cast(list[KonfluxBuildRecord], all_build_objs), logger, exact=exact
+    )
 
 
 def get_golang_container_nvrs_for_konflux_record(
-    build_objs: Iterable[KonfluxBuildRecord], logger
+    build_objs: Iterable[KonfluxBuildRecord],
+    logger,
+    exact=False,
 ) -> dict[str, set[tuple[str, str, str]]]:
     """
     :param build_objs: a list of konflux build records
@@ -550,7 +566,10 @@ def get_golang_container_nvrs_for_konflux_record(
             )
             if not go_package:
                 raise ValueError(f'Cannot find go version for {build.nvr}')
-            go_version = f"{go_package['version']}-{go_package['release']}"
+            if not exact:
+                go_version = f"{go_package['version']}-{go_package['release']}"
+            else:
+                go_version = f"{go_package['name']}-{go_package['version']}-{go_package['release']}"
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
@@ -588,42 +607,34 @@ def get_golang_container_nvrs_for_konflux_record(
     return go_nvr_map
 
 
-def golang_builder_version(nvr, logger):
-    go_version = None
+def get_parent_golang_from_brew(nvr: Tuple[str, str, str]) -> Optional[str]:
     try:
-        build_log = brew.get_nvr_arch_log(*nvr)
-    except BrewBuildException:
-        logger.debug(f'Could not brew log for {nvr}')
-    else:
-        try:
-            go_version = get_golang_version_from_build_log(build_log)
-        except AttributeError:
-            logger.debug(f'Could not find Go version in build log for {nvr}')
+        build_log, log_url = brew.get_nvr_arch_log(*nvr)
+        go_version = get_golang_version_from_log(build_log, log_url)
+    except Exception as e:
+        LOGGER.warning(f'Could not find go version for {"-".join(nvr)}: {e}')
+        build_log, log_url = brew.get_nvr_arch_build_log(*nvr)
+        go_version = get_golang_version_from_log(build_log, log_url)
     return go_version
 
 
-def get_golang_rpm_nvrs(nvrs, logger):
+def get_golang_rpm_nvrs(nvrs, exact=False):
     go_nvr_map = {}
     for nvr in nvrs:
-        go_version = None
         # what we build in brew as openshift
         # is called openshift-hyperkube in rhcos
         if nvr[0] == 'openshift-hyperkube':
             n = 'openshift'
             nvr = (n, nvr[1], nvr[2])
 
+        root_log, log_url = brew.get_nvr_root_log(*nvr)
         try:
-            root_log = brew.get_nvr_root_log(*nvr)
-        except BrewBuildException:
-            logger.debug(f'Could not find brew log for {nvr}')
-        else:
-            try:
-                go_version = get_golang_version_from_build_log(root_log)
-            except AttributeError:
-                logger.debug(f'Could not find go version in root log for {nvr}')
+            go_version = get_golang_version_from_log(root_log, log_url)
+        except Exception as e:
+            raise ValueError(f'Could not find go version in root log for {nvr}: {e}') from e
 
-        if not go_version:
-            continue
+        if exact:
+            go_version = f'golang-{go_version}'
 
         if go_version not in go_nvr_map:
             go_nvr_map[go_version] = set()

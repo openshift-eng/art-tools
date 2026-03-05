@@ -493,8 +493,12 @@ class UpdateGolangPipeline:
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
-        go_latest = group_content['vars'][go_latest_var]
-        go_previous = group_content['vars'].get(go_previous_var, None)
+        go_latest = group_content['vars'].get(go_latest_var)
+        if not go_latest:
+            raise ValueError(
+                f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
+            )
+        go_previous = group_content['vars'].get(go_previous_var)
 
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
@@ -571,10 +575,10 @@ class UpdateGolangPipeline:
                         info['image'] = new_latest_go
                     if info['image'] == previous_go:
                         info['image'] = latest_go
-                group_content['vars']['GO_LATEST'] = go_version
+                group_content['vars'][go_latest_var] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
                 if go_previous:
-                    group_content['vars']['GO_PREVIOUS'] = go_latest
+                    group_content['vars'][go_previous_var] = go_latest
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:

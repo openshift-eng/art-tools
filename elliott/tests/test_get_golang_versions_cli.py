@@ -18,11 +18,10 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize").and_return(None)
         nvrs = [('foo', 'v1', 'r'), ('bar', 'v1', 'r'), ('runc', 'v1', 'r'), ('podman', 'v1', 'r')]
         go_nvr_map = 'foobar'
-        logger = get_golang_versions_cli._LOGGER
         flexmock(erratalib).should_receive("get_all_advisory_nvrs").with_args(advisory_id).and_return(nvrs)
         flexmock(erratalib).should_receive("get_erratum_content_type").with_args(advisory_id).and_return(content_type)
         flexmock(utillib).should_receive("get_golang_rpm_nvrs").with_args(
-            [('runc', 'v1', 'r'), ('podman', 'v1', 'r')], logger
+            [('runc', 'v1', 'r'), ('podman', 'v1', 'r')]
         ).and_return(go_nvr_map)
         flexmock(utillib).should_receive("pretty_print_nvrs_go").with_args(go_nvr_map)
 
@@ -37,7 +36,7 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
 
         logger = get_golang_versions_cli._LOGGER
         flexmock(utillib).should_receive("get_golang_rpm_nvrs").with_args(
-            [('podman', '1.9.3', '3.rhaos4.6.el8')], logger
+            [('podman', '1.9.3', '3.rhaos4.6.el8')]
         ).and_return(go_map_1)
         flexmock(utillib).should_receive("get_golang_container_nvrs").with_args(
             [('podman-container', '3.0.1', '6.el8')], logger
