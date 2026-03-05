@@ -79,7 +79,6 @@ def rhcos_cli(runtime, release, packages, arch, go):
                 break
 
     version = f'{major}.{minor}'
-    logger = LOGGER
 
     if arch == 'all':
         target_arches = BREW_ARCHES
@@ -106,7 +105,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         ]
 
     for build, local_arch in build_ids:
-        _via_build_id(runtime, build, local_arch, version, packages, go, logger)
+        _via_build_id(runtime, build, local_arch, version, packages, go)
 
 
 def get_pullspec(release, arch):
@@ -136,7 +135,7 @@ def get_build_id_from_image_pullspec(runtime, pullspec):
     return build_id, arch
 
 
-def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
+def _via_build_id(runtime, build_id, arch, version, packages, go):
     if not build_id:
         Exception('Cannot find build_id')
 
@@ -152,7 +151,7 @@ def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
             packages.append('openshift-hyperkube')
         nvrs = [p for p in nvrs if p[0] in packages]
     if go:
-        go_rpm_nvrs = util.get_golang_rpm_nvrs(nvrs, logger)
+        go_rpm_nvrs = util.get_golang_rpm_nvrs(nvrs)
         util.pretty_print_nvrs_go(go_rpm_nvrs, ignore_na=True)
         return
     for nvr in sorted(nvrs):

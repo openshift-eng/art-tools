@@ -25,7 +25,6 @@ from artcommonlib.util import extract_related_images_from_fbc
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
-from elliottlib.exceptions import BrewBuildException
 
 # -----------------------------------------------------------------------------
 # Constants and defaults
@@ -603,32 +602,27 @@ def get_golang_container_nvrs_for_konflux_record(
 
 def get_parent_golang_from_brew(nvr: Tuple[str, str, str]) -> Optional[str]:
     build_log = brew.get_nvr_arch_log(*nvr)
-    go_version = get_golang_version_from_build_log(build_log)
+    try:
+        go_version = get_golang_version_from_build_log(build_log)
+    except Exception as e:
+        raise ValueError(f'Could not find go version in build log for {nvr}: {e}') from e
     return go_version
 
 
-def get_golang_rpm_nvrs(nvrs, logger, exact=False):
+def get_golang_rpm_nvrs(nvrs, exact=False):
     go_nvr_map = {}
     for nvr in nvrs:
-        go_version = None
         # what we build in brew as openshift
         # is called openshift-hyperkube in rhcos
         if nvr[0] == 'openshift-hyperkube':
             n = 'openshift'
             nvr = (n, nvr[1], nvr[2])
 
+        root_log = brew.get_nvr_root_log(*nvr)
         try:
-            root_log = brew.get_nvr_root_log(*nvr)
-        except BrewBuildException:
-            logger.debug(f'Could not find brew log for {nvr}')
-        else:
-            try:
-                go_version = get_golang_version_from_build_log(root_log)
-            except AttributeError:
-                logger.debug(f'Could not find go version in root log for {nvr}')
-
-        if not go_version:
-            continue
+            go_version = get_golang_version_from_build_log(root_log)
+        except Exception as e:
+            raise ValueError(f'Could not find go version in root log for {nvr}: {e}') from e
 
         if exact:
             go_version = f'golang-{go_version}'

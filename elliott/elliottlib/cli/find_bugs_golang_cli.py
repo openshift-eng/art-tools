@@ -308,7 +308,7 @@ class FindBugsGolangCli:
             f"Found {len(nvrs)} NVRs for {rpm_name}: {sorted([f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs])}. Checking if fix is in NVRs..."
         )
 
-        go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger, exact=True)
+        go_nvr_map = get_golang_rpm_nvrs(nvrs, exact=True)
         self._logger.info(f"Found {len(go_nvr_map)} parent golang NVRs: {sorted(go_nvr_map.keys())}")
         return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
 

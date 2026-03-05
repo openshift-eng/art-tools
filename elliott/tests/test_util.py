@@ -121,7 +121,7 @@ class TestUtil(unittest.TestCase):
             ],
         )
         go_version = '1.18.0-2.module+el8.7.0+14880+f5e30240'
-        flexmock(util).should_receive("golang_builder_version").and_return(go_version)
+        flexmock(util).should_receive("get_parent_golang_from_brew").and_return(go_version)
         expected = {go_version: {nvrs[0]}}
         actual = util.get_golang_container_nvrs(nvrs, None)
         self.assertEqual(expected, actual)
