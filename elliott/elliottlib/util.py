@@ -480,6 +480,8 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exa
         name = nvr[0]
         if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
             go_version = get_parent_golang_from_brew(nvr)
+            if not go_version:
+                raise ValueError(f'Could not find go version for golang builder {nvr}')
             if exact:
                 go_version = f"golang-{go_version}"
             if go_version not in go_nvr_map:
