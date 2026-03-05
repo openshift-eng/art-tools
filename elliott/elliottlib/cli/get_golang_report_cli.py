@@ -7,8 +7,8 @@ from artcommonlib.format_util import green_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 
-from elliottlib.runtime import Runtime
 from elliottlib.cli.common import cli
+from elliottlib.runtime import Runtime
 from elliottlib.util import get_golang_container_nvrs
 
 _LOGGER = logutil.get_logger(__name__)
@@ -123,6 +123,7 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
             'ose-aws-ecr-image-credential-provider',
             'ose-azure-acr-image-credential-provider',
             'ose-gcp-gcr-image-credential-provider',
+            'ose-crio-credential-provider',
         }
         if rpm_name not in golang_rpms:
             _LOGGER.debug(f"Skipping rpm {rpm_name} since it is not a golang rpm")

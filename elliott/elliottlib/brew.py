@@ -211,7 +211,7 @@ def get_nvr_arch_log(name, version, release, arch='x86_64'):
     return res.text, log_url
 
 
-def get_nvr_arch_build_log(name, version, release, arch='x86_64'):
+def get_nvr_arch_build_log(name, version, release, arch='x86_64') -> Tuple[str, str]:
     log_url = '{host}/packages/{name}/{version}/{release}/data/logs/{arch}-build.log'.format(
         host=constants.BREW_DOWNLOAD_URL,
         name=name,
@@ -226,7 +226,7 @@ def get_nvr_arch_build_log(name, version, release, arch='x86_64'):
     return res.text, log_url
 
 
-def get_nvr_root_log(name, version, release, arch='x86_64'):
+def get_nvr_root_log(name, version, release, arch='x86_64') -> Tuple[str, str]:
     tmp = re.search(r'\.el(\d+)', release)
     try:
         rhel_version = int(tmp.groups()[0])
@@ -241,7 +241,7 @@ def get_nvr_root_log(name, version, release, arch='x86_64'):
     res = requests.get(root_log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
     if res.status_code != 200:
         raise exceptions.BrewBuildException("Could not get root.log for {}-{}-{}".format(name, version, release))
-    return res.text
+    return res.text, root_log_url
 
 
 class Build(object):

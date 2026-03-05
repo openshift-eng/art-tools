@@ -627,9 +627,9 @@ def get_golang_rpm_nvrs(nvrs, exact=False):
             n = 'openshift'
             nvr = (n, nvr[1], nvr[2])
 
-        root_log = brew.get_nvr_root_log(*nvr)
+        root_log, log_url = brew.get_nvr_root_log(*nvr)
         try:
-            go_version = get_golang_version_from_log(root_log)
+            go_version = get_golang_version_from_log(root_log, log_url)
         except Exception as e:
             raise ValueError(f'Could not find go version in root log for {nvr}: {e}') from e
 
