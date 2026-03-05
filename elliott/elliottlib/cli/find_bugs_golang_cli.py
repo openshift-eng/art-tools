@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import click
 import requests
-from artcommonlib.release_util import isolate_el_version_in_release, split_el_suffix_in_release
+from artcommonlib.release_util import get_patch_from_release, isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli.get_nightlies import find_rc_nightlies
@@ -170,8 +170,8 @@ class FindBugsGolangCli:
                 parent_go_build = list(go_builder_nvr_map.keys())[0]
 
             parsed_nvr = parse_nvr(parent_go_build)
-            release_without_el = split_el_suffix_in_release(parsed_nvr['release'])[0]
-            version = Version.parse(f"{parsed_nvr['version']}-{release_without_el}")
+            patch = get_patch_from_release(parsed_nvr['release'])
+            version = Version.parse(f"{parsed_nvr['version']}-{patch}")
             if version not in versions_to_build_map:
                 versions_to_build_map[version] = 0
             versions_to_build_map[version] += len(go_nvr_map[go_build])
@@ -548,8 +548,8 @@ class FindBugsGolangCli:
                 go_version = None
                 for nvr in self.fixed_in_nvrs:
                     parsed_nvr = parse_nvr(nvr)
-                    release_without_el = split_el_suffix_in_release(parsed_nvr['release'])[0]
-                    version = Version.parse(f"{parsed_nvr['version']}-{release_without_el}")
+                    patch = get_patch_from_release(parsed_nvr['release'])
+                    version = Version.parse(f"{parsed_nvr['version']}-{patch}")
                     go_version = version
                 fixed_in_version_cve_id = {go_version} if go_version else set()
                 logger.info(
