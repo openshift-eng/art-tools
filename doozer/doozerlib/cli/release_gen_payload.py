@@ -1012,10 +1012,10 @@ class GenPayloadCli:
         """
 
         self.logger.debug("detecting images inconsistent with the assembly definition ...")
-        for _, bbii in assembly_inspector.get_group_release_images().items():
+        for dgk, bbii in assembly_inspector.get_group_release_images().items():
             if bbii:
                 self.assembly_issues.extend(
-                    assembly_inspector.check_group_image_consistency(bbii, self.package_rpm_finder)
+                    assembly_inspector.check_group_image_consistency(dgk, bbii, self.package_rpm_finder)
                 )
 
     @TRACER.start_as_current_span("GenPayloadCli.detect_installed_rpms_issues")

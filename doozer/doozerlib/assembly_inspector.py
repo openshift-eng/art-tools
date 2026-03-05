@@ -169,6 +169,25 @@ class AssemblyInspector:
         self.runtime.logger.info(f'Checking RHCOS build for consistency: {str(rhcos_build)}...')
 
         issues: List[AssemblyIssue] = []
+
+        expected_major_minor = self.runtime.get_minor_version()  # e.g. "4.22"
+        if rhcos_build.stream_version:
+            # Non-layered RHCOS: stream_version is already "MAJOR.MINOR" (e.g. "4.22")
+            rhcos_major_minor = rhcos_build.stream_version
+        else:
+            # Layered RHCOS: build_id like "4.21.9.6.202602041851-0"; first two components are "MAJOR.MINOR"
+            parts = rhcos_build.build_id.split('.')
+            rhcos_major_minor = f'{parts[0]}.{parts[1]}'
+        if rhcos_major_minor != expected_major_minor:
+            issues.append(
+                AssemblyIssue(
+                    f'RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch}) has version {rhcos_major_minor} '
+                    f'which does not match the expected group version {expected_major_minor}',
+                    component='rhcos',
+                    code=AssemblyIssueCode.VERSION_MISMATCH,
+                )
+            )
+
         required_packages: Dict[str, str] = (
             dict()
         )  # Dict[package_name] -> nvr  # Dependency specified in 'rhcos' in assembly definition
@@ -374,17 +393,46 @@ class AssemblyInspector:
         return issues
 
     def check_group_image_consistency(
-        self, build_record_inspector: BuildRecordInspector, package_rpm_finder: Optional[PackageRpmFinder]
+        self, expected_dgk: str, build_record_inspector: BuildRecordInspector,
+        package_rpm_finder: Optional[PackageRpmFinder]
     ) -> List[AssemblyIssue]:
         """
         Evaluate the current assembly build and an image in the group and check whether they are consistent with
+        the assembly definition.
+        :param expected_dgk: The distgit key that this build is expected to correspond to.
         :param build_record_inspector: The brew build to check
-        :return: Returns a (potentially empty) list of reasons the image should be rebuilt.
         :param package_rpm_finder: used to retrieve a list of RPMs installed in a Konflux build
+        :return: Returns a (potentially empty) list of reasons the image should be rebuilt.
         """
-        image_meta = build_record_inspector.get_image_meta()
-        self.runtime.logger.info(f'Checking group image for consistency: {image_meta.distgit_key}...')
+        image_meta = self.runtime.image_map[expected_dgk]
+        self.runtime.logger.info(f'Checking group image for consistency: {expected_dgk}...')
         issues: List[AssemblyIssue] = []
+        dgk = expected_dgk
+
+        build_nvr_name = parse_nvr(build_record_inspector.get_nvr())['name']
+        expected_component = image_meta.get_component_name()
+        if build_nvr_name != expected_component:
+            issues.append(
+                AssemblyIssue(
+                    f'Image build {build_record_inspector.get_nvr()} has component {build_nvr_name} '
+                    f'but expected {expected_component} for {dgk}',
+                    component=dgk,
+                )
+            )
+
+        expected_major_minor = self.runtime.get_minor_version()  # e.g. "4.22"
+        build_version = build_record_inspector.get_version()  # e.g. "v4.22.0" for images
+        build_major_minor = build_version.lstrip('v').rsplit('.', 1)[0]  # "v4.22.0" -> "4.22"
+        if build_major_minor != expected_major_minor:
+            issues.append(
+                AssemblyIssue(
+                    f'Image build {build_record_inspector.get_nvr()} has version {build_version} '
+                    f'which does not match the expected group version {expected_major_minor}',
+                    component=dgk,
+                    code=AssemblyIssueCode.VERSION_MISMATCH,
+                )
+            )
+
         required_packages: Dict[str, str] = (
             dict()
         )  # Dict[package_name] -> nvr  # Dependency specified at image-specific level
@@ -392,7 +440,6 @@ class AssemblyInspector:
         installed_packages = build_record_inspector.get_all_installed_package_build_dicts(
             package_rpm_finder
         )  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
-        dgk = build_record_inspector.get_image_meta().distgit_key
 
         """
         If the assembly defined any RPM package dependencies at the group or image

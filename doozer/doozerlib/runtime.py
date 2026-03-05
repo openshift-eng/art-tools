@@ -491,6 +491,16 @@ class Runtime(GroupRuntime):
                 raise ValueError(
                     'Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).'
                 )
+
+            if self.assembly_type == AssemblyTypes.STANDARD:
+                expected_prefix = f"{self.group_config.vars['MAJOR']}.{self.group_config.vars['MINOR']}."
+                if not self.assembly.startswith(expected_prefix):
+                    raise ValueError(
+                        f'Assembly {self.assembly} is type STANDARD but its name does not start with '
+                        f'the group version prefix {expected_prefix} — '
+                        f'STANDARD assembly names must match the group\'s major.minor version '
+                        f'(e.g. {expected_prefix}z where z is the patch version).'
+                    )
         else:
             # If assemblies are not enabled for the group,
             # ignore this argument throughout doozer.
