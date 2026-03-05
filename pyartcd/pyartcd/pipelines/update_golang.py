@@ -493,8 +493,8 @@ class UpdateGolangPipeline:
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
-        go_latest = group_content['vars'][go_latest_var]
-        go_previous = group_content['vars'].get(go_previous_var, None)
+        go_latest = group_content['vars'].get(go_latest_var)
+        go_previous = group_content['vars'].get(go_previous_var)
 
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
