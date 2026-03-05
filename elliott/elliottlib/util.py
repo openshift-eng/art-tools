@@ -25,7 +25,6 @@ from artcommonlib.util import extract_related_images_from_fbc
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
-from elliottlib.util import get_golang_version_from_build_log
 
 # -----------------------------------------------------------------------------
 # Constants and defaults
@@ -628,7 +627,7 @@ def get_golang_rpm_nvrs(nvrs, exact=False):
 
         root_log = brew.get_nvr_root_log(*nvr)
         try:
-            go_version = get_golang_version_from_build_log(root_log)
+            go_version = get_golang_version_from_log(root_log)
         except Exception as e:
             raise ValueError(f'Could not find go version in root log for {nvr}: {e}') from e
 
