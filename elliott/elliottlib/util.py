@@ -479,7 +479,7 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exa
             if exact:
                 go_version = f"golang-{go_version}"
             if not go_version:
-                raise ValueError(f'Cannot find go version for {name}')
+                raise ValueError(f'Cannot find go version for {"-".join(nvr_param)}')
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
