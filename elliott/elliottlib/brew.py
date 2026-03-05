@@ -206,20 +206,23 @@ def get_nvr_arch_log(name, version, release, arch='x86_64'):
     )
 
     logger.debug(f"Trying {log_url}")
-    try:
-        res = requests.get(log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
-        res.raise_for_status()
-    except:
-        log_url = '{host}/packages/{name}/{version}/{release}/data/logs/{arch}-build.log'.format(
-            host=constants.BREW_DOWNLOAD_URL,
-            name=name,
-            version=version,
-            release=release,
-            arch=arch,
-        )
-        logger.debug(f"Trying {log_url}")
-        res = requests.get(log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
-        res.raise_for_status()
+    res = requests.get(log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
+    res.raise_for_status()
+    return res.text, log_url
+
+
+def get_nvr_arch_build_log(name, version, release, arch='x86_64'):
+    log_url = '{host}/packages/{name}/{version}/{release}/data/logs/{arch}-build.log'.format(
+        host=constants.BREW_DOWNLOAD_URL,
+        name=name,
+        version=version,
+        release=release,
+        arch=arch,
+    )
+
+    logger.debug(f"Trying {log_url}")
+    res = requests.get(log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
+    res.raise_for_status()
     return res.text, log_url
 
 

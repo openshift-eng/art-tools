@@ -22,6 +22,7 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.util import extract_related_images_from_fbc
+from build.lib.elliottlib.util import get_golang_version_from_build_log
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
@@ -225,27 +226,32 @@ def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional
     return None
 
 
-def get_golang_version_from_build_log(log):
+def get_golang_version_from_log(log, log_url):
     # TODO add a test for this
     # Based on below greps:
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang-(bin-|))[0-9]+.[0-9]+.[0-9]+[^ ]*' ./3.11/*.log | sed 's/:.*\([0-9]\+\.[0-9]\+\.[0-9]\+.*\)/: \1/'
     # $ grep -m1 -o -E '(go-toolset-1[^ ]*|golang.*module[^ ]*).*[0-9]+.[0-9]+.[0-9]+[^ ]*' ./4.5/*.log | sed 's/\:.*\([^a-z][0-9]\+\.[0-9]\+\.[0-9]\+[^ ]*\)/:\ \1/'
-    m = re.search(r'(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*', log)
-    s = m.group(0).split()
+    go_version = None
 
-    # if we get a result like:
-    #   "golang-bin               x86_64  1.14.12-1.module+el8.3.0+8784+380394dc"
-    if len(s) > 1:
-        go_version = s[-1]
-    else:
-        # if we get a result like (more common for RHEL7 build logs):
-        #   "go-toolset-1.14-golang-1.14.9-2.el7.x86_64"
-        go_version = s[0]
-        # extract version and release
-        m = re.search(r'[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$', s[0])
+    try:
+        m = re.search(r'(go-toolset-1\S+-golang\S+|golang-bin).*[0-9]+\.[0-9]+\.[0-9]+[^\s]*', log)
         s = m.group(0).split()
-        if len(s) == 1:
+
+        # if we get a result like:
+        #   "golang-bin               x86_64  1.14.12-1.module+el8.3.0+8784+380394dc"
+        if len(s) > 1:
+            go_version = s[-1]
+        else:
+            # if we get a result like (more common for RHEL7 build logs):
+            #   "go-toolset-1.14-golang-1.14.9-2.el7.x86_64"
             go_version = s[0]
+            # extract version and release
+            m = re.search(r'[0-9a-zA-z\.]+-[0-9a-zA-z\.]+$', s[0])
+            s = m.group(0).split()
+            if len(s) == 1:
+                go_version = s[0]
+    except Exception as e:
+        LOGGER.warning(f'Could not find go rpm version in log {log_url}: {e}')
 
     return go_version
 
@@ -601,11 +607,13 @@ def get_golang_container_nvrs_for_konflux_record(
 
 
 def get_parent_golang_from_brew(nvr: Tuple[str, str, str]) -> Optional[str]:
-    build_log, log_url = brew.get_nvr_arch_log(*nvr)
     try:
-        go_version = get_golang_version_from_build_log(build_log)
+        build_log, log_url = brew.get_nvr_arch_log(*nvr)
+        go_version = get_golang_version_from_log(build_log, log_url)
     except Exception as e:
-        raise ValueError(f'Could not find go version at {log_url} for {"-".join(nvr)}: {e}') from e
+        LOGGER.warning(f'Could not find go version for {"-".join(nvr)}: {e}')
+        build_log, log_url = brew.get_nvr_arch_build_log(*nvr)
+        go_version = get_golang_version_from_log(build_log, log_url)
     return go_version
 
 
