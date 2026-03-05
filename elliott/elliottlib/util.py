@@ -250,7 +250,7 @@ def get_golang_version_from_log(log, log_url):
             if len(s) == 1:
                 go_version = s[0]
     except Exception as e:
-        LOGGER.warning(f'Could not find go rpm version in log {log_url}: {e}')
+        raise ValueError(f'Could not find go rpm version in log {log_url}: {e}')
 
     return go_version
 
