@@ -18,8 +18,10 @@ from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
+    Data,
     Environments,
     Metadata,
+    ReleaseNotes,
     Shipment,
     ShipmentConfig,
     ShipmentEnv,
@@ -367,7 +369,20 @@ class ReleaseFromFbcPipeline:
         environments = Environments(stage=ShipmentEnv(releasePlan=stage_rpa), prod=ShipmentEnv(releasePlan=prod_rpa))
 
         # Create release notes data - set to null for release-from-fbc pipeline
+        # Exception: For OpenShift groups, provide minimal release notes to satisfy validation (required)
         data = None
+        if kind == 'image' and self.group.startswith('openshift-'):
+            # Special case: This is NOT the normal usage for release-from-fbc, print warning
+            self.logger.info(
+                f"[Warning] Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
+                f"to satisfy shipment validation requirements. This is a special situation case, "
+                f"PLEASE REVIEW!!"
+            )
+            release_notes = ReleaseNotes(
+                type='RHBA',
+                synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}'
+            )
+            data = Data(releaseNotes=release_notes)
 
         # Create shipment
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
