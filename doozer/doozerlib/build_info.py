@@ -698,7 +698,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_image_inspectors(self):
         if not self._inspectors:
-            info = util.oc_image_info_show_multiarch__caching(
+            info = util.oc_image_info_show_multiarch(
                 pullspec=self.get_build_pullspec(),
                 registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
             )

@@ -1189,7 +1189,7 @@ def images_streams_prs(
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    util.oc_image_info_for_arch__caching(upstream_image)
+                    util.oc_image_info_for_arch(upstream_image)
                 except:
                     yellow_print(
                         f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'

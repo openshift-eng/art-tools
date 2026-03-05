@@ -6,10 +6,16 @@ from unittest.mock import patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
+from artcommonlib.oc_image_info import oc_image_info__cached__lru, oc_image_info__cached_async__lru
 from doozerlib import util
 
 
 class TestUtil(unittest.TestCase):
+    def setUp(self):
+        """Clear LRU caches before each test to ensure test isolation."""
+        oc_image_info__cached__lru.cache_clear()
+        oc_image_info__cached_async__lru.cache_clear()
+
     def test_isolate_nightly_name_components(self):
         self.assertEqual(
             util.isolate_nightly_name_components('4.1.0-0.nightly-2019-11-08-213727'), ('4.1', 'x86_64', False)
@@ -129,7 +135,7 @@ class TestUtil(unittest.TestCase):
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_show_multiarch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
-        util.oc_image_info_show_multiarch__caching('pullspec')
+        util.oc_image_info_show_multiarch('pullspec')
         gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
@@ -178,10 +184,10 @@ class TestUtil(unittest.TestCase):
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_for_arch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
-        util.oc_image_info_for_arch__caching('pullspec')
+        util.oc_image_info_for_arch('pullspec')
         gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, oc_image_info_mock):
         # When strict=False and manifest unknown, should return None
         oc_image_info_mock.return_value = None
@@ -191,14 +197,14 @@ class TestUtil(unittest.TestCase):
             'pullspec', '--filter-by-os=amd64', registry_config=None, strict=False
         )
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_false_other_error(self, oc_image_info_mock):
         # When strict=False but other error, should raise
         oc_image_info_mock.side_effect = IOError("oc image info failed (rc=1): error: network timeout")
         with self.assertRaises(IOError):
             util.oc_image_info_for_arch('pullspec', strict=False)
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_true_manifest_unknown(self, oc_image_info_mock):
         # When strict=True and manifest unknown, should raise
         oc_image_info_mock.side_effect = IOError(

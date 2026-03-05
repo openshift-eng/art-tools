@@ -476,7 +476,7 @@ class KonfluxFbcFragmentMerger:
                 """
                 Fetch the ImageDigestMirrorSet for a given fragment.
                 """
-                fragment_info = await util.oc_image_info_for_arch_async__caching(
+                fragment_info = await util.oc_image_info_for_arch_async(
                     fragment,
                     registry_config=self.registry_auth,
                 )
@@ -1026,7 +1026,7 @@ class KonfluxFbcRebaser:
         return image_digest_mirror_set
 
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
-        return await util.oc_image_info_for_arch_async__caching(
+        return await util.oc_image_info_for_arch_async(
             bundle_build.image_pullspec,
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )

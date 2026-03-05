@@ -63,7 +63,7 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
                     return rhel_version, golang_version
 
         # At this point, we're missing at least one value - fall back to inspecting image labels
-        image_info = cast(Dict, util.oc_image_info_for_arch__caching(pullspec))
+        image_info = cast(Dict, util.oc_image_info_for_arch(pullspec))
         labels = image_info['config']['config']['Labels']
 
         # Extract RHEL version from release label if we don't have it yet
@@ -584,7 +584,7 @@ class ImageMetadata(Metadata):
                 builder_brew_build = ImageMetadata.builder_image_builds.get(builder_image_url, None)
 
                 if not builder_brew_build:
-                    latest_builder_image_info = Model(util.oc_image_info_for_arch__caching(builder_image_url))
+                    latest_builder_image_info = Model(util.oc_image_info_for_arch(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [
                         builder_info_labels['com.redhat.component'],

@@ -765,7 +765,7 @@ RUN echo "test"
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
-    @patch('doozerlib.image.util.oc_image_info_for_arch__caching', return_value={'config': {'config': {'Labels': {}}}})
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
     def test_determine_upstream_rhel_version_ubi_pattern(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
