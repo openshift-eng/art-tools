@@ -2321,7 +2321,7 @@ class KonfluxRebaser:
         replacements: List[Tuple[str, str]] = []
         for ref in image_refs:
             name = ref['name']
-            name = _map_image_name(name, image_map)
+            mapped_name = _map_image_name(name, image_map)
             spec = ref['from']['name']
 
             # Skip images that are defined in external-images config
@@ -2333,7 +2333,9 @@ class KonfluxRebaser:
             distgit = self._runtime.name_in_bundle_map.get(name, None)
             # fail if upstream is referring to an image we don't actually build
             if not distgit:
-                raise ValueError('Unable to find {} in image-references data for {}'.format(name, metadata.distgit_key))
+                raise ValueError(
+                    'Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key)
+                )
 
             meta = self._runtime.image_map.get(distgit, None)
             if meta:  # image is currently being processed
