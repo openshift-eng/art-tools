@@ -475,11 +475,9 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exa
             raise
         name = nvr[0]
         if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
-            go_version = golang_builder_version(nvr, logger)
+            go_version = get_parent_golang_from_brew(nvr)
             if exact:
                 go_version = f"golang-{go_version}"
-            if not go_version:
-                raise ValueError(f'Cannot find go version for {"-".join(nvr_param)}')
             if go_version not in go_nvr_map:
                 go_nvr_map[go_version] = set()
             go_nvr_map[go_version].add(nvr)
@@ -603,17 +601,9 @@ def get_golang_container_nvrs_for_konflux_record(
     return go_nvr_map
 
 
-def golang_builder_version(nvr, logger):
-    go_version = None
-    try:
-        build_log = brew.get_nvr_arch_log(*nvr)
-    except BrewBuildException:
-        logger.debug(f'Could not brew log for {nvr}')
-    else:
-        try:
-            go_version = get_golang_version_from_build_log(build_log)
-        except AttributeError:
-            logger.debug(f'Could not find Go version in build log for {nvr}')
+def get_parent_golang_from_brew(nvr: Tuple[str, str, str]) -> Optional[str]:
+    build_log = brew.get_nvr_arch_log(*nvr)
+    go_version = get_golang_version_from_build_log(build_log)
     return go_version
 
 
