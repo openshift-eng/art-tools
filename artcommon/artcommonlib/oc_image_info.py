@@ -85,8 +85,10 @@ def _is_cacheable(pullspec: str) -> bool:
 
 def _redis_available() -> bool:
     """Return True when Redis credentials are present in the environment."""
-    logger.warning("REDIS_SERVER_PASSWORD not set: Redis caching disabled")
-    return bool(os.environ.get("REDIS_SERVER_PASSWORD"))
+    available = bool(os.environ.get("REDIS_SERVER_PASSWORD"))
+    if not available:
+        logger.warning("REDIS_SERVER_PASSWORD not set: Redis caching disabled")
+    return available
 
 
 def _build_cmd(pullspec: str, options: Tuple[str, ...], registry_config: Optional[str]) -> list[str]:
