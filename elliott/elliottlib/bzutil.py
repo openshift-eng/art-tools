@@ -712,6 +712,7 @@ class JIRABugTracker(BugTracker):
 
     @staticmethod
     def get_config(runtime) -> Dict:
+        from artcommonlib.jira_config import JIRA_SERVER_URL
         bug_config = runtime.gitdata.load_data(key='bug', replace_vars=runtime.group_config.vars).data
         # construct config so that all jira_config keys become toplevel keys
         jira_config = bug_config.pop('jira_config')
@@ -719,6 +720,8 @@ class JIRABugTracker(BugTracker):
             if key in bug_config:
                 raise ValueError(f"unexpected: top level config contains same key ({key}) as jira_config")
             bug_config[key] = jira_config[key]
+        # JIRA server is hardcoded (not read from bug.yml)
+        bug_config['server'] = JIRA_SERVER_URL
         return bug_config
 
     def login(self, token_auth=None) -> JIRA:

@@ -817,9 +817,9 @@ class Runtime(GroupRuntime):
 
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
-        bug_config = Model(self.get_bug_config())
-        server = bug_config.jira_config.server or JIRA_SERVER_URL
+            raise ValueError("JIRA client is not supported for OCP versions < 4.6")
+        # JIRA server is hardcoded in artcommonlib.jira_config (not read from bug.yml)
+        server = JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:

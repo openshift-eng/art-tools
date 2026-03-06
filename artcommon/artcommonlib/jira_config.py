@@ -23,9 +23,9 @@ Example usage:
 
 import os
 
-# Default JIRA server URL
+# Default JIRA server URL (hardcoded; not read from ocp-build-data bug.yml)
 # This can be overridden by setting the JIRA_SERVER_URL environment variable
-DEFAULT_JIRA_SERVER_URL = "https://issues.redhat.com"
+DEFAULT_JIRA_SERVER_URL = "https://redhat.atlassian.net"
 DEFAULT_JIRA_EMAIL = "aos-team-art-private+openshift-art-jira-bot@redhat.com"
 # Get the JIRA server URL (check environment variable first, then use default)
 JIRA_SERVER_URL = os.environ.get("JIRA_SERVER_URL", DEFAULT_JIRA_SERVER_URL)
