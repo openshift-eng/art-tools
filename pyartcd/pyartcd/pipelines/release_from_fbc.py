@@ -216,6 +216,10 @@ class ReleaseFromFbcPipeline:
 
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
         product = self.group.split('-')[0]
+        # Special case: openshift groups do not define product in group config,
+        # use 'ocp' as the product name when openshift is detected
+        if product == 'openshift':
+            product = 'ocp'
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
