@@ -28,12 +28,17 @@ class ReleaseScheduleClient:
         self,
         group: str,
         assembly_type: AssemblyTypes = AssemblyTypes.STANDARD,
+        assembly_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch all_ga_tasks from release schedule API for a group."""
         s = requests.Session()
         auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
         s.post(self.AUTH_URL, auth=auth)
-        if assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+
+        pre_ga_release = assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW)
+        standard_ga_release = assembly_type == AssemblyTypes.STANDARD and assembly_name and assembly_name.endswith('.0')
+
+        if pre_ga_release or standard_ga_release:
             path = f'releases/{group}/'
         else:
             path = f'{group}.z/'
@@ -56,7 +61,7 @@ class ReleaseScheduleClient:
 
         :raises ValueError: If the assembly release date is not found
         """
-        for release in self._fetch_ga_tasks(group, assembly_type):
+        for release in self._fetch_ga_tasks(group, assembly_type, assembly_name):
             if assembly_name in release['name']:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
@@ -87,7 +92,7 @@ class ReleaseScheduleClient:
         if minor > 0:
             prev_group = f'openshift-{major}.{minor - 1}'
             try:
-                for release in self._fetch_ga_tasks(prev_group, assembly_type):
+                for release in self._fetch_ga_tasks(prev_group, assembly_type, assembly_name):
                     if is_future_release_date(release['date_start']):
                         days_diff = abs(
                             (
