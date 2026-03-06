@@ -10,6 +10,7 @@ from elliottlib.cli.find_builds_cli import (
     find_builds_konflux,
     find_builds_konflux_all_types,
 )
+from elliottlib.exceptions import ElliottFatalError
 from flexmock import flexmock
 
 
@@ -58,7 +59,8 @@ class TestFindBuildsCli(TestCase):
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
-        runtime = flexmock(konflux_db=flexmock())
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
         image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
@@ -77,13 +79,47 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
         image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
 
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image2"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux_excludes_non_payload(self, MockKonfluxBuildRecord, _):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.branch_el_target.return_value = "el8"
+        image_meta_1.get_latest_build = AsyncMock(return_value={"nvr": "image1-1.0.0-1.el8"})
+
+        image_meta_2 = MagicMock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+        actual_records = await find_builds_konflux(runtime, payload=False)
+        self.assertEqual(len(actual_records), 0)
+        image_meta_2.get_latest_build.assert_not_called()
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image1"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux_errors_on_excluded_payload(self, MockKonfluxBuildRecord, _):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+
+        runtime.should_receive("image_metas").and_return([image_meta_1])
+        with self.assertRaises(ElliottFatalError):
+            await find_builds_konflux(runtime, payload=True)
+
 
 class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
     async def test_find_builds_konflux_all_types(self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord):
         # Setup runtime and DB mocks
-        runtime = flexmock(konflux_db=flexmock())
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
 
@@ -129,6 +165,59 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
         image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
         image_meta_2.get_latest_build.assert_called_once_with(el_target="el9", exclude_large_columns=True)
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image2"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_find_builds_konflux_all_types_excludes_non_payload(
+        self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord, _
+    ):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
+
+        image_meta_1 = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
+        )
+        image_meta_1.branch_el_target.return_value = "el8"
+        build_1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta_1.get_latest_build = AsyncMock(return_value=build_1)
+
+        image_meta_2 = MagicMock(
+            base_only=False, is_release=True, is_payload=False, is_olm_operator=True, distgit_key="image2"
+        )
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image2-2.0.0-1.el9"))
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+
+        builds_map = await find_builds_konflux_all_types(runtime)
+
+        self.assertEqual(builds_map['payload'], [build_1.nvr])
+        self.assertEqual(builds_map['non_payload'], [])
+        self.assertEqual(builds_map['olm_builds'], [])
+        self.assertEqual(builds_map['olm_builds_not_found'], [])
+        image_meta_2.get_latest_build.assert_not_called()
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image1"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_find_builds_konflux_all_types_errors_on_excluded_payload(
+        self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord, _
+    ):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
+
+        image_meta_1 = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
+        )
+
+        runtime.should_receive("image_metas").and_return([image_meta_1])
+        with self.assertRaises(ElliottFatalError):
+            await find_builds_konflux_all_types(runtime)
 
 
 if __name__ == "__main__":

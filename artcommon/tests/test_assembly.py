@@ -6,6 +6,7 @@ from artcommonlib.assembly import (
     _merger,
     assembly_basis_event,
     assembly_config_struct,
+    assembly_excluded_components,
     assembly_group_config,
     assembly_metadata_config,
     assembly_rhcos_config,
@@ -530,6 +531,118 @@ releases:
             pass
         except Exception as e:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
+
+    def test_assembly_excluded_components_no_assembly(self):
+        self.assertEqual(assembly_excluded_components(self.releases_config, None, 'image'), set())
+        self.assertEqual(assembly_excluded_components(self.releases_config, '', 'image'), set())
+        self.assertEqual(assembly_excluded_components(None, 'ART_1', 'image'), set())
+
+    def test_assembly_excluded_components_no_exclusions(self):
+        self.assertEqual(assembly_excluded_components(self.releases_config, 'ART_7', 'image'), set())
+
+    def test_assembly_excluded_components_basic(self):
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: image-a
+          exclude: true
+        - distgit_key: image-b
+          metadata:
+            is: some-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        excluded = assembly_excluded_components(releases_config, 'test_assembly', 'image')
+        self.assertEqual(excluded, {'image-a'})
+
+    def test_assembly_excluded_components_explicit_false(self):
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: image-a
+          exclude: false
+        - distgit_key: image-b
+          exclude: true
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        excluded = assembly_excluded_components(releases_config, 'test_assembly', 'image')
+        self.assertEqual(excluded, {'image-b'})
+
+    def test_assembly_excluded_components_inheritance(self):
+        releases_yml = """
+releases:
+  parent:
+    assembly:
+      members:
+        images:
+        - distgit_key: image-a
+          exclude: true
+        - distgit_key: image-b
+          exclude: true
+  child:
+    assembly:
+      basis:
+        assembly: parent
+      members:
+        images:
+        - distgit_key: image-c
+          exclude: true
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        excluded = assembly_excluded_components(releases_config, 'child', 'image')
+        self.assertEqual(excluded, {'image-a', 'image-b', 'image-c'})
+
+    def test_assembly_excluded_components_child_overrides_parent(self):
+        releases_yml = """
+releases:
+  parent:
+    assembly:
+      members:
+        images:
+        - distgit_key: image-a
+          exclude: true
+        - distgit_key: image-b
+          exclude: true
+  child:
+    assembly:
+      basis:
+        assembly: parent
+      members:
+        images:
+        - distgit_key: image-a
+          exclude: false
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        excluded = assembly_excluded_components(releases_config, 'child', 'image')
+        self.assertEqual(excluded, {'image-b'})
+
+    def test_assembly_excluded_components_rpms(self):
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        rpms:
+        - distgit_key: rpm-a
+          exclude: true
+        - distgit_key: rpm-b
+          metadata:
+            content: {}
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        excluded = assembly_excluded_components(releases_config, 'test_assembly', 'rpm')
+        self.assertEqual(excluded, {'rpm-a'})
+        # images should be unaffected
+        self.assertEqual(assembly_excluded_components(releases_config, 'test_assembly', 'image'), set())
+
+    def test_assembly_excluded_components_infinite_recursion(self):
+        with self.assertRaises(ValueError):
+            assembly_excluded_components(self.releases_config, 'ART_INFINITE', 'rpm')
 
     def test_merger(self):
         # First value dominates on primitive
