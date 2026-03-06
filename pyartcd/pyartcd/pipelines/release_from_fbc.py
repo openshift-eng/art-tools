@@ -215,6 +215,9 @@ class ReleaseFromFbcPipeline:
             self.logger.warning(f"Failed to load product from group config: {e}")
 
         # Fallback: extract product from group name (e.g., "oadp-1.3" -> "oadp")
+        if self.group.startswith("openshift-"):
+            # Product name should always be ocp for openshift
+            return "ocp"
         product = self.group.split('-')[0]
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
