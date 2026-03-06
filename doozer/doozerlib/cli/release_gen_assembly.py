@@ -213,7 +213,6 @@ class GenAssemblyCli:
         self.nightlies = nightlies
         self.standards = standards
         self.custom = custom
-        self._in_flight_param = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.graph_url = graph_url
@@ -240,13 +239,13 @@ class GenAssemblyCli:
         self.rhcos_version = ''
         self.rhcos_node_id = ''
         self.final_previous_list: List[VersionInfo] = []
-        self.release_date = release_date
+        self.release_date = self._resolve_release_date(release_date)
 
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
 
         # Resolve in-flight
-        self.in_flight = self._resolve_in_flight()
+        self.in_flight = self._resolve_in_flight(in_flight)
 
         # Load releases_config
         self.releases_config = self.runtime.get_releases_config()
@@ -270,17 +269,18 @@ class GenAssemblyCli:
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
 
-    def _resolve_in_flight(self) -> Optional[str]:
+    def _resolve_in_flight(self, in_flight: Optional[str]) -> Optional[str]:
         """Resolve in-flight release from param, or auto-detect when not custom."""
-        if self._in_flight_param == "none" or self.custom:
+        if in_flight == "none" or self.custom:
             return None
-        elif self._in_flight_param:
-            return self._in_flight_param
+        elif in_flight:
+            return in_flight
 
         in_flight = self.release_schedule_client.get_inflight(
             self.gen_assembly_name,
             self.runtime.group,
             self.assembly_type,
+            assembly_release_date=self.release_date,
         )
         if in_flight is None:
             raise ValueError(
@@ -878,7 +878,7 @@ class GenAssemblyCli:
 
         if self.runtime.build_system == 'konflux':
             group_info['shipment'] = self._get_shipment_info()
-            group_info['release_date'] = self._get_release_date()
+            group_info['release_date'] = self.release_date
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
@@ -909,20 +909,19 @@ class GenAssemblyCli:
             },
         }
 
-    def _get_release_date(self):
-        if self.release_date:
-            return self.release_date
+    def _resolve_release_date(self, release_date: Optional[str]) -> str:
+        if release_date:
+            return release_date
+
         if self.assembly_type != AssemblyTypes.STANDARD:
             raise ValueError("For non standard release you need to manually set release date from job")
+
         self.logger.info("Release date not provided. Fetching release date from release schedule...")
-        try:
-            self.release_date = self.release_schedule_client.get_assembly_release_date(
-                self.gen_assembly_name, self.runtime.group, self.assembly_type
-            )
-        except Exception as ex:
-            raise ValueError(f"Failed to fetch release date from release schedule for {self.gen_assembly_name}: {ex}")
-        self.logger.info("Release date: %s", self.release_date)
-        return self.release_date
+        release_date = self.release_schedule_client.get_assembly_release_date(
+            self.gen_assembly_name, self.runtime.group, self.assembly_type
+        )
+        self.logger.info("Release date found for %s: %s", self.gen_assembly_name, release_date)
+        return release_date
 
     def _get_member_overrides(self):
         """
