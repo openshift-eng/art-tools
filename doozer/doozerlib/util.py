@@ -309,17 +309,21 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     return major_minor, brew_arch, is_private
 
 
-def get_nightly_pullspec(runtime, nightly: str) -> str:
-    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
-    if major_minor != runtime.get_minor_version():
-        raise ValueError(f"Specified nightly {nightly} does not match group major.minor {major_minor}")
+def get_nightly_pullspec(nightly: str, build_system: str = 'konflux') -> str:
+    """
+    Construct nightly pullspec from nightly name.
 
-    if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
-        major, _ = runtime.get_major_minor_fields()
-        if major == 5:
-            release_suffix = "release-5"
-        else:
-            release_suffix = "release"
+    :param nightly: Nightly name (e.g., '5.0.0-0.nightly-2022-12-01-153811')
+    :param build_system: 'brew' or 'konflux'
+    :return: Full pullspec URL
+    """
+    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
+
+    # Extract major version from nightly name
+    major = int(major_minor.split('.')[0])
+
+    if build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
+        release_suffix = "release-5" if major == 5 else "release"
     else:
         release_suffix = 'konflux-release'
 

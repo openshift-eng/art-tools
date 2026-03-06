@@ -312,7 +312,7 @@ class GenAssemblyCli:
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'
                 )
 
-            nightly_pullspec = get_nightly_pullspec(self.runtime, nightly_name)
+            nightly_pullspec = get_nightly_pullspec(nightly_name, self.runtime.build_system)
             self.release_pullspecs[brew_cpu_arch] = nightly_pullspec
 
         for standard_release_name in self.standards:

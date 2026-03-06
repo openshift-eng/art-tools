@@ -8,6 +8,7 @@ from doozerlib.util import get_nightly_pullspec
 
 from elliottlib import rhcos, util
 from elliottlib.cli.common import cli
+from elliottlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ LOGGER = logging.getLogger(__name__)
 @click.option('--packages', '-p', 'packages', help='Show details for only these package names (comma-separated)')
 @click.option('--go', '-g', 'go', is_flag=True, help='Show go version for packages that are go binaries')
 @click.pass_obj
-def rhcos_cli(runtime, release, packages, arch, go):
+def rhcos_cli(runtime: Runtime, release, packages, arch, go):
     """
         Show packages in an RHCOS build in a payload image.
         There are several ways to specify the location of the RHCOS build.
@@ -93,7 +94,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         if pullspec:
             payload_pullspecs.append(release)
         elif nightly:
-            payload_pullspecs.append(get_nightly_pullspec(runtime, release))
+            payload_pullspecs.append(get_nightly_pullspec(release, runtime.build_system))
         elif named_release:
             for local_arch in target_arches:
                 p = get_pullspec(release, local_arch)

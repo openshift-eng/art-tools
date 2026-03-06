@@ -2706,7 +2706,7 @@ class PayloadGenerator:
         issues: List[str]
         runtime.logger.info(f"Processing nightly: {nightly}")
         try:
-            pullspec = get_nightly_pullspec(runtime, nightly)
+            pullspec = get_nightly_pullspec(nightly, runtime.build_system)
         except ValueError as e:
             return terminal_issue(str(e))
 

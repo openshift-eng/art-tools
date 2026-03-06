@@ -441,7 +441,7 @@ class BuildMicroShiftPipeline:
         pullspecs = []
         for payload in payloads:
             if "/" not in payload:
-                pullspec = get_nightly_pullspec(self.runtime, payload)
+                pullspec = get_nightly_pullspec(payload)
                 pullspecs.append(pullspec)
             else:
                 # payload is a pullspec
