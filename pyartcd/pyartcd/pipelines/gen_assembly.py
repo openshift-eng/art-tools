@@ -11,7 +11,6 @@ import aiohttp
 import click
 from artcommonlib import exectools
 from artcommonlib.util import (
-    get_inflight,
     isolate_major_minor_in_group,
     merge_objects,
     new_roundtrip_yaml_handler,
@@ -72,14 +71,7 @@ class GenAssemblyPipeline:
         self.date = date
         self.skip_get_nightlies = skip_get_nightlies
         self.gen_microshift = gen_microshift
-        if in_flight and in_flight != "none":
-            self.in_flight = in_flight
-        elif in_flight == "none":
-            self.in_flight = None
-        elif not custom:
-            self.in_flight = get_inflight(assembly, group)
-        else:
-            self.in_flight = None
+        self.in_flight = in_flight  # Raw param; resolution happens in doozer release:gen-assembly
 
         self.previous_list = previous_list
         self.auto_previous = auto_previous
@@ -124,7 +116,9 @@ class GenAssemblyPipeline:
             if self.arches and not self.custom:
                 self._logger.warning("Customizing arches for non-custom assembly, proceed with caution")
 
-            if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
+            if self.custom and (
+                self.auto_previous or self.previous_list or (self.in_flight and self.in_flight != "none")
+            ):
                 raise ValueError("Specifying previous list for a custom release is not allowed.")
 
             if self.skip_get_nightlies:
@@ -155,11 +149,7 @@ class GenAssemblyPipeline:
                 self._logger.warning("No PR update was made")
                 return
 
-            # Sends a slack message
-            message = (
-                f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
-                f"The inflight release is {self.in_flight}"
-            )
+            message = f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}"
             if not self.skip_get_nightlies:
                 if not self.ignore_non_x86_nightlies and latest_nightly not in candidate_nightlies:
                     message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
@@ -249,7 +239,7 @@ class GenAssemblyPipeline:
         if self.custom:
             cmd.append("--custom")
         else:
-            if self.in_flight:
+            if self.in_flight is not None:
                 cmd.append(f"--in-flight={self.in_flight}")
             for previous in self.previous_list:
                 cmd.append(f"--previous={previous}")

@@ -8,6 +8,16 @@ from flexmock import flexmock
 
 
 class TestGenAssemblyCli(TestCase):
+    def setUp(self):
+        self.get_inflight_patcher = patch(
+            'doozerlib.cli.release_gen_assembly.ReleaseScheduleClient',
+        )
+        self.mock_client_class = self.get_inflight_patcher.start()
+        self.mock_client_class.return_value.get_inflight.return_value = None
+
+    def tearDown(self):
+        self.get_inflight_patcher.stop()
+
     def test_initialize_assembly_type(self):
         """
         Check that the correct assembly type is set, according to

@@ -63,8 +63,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
         self.assertEqual(result.exit_code, 0)
 
-    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_next_week', return_value=True)
-    def test_verify_bugs_with_sweep_cli(self, *_):
+    @patch('elliottlib.cli.verify_attached_bugs_cli.ReleaseScheduleClient')
+    def test_verify_bugs_with_sweep_cli(self, mock_client_class):
+        mock_client_class.return_value.is_release_next_week.return_value = True
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
@@ -133,8 +134,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
     @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
-    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_next_week', return_value=True)
-    def test_verify_attached_bugs_cli_fail(self, *_):
+    @patch('elliottlib.cli.verify_attached_bugs_cli.ReleaseScheduleClient')
+    def test_verify_attached_bugs_cli_fail(self, mock_client_class, *_):
+        mock_client_class.return_value.is_release_next_week.return_value = True
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})

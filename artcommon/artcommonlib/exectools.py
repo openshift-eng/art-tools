@@ -19,6 +19,7 @@ from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 import tenacity
@@ -92,8 +93,18 @@ def urlopen_assert(url_or_req, httpcode=200, retries=3):
     :param retries: The number of retries to permit
     :return: The success result of urlopen (or a RetryException will be thrown)
     """
+    url = url_or_req if isinstance(url_or_req, str) else url_or_req.full_url
+
+    def _try_open():
+        try:
+            return urlopen(url_or_req)
+        except HTTPError as e:
+            raise HTTPError(url, e.code, f"{e.reason} (url: {url})", e.headers, e.fp) from e
+        except URLError as e:
+            raise URLError(f"{e.reason} (url: {url})") from e
+
     return retry(
-        retries, lambda: urlopen(url_or_req), check_f=lambda req: req.code == httpcode, wait_f=lambda x: time.sleep(30)
+        retries, _try_open, check_f=lambda req: req.code == httpcode, wait_f=lambda x: time.sleep(30)
     )
 
 
