@@ -487,7 +487,7 @@ async def cleanup_old_plashets_remote(
                 logger.warning("[DRY RUN] Directories that would be removed:\n%s", dirs)
             else:
                 logger.info("[DRY RUN] No old plashet directories found to clean up")
-        except Exception as e:
+        except (ChildProcessError, OSError) as e:
             logger.warning("[DRY RUN] Could not list old plashets: %s", e)
     else:
         # Find and remove, then clean up empty YYYY-MM parent dirs

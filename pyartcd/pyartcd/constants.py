@@ -6,7 +6,7 @@ PLASHET_REMOTES = [
 ]
 
 PLASHET_REMOTE_BASE_DIR = "/mnt/data/pub/RHOCP/plashets"
-PLASHET_CLEANUP_OLDER_THAN_DAYS = 14
+PLASHET_CLEANUP_OLDER_THAN_DAYS = 21
 
 SPMM_UTILS_REMOTE_HOST = "exd-ocp-buildvm-bot-prod@spmm-util"
 
