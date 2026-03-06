@@ -95,6 +95,7 @@ class ReleaseScheduleClient:
         major, minor = get_ocp_version_from_group(group)
 
         # Only look for previous group if minor > 0 to avoid negative minor versions
+        # TODO: Fix this logic for OCP5
         if minor > 0:
             prev_group = f'openshift-{major}.{minor - 1}'
             try:
