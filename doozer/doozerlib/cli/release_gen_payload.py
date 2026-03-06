@@ -2705,6 +2705,11 @@ class PayloadGenerator:
 
         issues: List[str]
         runtime.logger.info(f"Processing nightly: {nightly}")
+
+        major_minor, _, _ = isolate_nightly_name_components(nightly)
+        if major_minor != runtime.get_minor_version():
+            return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
+
         try:
             pullspec = get_nightly_pullspec(nightly, runtime.build_system)
         except ValueError as e:
