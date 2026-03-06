@@ -478,7 +478,7 @@ async def cleanup_old_plashets_remote(
 
     if dry_run:
         # List what would be removed
-        cmd = ["ssh", plashet_remote_host, "--", "bash", "-c", find_cmd]
+        cmd = ["ssh", plashet_remote_host, "--", find_cmd]
         logger.warning("[DRY RUN] Would remove old plashets matching: %s", find_cmd)
         try:
             _, stdout, _ = await exectools.cmd_gather_async(cmd, env=os.environ.copy())
@@ -494,7 +494,7 @@ async def cleanup_old_plashets_remote(
         remove_cmd = f"{find_cmd} -exec rm -rf {{}} +"
         cleanup_empty_cmd = f"find {remote_base_dir} -mindepth 1 -maxdepth 1 -type d -empty -delete"
         full_cmd = f"{remove_cmd} && {cleanup_empty_cmd}"
-        cmd = ["ssh", plashet_remote_host, "--", "bash", "-c", full_cmd]
+        cmd = ["ssh", plashet_remote_host, "--", full_cmd]
         logger.info(
             "Cleaning up plashets older than %d days in %s on %s", older_than_days, remote_base_dir, plashet_remote_host
         )
