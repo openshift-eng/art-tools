@@ -430,7 +430,12 @@ class PrepareReleaseKonfluxPipeline:
             operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(base_command, operate_cmd)
+
+            # If we're dry-running the pipeline and the advisories do not exist, skip the command since it will fail
+            if advisory_num <= 0 and self.dry_run:
+                self.logger.info("[DRY-RUN] Would have attached CVE flaws to %s advisory %s", impetus, advisory_num)
+            else:
+                await self.run_cmd_with_retry(base_command, operate_cmd)
 
             # change status to qe
             try:
