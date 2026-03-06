@@ -837,6 +837,8 @@ class GenPayloadCli:
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
 
+        self.detect_hermetic_mismatches(assembly_inspector)
+
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
 
@@ -1028,6 +1030,33 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_installed_rpms_in_image(dg_key, bbii, self.package_rpm_finder)
+                )
+
+    @TRACER.start_as_current_span("GenPayloadCli.detect_hermetic_mismatches")
+    def detect_hermetic_mismatches(self, assembly_inspector: AssemblyInspector):
+        """
+        For Konflux builds, check that images configured as hermetic were
+        actually built hermetically. Only flags the case where the config
+        requires hermetic but the build was non-hermetic.
+        """
+        if self.runtime.build_system != 'konflux':
+            return
+
+        self.logger.debug("Detecting hermetic mode mismatches...")
+        for dg_key, bbii in assembly_inspector.get_group_release_images().items():
+            if not bbii:
+                continue
+            image_meta = bbii.get_image_meta()
+            configured_mode = image_meta.get_konflux_network_mode()
+
+            if configured_mode == "hermetic" and not bbii.get_build_obj().hermetic:
+                self.assembly_issues.append(
+                    AssemblyIssue(
+                        f"Image {dg_key} build {bbii.get_nvr()} was built non-hermetically "
+                        f"but configured network mode is 'hermetic'",
+                        component=dg_key,
+                        code=AssemblyIssueCode.MISMATCHED_NETWORK_MODE,
+                    )
                 )
 
     def full_component_repo(self, repo_type: RepositoryType = RepositoryType.PUBLIC) -> str:

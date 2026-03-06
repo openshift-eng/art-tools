@@ -131,6 +131,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             detect_non_latest_rpms=None,
             detect_inconsistent_images=Mock(),
             detect_installed_rpms_issues=None,
+            detect_hermetic_mismatches=None,
             detect_extend_payload_entry_issues=AsyncMock(),
             summarize_issue_permits=(True, {}),
         )
@@ -957,6 +958,112 @@ manifests:
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+
+    def _make_bbii(self, configured_mode, actual_hermetic, nvr="test-1.0-1"):
+        """Helper to create mock build record inspector for hermetic mismatch tests."""
+        build_obj = Mock()
+        build_obj.hermetic = actual_hermetic
+
+        image_meta = Mock()
+        image_meta.get_konflux_network_mode.return_value = configured_mode
+
+        bbii = Mock()
+        bbii.get_image_meta.return_value = image_meta
+        bbii.get_build_obj.return_value = build_obj
+        bbii.get_nvr.return_value = nvr
+        return bbii
+
+    def test_detect_hermetic_mismatches_configured_hermetic_built_non_hermetic(self):
+        """Configured hermetic but built non-hermetically should produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="spam-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"spam": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        issue = gpcli.assembly_issues[0]
+        self.assertEqual(issue.code, AssemblyIssueCode.MISMATCHED_NETWORK_MODE)
+        self.assertEqual(issue.component, "spam")
+        self.assertIn("non-hermetic", issue.msg)
+
+    def test_detect_hermetic_mismatches_configured_open_built_hermetic(self):
+        """Configured open but built hermetically should NOT produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=True, nvr="eggs-2.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"eggs": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_hermetic(self):
+        """Configured hermetic and built hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="foo-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"foo": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_open(self):
+        """Configured open and built non-hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="bar-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"bar": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_defaults_to_open(self):
+        """Default network mode ('open') with non-hermetic build should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="default-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"default-img": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_skips_none_bbii(self):
+        """Images with no build record inspector (None) should be skipped."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"missing-img": None}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_multiple_images(self):
+        """Only mismatched images produce issues; matched ones do not."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        good_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="good-1.0-1")
+        bad_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="bad-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"good-img": good_bbii, "bad-img": bad_bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        self.assertEqual(gpcli.assembly_issues[0].component, "bad-img")
+
+    def test_detect_hermetic_mismatches_skips_brew_builds(self):
+        """Brew builds should be skipped - they don't have hermetic attribute."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='brew'))
+        ai = Mock(AssemblyInspector)
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        ai.get_group_release_images.assert_not_called()
+        self.assertEqual(gpcli.assembly_issues, [])
 
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
