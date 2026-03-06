@@ -501,7 +501,7 @@ async def cleanup_old_plashets_remote(
         try:
             await exectools.cmd_assert_async(cmd, env=os.environ.copy())
             logger.info("Old plashet cleanup completed for %s", remote_base_dir)
-        except ChildProcessError as e:
+        except (ChildProcessError, OSError) as e:
             # Don't fail the build if cleanup fails
             logger.warning("Failed to clean up old plashets on %s: %s", plashet_remote_host, e)
 
