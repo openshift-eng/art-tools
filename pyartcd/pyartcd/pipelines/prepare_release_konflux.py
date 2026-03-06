@@ -377,7 +377,7 @@ class PrepareReleaseKonfluxPipeline:
         # Sweep builds
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
         for impetus, advisory_num in impetus_advisories.items():
-            if advisory_num <= 0:
+            if advisory_num <= 0 and not self.dry_run:
                 raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
             # Skip populating microshift advisory since that is done later after promote
             if impetus == "microshift":
@@ -430,7 +430,12 @@ class PrepareReleaseKonfluxPipeline:
             operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(base_command, operate_cmd)
+
+            # If we're dry-running the pipeline and the advisories do not exist, skip the command since it will fail
+            if advisory_num <= 0 and self.dry_run:
+                self.logger.info("[DRY-RUN] Would have attached CVE flaws to %s advisory %s", impetus, advisory_num)
+            else:
+                await self.run_cmd_with_retry(base_command, operate_cmd)
 
             # change status to qe
             try:
