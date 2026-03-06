@@ -703,6 +703,183 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         )
 
+    def test_extract_version_from_bundle_name(self):
+        """Test version extraction from bundle names with 'v' prefix"""
+        from semver import VersionInfo
+
+        # Test standard format with v prefix
+        version = self.rebaser._extract_version_from_bundle_name("oadp-operator.v1.3.9")
+        self.assertEqual(version, VersionInfo(1, 3, 9))
+
+        # Test another version
+        version = self.rebaser._extract_version_from_bundle_name("oadp-operator.v1.4.4")
+        self.assertEqual(version, VersionInfo(1, 4, 4))
+
+        # Test without v prefix (backward compatibility for tests)
+        version = self.rebaser._extract_version_from_bundle_name("test-bundle-name.v2.1.0")
+        self.assertEqual(version, VersionInfo(2, 1, 0))
+
+        # Test invalid format - should raise ValueError
+        with self.assertRaises(ValueError) as cm:
+            self.rebaser._extract_version_from_bundle_name("invalid-name")
+        self.assertIn("Cannot parse semantic version", str(cm.exception))
+
+        # Test malformed version - should raise ValueError
+        with self.assertRaises(ValueError) as cm:
+            self.rebaser._extract_version_from_bundle_name("operator.vX.Y.Z")
+        self.assertIn("Cannot parse semantic version", str(cm.exception))
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_with_insert_missing_entry(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """Test that insert_missing_entry flag causes version-ordered sorting"""
+        # Create rebaser with insert_missing_entry=True
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly=self.assembly,
+            version="1.3.9",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+            insert_missing_entry=True,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-operator"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "14"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["test-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "test-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="test-operator-bundle-1.3.9-1",
+            operator_nvr="test-operator-1.3.9-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/test-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/test-operator.git",
+            commitish="abc123def",
+        )
+
+        version = "1.3.9"
+        release = "1"
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "test-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "test-operator.v1.3.9",
+            "test-package",
+            {
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.3.9",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/test-bundle@sha256:abc"}],
+            },
+        )
+
+        # Set up catalog with entries in wrong order: [v1.0.0, v1.4.4]
+        # After adding v1.3.9, they should be sorted to [v1.0.0, v1.3.9, v1.4.4]
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package", "defaultChannel": "stable"},
+            {
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "test-package",
+                "entries": [
+                    {"name": "test-operator.v1.0.0"},
+                    {"name": "test-operator.v1.4.4"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.0.0",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "test-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        # Run the rebase
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+
+        # Verify the entries are sorted by version
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["test-package"]["olm.channel"]["stable"]["entries"]
+        entry_names = [e["name"] for e in entries]
+
+        # Verify correct sorted order: v1.0.0 < v1.3.9 < v1.4.4
+        self.assertEqual(entry_names, ["test-operator.v1.0.0", "test-operator.v1.3.9", "test-operator.v1.4.4"])
+
 
 class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
     """Test the _fetch_csv_from_git helper function."""

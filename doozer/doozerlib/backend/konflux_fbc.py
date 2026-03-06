@@ -36,6 +36,7 @@ from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
+from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 
@@ -655,6 +656,7 @@ class KonfluxFbcRebaser:
         fbc_repo: str,
         upcycle: bool,
         ocp_version_override: Optional[Tuple[int, int]] = None,
+        insert_missing_entry: bool = False,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -670,10 +672,37 @@ class KonfluxFbcRebaser:
         self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        self.insert_missing_entry = insert_missing_entry
 
     @staticmethod
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
+
+    @staticmethod
+    def _extract_version_from_bundle_name(bundle_name: str) -> VersionInfo:
+        """Extract semantic version from bundle name.
+
+        Bundle names follow format: {operator-name}.v{major}.{minor}.{patch}
+        Example: "oadp-operator.v1.3.9" -> VersionInfo(1, 3, 9)
+
+        :param bundle_name: The bundle name
+        :return: VersionInfo object
+        :raises ValueError: If version cannot be parsed from bundle name
+        """
+        try:
+            # Find the version part (starts with .v followed by semantic version)
+            # Split by '.' and look for the part starting with 'v'
+            parts = bundle_name.split('.')
+            for i, part in enumerate(parts):
+                if part.startswith('v') and len(parts) > i + 2:
+                    # Extract vX.Y.Z format
+                    version_str = '.'.join([part[1:]] + parts[i+1:i+3])  # Remove 'v' prefix
+                    return VersionInfo.parse(version_str)
+        except Exception as e:
+            raise ValueError(
+                f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+                f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+            ) from e
 
     def _find_future_release_assembly(
         self,
@@ -1150,7 +1179,15 @@ class KonfluxFbcRebaser:
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
                 entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
+
+                if self.insert_missing_entry:
+                    # Add entry and then sort all entries in ascending version order
+                    channel['entries'].append(entry)
+
+                    logger.info("Sorting channel entries by version order")
+                    channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+                else:
+                    channel['entries'].append(entry)
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 entry.clear()
