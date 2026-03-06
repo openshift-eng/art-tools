@@ -186,6 +186,7 @@ async def build_plashets(
     data_gitref: str = '',
     copy_links: bool = False,
     dry_run: bool = False,
+    cleanup_older_than_days: int = 0,
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
@@ -348,7 +349,12 @@ async def build_plashets(
         await asyncio.gather(
             *[
                 copy_to_remote(
-                    plashet_remote['host'], local_base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links
+                    plashet_remote['host'],
+                    local_base_dir,
+                    remote_base_dir,
+                    dry_run=dry_run,
+                    copy_links=copy_links,
+                    cleanup_older_than_days=cleanup_older_than_days,
                 )
                 for plashet_remote in PLASHET_REMOTES
             ]
@@ -450,15 +456,67 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str, symlink_name
     return symlink_path
 
 
+async def cleanup_old_plashets_remote(
+    plashet_remote_host: str,
+    remote_base_dir: os.PathLike,
+    older_than_days: int,
+    dry_run: bool = False,
+):
+    """
+    Remove plashet directories older than the specified number of days on the remote host.
+
+    Plashet directories are organized as <base_dir>/<YYYY-MM>/<revision>/.
+    This function uses `find` to locate and remove directories whose modification time
+    exceeds `older_than_days`, while preserving symlinks (e.g. 'latest').
+    """
+
+    remote_base_dir = Path(remote_base_dir)
+    # Find and remove old plashet directories under YYYY-MM/ subdirs.
+    # -mindepth 2 -maxdepth 2 targets the revision dirs (e.g. 2026-03/20260306120000)
+    # without touching the YYYY-MM parent dirs or the 'latest' symlink.
+    find_cmd = f"find {remote_base_dir} -mindepth 2 -maxdepth 2 -type d -mtime +{older_than_days} -not -name latest"
+
+    if dry_run:
+        # List what would be removed
+        cmd = ["ssh", plashet_remote_host, "--", "bash", "-c", find_cmd]
+        logger.warning("[DRY RUN] Would remove old plashets matching: %s", find_cmd)
+        try:
+            _, stdout, _ = await exectools.cmd_gather_async(cmd, env=os.environ.copy())
+            dirs = stdout.strip()
+            if dirs:
+                logger.warning("[DRY RUN] Directories that would be removed:\n%s", dirs)
+            else:
+                logger.info("[DRY RUN] No old plashet directories found to clean up")
+        except Exception as e:
+            logger.warning("[DRY RUN] Could not list old plashets: %s", e)
+    else:
+        # Find and remove, then clean up empty YYYY-MM parent dirs
+        remove_cmd = f"{find_cmd} -exec rm -rf {{}} +"
+        cleanup_empty_cmd = f"find {remote_base_dir} -mindepth 1 -maxdepth 1 -type d -empty -delete"
+        full_cmd = f"{remove_cmd} && {cleanup_empty_cmd}"
+        cmd = ["ssh", plashet_remote_host, "--", "bash", "-c", full_cmd]
+        logger.info(
+            "Cleaning up plashets older than %d days in %s on %s", older_than_days, remote_base_dir, plashet_remote_host
+        )
+        try:
+            await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+            logger.info("Old plashet cleanup completed for %s", remote_base_dir)
+        except ChildProcessError as e:
+            # Don't fail the build if cleanup fails
+            logger.warning("Failed to clean up old plashets on %s: %s", plashet_remote_host, e)
+
+
 async def copy_to_remote(
     plashet_remote_host: str,
     local_base_dir: os.PathLike,
     remote_base_dir: os.PathLike,
     dry_run: bool = False,
     copy_links: bool = False,
+    cleanup_older_than_days: int = 0,
 ):
     """
-    Copies plashet out to remote host (ocp-artifacts)
+    Copies plashet out to remote host (ocp-artifacts).
+    Optionally cleans up plashet directories older than the specified number of days.
     """
 
     # Make sure the remote base dir exist
@@ -504,3 +562,12 @@ async def copy_to_remote(
     else:
         logger.info("Executing %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+    # Clean up old plashets after successful rsync
+    if cleanup_older_than_days > 0:
+        await cleanup_old_plashets_remote(
+            plashet_remote_host=plashet_remote_host,
+            remote_base_dir=remote_base_dir,
+            older_than_days=cleanup_older_than_days,
+            dry_run=dry_run,
+        )

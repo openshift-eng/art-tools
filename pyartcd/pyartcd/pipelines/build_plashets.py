@@ -6,7 +6,7 @@ from artcommonlib.util import isolate_major_minor_in_group
 
 from pyartcd import jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.constants import OCP_BUILD_DATA_URL, PLASHET_CLEANUP_OLDER_THAN_DAYS
 from pyartcd.locks import Lock
 from pyartcd.plashets import build_plashets
 from pyartcd.runtime import Runtime
@@ -22,7 +22,16 @@ class RpmMirror:
 
 class BuildPlashetsPipeline:
     def __init__(
-        self, runtime: Runtime, group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False
+        self,
+        runtime: Runtime,
+        group,
+        release,
+        assembly,
+        repos=None,
+        data_path='',
+        data_gitref='',
+        copy_links=False,
+        cleanup_older_than_days=0,
     ):
         self.runtime = runtime
         self.group = group
@@ -32,6 +41,7 @@ class BuildPlashetsPipeline:
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.copy_links = copy_links
+        self.cleanup_older_than_days = cleanup_older_than_days
 
         self.slack_client = runtime.new_slack_client()
 
@@ -72,6 +82,7 @@ class BuildPlashetsPipeline:
                 data_gitref=self.data_gitref,
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
+                cleanup_older_than_days=self.cleanup_older_than_days,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -143,6 +154,14 @@ class BuildPlashetsPipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
+@click.option(
+    '--cleanup-older-than-days',
+    required=False,
+    type=int,
+    default=PLASHET_CLEANUP_OLDER_THAN_DAYS,
+    help=f'Remove plashet directories older than this many days from the remote host after rsync. '
+    f'0 disables cleanup. Default: {PLASHET_CLEANUP_OLDER_THAN_DAYS}',
+)
 @pass_runtime
 @click_coroutine
 async def build_plashets_cli(
@@ -154,6 +173,7 @@ async def build_plashets_cli(
     data_path: str,
     data_gitref: str,
     copy_links: bool,
+    cleanup_older_than_days: int,
 ):
     # Auto-generate release timestamp if not provided
     if not release:
@@ -169,6 +189,7 @@ async def build_plashets_cli(
         data_path=data_path,
         data_gitref=data_gitref,
         copy_links=copy_links,
+        cleanup_older_than_days=cleanup_older_than_days,
     )
 
     lock = Lock.PLASHET
