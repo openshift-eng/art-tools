@@ -5,7 +5,7 @@ Release schedule API client for fetching OCP release schedule data.
 import logging
 import re
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import requests_gssapi
@@ -29,47 +29,53 @@ class ReleaseScheduleClient:
         group: str,
         assembly_type: AssemblyTypes = AssemblyTypes.STANDARD,
         assembly_name: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Fetch all_ga_tasks from release schedule API for a group."""
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """Fetch all_ga_tasks from release schedule API for a group.
+        Returns a tuple of (all_ga_tasks, is_ga_or_prega_release)
+        """
         s = requests.Session()
         auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
         s.post(self.AUTH_URL, auth=auth)
 
         pre_ga_release = assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW)
-        standard_ga_release = assembly_type == AssemblyTypes.STANDARD and assembly_name and assembly_name.endswith('.0')
-
-        if pre_ga_release or standard_ga_release:
-            path = f'releases/{group}/'
+        if assembly_name:
+            standard_ga_release = assembly_type == AssemblyTypes.STANDARD and assembly_name.endswith('.0')
         else:
-            path = f'{group}.z/'
+            standard_ga_release = False
+
+        is_ga_or_prega_release = pre_ga_release or standard_ga_release
+        path = f'{group}{".z/" if not is_ga_or_prega_release else "/"}'
         response = s.get(
             f'{self.RELEASE_SCHEDULES_BASE}/{path}?fields={self.GA_TASKS_FIELD}',
             headers={'Accept': 'application/json'},
         )
         response.raise_for_status()
         data = response.json()
-        return data.get(self.GA_TASKS_FIELD, [])
+        return data.get(self.GA_TASKS_FIELD, []), is_ga_or_prega_release
 
     def get_assembly_release_date(
         self,
         assembly_name: str,
         group: str,
-        assembly_type: AssemblyTypes = AssemblyTypes.STANDARD,
+        assembly_type: AssemblyTypes,
     ) -> str:
         """
         Get assembly release date from release schedule API.
 
         :raises ValueError: If the assembly release date is not found
         """
-        for release in self._fetch_ga_tasks(group, assembly_type, assembly_name):
-            if assembly_name in release['name']:
+        ga_tasks, is_ga_or_prega_release = self._fetch_ga_tasks(group, assembly_type, assembly_name)
+        for release in ga_tasks:
+            # if it is a ga release then use the date from the first ga task
+            if assembly_name in release['name'] or is_ga_or_prega_release:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
                 return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
         raise ValueError(f'Assembly release date not found for {assembly_name}')
 
     def is_release_next_week(self, group: str) -> bool:
         """Check if release of group is scheduled for the near week."""
-        for release in self._fetch_ga_tasks(group, AssemblyTypes.STANDARD):
+        ga_tasks, _ = self._fetch_ga_tasks(group)
+        for release in ga_tasks:
             release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
             if release_date > date.today() and release_date <= date.today() + timedelta(
                 days=self.RELEASE_NEXT_WEEK_DAYS
@@ -92,7 +98,8 @@ class ReleaseScheduleClient:
         if minor > 0:
             prev_group = f'openshift-{major}.{minor - 1}'
             try:
-                for release in self._fetch_ga_tasks(prev_group, assembly_type, assembly_name):
+                ga_tasks, _ = self._fetch_ga_tasks(prev_group)
+                for release in ga_tasks:
                     if is_future_release_date(release['date_start']):
                         days_diff = abs(
                             (
