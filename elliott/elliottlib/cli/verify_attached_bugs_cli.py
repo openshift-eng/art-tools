@@ -6,8 +6,8 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
 from artcommonlib.assembly import assembly_issues_config
+from artcommonlib.release_schedule import ReleaseScheduleClient
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import is_release_next_week
 from errata_tool import ErrataException
 
 from elliottlib import bzutil, constants
@@ -216,6 +216,7 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
 class BugValidator:
     def __init__(self, runtime: Runtime, output: str = 'text'):
         self.runtime = runtime
+        self.release_schedule_client = ReleaseScheduleClient()
         self.target_releases: List[str] = runtime.get_bug_tracker('jira').config['target_release']
         self.et_data: Dict[str, Any] = runtime.get_errata_config()
         self.errata_api = AsyncErrataAPI(self.et_data.get("server", constants.errata_url))
@@ -571,7 +572,7 @@ class BugValidator:
                 if (
                     is_attached
                     and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']
-                    and is_release_next_week(f"openshift-{major}.{minor + 1}")
+                    and self.release_schedule_client.is_release_next_week(f"openshift-{major}.{minor + 1}")
                 ):
                     try:
                         blocker_advisories = blocker.all_advisory_ids()

@@ -13,10 +13,10 @@ from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing
+from artcommonlib.release_schedule import ReleaseScheduleClient
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import (
     get_art_prod_image_repo_for_version,
-    get_assembly_release_date,
     uses_konflux_imagestream_override,
 )
 from requests.adapters import HTTPAdapter
@@ -207,12 +207,13 @@ class GenAssemblyCli:
         release_date: Optional[str] = None,
     ):
         self.runtime = runtime
+        self.release_schedule_client = ReleaseScheduleClient()
         # The name of the assembly we are going to output
         self.gen_assembly_name = gen_assembly_name
         self.nightlies = nightlies
         self.standards = standards
         self.custom = custom
-        self.in_flight = in_flight
+        self._in_flight_param = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.graph_url = graph_url
@@ -244,6 +245,9 @@ class GenAssemblyCli:
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
 
+        # Resolve in-flight
+        self.in_flight = self._resolve_in_flight()
+
         # Load releases_config
         self.releases_config = self.runtime.get_releases_config()
 
@@ -265,6 +269,20 @@ class GenAssemblyCli:
             self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
+
+    def _resolve_in_flight(self) -> Optional[str]:
+        """Resolve in-flight release from param, or auto-detect when not custom."""
+        if self._in_flight_param and self._in_flight_param != "none":
+            return self._in_flight_param
+        if self._in_flight_param == "none":
+            return None
+        if not self.custom:
+            return self.release_schedule_client.get_inflight(
+                self.gen_assembly_name,
+                self.runtime.group,
+                self.assembly_type,
+            )
+        return None
 
     async def run(self):
         self._validate_params()
@@ -894,7 +912,9 @@ class GenAssemblyCli:
             raise ValueError("For non standard release you need to manually set release date from job")
         self.logger.info("Release date not provided. Fetching release date from release schedule...")
         try:
-            self.release_date = get_assembly_release_date(self.gen_assembly_name, self.runtime.group)
+            self.release_date = self.release_schedule_client.get_assembly_release_date(
+                self.gen_assembly_name, self.runtime.group, self.assembly_type
+            )
         except Exception as ex:
             raise ValueError(f"Failed to fetch release date from release schedule for {self.gen_assembly_name}: {ex}")
         self.logger.info("Release date: %s", self.release_date)

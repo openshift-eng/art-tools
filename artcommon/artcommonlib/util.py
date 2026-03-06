@@ -7,22 +7,18 @@ import os
 import re
 import sys
 import tempfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
-import aiohttp
-import requests
-import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_NAMESPACE,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
-    RELEASE_SCHEDULES,
 )
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
@@ -32,7 +28,6 @@ from artcommonlib.oc_image_info import (
 )
 from artcommonlib.release_util import isolate_el_version_in_release
 from ruamel.yaml import YAML
-from semver import VersionInfo
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
@@ -191,129 +186,6 @@ def is_future_release_date(date_str):
         except ValueError:
             continue
     raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
-
-
-def get_assembly_release_date(assembly, group):
-    """
-    Get assembly release release date from release schedule API.
-
-    :raises ValueError: If the assembly release date is not found
-    """
-    s = requests.Session()
-    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    response = s.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    response.raise_for_status()
-    try:
-        data = response.json()
-        for release in data['all_ga_tasks']:
-            if assembly in release['name']:
-                # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    except KeyError:
-        pass
-    raise ValueError(f'Assembly release date not found for {assembly}')
-
-
-async def get_assembly_release_date_async(release_name: str):
-    """
-    Get assembly release release date from release schedule API.
-
-    :raises ValueError: If the assembly release date is not found
-    """
-    version = VersionInfo.parse(release_name)
-    release_train = f'openshift-{version.major}.{version.minor}.z'
-    async with aiohttp.ClientSession() as session:
-        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-        await session.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-        async with session.get(
-            f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
-            for release in data['all_ga_tasks']:
-                if release_name in release['name']:
-                    # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                    return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-    raise ValueError(f'Assembly release date not found for {release_name}')
-
-
-def is_release_next_week(group):
-    """
-    Check if there release of group need to release in the near week
-    """
-    s = requests.Session()
-    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-    release_schedules = s.get(
-        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
-    )
-    for release in release_schedules.json()['all_ga_tasks']:
-        release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
-        if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
-            return True
-    return False
-
-
-def get_inflight(assembly, group):
-    """
-    Get inflight release name from current assembly release
-    """
-    inflight_release = None
-    assembly_release_date = get_assembly_release_date(assembly, group)
-    major, minor = get_ocp_version_from_group(group)
-
-    # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
-    if minor > 0:
-        prev_group = f'openshift-{major}.{minor - 1}'
-        s = requests.Session()
-        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-        s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-        response = s.get(
-            f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
-            headers={'Accept': 'application/json'},
-        )
-        response.raise_for_status()
-        try:
-            data = response.json()
-            for release in data['all_ga_tasks']:
-                is_future = is_future_release_date(release['date_start'])
-                if is_future:
-                    days_diff = abs(
-                        (
-                            datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                            - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                        ).days
-                    )
-                    if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                        match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                        if match:
-                            inflight_release = match.group()
-                            break
-                        else:
-                            raise ValueError(f"Didn't find in_inflight release in {release['name']}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
-        except ValueError as e:
-            if "time data" in str(e) or "does not match format" in str(e):
-                raise ValueError(
-                    f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
-                )
-            else:
-                raise  # Re-raise other ValueErrors unchanged
-        except KeyError as e:
-            raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
-
-        if not inflight_release:
-            LOGGER.info(
-                f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
-            )
-        else:
-            LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
-    else:
-        LOGGER.info(f'No previous group available for {group} (minor version is 0)')
-
-    return inflight_release
 
 
 def isolate_rhel_major_from_version(version: str) -> Optional[int]:
