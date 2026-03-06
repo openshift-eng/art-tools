@@ -377,7 +377,7 @@ class PrepareReleaseKonfluxPipeline:
         # Sweep builds
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
         for impetus, advisory_num in impetus_advisories.items():
-            if advisory_num <= 0:
+            if advisory_num <= 0 and not self.dry_run:
                 raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
             # Skip populating microshift advisory since that is done later after promote
             if impetus == "microshift":
