@@ -428,3 +428,34 @@ def assembly_metadata_config(
             config_dict = _merger(component_entry.metadata.primitive(), config_dict)
 
     return Model(dict_to_model=config_dict)
+
+
+def assembly_excluded_components(releases_config: Model, assembly: typing.Optional[str], meta_type: str) -> set[str]:
+    """
+    Returns a set of distgit_keys that have `exclude: true` in the assembly's members section.
+    Respects assembly inheritance: excluded components from ancestor assemblies are inherited
+    unless a child assembly explicitly sets `exclude: false`.
+    :param releases_config: A Model for releases.yaml.
+    :param assembly: The name of the assembly
+    :param meta_type: 'rpm' or 'image'
+    :return: A set of excluded distgit_keys.
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return set()
+
+    _check_recursion(releases_config, assembly)
+    target_assembly = releases_config.releases[assembly].assembly
+
+    excluded: set[str] = set()
+    if target_assembly.basis.assembly:
+        excluded = assembly_excluded_components(releases_config, target_assembly.basis.assembly, meta_type)
+
+    component_list = target_assembly.members[f'{meta_type}s']
+    for component_entry in component_list:
+        if component_entry.distgit_key is not Missing:
+            if component_entry.exclude:
+                excluded.add(component_entry.distgit_key)
+            elif component_entry.exclude is not Missing:
+                excluded.discard(component_entry.distgit_key)
+
+    return excluded
