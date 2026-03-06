@@ -74,6 +74,10 @@ class AssemblyIssueCode(Enum):
     # this code will be emitted:
     UNSHIPPABLE_KERNEL = 11
 
+    # The image is configured to build hermetically but the actual
+    # build was non-hermetic.
+    MISMATCHED_NETWORK_MODE = 12
+
 
 class AssemblyIssue:
     """
