@@ -1,6 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
@@ -183,10 +184,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client.verify_connection = MagicMock(return_value=True)
         self.konflux_client.resource_url = MagicMock()
 
+    @patch("elliottlib.cli.konflux_release_cli.CreateReleaseCli._validate_snapshot_components", new_callable=AsyncMock)
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_run_prod_happy_path(self, mock_runtime, mock_konflux_client_init, _):
+    async def test_run_prod_happy_path(self, mock_runtime, mock_konflux_client_init, _, __):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
@@ -342,10 +344,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         # Check result
         self.assertEqual(result, created_release)
 
+    @patch("elliottlib.cli.konflux_release_cli.CreateReleaseCli._validate_snapshot_components", new_callable=AsyncMock)
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_run_stage_happy_path(self, mock_runtime, mock_konflux_client_init, _):
+    async def test_run_stage_happy_path(self, mock_runtime, mock_konflux_client_init, _, __):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
@@ -607,10 +610,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             str(context.exception),
         )
 
+    @patch("elliottlib.cli.konflux_release_cli.CreateReleaseCli._validate_snapshot_components", new_callable=AsyncMock)
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_shipped(self, mock_runtime, mock_konflux_client_init, _):
+    async def test_shipped(self, mock_runtime, mock_konflux_client_init, _, __):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
@@ -687,3 +691,309 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         # assert that release did not get created
         self.assertEqual(self.konflux_client._create.call_count, 0)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_fetch_release_plan_admission_success(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock the aiohttp response using a context manager mock
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(
+            return_value="""
+data:
+  mapping:
+    components:
+      - name: test-component-1
+      - name: test-component-2
+"""
+        )
+
+        mock_get_cm = MagicMock()
+        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_get_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_get_cm
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("elliottlib.cli.konflux_release_cli.aiohttp.ClientSession", return_value=mock_session_cm):
+            result = await cli._fetch_release_plan_admission("test-release-plan")
+
+        self.assertEqual(result["data"]["mapping"]["components"][0]["name"], "test-component-1")
+        self.assertEqual(result["data"]["mapping"]["components"][1]["name"], "test-component-2")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_fetch_release_plan_admission_not_found(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock 404 response
+        mock_response = MagicMock()
+        mock_response.status = 404
+
+        mock_get_cm = MagicMock()
+        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_get_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_get_cm
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("elliottlib.cli.konflux_release_cli.aiohttp.ClientSession", return_value=mock_session_cm):
+            with self.assertRaises(ValueError) as context:
+                await cli._fetch_release_plan_admission("test-release-plan")
+
+        self.assertIn("ReleasePlanAdmission not found", str(context.exception))
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_fetch_release_plan_admission_forbidden(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock 403 response
+        mock_response = MagicMock()
+        mock_response.status = 403
+
+        mock_get_cm = MagicMock()
+        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_get_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_get_cm
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("elliottlib.cli.konflux_release_cli.aiohttp.ClientSession", return_value=mock_session_cm):
+            with self.assertRaises(ValueError) as context:
+                await cli._fetch_release_plan_admission("test-release-plan")
+
+        self.assertIn("403 Forbidden", str(context.exception))
+        self.assertIn("GITLAB_TOKEN", str(context.exception))
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_validate_snapshot_components_success(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment = Shipment(
+            metadata=Metadata(
+                product="ocp",
+                application="openshift-4-18",
+                group="openshift-4.18",
+                assembly="4.18.2",
+                fbc=False,
+            ),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan="test-stage-rp"),
+                prod=ShipmentEnv(releasePlan="test-prod-rp"),
+            ),
+            snapshot=Snapshot(
+                nvrs=["test-nvr-1"],
+                spec=SnapshotSpec(
+                    application="openshift-4-18",
+                    components=[
+                        SnapshotComponent(
+                            name="test-component-1",
+                            source=ComponentSource(git=GitSource(url="https://github.com/test.git", revision="abc123")),
+                            containerImage="test-image",
+                        ),
+                    ],
+                ),
+            ),
+            data=Data(
+                releaseNotes=ReleaseNotes(
+                    type="RHBA",
+                    synopsis="Test",
+                    topic="Topic",
+                    description="Desc",
+                    solution="Solution",
+                ),
+            ),
+        )
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock _fetch_release_plan_admission to return RPA with the component
+        cli._fetch_release_plan_admission = AsyncMock(
+            return_value={
+                "data": {
+                    "mapping": {
+                        "components": [
+                            {"name": "test-component-1"},
+                            {"name": "test-component-2"},
+                        ]
+                    }
+                }
+            }
+        )
+
+        # Should not raise
+        await cli._validate_snapshot_components(shipment)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_validate_snapshot_components_unauthorized(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment = Shipment(
+            metadata=Metadata(
+                product="ocp",
+                application="openshift-4-18",
+                group="openshift-4.18",
+                assembly="4.18.2",
+                fbc=False,
+            ),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan="test-stage-rp"),
+                prod=ShipmentEnv(releasePlan="test-prod-rp"),
+            ),
+            snapshot=Snapshot(
+                nvrs=["test-nvr-1"],
+                spec=SnapshotSpec(
+                    application="openshift-4-18",
+                    components=[
+                        SnapshotComponent(
+                            name="authorized-component",
+                            source=ComponentSource(git=GitSource(url="https://github.com/test.git", revision="abc123")),
+                            containerImage="test-image",
+                        ),
+                        SnapshotComponent(
+                            name="unauthorized-component",
+                            source=ComponentSource(
+                                git=GitSource(url="https://github.com/test2.git", revision="def456")
+                            ),
+                            containerImage="test-image-2",
+                        ),
+                    ],
+                ),
+            ),
+            data=Data(
+                releaseNotes=ReleaseNotes(
+                    type="RHBA",
+                    synopsis="Test",
+                    topic="Topic",
+                    description="Desc",
+                    solution="Solution",
+                ),
+            ),
+        )
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock _fetch_release_plan_admission to return RPA without unauthorized component
+        cli._fetch_release_plan_admission = AsyncMock(
+            return_value={
+                "data": {
+                    "mapping": {
+                        "components": [
+                            {"name": "authorized-component"},
+                        ]
+                    }
+                }
+            }
+        )
+
+        with self.assertRaises(ValueError) as context:
+            await cli._validate_snapshot_components(shipment)
+
+        self.assertIn("unauthorized-component", str(context.exception))
+        self.assertIn("not registered in ReleasePlanAdmission", str(context.exception))
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_validate_snapshot_components_skips_fbc(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment = Shipment(
+            metadata=Metadata(
+                product="ocp",
+                application="openshift-4-18",
+                group="openshift-4.18",
+                assembly="4.18.2",
+                fbc=True,  # FBC release
+            ),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan="test-stage-rp"),
+                prod=ShipmentEnv(releasePlan="test-prod-rp"),
+            ),
+            snapshot=Snapshot(
+                nvrs=["test-nvr-1"],
+                spec=SnapshotSpec(
+                    application="openshift-4-18",
+                    components=[
+                        SnapshotComponent(
+                            name="fbc-component",
+                            source=ComponentSource(git=GitSource(url="https://github.com/test.git", revision="abc123")),
+                            containerImage="test-image",
+                        ),
+                    ],
+                ),
+            ),
+        )
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=self.dry_run,
+            kind="image",
+        )
+
+        # Mock should NOT be called for FBC releases
+        cli._fetch_release_plan_admission = AsyncMock()
+
+        # Should not raise and should not fetch RPA
+        await cli._validate_snapshot_components(shipment)
+        cli._fetch_release_plan_admission.assert_not_called()

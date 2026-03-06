@@ -1,9 +1,12 @@
+import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Set
 
+import aiohttp
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_RPA_BASE_URL
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -178,6 +181,98 @@ class CreateReleaseCli:
         assembly_str = self.runtime.assembly.replace(".", "-")
         return f"{self.runtime.product}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
 
+    async def _fetch_release_plan_admission(self, release_plan: str) -> dict:
+        """
+        Fetch ReleasePlanAdmission YAML from GitLab.
+        :param release_plan: The release plan name (e.g., 'ocp-4-19-art-advisory-stage')
+        :return: Parsed YAML content as dict
+        :raises ValueError: If fetch fails or file not found
+        """
+        rpa_url = f"{KONFLUX_RELEASE_DATA_RPA_BASE_URL}/{release_plan}.yaml"
+        LOGGER.info(f"Fetching ReleasePlanAdmission from {rpa_url}")
+
+        timeout = aiohttp.ClientTimeout(total=30, sock_read=10)
+        headers = {}
+        gitlab_token = os.environ.get("GITLAB_TOKEN")
+        if gitlab_token:
+            headers["Private-Token"] = gitlab_token
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(rpa_url, headers=headers) as response:
+                if response.status == 404:
+                    raise ValueError(
+                        f"ReleasePlanAdmission not found at {rpa_url}. "
+                        f"Please ensure the file exists for release plan '{release_plan}'."
+                    )
+                if response.status != 200:
+                    error_msg = f"Failed to fetch ReleasePlanAdmission from {rpa_url}: HTTP {response.status}"
+                    if response.status == 403:
+                        error_msg += ". 403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
+                    raise ValueError(error_msg)
+                content = await response.text()
+
+        rpa_data = yaml.load(content)
+        if not rpa_data:
+            raise ValueError(f"ReleasePlanAdmission at {rpa_url} is empty or invalid YAML")
+        return rpa_data
+
+    async def _validate_snapshot_components(self, shipment: Shipment) -> None:
+        """
+        Validate that all snapshot components are registered in the ReleasePlanAdmission.
+        :param shipment: The shipment containing snapshot and environment config
+        :raises ValueError: If any components are not in the allowed list
+        """
+        # Skip validation for FBC releases
+        if shipment.metadata.fbc:
+            LOGGER.info("Skipping component validation for FBC release")
+            return
+
+        # Get the release plan name for the current environment
+        release_plan = getattr(shipment.environments, self.release_env).releasePlan
+        LOGGER.info(f"Validating snapshot components against ReleasePlanAdmission '{release_plan}'")
+
+        # Fetch the ReleasePlanAdmission
+        rpa_data = await self._fetch_release_plan_admission(release_plan)
+
+        # Extract allowed components from data.mapping.components
+        try:
+            mapping = rpa_data.get("data", {}).get("mapping", {})
+            allowed_components: List[dict] = mapping.get("components", [])
+        except (AttributeError, TypeError):
+            raise ValueError(
+                f"ReleasePlanAdmission '{release_plan}' has invalid structure. "
+                "Expected 'data.mapping.components' to be a list."
+            )
+
+        if not allowed_components:
+            raise ValueError(
+                f"ReleasePlanAdmission '{release_plan}' has no components defined in 'data.mapping.components'."
+            )
+
+        # Build set of allowed component names
+        allowed_names: Set[str] = set()
+        for comp in allowed_components:
+            if isinstance(comp, dict) and "name" in comp:
+                allowed_names.add(comp["name"])
+            elif isinstance(comp, str):
+                allowed_names.add(comp)
+
+        # Check each snapshot component against allowed list
+        snapshot_components = shipment.snapshot.spec.components
+        unauthorized: List[str] = []
+        for component in snapshot_components:
+            if component.name not in allowed_names:
+                unauthorized.append(component.name)
+
+        if unauthorized:
+            raise ValueError(
+                f"The following components are not registered in ReleasePlanAdmission '{release_plan}':\n"
+                + "\n".join(f"  - {name}" for name in sorted(unauthorized))
+                + "\nPlease add them to the ReleasePlanAdmission before creating a release."
+            )
+
+        LOGGER.info(f"All {len(snapshot_components)} components validated successfully")
+
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
         Create a Konflux Snapshot manifest from the given shipment's snapshot spec.
@@ -185,6 +280,8 @@ class CreateReleaseCli:
         if not (shipment.snapshot and shipment.snapshot.spec.components):
             raise ValueError("A valid snapshot must be provided")
 
+        # Validate that all components are registered in the ReleasePlanAdmission
+        await self._validate_snapshot_components(shipment)
         snapshot_name = self.get_object_name()
 
         # Prepare metadata with labels and optional annotations

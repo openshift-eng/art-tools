@@ -33,6 +33,12 @@ ACTIVE_OCP_VERSIONS = [
     "5.0",
 ]
 
+# Konflux Release Data GitLab URL for ReleasePlanAdmission files
+KONFLUX_RELEASE_DATA_RPA_BASE_URL = (
+    "https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/"
+    "config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art"
+)
+
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
