@@ -239,10 +239,9 @@ class GenAssemblyCli:
         self.rhcos_version = ''
         self.rhcos_node_id = ''
         self.final_previous_list: List[VersionInfo] = []
-        self.release_date = self._resolve_release_date(release_date)
-
         # Infer assembly type
         self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
+        self.release_date = self._resolve_release_date(release_date)
 
         # Resolve in-flight
         self.in_flight = self._resolve_in_flight(in_flight)
@@ -271,22 +270,19 @@ class GenAssemblyCli:
 
     def _resolve_in_flight(self, in_flight: Optional[str]) -> Optional[str]:
         """Resolve in-flight release from param, or auto-detect when not custom."""
-        if in_flight == "none" or self.custom:
+        if in_flight == "none":
             return None
-        elif in_flight:
+        if in_flight:
             return in_flight
+        if self.custom:
+            return None
 
-        in_flight = self.release_schedule_client.get_inflight(
+        return self.release_schedule_client.get_inflight(
             self.gen_assembly_name,
             self.runtime.group,
             self.assembly_type,
             assembly_release_date=self.release_date,
         )
-        if in_flight is None:
-            raise ValueError(
-                f"Could not find in-flight release for {self.gen_assembly_name}. Please investigate or set the in-flight release manually."
-            )
-        return in_flight
 
     async def run(self):
         self._validate_params()
@@ -909,12 +905,12 @@ class GenAssemblyCli:
             },
         }
 
-    def _resolve_release_date(self, release_date: Optional[str]) -> str:
+    def _resolve_release_date(self, release_date: Optional[str]) -> Optional[str]:
         if release_date:
             return release_date
 
         if self.assembly_type != AssemblyTypes.STANDARD:
-            raise ValueError("For non standard release you need to manually set release date from job")
+            return None
 
         self.logger.info("Release date not provided. Fetching release date from release schedule...")
         release_date = self.release_schedule_client.get_assembly_release_date(
