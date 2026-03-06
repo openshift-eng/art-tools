@@ -272,17 +272,21 @@ class GenAssemblyCli:
 
     def _resolve_in_flight(self) -> Optional[str]:
         """Resolve in-flight release from param, or auto-detect when not custom."""
-        if self._in_flight_param and self._in_flight_param != "none":
-            return self._in_flight_param
-        if self._in_flight_param == "none":
+        if self._in_flight_param == "none" or self.custom:
             return None
-        if not self.custom:
-            return self.release_schedule_client.get_inflight(
-                self.gen_assembly_name,
-                self.runtime.group,
-                self.assembly_type,
+        elif self._in_flight_param:
+            return self._in_flight_param
+
+        in_flight = self.release_schedule_client.get_inflight(
+            self.gen_assembly_name,
+            self.runtime.group,
+            self.assembly_type,
+        )
+        if in_flight is None:
+            raise ValueError(
+                f"Could not find in-flight release for {self.gen_assembly_name}. Please investigate or set the in-flight release manually."
             )
-        return None
+        return in_flight
 
     async def run(self):
         self._validate_params()

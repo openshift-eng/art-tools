@@ -91,7 +91,12 @@ class ReleaseScheduleClient:
     ) -> Optional[str]:
         """Get inflight release name from current assembly release."""
         inflight_release = None
-        assembly_release_date = self.get_assembly_release_date(assembly_name, group, assembly_type)
+        try:
+            assembly_release_date = self.get_assembly_release_date(assembly_name, group, assembly_type)
+        except ValueError as e:
+            LOGGER.error('Could not get assembly release date for %s %s %s: %s', assembly_name, group, assembly_type, e)
+            return None
+
         major, minor = get_ocp_version_from_group(group)
 
         # Only look for previous group if minor > 0 to avoid negative minor versions
