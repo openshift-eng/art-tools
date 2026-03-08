@@ -63,9 +63,8 @@ class LayeredProductsScanPipeline:
         """
 
         if not self.runtime.dry_run:
-            # TODO: Uncomment after logging can support stream builds
-            # if self.assembly != 'stream':
-            #     raise ValueError('non-stream assemblies are only allowed in dry-run mode')
+            if self.assembly != 'stream':
+                raise ValueError('non-stream assemblies are only allowed in dry-run mode')
             if self.data_path != constants.OCP_BUILD_DATA_URL or self.data_gitref:
                 raise ValueError('Custom data paths can only be used in dry-run mode')
 
