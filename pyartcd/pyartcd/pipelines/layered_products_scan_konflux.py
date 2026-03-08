@@ -160,7 +160,7 @@ async def layered_products_scan(
         await pipeline.run()
 
     else:
-        lock = Lock.OADP_SCAN
+        lock = Lock.LAYERED_PRODUCTS_SCAN
         lock_name = lock.value.format(group=group)
         lock_identifier = jenkins.get_build_path_or_random()
 
@@ -169,7 +169,7 @@ async def layered_products_scan(
         # and skip the current build if that's the case.
         # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
         async def run_with_build_lock():
-            build_lock = Lock.OADP_BUILD
+            build_lock = Lock.LAYERED_PRODUCTS_BUILD
             build_lock_name = build_lock.value.format(group=group)
             await locks.run_with_lock(
                 coro=pipeline.run(),

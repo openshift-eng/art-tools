@@ -311,8 +311,8 @@ async def build_layered_products(
         else:
             await locks.run_with_lock(
                 coro=pipeline.run(),
-                lock=Lock.OADP_BUILD,
-                lock_name=Lock.OADP_BUILD.value.format(group=group),
+                lock=Lock.LAYERED_PRODUCTS_BUILD,
+                lock_name=Lock.LAYERED_PRODUCTS_BUILD.value.format(group=group),
                 lock_id=lock_identifier,
             )
     except Exception as err:
