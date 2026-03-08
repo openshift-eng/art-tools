@@ -26,8 +26,8 @@ class Lock(enum.Enum):
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
     FBC_BUILD = 'lock:fbc-build:{group}'
-    OADP_BUILD = 'lock:oadp-build:{group}'
-    OADP_SCAN = 'lock:oadp-scan:{group}'
+    LAYERED_PRODUCTS_BUILD = 'lock:layered-products-build:{group}'
+    LAYERED_PRODUCTS_SCAN = 'lock:layered-products-scan:{group}'
     BUILD_OKD = 'lock:build-okd:{version}'
     SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
     SCAN_OPERATOR = 'lock:scan-operator:{version}'
@@ -124,12 +124,12 @@ LOCK_POLICY = {
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
-    Lock.OADP_BUILD: {
+    Lock.LAYERED_PRODUCTS_BUILD: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
-    Lock.OADP_SCAN: {
+    Lock.LAYERED_PRODUCTS_SCAN: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

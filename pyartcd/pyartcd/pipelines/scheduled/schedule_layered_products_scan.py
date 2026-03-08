@@ -11,13 +11,13 @@ from pyartcd.runtime import Runtime
 
 async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
     # Skip if locked on layered products scan
-    scan_lock_name = Lock.OADP_SCAN.value.format(group=group)
+    scan_lock_name = Lock.LAYERED_PRODUCTS_SCAN.value.format(group=group)
     if await lock_manager.is_locked(scan_lock_name):
         runtime.logger.info(f'[{group}] Locked on {scan_lock_name}, skipping')
         return
 
     # Skip if locked on layered products build
-    build_lock_name = Lock.OADP_BUILD.value.format(group=group)
+    build_lock_name = Lock.LAYERED_PRODUCTS_BUILD.value.format(group=group)
     if await lock_manager.is_locked(build_lock_name):
         runtime.logger.info(f'[{group}] Locked on {build_lock_name}, skipping')
         return
