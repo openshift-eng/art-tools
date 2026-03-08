@@ -504,3 +504,28 @@ async def copy_to_remote(
     else:
         logger.info("Executing %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+    # Clean up old date-based directories on the remote, keeping the 3 most recent.
+    # find -type d excludes symlinks (e.g. 'latest'), head -n -3 is a no-op when <= 3 dirs.
+    keep = 3
+    if dry_run:
+        script = (
+            f'find {remote_base_dir} -maxdepth 1 -mindepth 1 -type d -printf "%f\\n"'
+            f" | sort | head -n -{keep} | while read d; do"
+            f' echo "Would remove {remote_base_dir}/$d"; done'
+        )
+    else:
+        script = (
+            f'find {remote_base_dir} -maxdepth 1 -mindepth 1 -type d -printf "%f\\n"'
+            f" | sort | head -n -{keep} | while read d; do"
+            f' echo "Removing $d"; rm -rf -- "{remote_base_dir}/$d"; done'
+        )
+    cmd = ["ssh", plashet_remote_host, "--", "bash", "-c", script]
+    logger.info(
+        "Cleaning up old plashet directories on %s:%s (keeping last %d)%s",
+        plashet_remote_host,
+        remote_base_dir,
+        keep,
+        " [DRY RUN]" if dry_run else "",
+    )
+    await exectools.cmd_assert_async(cmd, env=os.environ.copy())
