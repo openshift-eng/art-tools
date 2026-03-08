@@ -24,6 +24,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -259,6 +260,15 @@ class KonfluxImageBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
+
+                    LOGGER.info(f"Post-build processing for {metadata.distgit_key}, image_pullspec: {image_pullspec}")
+                    if image_digest:
+                        await self._handle_base_image_completion(metadata, record["image_pullspec"], nvr)
+                    else:
+                        LOGGER.warning(
+                            f"No image pullspec available for base image workflow, skipping for {metadata.distgit_key}"
+                        )
+
                     break
 
             if not metadata.build_status and error:
@@ -988,3 +998,42 @@ class KonfluxImageBuilder:
                 parent_image_nvrs.append(pullspec)
 
         return parent_image_nvrs
+
+    async def _handle_base_image_completion(self, metadata: ImageMetadata, image_pullspec: str, nvr: str) -> None:
+        """
+        Handle post-build processing for base images.
+
+        Detects if the completed build is a base image and triggers the snapshot-to-release
+        workflow to generate dual URLs for streams.yml updates.
+
+        Args:
+            metadata: Image metadata for the completed build
+            image_pullspec: Pullspec of the built image
+            nvr: Pre-computed NVR (Name-Version-Release) for the build
+        """
+        try:
+            is_base_image = metadata.is_base_image()
+            is_snapshot_release = metadata.is_snapshot_release_enabled()
+
+            if not is_base_image:
+                LOGGER.info(f"Image {metadata.distgit_key} is not a base image, skipping snapshot-release workflow")
+                return
+
+            if not is_snapshot_release:
+                LOGGER.info(f"Image {metadata.distgit_key} does not have snapshot_release enabled, skipping workflow")
+                return
+
+            handler = BaseImageHandler(metadata, nvr, image_pullspec, self._config.dry_run)
+            result = await handler.process_base_image_completion()
+
+            if result:
+                release_name, snapshot_name = result
+                LOGGER.info(f"✓ Base image workflow completed successfully for {metadata.distgit_key}")
+                LOGGER.info(f"  Release: {release_name}")
+                LOGGER.info(f"  Snapshot: {snapshot_name}")
+            else:
+                LOGGER.warning(f"Base image workflow failed for {metadata.distgit_key}")
+
+        except Exception as e:
+            LOGGER.error(f"Base image workflow error for {metadata.distgit_key}: {e}")
+            LOGGER.debug(f"Base image workflow traceback: {traceback.format_exc()}")
