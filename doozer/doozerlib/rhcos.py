@@ -167,7 +167,8 @@ class RHCOSBuildFinder:
         if meta_type == "commitmeta":
             with tempfile.TemporaryDirectory() as temp_dir:
                 stdout, _ = exectools.cmd_assert(
-                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm",
+                    retries=3,
                 )
                 with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
                     meta_data = json.load(f)
@@ -175,7 +176,8 @@ class RHCOSBuildFinder:
         elif meta_type == "meta":
             with tempfile.TemporaryDirectory() as temp_dir:
                 stdout, _ = exectools.cmd_assert(
-                    f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+                    f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm",
+                    retries=3,
                 )
                 with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
                     extensions_data = json.load(f)
@@ -188,9 +190,10 @@ class RHCOSBuildFinder:
         if not arch:
             arch = self.brew_arch
         url = f"{self.rhcos_release_url()}/{build_id}/{arch}/{meta_type}.json"
-        with request.urlopen(url) as req:
+        with request.urlopen(url, timeout=60) as req:
             return json.loads(req.read().decode())
 
+    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
     def rhel_build_meta_layered(self, pullspec: str):
         """
         For layered node image, get its rhel image rpm list.
@@ -215,7 +218,7 @@ class RHCOSBuildFinder:
             rhel_minor = build_id.split(".")[1]
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_major}.{rhel_minor}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
-            with request.urlopen(url) as req:
+            with request.urlopen(url, timeout=60) as req:
                 return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
         else:
             return []
