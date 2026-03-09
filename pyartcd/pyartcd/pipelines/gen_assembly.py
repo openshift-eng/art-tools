@@ -51,7 +51,7 @@ class GenAssemblyPipeline:
         auto_previous: bool,
         auto_trigger_build_sync: bool,
         skip_get_nightlies: bool,
-        ignore_non_x86_nightlies: Optional[bool] = False,
+        ignore_non_x86_nightlies: Optional[bool] = True,
         logger: Optional[logging.Logger] = None,
         gen_microshift: bool = False,
         date: Optional[str] = None,
@@ -415,7 +415,7 @@ class GenAssemblyPipeline:
     '--ignore-non-x86-nightlies',
     'ignore_non_x86_nightlies',
     is_flag=True,
-    default=False,
+    default=True,
     help='Ignore non-x86 nightlies, only use x86 nightly',
 )
 @click.option(

@@ -29,6 +29,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
             auto_previous=True,
             auto_trigger_build_sync=False,
             skip_get_nightlies=False,
+            ignore_non_x86_nightlies=False,
         )
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
@@ -110,6 +111,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
             auto_previous=True,
             auto_trigger_build_sync=False,
             skip_get_nightlies=False,
+            ignore_non_x86_nightlies=False,
         )
         out = """
 releases:
@@ -178,6 +180,7 @@ releases:
             auto_previous=True,
             auto_trigger_build_sync=False,
             skip_get_nightlies=False,
+            ignore_non_x86_nightlies=False,
         )
         pipeline._working_dir = Path("/path/to/working")
         yaml.load.return_value = OrderedDict(
@@ -275,6 +278,7 @@ releases:
             auto_previous=True,
             auto_trigger_build_sync=False,
             skip_get_nightlies=False,
+            ignore_non_x86_nightlies=False,
         )
         pipeline._working_dir = Path("/path/to/working")
         get_nightlies.return_value = ["nightly1", "nightly2", "nightly3", "nightly4"]
