@@ -78,6 +78,7 @@ class LayeredProductsScanPipeline:
         cmd = self.doozer_base_command.copy()
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
+
         cmd.extend(
             [
                 'beta:config:konflux:scan-sources',
@@ -85,6 +86,14 @@ class LayeredProductsScanPipeline:
                 f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
                 '--rebase-priv',
             ]
+
+
+
+
+
+
+
+
         )
         if self.runtime.dry_run:
             cmd.append('--dry-run')
