@@ -27,6 +27,7 @@ from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
+from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -56,6 +57,7 @@ class ConfigScanSources:
         as_yaml: bool,
         rebase_priv: bool = False,
         dry_run: bool = False,
+        variant: str = 'ocp',
     ):
         if runtime.konflux_db is None:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
@@ -72,8 +74,14 @@ class ConfigScanSources:
         self.as_yaml = as_yaml
         self.rebase_priv = rebase_priv
         self.dry_run = dry_run
+        self.variant = BuildVariant(variant.lower())
 
-        self.all_rpm_metas = set(runtime.rpm_metas())
+        # Only load RPM metadata for OCP variant (OKD doesn't check RPM changes)
+        if self.variant != BuildVariant.OKD:
+            self.all_rpm_metas = set(runtime.rpm_metas())
+        else:
+            self.all_rpm_metas = set()
+
         self.all_image_metas = set(
             filter(
                 lambda meta: self._is_image_enabled_for_scan(meta),
@@ -164,14 +172,13 @@ class ConfigScanSources:
             else:
                 self.rebase_into_priv()
 
-        # Gather latest builds for ART-managed RPMs
-        await self.find_latest_rpms_builds()
-
-        # Find RPMs built by ART that need to be rebuilt
-        await self.check_changing_rpms()
-
-        # Get current task bundle SHAs from GitHub
-        self.current_task_bundles = await self.get_current_task_bundle_shas()
+        if self.variant != BuildVariant.OKD:
+            # Gather latest builds for ART-managed RPMs
+            await self.find_latest_rpms_builds()
+            # Find RPMs built by ART that need to be rebuilt
+            await self.check_changing_rpms()
+            # Get current task bundle SHAs from GitHub
+            self.current_task_bundles = await self.get_current_task_bundle_shas()
 
         # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
         # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
@@ -496,12 +503,6 @@ class ConfigScanSources:
             )
             return
 
-        # Check for changes in image arches
-        await self.scan_arch_changes(image_meta)
-
-        # Check for changes in the network mode
-        await self.scan_network_mode_changes(image_meta)
-
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -511,17 +512,20 @@ class ConfigScanSources:
         # Check for changes in builders
         await self.scan_builders_changes(image_meta)
 
-        # Check if there has been a config change since last build
-        await self.scan_for_config_changes(image_meta)
-
-        # Check for RPM changes
-        await self.scan_rpm_changes(image_meta)
-
-        # Check for changes in extra packages
-        await self.scan_extra_packages(image_meta)
-
-        # Check for outdated task bundles
-        await self.scan_task_bundle_changes(image_meta)
+        # For OCP variant, perform additional checks that don't apply to OKD
+        if self.variant != BuildVariant.OKD:
+            # Check for changes in image arches (skip for OKD - arch changes don't trigger OKD rebuilds)
+            await self.scan_arch_changes(image_meta)
+            # Check for changes in the network mode (skip for OKD - it always uses open network)
+            await self.scan_network_mode_changes(image_meta)
+            # Check if there has been a config change since last build
+            await self.scan_for_config_changes(image_meta)
+            # Check for RPM changes
+            await self.scan_rpm_changes(image_meta)
+            # Check for changes in extra packages
+            await self.scan_extra_packages(image_meta)
+            # Check for outdated task bundles
+            await self.scan_task_bundle_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
@@ -1629,9 +1633,15 @@ class ConfigScanSources:
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
 @click.option("--rebase-priv", default=False, is_flag=True, help='Try to reconcile public upstream into openshift-priv')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
+@click.option(
+    '--variant',
+    type=click.Choice(['ocp', 'okd'], case_sensitive=False),
+    default='ocp',
+    help='Build variant to scan for (ocp or okd). OKD skips network mode checks.',
+)
 @click_coroutine
 @pass_runtime
-async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
+async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, variant):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -1667,5 +1677,6 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
             as_yaml=as_yaml,
             rebase_priv=rebase_priv,
             dry_run=dry_run,
+            variant=variant,
             session=session,
         ).run()
