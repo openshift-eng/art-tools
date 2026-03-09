@@ -765,11 +765,16 @@ class KonfluxFbcRebaser:
             return None
 
         # Bundle components typically follow pattern: {operator_name}-bundle
-        expected_bundle_suffix = f"{operator_name}-bundle"
-        for component in shipment.shipment.snapshot.spec.components:
-            if component.name.endswith(operator_name):
-                return component
-            if component.name.endswith(expected_bundle_suffix):
+        expected_names = (
+            f"{operator_name}-bundle",
+            operator_name,
+        )
+        for expected_name in expected_names:
+            component = next(
+                (c for c in shipment.shipment.snapshot.spec.components if c.name == expected_name),
+                None,
+            )
+            if component:
                 return component
 
         return None
