@@ -767,6 +767,8 @@ class KonfluxFbcRebaser:
         # Bundle components typically follow pattern: {operator_name}-bundle
         expected_bundle_suffix = f"{operator_name}-bundle"
         for component in shipment.shipment.snapshot.spec.components:
+            if component.name == operator_name:
+                return component
             if component.name.endswith(expected_bundle_suffix):
                 return component
 
@@ -883,7 +885,7 @@ class KonfluxFbcRebaser:
             operator_name = metadata.distgit_key
             bundle_component = self._find_component_in_shipment(metadata_shipment, operator_name)
             if not bundle_component:
-                self._logger.debug("Bundle component for %s not found in assembly %s", operator_name, assembly)
+                self._logger.info("Bundle component for %s not found in assembly %s", operator_name, assembly)
                 return None
 
             # 4. Extract CSV name and skipRange from bundle source
@@ -897,7 +899,7 @@ class KonfluxFbcRebaser:
             fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
             fbc_component = self._find_component_in_shipment(fbc_shipment, operator_name)
             if not fbc_component:
-                self._logger.debug("FBC component for %s not found in assembly %s", operator_name, assembly)
+                self._logger.info("FBC component for %s not found in assembly %s", operator_name, assembly)
                 return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
 
             # 6. Render the FBC image and get the olm.bundle blob
