@@ -90,6 +90,7 @@ class KonfluxRebaser:
         variant: BuildVariant = BuildVariant.OCP,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         lockfile_seed_nvrs: Optional[list[str]] = None,
+        extra_labels: Optional[Dict[str, str]] = None,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -107,6 +108,7 @@ class KonfluxRebaser:
         self.image_repo = image_repo
         self.uuid_tag = ''
         self.variant = variant
+        self.extra_labels = extra_labels or {}
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -1048,6 +1050,10 @@ class KonfluxRebaser:
         if metadata.config.labels is not Missing:
             for k, v in metadata.config.labels.items():
                 dfp.labels[k] = str(v)
+
+        # Set extra labels passed via CLI
+        for k, v in self.extra_labels.items():
+            dfp.labels[k] = v
 
         # Set the image name
         dfp.labels["name"] = metadata.config.name

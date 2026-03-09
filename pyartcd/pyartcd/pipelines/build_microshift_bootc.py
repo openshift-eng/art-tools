@@ -426,6 +426,27 @@ class BuildMicroShiftBootcPipeline:
             f"The NVR release fields do not contain a recognizable commit hash."
         )
 
+    def _get_assembly_label_value(self) -> Optional[str]:
+        """Compute the value for the assembly Dockerfile label.
+
+        - STANDARD (e.g. assembly ``4.18.1``): ``v4.18.1``
+        - CANDIDATE / PREVIEW (e.g. assembly ``rc.1``): ``v4.22.0-rc.1``
+        - CUSTOM: raises – not supported for microshift-bootc
+        - STREAM: returns None (label is omitted)
+        """
+        if self.assembly_type == AssemblyTypes.STREAM:
+            return None
+        major, minor = self._ocp_version
+        if self.assembly_type == AssemblyTypes.STANDARD:
+            return f"v{self.assembly}"
+        if self.assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+            return f"v{major}.{minor}.0-{self.assembly}"
+        if self.assembly_type == AssemblyTypes.CUSTOM:
+            raise ValueError(
+                f"Assembly type CUSTOM is not supported for microshift-bootc builds (assembly={self.assembly})"
+            )
+        raise ValueError(f"Assembly type {self.assembly_type} is not supported for microshift-bootc builds")
+
     async def _rebase_and_build_bootc(self):
         bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
@@ -479,6 +500,9 @@ class BuildMicroShiftBootcPipeline:
         # Extract the commit from the microshift RPM to ensure bootc is built from the same source
         upstream_commit = await self._get_microshift_rpm_commit()
 
+        # Determine the assembly label value based on assembly type
+        assembly_label_value = self._get_assembly_label_value()
+
         # Rebase and build bootc image
         version = f"v{major}.{minor}.0"
         release = default_release_suffix()
@@ -504,6 +528,10 @@ class BuildMicroShiftBootcPipeline:
             version,
             "--release",
             release,
+        ]
+        if assembly_label_value:
+            rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
+        rebase_cmd += [
             "--message",
             f"Updating Dockerfile version and release {version}-{release}",
         ]

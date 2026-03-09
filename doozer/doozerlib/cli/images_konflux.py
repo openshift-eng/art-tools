@@ -53,6 +53,7 @@ class KonfluxRebaseCli:
         message: str,
         push: bool,
         lockfile_seed_nvrs: Optional[List[str]] = None,
+        extra_labels: Optional[dict[str, str]] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -65,6 +66,7 @@ class KonfluxRebaseCli:
         self.image_repo = image_repo
         self.message = message
         self.push = push
+        self.extra_labels = extra_labels or {}
         self.upcycle = runtime.upcycle
         self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
@@ -89,6 +91,7 @@ class KonfluxRebaseCli:
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
             lockfile_seed_nvrs=self.lockfile_seed_nvrs,
+            extra_labels=self.extra_labels,
         )
 
         await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
@@ -164,6 +167,12 @@ class KonfluxRebaseCli:
     'Format: NVR[,NVR,...]. '
     'Example: ironic-container-v4.22.0-assembly.test',
 )
+@click.option(
+    '--extra-label',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra labels to add to the Dockerfile. Can be specified multiple times. e.g. --extra-label assembly=4.18.1',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -178,6 +187,7 @@ async def images_konflux_rebase(
     image_repo: str,
     network_mode: Optional[str],
     lockfile_seed_nvrs: Optional[str],
+    extra_label: tuple,
     message: str,
     push: bool,
 ):
@@ -191,6 +201,14 @@ async def images_konflux_rebase(
     if lockfile_seed_nvrs:
         parsed_seed_nvrs = [nvr.strip() for nvr in lockfile_seed_nvrs.split(',') if nvr.strip()]
 
+    # Parse extra labels from KEY=VALUE format
+    extra_labels = {}
+    for label in extra_label:
+        if '=' not in label:
+            raise click.BadParameter(f"Extra label must be in KEY=VALUE format, got: {label}")
+        key, value = label.split('=', 1)
+        extra_labels[key] = value
+
     cli = KonfluxRebaseCli(
         runtime=runtime,
         version=version,
@@ -202,6 +220,7 @@ async def images_konflux_rebase(
         message=message,
         push=push,
         lockfile_seed_nvrs=parsed_seed_nvrs,
+        extra_labels=extra_labels,
     )
     await cli.run()
 

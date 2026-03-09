@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
@@ -306,6 +307,56 @@ shipment:
             await pipeline._get_microshift_rpm_commit()
         self.assertIn("commit", str(ctx.exception).lower())
 
+    def _make_pipeline(self, group="openshift-4.21", assembly="4.21.0"):
+        """Helper to create a pipeline instance with the given group and assembly."""
+        return BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=group,
+            assembly=assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+    def test_get_assembly_label_value_standard(self):
+        pipeline = self._make_pipeline(assembly="4.21.0")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.21.0")
+
+    def test_get_assembly_label_value_standard_z_stream(self):
+        pipeline = self._make_pipeline(assembly="4.18.3")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.18.3")
+
+    def test_get_assembly_label_value_candidate_rc(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="rc.1")
+        pipeline.assembly_type = AssemblyTypes.CANDIDATE
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-rc.1")
+
+    def test_get_assembly_label_value_candidate_ec(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="ec.3")
+        pipeline.assembly_type = AssemblyTypes.CANDIDATE
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-ec.3")
+
+    def test_get_assembly_label_value_preview(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="ec.2")
+        pipeline.assembly_type = AssemblyTypes.PREVIEW
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-ec.2")
+
+    def test_get_assembly_label_value_custom_raises(self):
+        pipeline = self._make_pipeline(assembly="custom-hotfix")
+        pipeline.assembly_type = AssemblyTypes.CUSTOM
+        with self.assertRaises(ValueError) as ctx:
+            pipeline._get_assembly_label_value()
+        self.assertIn("CUSTOM", str(ctx.exception))
+
+    def test_get_assembly_label_value_stream_returns_none(self):
+        pipeline = self._make_pipeline(assembly="stream")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+        self.assertIsNone(pipeline._get_assembly_label_value())
+
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
@@ -330,8 +381,7 @@ shipment:
             data_path="https://github.com/openshift-eng/ocp-build-data",
             slack_client=self.mock_slack_client,
         )
-        pipeline.assembly_type = Mock()
-        pipeline.assembly_type.__ne__ = Mock(return_value=True)
+        pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.force = True
         os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
 
