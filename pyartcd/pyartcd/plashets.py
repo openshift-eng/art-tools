@@ -504,3 +504,54 @@ async def copy_to_remote(
     else:
         logger.info("Executing %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+    # Clean up old revision directories on the remote, keeping the 3 most recent.
+    keep = 3
+    await run_cleanup_script(plashet_remote_host, remote_base_dir, keep=keep, dry_run=dry_run)
+
+
+CLEANUP_SCRIPT = Path(__file__).parent / 'cleanup_plashets.sh'
+
+
+async def run_cleanup_script(
+    plashet_remote_host: str,
+    remote_base_dir: os.PathLike,
+    keep: int = 3,
+    dry_run: bool = False,
+):
+    """
+    Run cleanup_plashets.sh on a remote host via SSH, piping the script via stdin
+    to avoid shell quoting issues.
+    """
+    script = CLEANUP_SCRIPT.read_text()
+    args = [str(remote_base_dir), str(keep)]
+    if dry_run:
+        args.append("--dry-run")
+
+    cmd = ["ssh", plashet_remote_host, "--", "bash", "-s", "--"] + args
+    logger.info(
+        "Cleaning up old plashet directories on %s:%s (keeping last %d)%s",
+        plashet_remote_host,
+        remote_base_dir,
+        keep,
+        " [DRY RUN]" if dry_run else "",
+    )
+    proc = await asyncio.subprocess.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=os.environ.copy(),
+    )
+    stdout, stderr = await proc.communicate(input=script.encode())
+    if stdout:
+        logger.info("Cleanup output from %s:\n%s", plashet_remote_host, stdout.decode().rstrip())
+    if stderr:
+        logger.warning("Cleanup stderr from %s:\n%s", plashet_remote_host, stderr.decode().rstrip())
+    if proc.returncode != 0:
+        logger.warning(
+            "Cleanup script failed on %s:%s with exit code %d",
+            plashet_remote_host,
+            remote_base_dir,
+            proc.returncode,
+        )
