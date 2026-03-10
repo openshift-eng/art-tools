@@ -920,6 +920,34 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
         self.assertEqual(result, component2)
 
+    def test_find_component_in_shipment_by_operator_name(self):
+        """Test finding a component by exact operator name (no -bundle suffix)."""
+        shipment = MagicMock()
+
+        component1 = MagicMock()
+        component1.name = "other-operator-bundle"
+        component2 = MagicMock()
+        component2.name = "cluster-nfd-operator"
+
+        shipment.shipment.snapshot.spec.components = [component1, component2]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "cluster-nfd-operator")
+        self.assertEqual(result, component2)
+
+    def test_find_component_in_shipment_prefers_bundle_suffix(self):
+        """Test that -bundle suffix match is preferred over bare operator name."""
+        shipment = MagicMock()
+
+        bare_component = MagicMock()
+        bare_component.name = "nfd-operator"
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+
+        shipment.shipment.snapshot.spec.components = [bare_component, bundle_component]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
+        self.assertEqual(result, bundle_component)
+
     def test_find_component_in_shipment_not_found(self):
         """Test when component is not found in shipment."""
         shipment = MagicMock()
