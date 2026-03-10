@@ -143,15 +143,17 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
         cache_dir = _get_template_cache_dir()
         repo_path = cache_dir / cache_key
 
-        if repo_path.exists():
-            # Remove stale clone
-            import shutil
-
-            shutil.rmtree(repo_path, ignore_errors=True)
-
+        # Try to clone
         LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
-        exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
-        exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+        try:
+            exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
+            exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+        except ChildProcessError as e:
+            # If another process already cloned it, just use it
+            if "already exists" in str(e) and (repo_path / '.git').exists():
+                LOGGER.info(f"Clone exists from another process, using {repo_path}")
+            else:
+                raise
 
         _TEMPLATE_REPO_CACHE[cache_key] = repo_path
         return repo_path
