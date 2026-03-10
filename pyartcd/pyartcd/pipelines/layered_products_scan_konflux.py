@@ -86,6 +86,7 @@ class LayeredProductsScanPipeline:
                 '--rebase-priv',
             ]
         )
+
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
