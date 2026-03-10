@@ -149,9 +149,19 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
             exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
             exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
         except ChildProcessError as e:
-            # If another process already cloned it, just use it
-            if "already exists" in str(e) and (repo_path / '.git').exists():
-                LOGGER.info(f"Clone exists from another process, using {repo_path}")
+            # If another process already cloned it, validate and use it
+            if "already exists" in str(e):
+                LOGGER.info("Clone attempt failed (directory exists), checking if another process completed it...")
+                try:
+                    # Verify the repository is valid and has the requested ref
+                    # Retry with short pollrate to give concurrent clone time to complete
+                    exectools.cmd_assert(f'git -C {repo_path} rev-parse --verify {ref}', retries=3, pollrate=5)
+                    # Ensure we're on the correct ref
+                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3, pollrate=5)
+                    LOGGER.info(f"Validated and using clone from another process at {repo_path}")
+                except Exception as validation_error:
+                    LOGGER.error(f"Clone exists but validation failed: {validation_error}")
+                    raise e  # Re-raise original error if validation fails
             else:
                 raise
 
