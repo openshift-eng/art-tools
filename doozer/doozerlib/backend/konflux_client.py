@@ -156,8 +156,12 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                     # Verify the repository is valid and has the requested ref
                     # Retry with short pollrate to give concurrent clone time to complete
                     exectools.cmd_assert(f'git -C {repo_path} rev-parse --verify {ref}', retries=3, pollrate=5)
+                    # Fetch latest changes to ensure we're not using stale clone
+                    exectools.cmd_assert(f'git -C {repo_path} fetch --all --prune', retries=3)
                     # Ensure we're on the correct ref
-                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3, pollrate=5)
+                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                    # If ref is a branch, pull latest
+                    exectools.cmd_gather(f'git -C {repo_path} pull --ff-only 2>/dev/null || true')
                     LOGGER.info(f"Validated and using clone from another process at {repo_path}")
                 except Exception as validation_error:
                     LOGGER.error(f"Clone exists but validation failed: {validation_error}")
