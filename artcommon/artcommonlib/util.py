@@ -193,12 +193,31 @@ def is_future_release_date(date_str):
     raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
-def get_assembly_release_date(assembly, group):
+def get_assembly_release_date(assembly, group, date=None):
     """
     Get assembly release release date from release schedule API.
 
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date. Accepts formats:
+                 - YYYY-MM-DD (e.g., 2026-03-31)
+                 - YYYY-MMM-DD (e.g., 2026-Mar-31)
+                 If provided, this date is used instead of fetching from the API.
     :raises ValueError: If the assembly release date is not found
+    :return: Date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
     """
+    # If a date is explicitly provided, normalize it to the expected format
+    if date:
+        # Try to parse the date in multiple formats and return in YYYY-MMM-DD format
+        for fmt in ["%Y-%m-%d", "%Y-%b-%d"]:
+            try:
+                parsed_date = datetime.strptime(date, fmt)
+                return parsed_date.strftime("%Y-%b-%d")
+            except ValueError:
+                continue
+        # If neither format worked, return the date as-is (will fail later with better context)
+        return date
+
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
     s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
@@ -255,12 +274,16 @@ def is_release_next_week(group):
     return False
 
 
-def get_inflight(assembly, group):
+def get_inflight(assembly, group, date=None):
     """
     Get inflight release name from current assembly release
+
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
     """
     inflight_release = None
-    assembly_release_date = get_assembly_release_date(assembly, group)
+    assembly_release_date = get_assembly_release_date(assembly, group, date)
     major, minor = get_ocp_version_from_group(group)
 
     # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
