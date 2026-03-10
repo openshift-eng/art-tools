@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -137,7 +138,8 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                     return repo_path
                 except Exception as e:
                     LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
-                    # Fall through to clone
+                    # Remove corrupt clone and fall through to re-clone
+                    shutil.rmtree(repo_path, ignore_errors=True)
 
         # Clone the repository
         cache_dir = _get_template_cache_dir()
@@ -165,6 +167,9 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                     LOGGER.info(f"Validated and using clone from another process at {repo_path}")
                 except Exception as validation_error:
                     LOGGER.error(f"Clone exists but validation failed: {validation_error}")
+                    # Remove corrupt clone so future attempts can succeed
+                    LOGGER.info(f"Removing corrupt clone at {repo_path}")
+                    shutil.rmtree(repo_path, ignore_errors=True)
                     raise e  # Re-raise original error if validation fails
             else:
                 raise
