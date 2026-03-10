@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
 from elliottlib.cli.find_builds_cli import (
+    _fetch_builds_by_kind_rpm,
     _filter_out_attached_builds,
     _find_shipped_builds,
     find_builds_konflux,
     find_builds_konflux_all_types,
 )
+from elliottlib.exceptions import ElliottFatalError
 from flexmock import flexmock
 
 
@@ -58,7 +60,8 @@ class TestFindBuildsCli(TestCase):
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
-        runtime = flexmock(konflux_db=flexmock())
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
         image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
@@ -79,13 +82,47 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
             enforce_network_mode=True, el_target="el8", exclude_large_columns=True
         )
 
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image2"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux_excludes_non_payload(self, MockKonfluxBuildRecord, _):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta_1.branch_el_target.return_value = "el8"
+        image_meta_1.get_latest_build = AsyncMock(return_value={"nvr": "image1-1.0.0-1.el8"})
+
+        image_meta_2 = MagicMock(base_only=False, is_release=True, is_payload=False, distgit_key="image2")
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+        actual_records = await find_builds_konflux(runtime, payload=False)
+        self.assertEqual(len(actual_records), 0)
+        image_meta_2.get_latest_build.assert_not_called()
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image1"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_find_builds_konflux_errors_on_excluded_payload(self, MockKonfluxBuildRecord, _):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        image_meta_1 = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+
+        runtime.should_receive("image_metas").and_return([image_meta_1])
+        with self.assertRaises(ElliottFatalError):
+            await find_builds_konflux(runtime, payload=True)
+
 
 class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
     async def test_find_builds_konflux_all_types(self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord):
         # Setup runtime and DB mocks
-        runtime = flexmock(konflux_db=flexmock())
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
 
@@ -135,6 +172,131 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         image_meta_2.get_latest_build.assert_called_once_with(
             enforce_network_mode=True, el_target="el9", exclude_large_columns=True
         )
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image2"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_find_builds_konflux_all_types_excludes_non_payload(
+        self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord, _
+    ):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
+
+        image_meta_1 = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
+        )
+        image_meta_1.branch_el_target.return_value = "el8"
+        build_1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta_1.get_latest_build = AsyncMock(return_value=build_1)
+
+        image_meta_2 = MagicMock(
+            base_only=False, is_release=True, is_payload=False, is_olm_operator=True, distgit_key="image2"
+        )
+        image_meta_2.branch_el_target.return_value = "el9"
+        image_meta_2.get_latest_build = AsyncMock(return_value=MagicMock(nvr="image2-2.0.0-1.el9"))
+
+        runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
+
+        builds_map = await find_builds_konflux_all_types(runtime)
+
+        self.assertEqual(builds_map['payload'], [build_1.nvr])
+        self.assertEqual(builds_map['non_payload'], [])
+        self.assertEqual(builds_map['olm_builds'], [])
+        self.assertEqual(builds_map['olm_builds_not_found'], [])
+        image_meta_2.get_latest_build.assert_not_called()
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"image1"})
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_find_builds_konflux_all_types_errors_on_excluded_payload(
+        self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord, _
+    ):
+        runtime = flexmock(konflux_db=flexmock(), assembly="4.17.1")
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
+
+        image_meta_1 = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
+        )
+
+        runtime.should_receive("image_metas").and_return([image_meta_1])
+        with self.assertRaises(ElliottFatalError):
+            await find_builds_konflux_all_types(runtime)
+
+
+class TestFetchBuildsByKindRpm(IsolatedAsyncioTestCase):
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"rpm-b"})
+    @mock.patch("elliottlib.cli.find_builds_cli._find_shipped_builds", return_value=set())
+    @mock.patch("elliottlib.cli.find_builds_cli._ensure_accepted_tags")
+    async def test_member_only_excludes_rpm(self, mock_ensure_tags, mock_shipped, _):
+        runtime = flexmock(assembly="4.17.1", assembly_basis_event=None, rpm_map={})
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+
+        rpm_a = MagicMock(distgit_key="rpm-a")
+        rpm_a.determine_targets.return_value = ["rhaos-4.17-rhel-9-candidate"]
+        rpm_a.get_latest_build = AsyncMock(
+            return_value={"id": 1, "name": "rpm-a", "version": "1.0", "release": "1.el9", "nvr": "rpm-a-1.0-1.el9"}
+        )
+
+        rpm_b = MagicMock(distgit_key="rpm-b")
+        rpm_b.determine_targets.return_value = ["rhaos-4.17-rhel-9-candidate"]
+        rpm_b.get_latest_build = AsyncMock(
+            return_value={"id": 2, "name": "rpm-b", "version": "2.0", "release": "1.el9", "nvr": "rpm-b-2.0-1.el9"}
+        )
+
+        runtime.should_receive("rpm_metas").and_return([rpm_a, rpm_b])
+
+        tag_pv_map = {"rhaos-4.17-rhel-9-candidate": "RHEL-9-OSE-4.17"}
+
+        def fake_ensure_tags(builds, *args, **kwargs):
+            for b in builds:
+                b["tag_name"] = "rhaos-4.17-rhel-9-candidate"
+
+        mock_ensure_tags.side_effect = fake_ensure_tags
+
+        nvrps = await _fetch_builds_by_kind_rpm(
+            runtime, tag_pv_map, brew_session=MagicMock(), include_shipped=False, member_only=True
+        )
+
+        rpm_a.get_latest_build.assert_called_once()
+        rpm_b.get_latest_build.assert_not_called()
+        self.assertEqual(len(nvrps), 1)
+        self.assertEqual(nvrps[0][0], "rpm-a")
+
+    @mock.patch("elliottlib.cli.find_builds_cli.assembly_excluded_components", return_value={"rpm-b"})
+    @mock.patch("elliottlib.cli.find_builds_cli._find_shipped_builds", return_value=set())
+    @mock.patch("elliottlib.cli.find_builds_cli._ensure_accepted_tags")
+    @mock.patch("elliottlib.cli.find_builds_cli.BuildFinder")
+    async def test_general_sweep_excludes_rpm(self, MockBuildFinder, mock_ensure_tags, mock_shipped, _):
+        rpm_b_meta = MagicMock()
+        rpm_b_meta.get_component_name.return_value = "rpm-b-pkg"
+
+        runtime = flexmock(assembly="4.17.1", assembly_basis_event=None, brew_event=None, rpm_map={"rpm-b": rpm_b_meta})
+        runtime.should_receive("get_releases_config").and_return(MagicMock())
+
+        tag_pv_map = {"rhaos-4.17-rhel-9-candidate": "RHEL-9-OSE-4.17"}
+
+        builder = MockBuildFinder.return_value
+        builder.from_tag.return_value = {
+            "rpm-a-pkg": {"id": 1, "name": "rpm-a", "version": "1.0", "release": "1.el9", "nvr": "rpm-a-1.0-1.el9"},
+            "rpm-b-pkg": {"id": 2, "name": "rpm-b", "version": "2.0", "release": "1.el9", "nvr": "rpm-b-2.0-1.el9"},
+        }
+
+        def fake_ensure_tags(builds, *args, **kwargs):
+            for b in builds:
+                b["tag_name"] = "rhaos-4.17-rhel-9-candidate"
+
+        mock_ensure_tags.side_effect = fake_ensure_tags
+
+        nvrps = await _fetch_builds_by_kind_rpm(
+            runtime, tag_pv_map, brew_session=MagicMock(), include_shipped=False, member_only=False
+        )
+
+        self.assertEqual(len(nvrps), 1)
+        self.assertEqual(nvrps[0][0], "rpm-a")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import koji
 import requests
 from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
-from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.assembly import assembly_excluded_components, assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
@@ -482,9 +482,15 @@ async def _fetch_builds_by_kind_image(
     non_payload_only: bool,
     include_shipped: bool,
 ):
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
     image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         if (payload_only and not image.is_payload) or (non_payload_only and image.is_payload):
             continue
@@ -572,6 +578,14 @@ async def _fetch_builds_by_kind_rpm(
                 f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release."
             )
 
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'rpm')
+    excluded_component_names: set[str] = set()
+    for dk in excluded:
+        rpm_meta = runtime.rpm_map.get(dk)
+        if rpm_meta:
+            excluded_component_names.add(rpm_meta.get_component_name())
+            LOGGER.info(f'Excluding rpm {dk} per assembly definition')
+
     builds: list[dict] = []
 
     pinned_nvrs = set()
@@ -580,7 +594,7 @@ async def _fetch_builds_by_kind_rpm(
             tasks = [
                 rpm.get_latest_build(default=None, el_target=tag, exclude_large_columns=True)
                 for rpm in runtime.rpm_metas()
-                if tag in rpm.determine_targets()
+                if tag in rpm.determine_targets() and rpm.distgit_key not in excluded
             ]
             builds_for_tag = await asyncio.gather(*tasks)
             builds.extend(filter(lambda b: b is not None, builds_for_tag))
@@ -634,6 +648,8 @@ async def _fetch_builds_by_kind_rpm(
                         )
                 component_builds.update(group_deps)
                 pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
+            for name in excluded_component_names:
+                component_builds.pop(name, None)
             builds.extend(component_builds.values())
 
     LOGGER.info(f"Found {len(builds)} qualified rpm builds")
@@ -716,9 +732,15 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
     image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         if (payload and not image.is_payload) or (not payload and image.is_payload):
             continue
@@ -768,9 +790,15 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
     image_metas: list[tuple[bool, ImageMetadata]] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         image_metas.append((image.is_payload, image))
 
