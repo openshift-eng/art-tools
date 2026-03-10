@@ -77,7 +77,7 @@ class GenAssemblyPipeline:
         elif in_flight == "none":
             self.in_flight = None
         elif not custom:
-            self.in_flight = get_inflight(assembly, group)
+            self.in_flight = get_inflight(assembly, group, date)
         else:
             self.in_flight = None
 
