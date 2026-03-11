@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -137,21 +138,41 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                     return repo_path
                 except Exception as e:
                     LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
-                    # Fall through to clone
+                    # Remove corrupt clone and fall through to re-clone
+                    shutil.rmtree(repo_path, ignore_errors=True)
 
         # Clone the repository
         cache_dir = _get_template_cache_dir()
         repo_path = cache_dir / cache_key
 
-        if repo_path.exists():
-            # Remove stale clone
-            import shutil
-
-            shutil.rmtree(repo_path, ignore_errors=True)
-
+        # Try to clone
         LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
-        exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
-        exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+        try:
+            exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
+            exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+        except ChildProcessError as e:
+            # If another process already cloned it, validate and use it
+            if "already exists" in str(e):
+                LOGGER.info("Clone attempt failed (directory exists), checking if another process completed it...")
+                try:
+                    # Verify the repository is valid and has the requested ref
+                    # Retry with short pollrate to give concurrent clone time to complete
+                    exectools.cmd_assert(f'git -C {repo_path} rev-parse --verify {ref}', retries=3, pollrate=5)
+                    # Fetch latest changes to ensure we're not using stale clone
+                    exectools.cmd_assert(f'git -C {repo_path} fetch --all --prune', retries=3)
+                    # Ensure we're on the correct ref
+                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                    # If ref is a branch, pull latest
+                    exectools.cmd_gather(f'git -C {repo_path} pull --ff-only 2>/dev/null || true')
+                    LOGGER.info(f"Validated and using clone from another process at {repo_path}")
+                except Exception as validation_error:
+                    LOGGER.error(f"Clone exists but validation failed: {validation_error}")
+                    # Remove corrupt clone so future attempts can succeed
+                    LOGGER.info(f"Removing corrupt clone at {repo_path}")
+                    shutil.rmtree(repo_path, ignore_errors=True)
+                    raise e  # Re-raise original error if validation fails
+            else:
+                raise
 
         _TEMPLATE_REPO_CACHE[cache_key] = repo_path
         return repo_path
