@@ -825,7 +825,10 @@ class ConfigScanSources:
         ]
 
         if not all(builder_nvr_list):
-            raise IOError(f'Unable to find nvr in {builder_info_labels}')
+            self.logger.warning(
+                f'Builder image {builder_image_name} does not have the labels necessary to construct NVR (com.redhat.component, version, release). Available labels: {builder_info_labels}'
+            )
+            return None
 
         builder_image_nvr = '-'.join(builder_nvr_list)
 
@@ -882,6 +885,12 @@ class ConfigScanSources:
             else:
                 raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
             builder_build_nvr = await self.get_builder_build_nvr(builder_image_name)
+
+            if not builder_build_nvr:
+                if builder.stream:
+                    raise IOError(f'Unable to find nvr for {builder_image_name}')
+                # If it's a direct image reference, skip it (likely an external/upstream image)
+                continue
 
             # Get the builder build start time
             builder_build_start_time = await self.get_builder_build_start_time(builder_build_nvr)
