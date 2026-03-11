@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import os
 import re
@@ -28,6 +29,42 @@ from pyartcd.jenkins import start_build_sync
 from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
+
+
+def validate_release_date(ctx, param, value):
+    """
+    Validates and converts release date to the format expected by elliott.
+    Accepts both YYYY-MM-DD and YYYY-Mon-DD formats.
+    Converts to YYYY-Mon-DD format (e.g., 2026-Mar-31) which is required by elliott.
+    """
+    if value is None:
+        return None
+
+    # Elliott's expected format
+    elliott_format = '%Y-%b-%d'
+
+    # Try parsing as YYYY-Mon-DD first (elliott format)
+    try:
+        parsed_date = datetime.datetime.strptime(value, elliott_format)
+        # Already in correct format
+        return value
+    except ValueError:
+        pass
+
+    # Try parsing as YYYY-MM-DD (numeric month)
+    try:
+        parsed_date = datetime.datetime.strptime(value, '%Y-%m-%d')
+        # Convert to elliott format
+        converted = parsed_date.strftime(elliott_format)
+        click.echo(f"Converted release date from {value} to {converted} (elliott format)")
+        return converted
+    except ValueError:
+        pass
+
+    raise click.BadParameter(
+        'Release date (--date) must be in YYYY-Mon-DD format (e.g., 2026-Mar-31) '
+        'or YYYY-MM-DD format (e.g., 2026-03-31)'
+    )
 
 
 class GenAssemblyPipeline:
@@ -425,7 +462,11 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
-@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
+@click.option(
+    "--date",
+    metavar="YYYY-Mon-DD",
+    help="Expected release date (e.g. 2020-Nov-25 or 2020-11-25). Will be converted to YYYY-Mon-DD format.",
+)
 @pass_runtime
 @click_coroutine
 async def gen_assembly(
@@ -449,6 +490,10 @@ async def gen_assembly(
     gen_microshift: bool,
     date: Optional[str],
 ):
+    # Validate and convert date format if provided
+    if date:
+        date = validate_release_date(None, None, date)
+
     pipeline = GenAssemblyPipeline(
         runtime=runtime,
         group=group,
