@@ -104,10 +104,25 @@ func _covIdentityMiddleware(next _covHTTP.Handler) _covHTTP.Handler {
 	})
 }
 
+// _covCheckCoverageAvailable probes whether the binary was built with
+// -cover by attempting a trial metadata collection.  Returns true if
+// coverage data is available.
+func _covCheckCoverageAvailable() bool {
+	var buf _covBytes.Buffer
+	if err := _covRuntime.WriteMeta(&buf); err != nil {
+		_covLog.Printf("[COVERAGE] WARNING: Coverage instrumentation unavailable — binary was not built with -cover (WriteMeta: %v)", err)
+		_covLog.Printf("[COVERAGE] WARNING: The coverage server will start but all collection requests will fail")
+		return false
+	}
+	_covLog.Printf("[COVERAGE] Coverage instrumentation verified — binary was built with -cover")
+	return true
+}
+
 // _covStartServer starts a dedicated HTTP server for coverage collection.
 // It tries successive ports starting from COVERAGE_PORT (default 53700)
 // until one is available or _covMaxRetries attempts are exhausted.
 func _covStartServer() {
+	_covCheckCoverageAvailable()
 	startPort := _covDefaultPort
 	if envPort := _covOS.Getenv("COVERAGE_PORT"); envPort != "" {
 		if p, err := _covStrconv.Atoi(envPort); err == nil && p > 0 {
@@ -169,6 +184,7 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 	if !skipMeta {
 		var metaBuf _covBytes.Buffer
 		if err := _covRuntime.WriteMeta(&metaBuf); err != nil {
+			_covLog.Printf("[COVERAGE] ERROR: Failed to collect metadata: %v (binary may not have been built with -cover)", err)
 			_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect metadata: %v", err), _covHTTP.StatusInternalServerError)
 			return
 		}
@@ -178,6 +194,7 @@ func _covHandler(w _covHTTP.ResponseWriter, r *_covHTTP.Request) {
 	// Collect counters
 	var counterBuf _covBytes.Buffer
 	if err := _covRuntime.WriteCounters(&counterBuf); err != nil {
+		_covLog.Printf("[COVERAGE] ERROR: Failed to collect counters: %v (binary may not have been built with -cover)", err)
 		_covHTTP.Error(w, _covFmt.Sprintf("Failed to collect counters: %v", err), _covHTTP.StatusInternalServerError)
 		return
 	}
