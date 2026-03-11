@@ -2,10 +2,11 @@ import asyncio
 import os
 from collections import OrderedDict
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
+import click
+from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline, validate_release_date
 
 
 class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
@@ -288,3 +289,50 @@ releases:
         _gen_assembly_from_releases.assert_awaited_once_with(pipeline, ['nightly1', 'nightly2', 'nightly3', 'nightly4'])
         _create_or_update_pull_request.assert_awaited_once_with(pipeline, ANY)
         del os.environ["GITHUB_TOKEN"]
+
+
+class TestValidateReleaseDate(TestCase):
+    """
+    Test the validate_release_date callback function.
+    """
+
+    def test_validate_release_date_elliott_format(self):
+        """
+        Test that dates in elliott format (YYYY-Mon-DD) are accepted as-is.
+        """
+        result = validate_release_date(None, None, "2026-Mar-31")
+        self.assertEqual(result, "2026-Mar-31")
+
+        result = validate_release_date(None, None, "2020-Nov-25")
+        self.assertEqual(result, "2020-Nov-25")
+
+    def test_validate_release_date_numeric_format(self):
+        """
+        Test that dates in numeric format (YYYY-MM-DD) are converted to elliott format.
+        """
+        result = validate_release_date(None, None, "2026-03-31")
+        self.assertEqual(result, "2026-Mar-31")
+
+        result = validate_release_date(None, None, "2020-11-25")
+        self.assertEqual(result, "2020-Nov-25")
+
+    def test_validate_release_date_none(self):
+        """
+        Test that None is returned when no date is provided.
+        """
+        result = validate_release_date(None, None, None)
+        self.assertIsNone(result)
+
+    def test_validate_release_date_invalid_format(self):
+        """
+        Test that invalid date formats raise BadParameter.
+        """
+        with self.assertRaises(click.BadParameter) as context:
+            validate_release_date(None, None, "2026/03/31")
+
+        self.assertIn("must be in YYYY-Mon-DD format", str(context.exception))
+
+        with self.assertRaises(click.BadParameter) as context:
+            validate_release_date(None, None, "invalid-date")
+
+        self.assertIn("must be in YYYY-Mon-DD format", str(context.exception))
