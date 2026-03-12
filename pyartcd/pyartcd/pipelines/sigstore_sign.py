@@ -142,20 +142,20 @@ class SigstorePipeline:
                 release_images.append(release_info)
                 all_errors.update(errors)
 
-        # --- Phase 2: Discover component images ---
+        # --- Phase 2: Discover component images from ALL release pullspecs ---
+        # Each arch-specific release references arch-specific component digests,
+        # so we must discover from every release image to cover all architectures.
         component_images: Set[str] = set()
 
         if self.sign_components and self.pullspecs:
-            # Use first release image to get component references
-            first_pullspec = self.pullspecs[0]
-            logger.info("Discovering component images from %s", first_pullspec)
-
-            components, errors = await self.signatory.discover_component_images(
-                release_pullspec=first_pullspec,
-                release_name=release_name,
-            )
-            component_images.update(components)
-            all_errors.update(errors)
+            for pullspec in self.pullspecs:
+                logger.info(f"Discovering component images from {pullspec}")
+                components, errors = await self.signatory.discover_component_images(
+                    release_pullspec=pullspec,
+                    release_name=release_name,
+                )
+                component_images.update(components)
+                all_errors.update(errors)
 
         if all_errors:
             print("Discovery errors:")

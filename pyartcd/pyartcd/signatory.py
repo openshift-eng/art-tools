@@ -281,6 +281,8 @@ class SigstoreSignatory:
         signing_key_ids: List[str],
         rekor_url: str,
         concurrency_limit: int,
+        batch_retries: int = 3,
+        batch_retry_delay: float = 30.0,
     ) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
@@ -288,6 +290,8 @@ class SigstoreSignatory:
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
+        self.batch_retries = batch_retries  # number of batch-level retries for failed images
+        self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
 
     @staticmethod
     def redigest_pullspec(pullspec: str, digest: str) -> str:
@@ -464,26 +468,43 @@ class SigstoreSignatory:
         The tag-based signature enables customers to verify images referenced by tag
         without needing signedIdentity overrides in their policy.
 
+        Failed manifests are retried up to batch_retries times with a delay between attempts.
+
         :param release_images: List of ReleaseImageInfo with canonical tags and manifests to sign
         :param tag_only: If True, only sign with tag identity (skip digest identity).
             Useful for retroactive signing where digest signatures already exist.
         :return: Dict of any signing errors per pullspec
         """
-        # Build args: (pullspec, canonical_tag, tag_only)
         args: List[Tuple[str, str, bool]] = []
         for info in release_images:
             for pullspec in info.manifests_to_sign:
                 args.append((pullspec, info.canonical_tag, tag_only))
 
+        tag_label = " [TAG ONLY]" if tag_only else ""
         self._logger.info(
-            "Signing %d release image manifests (from %d release images)%s",
-            len(args),
-            len(release_images),
-            " [TAG ONLY]" if tag_only else "",
+            f"Signing {len(args)} release image manifests (from {len(release_images)} release images){tag_label}"
         )
 
-        results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
-        return {pullspec: err for result in results for pullspec, err in result.items()}
+        errors: Dict[str, Exception] = {}
+        for attempt in range(1, self.batch_retries + 1):
+            results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
+            errors = {ps: err for result in results for ps, err in result.items()}
+            if not errors:
+                break
+            failed = list(errors.keys())
+            if attempt < self.batch_retries:
+                self._logger.warning(
+                    f"Batch attempt {attempt}/{self.batch_retries}: {len(errors)} manifests failed signing, "
+                    f"retrying in {self.batch_retry_delay}s: {failed}"
+                )
+                args = [(ps, tag, to) for ps, tag, to in args if ps in errors]
+                await asyncio.sleep(self.batch_retry_delay)
+            else:
+                self._logger.error(
+                    f"Batch attempt {attempt}/{self.batch_retries}: {len(errors)} manifests still failing "
+                    f"after all retries: {failed}"
+                )
+        return errors
 
     async def sign_component_images(
         self,
@@ -495,15 +516,35 @@ class SigstoreSignatory:
         Component images don't need canonical tag signing since users reference them
         via the release image, not directly by tag.
 
+        Failed images are retried up to batch_retries times with a delay between attempts.
+
         :param component_images: Pullspecs of component images to sign
         :return: Dict of any signing errors per pullspec
         """
         pullspecs = list(component_images)
-        self._logger.info("Signing %d component images", len(pullspecs))
+        self._logger.info(f"Signing {len(pullspecs)} component images")
 
-        args = [(ps, None) for ps in pullspecs]
-        results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
-        return {pullspec: err for result in results for pullspec, err in result.items()}
+        args: List[Tuple[str, None]] = [(ps, None) for ps in pullspecs]
+        errors: Dict[str, Exception] = {}
+        for attempt in range(1, self.batch_retries + 1):
+            results = await run_limited_unordered(self._sign_manifest, args, self.concurrency_limit)
+            errors = {ps: err for result in results for ps, err in result.items()}
+            if not errors:
+                break
+            failed = list(errors.keys())
+            if attempt < self.batch_retries:
+                self._logger.warning(
+                    f"Batch attempt {attempt}/{self.batch_retries}: {len(errors)} images failed signing, "
+                    f"retrying in {self.batch_retry_delay}s: {failed}"
+                )
+                args = [(ps, None) for ps in errors]
+                await asyncio.sleep(self.batch_retry_delay)
+            else:
+                self._logger.error(
+                    f"Batch attempt {attempt}/{self.batch_retries}: {len(errors)} images still failing "
+                    f"after all retries: {failed}"
+                )
+        return errors
 
     async def _sign_manifest(
         self,
@@ -538,10 +579,10 @@ class SigstoreSignatory:
             identities.append(tag_identity)
 
         if not identities:
-            log.warning("No identities to sign for %s (tag_only=True but no canonical_tag)", pullspec)
+            log.warning(f"No identities to sign for {pullspec} (tag_only=True but no canonical_tag)")
             return {}
 
-        log.info("Signing manifest %s with identities: %s", pullspec, identities)
+        log.info(f"Signing manifest {pullspec} with identities: {identities}")
 
         for identity in identities:
             for signing_key_id in self.signing_key_ids:
@@ -562,17 +603,18 @@ class SigstoreSignatory:
                 cmd.append(pullspec)
 
                 if self.dry_run:
-                    log.info("[DRY RUN] Would sign: %s", cmd)
+                    log.info(f"[DRY RUN] Would sign: {cmd}")
                     continue
 
-                log.debug("Running: %s", cmd)
+                log.debug(f"Running: {cmd}")
                 try:
                     stdout = await self._retrying_cosign(cmd)
-                    log.debug("Signed %s (identity=%s): %s", pullspec, identity, stdout)
+                    log.debug(f"Signed {pullspec} (identity={identity}): {stdout}")
                     await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
                 except Exception as exc:
-                    log.error("Failed signing %s (identity=%s): %s", pullspec, identity, exc)
-                    return {pullspec: exc}
+                    detail = f"identity={identity}, key={signing_key_id}"
+                    log.error(f"Failed signing {pullspec} ({detail}): {exc}")
+                    return {pullspec: RuntimeError(f"{detail}: {exc}")}
 
         return {}
 
