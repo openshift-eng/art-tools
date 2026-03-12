@@ -1065,22 +1065,20 @@ class PromotePipeline:
         if all_errors:
             raise IOError(f"Release image discovery failed: {all_errors}")
 
-        # --- Phase 2: Discover component images ---
-        # Component images don't need canonical tag signing.
+        # --- Phase 2: Discover component images from ALL arch release images ---
+        # Each arch-specific release references arch-specific component digests,
+        # so we must discover from every release image to cover all architectures.
         component_images: Set[str] = set()
 
-        # Use the first release image to get component references
-        # (all arch variants have the same components)
-        first_release = next(iter(release_infos.values()))
-        first_pullspec = signatory.redigest_pullspec(first_release["image"], first_release["digest"])
-
-        self._logger.info("Discovering component images from %s", first_pullspec)
-        components, errors = await signatory.discover_component_images(
-            release_pullspec=first_pullspec,
-            release_name=release_name,
-        )
-        component_images.update(components)
-        all_errors.update(errors)
+        for arch, info in release_infos.items():
+            digest_pullspec = signatory.redigest_pullspec(info["image"], info["digest"])
+            self._logger.info(f"Discovering component images from {arch} release: {digest_pullspec}")
+            components, errors = await signatory.discover_component_images(
+                release_pullspec=digest_pullspec,
+                release_name=release_name,
+            )
+            component_images.update(components)
+            all_errors.update(errors)
 
         if all_errors:
             raise IOError(f"Component image discovery failed: {all_errors}")
