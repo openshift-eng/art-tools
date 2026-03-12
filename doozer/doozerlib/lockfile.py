@@ -498,6 +498,35 @@ class RPMLockfileGenerator:
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
 
+    def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
+        """Validate that RPM version SETS are consistent across all architectures."""
+        # Group EVRs by package name, then by architecture
+        package_arch_evrs = {}
+        all_arches = set(rpms_info_by_arch.keys())
+
+        for arch, rpm_list in rpms_info_by_arch.items():
+            for rpm in rpm_list:
+                package_arch_evrs.setdefault(rpm.name, {}).setdefault(arch, set()).add(rpm.evr)
+
+        # Ensure all packages are present across all architectures (with empty sets for missing)
+        for package_name, arch_evrs in package_arch_evrs.items():
+            for arch in all_arches:
+                if arch not in arch_evrs:
+                    arch_evrs[arch] = set()
+
+        # Validate identical EVR sets across architectures
+        mismatches = []
+        for package_name, arch_evrs in package_arch_evrs.items():
+            evr_sets = list(arch_evrs.values())
+            reference_set = evr_sets[0]
+
+            if not all(evr_set == reference_set for evr_set in evr_sets[1:]):
+                arch_details = [f"{arch}:{{{','.join(sorted(evr_set))}}}" for arch, evr_set in arch_evrs.items()]
+                mismatches.append(f"{package_name} ({'; '.join(arch_details)})")
+
+        if mismatches:
+            raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
+
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
     ) -> tuple[bool, set[str]]:
@@ -629,6 +658,9 @@ class RPMLockfileGenerator:
             self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
+
+        # Validate cross-architecture version set consistency
+        self._validate_cross_arch_version_sets(rpms_info_by_arch)
 
         if image_meta.is_cross_arch_enabled():
             self.logger.info("Cross-architecture lockfile inclusion enabled")
