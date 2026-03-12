@@ -591,10 +591,15 @@ class GenAssemblyCli:
                         f"Did not find RHCOS {self.primary_rhcos_tag} image for active group architecture: {arch}"
                     )
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
-                for tag in rhcos.get_container_configs(self.runtime):
-                    if self.rhcos_by_tag[tag.name].get(arch):
-                        continue
-                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                tags_to_resolve = [
+                    tag for tag in rhcos.get_container_configs(self.runtime)
+                    if not self.rhcos_by_tag[tag.name].get(arch)
+                ]
+                if not tags_to_resolve:
+                    continue
+
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    for tag in tags_to_resolve:
                         if not self.rhcos_by_tag[tag.name].get("x86_64"):
                             self._exit_with_error(
                                 f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
@@ -609,27 +614,29 @@ class GenAssemblyCli:
                             go_arch_for_brew_arch(arch),
                         )
                         self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
-                    else:
-                        url_key = (
-                            f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
-                        )
-                        rhcos_build_url = (
-                            f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
-                        )
-                        self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
-                        session = requests.Session()
-                        session.mount(
-                            'https://',
-                            HTTPAdapter(max_retries=Retry(total=3, backoff_factor=2, status_forcelist=[502, 503, 504])),
-                        )
-                        rhcos_meta_json = session.get(rhcos_build_url, timeout=60).json()
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                else:
+                    url_key = (
+                        f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+                    )
+                    rhcos_build_url = (
+                        f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
+                    )
+                    self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
+                    session = requests.Session()
+                    session.mount(
+                        'https://',
+                        HTTPAdapter(max_retries=Retry(total=3, backoff_factor=2, status_forcelist=[502, 503, 504])),
+                    )
+                    rhcos_meta_json = session.get(rhcos_build_url, timeout=60).json()
+                    for tag in tags_to_resolve:
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(
                                 f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}'
                             )
                         rhcos_image = rhcos_meta_json[tag.build_metadata_key]
                         self.rhcos_by_tag[tag.name][arch] = f"{rhcos_image['image']}@{rhcos_image['digest']}"
-                    self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
 
     async def _select_rpms(self):
         """
