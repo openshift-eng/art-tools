@@ -592,7 +592,8 @@ class GenAssemblyCli:
                     )
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
                 tags_to_resolve = [
-                    tag for tag in rhcos.get_container_configs(self.runtime)
+                    tag
+                    for tag in rhcos.get_container_configs(self.runtime)
                     if not self.rhcos_by_tag[tag.name].get(arch)
                 ]
                 if not tags_to_resolve:
@@ -616,9 +617,7 @@ class GenAssemblyCli:
                         self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
                         self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
                 else:
-                    url_key = (
-                        f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
-                    )
+                    url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
                     rhcos_build_url = (
                         f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
                     )
