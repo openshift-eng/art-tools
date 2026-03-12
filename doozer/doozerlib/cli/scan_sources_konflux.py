@@ -76,6 +76,10 @@ class ConfigScanSources:
         self.dry_run = dry_run
         self.variant = BuildVariant(variant.lower())
 
+        # Set the variant on runtime so metadata methods can use it for OKD builds
+        # This allows get_latest_konflux_build to query with okd-* group instead of openshift-*
+        self.runtime.variant = self.variant
+
         # Only load RPM metadata for OCP variant (OKD doesn't check RPM changes)
         if self.variant != BuildVariant.OKD:
             self.all_rpm_metas = set(runtime.rpm_metas())
@@ -111,28 +115,36 @@ class ConfigScanSources:
         Arg(s):
             image_meta (ImageMetadata): The image metadata.
         Return Value(s):
-            bool: True if okd.mode is enabled, False otherwise.
+            bool: True if okd.mode is explicitly enabled, or if the image is
+                  generally enabled (when no okd config exists).
         """
-        return (
-            image_meta.config.okd is not Missing
-            and image_meta.config.okd.mode is not Missing
-            and image_meta.config.okd.mode == 'enabled'
-        )
+
+        if image_meta.config.okd is not Missing and image_meta.config.okd.mode is not Missing:
+            return image_meta.config.okd.mode == 'enabled'
+        return image_meta.enabled
 
     def _is_image_enabled(self, image_meta: ImageMetadata) -> bool:
         """
         Check if an image should be processed (not disabled).
 
-        An image is considered enabled if:
-        - It's generally enabled (mode != 'disabled'), OR
-        - It has okd.mode: enabled (even if general mode: disabled)
+        For OKD variant:
+        - Image is enabled if generally enabled OR has okd.mode: enabled
+
+        For OCP variant:
+        - Image must be generally enabled (mode != 'disabled')
+        - OKD-only images (mode: disabled with okd.mode: enabled) are NOT included
 
         Arg(s):
             image_meta (ImageMetadata): The image metadata.
         Return Value(s):
             bool: True if image should be processed, False otherwise.
         """
-        return image_meta.enabled or self._is_okd_enabled(image_meta)
+        if self.variant == BuildVariant.OKD:
+            # For OKD, image is enabled if generally enabled OR has okd.mode: enabled
+            return self._is_okd_enabled(image_meta)
+        else:
+            # For OCP, only process generally enabled images (not OKD-only images)
+            return image_meta.enabled
 
     def _is_image_enabled_for_scan(self, image_meta: ImageMetadata) -> bool:
         """
@@ -187,7 +199,7 @@ class ConfigScanSources:
             await self.scan_images(self.image_tree[level])
 
         # Check RHCOS status if the kubeconfig is provided and group is openshift-*
-        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-"):
+        if self.ci_kubeconfig and self.runtime.group.startswith("openshift-") and self.variant != BuildVariant.OKD:
             await self.detect_rhcos_status()
 
         # Print the output report
@@ -449,18 +461,27 @@ class ConfigScanSources:
 
     async def find_latest_image_builds(self, image_names: List[str]):
         self.logger.info('Gathering latest image build records information...')
-        # Need installed_packages column for RPM analysis in scan_rpm_changes, so don't exclude any columns
+        # For OCP, need installed_packages column for RPM analysis in scan_rpm_changes
+        # For OKD, exclude large columns to reduce BigQuery cost (OKD doesn't check RPM changes)
+        exclude_large_columns = self.variant == BuildVariant.OKD
         latest_image_builds = await asyncio.gather(
-            *[self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names]
+            *[
+                self.runtime.image_map[name].get_latest_build(
+                    engine=Engine.KONFLUX.value, exclude_large_columns=exclude_large_columns
+                )
+                for name in image_names
+            ]
         )
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
     async def scan_images(self, image_names: List[str]):
-        # Filter to only enabled images (generally enabled OR OKD-enabled)
+        # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled)
         image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
+        if not image_names:
+            return
 
         # Store latest build records in a map, to reduce DB queries and execution time
         await self.find_latest_image_builds(image_names)
@@ -764,11 +785,29 @@ class ConfigScanSources:
 
         for dep_key in dependencies:
             # Is the image dependency included in doozer --images list?
-            if not self.runtime.image_map.get(dep_key, None):
+            dep_meta = self.runtime.image_map.get(dep_key, None)
+            if not dep_meta:
                 self.logger.warning(
                     "Image %s has unknown dependency %s. Is it excluded?", image_meta.distgit_key, dep_key
                 )
                 continue
+
+            # For OKD variant, apply additional filtering
+            if self.variant == BuildVariant.OKD:
+                # Skip dependencies that have okd_alignment.resolve_as configured
+                # These get resolved to a different image (e.g., CentOS Stream) at build time
+                okd_alignment = dep_meta.config.content.source.okd_alignment
+                if okd_alignment.resolve_as:
+                    self.logger.debug(
+                        'Skipping dependency %s for OKD variant (has okd_alignment.resolve_as configured)', dep_key
+                    )
+                    continue
+
+                # Skip dependencies that are not OKD-enabled
+                # We only want to check dependencies that will actually be built for OKD
+                if not self._is_image_enabled(dep_meta):
+                    self.logger.debug('Skipping dependency %s for OKD variant (not in OKD-enabled image set)', dep_key)
+                    continue
 
             # Is the dependency ever been built?
             dependency_build_record = self.latest_image_build_records_map.get(dep_key, None)
@@ -1636,7 +1675,7 @@ class ConfigScanSources:
 @click.option(
     "--ci-kubeconfig",
     metavar='KC_PATH',
-    required=True,
+    required=False,
     help="File containing kubeconfig for looking at release-controller imagestreams",
 )
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
@@ -1676,8 +1715,7 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
 
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
-    # Note: caller must use --load-okd-only flag to load OKD-only images for scanning
-    runtime.initialize(mode='both', clone_distgits=False)
+    runtime.initialize(mode='both' if variant != BuildVariant.OKD.value else 'images', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:
         await ConfigScanSources(
