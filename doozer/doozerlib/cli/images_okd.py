@@ -12,24 +12,24 @@ from copy import copy
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-import aiohttp
 import click
 import openshift_client as oc
 import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import (
-    convert_remote_git_to_ssh,
     deep_merge,
     download_file_from_github,
+    ensure_github_https_url,
     split_git_url,
 )
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
-from github import Github, UnknownObjectException
+from github import Auth, Github, UnknownObjectException
 
 from doozerlib import Runtime, constants
 from doozerlib.backend.rebaser import KonfluxRebaser
@@ -811,7 +811,10 @@ async def images_okd_prs(
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
-    g = Github(login_or_token=github_access_token)
+    if github_access_token:
+        g = Github(auth=Auth.Token(github_access_token))
+    else:
+        g = get_github_client_for_org("openshift")
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
@@ -841,8 +844,9 @@ async def images_okd_prs(
         release_fork_repo = github_user.create_fork(public_release_repo)
 
     # Clone openshift/release and populate our fork as a remote
-    release_repo_url = convert_remote_git_to_ssh(f'http://github.com/openshift/{openshift_release_repo_name}')
+    release_repo_url = f'https://github.com/openshift/{openshift_release_repo_name}'
     release_clone_dir = Path(runtime.working_dir).joinpath('clones', 'release')
+    git_auth_env = get_github_git_auth_env(url=release_repo_url)
 
     # Clone the openshift/release repo so we can open a PR if necessary.
     runtime.logger.info(f'Cloning {release_repo_url}')
@@ -850,8 +854,10 @@ async def images_okd_prs(
     git_clone(release_repo_url, release_clone_dir, git_cache_dir=runtime.git_cache_dir)
     with Dir(release_clone_dir):
         exectools.cmd_gather('git remote remove fork')  # In case we are reusing a cloned path
-        exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(release_fork_repo.git_url)}')
-        exectools.cmd_assert('git fetch --all', retries=3)
+        exectools.cmd_assert(
+            f'git remote add fork {ensure_github_https_url(release_fork_repo.git_url)}', set_env=git_auth_env
+        )
+        exectools.cmd_assert('git fetch --all', retries=3, set_env=git_auth_env)
         exectools.cmd_assert('git checkout origin/master')
         # All content will be produced in the staging branch. It will be pushed to the public
         # reconcile branch if and only if staging differs.
@@ -1003,7 +1009,7 @@ async def images_okd_prs(
         # The upstream source for the component.
         ci_operator_config = ci_operator_configs.get_ci_operator_config(org, repo_name, public_branch)
 
-        public_repo_url = convert_remote_git_to_ssh(public_repo_url)
+        public_repo_url = ensure_github_https_url(public_repo_url)
         component_source_path = pathlib.Path(runtime.working_dir).joinpath('snapshots', dgk)
         component_source_path.mkdir(exist_ok=True, parents=True)
 
@@ -1025,15 +1031,13 @@ async def images_okd_prs(
         while True:  # Allows symlinks to be followed
             dockerfile_abs_path = component_source_path.joinpath(os.path.basename(dockerfile_path))
 
-            async with aiohttp.ClientSession() as session:
-                await download_file_from_github(
-                    repository=public_repo_url,
-                    branch=public_branch,
-                    path=dockerfile_path,
-                    token=github_access_token,
-                    destination=dockerfile_abs_path,
-                    session=session,
-                )
+            await download_file_from_github(
+                repository=public_repo_url,
+                branch=public_branch,
+                path=dockerfile_path,
+                github_client=g,
+                destination=dockerfile_abs_path,
+            )
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:

@@ -83,10 +83,10 @@ class BuildRepo:
 
         # Run git config credential.helper store
         git_config_cmd = ["config", "credential.helper", "store"]
-        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir), github_url=self.url)
         # Run git config credential.useHttpPath true
         git_config_cmd = ["config", "credential.useHttpPath", "true"]
-        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir), github_url=self.url)
 
         # Check if the credentials are already set in ~/.git-credentials
         credentials_file = Path.home() / ".git-credentials"
@@ -161,7 +161,7 @@ class BuildRepo:
     async def init(self):
         """Initialize the local directory as a git repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["init", local_dir])
+        await git_helper.run_git_async(["init", local_dir], github_url=self.url)
 
     @start_as_current_span_async(TRACER, "build_repo.set_remote_url")
     async def set_remote_url(self, url: Optional[str], remote_name: str = "origin"):
@@ -172,11 +172,11 @@ class BuildRepo:
         if url is None:
             url = self.url
         local_dir = str(self.local_dir)
-        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "remote"], stderr=None)
+        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "remote"], stderr=None, github_url=url)
         if remote_name not in out.strip().split():
-            await git_helper.run_git_async(["-C", local_dir, "remote", "add", remote_name, url])
+            await git_helper.run_git_async(["-C", local_dir, "remote", "add", remote_name, url], github_url=url)
         else:
-            await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url])
+            await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url], github_url=url)
 
     @start_as_current_span_async(TRACER, "build_repo.set_pull_remote")
     async def set_pull_remote(self, pull_url: str):
@@ -199,8 +199,9 @@ class BuildRepo:
             fetch_options.append(f"--depth={depth}")
         # Use pull remote if different from push URL, otherwise use origin
         remote_name = "pull" if self.pull_url != self.url else "origin"
+        remote_url = self.pull_url if remote_name == "pull" else self.url
         rc, _, err = await git_helper.gather_git_async(
-            ["-C", local_dir, "fetch"] + fetch_options + [remote_name, refspec], check=False
+            ["-C", local_dir, "fetch"] + fetch_options + [remote_name, refspec], check=False, github_url=remote_url
         )
         if rc != 0:
             if not strict and "fatal: couldn't find remote ref" in err:
@@ -220,14 +221,16 @@ class BuildRepo:
             options.append("--detach")
         if orphan:
             options.append("--orphan")
-        await git_helper.run_git_async(["-C", local_dir, "switch"] + options + [branch])
+        await git_helper.run_git_async(["-C", local_dir, "switch"] + options + [branch], github_url=self.url)
         self.branch = branch
         self._commit_hash = await self._get_commit_hash(local_dir)
 
     @start_as_current_span_async(TRACER, "build_repo.delete_all_files")
     async def delete_all_files(self):
         """Delete all files in the local directory."""
-        await git_helper.run_git_async(["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."])
+        await git_helper.run_git_async(
+            ["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."], github_url=self.url
+        )
 
     @staticmethod
     @start_as_current_span_async(TRACER, "build_repo.get_commit_hash")
@@ -249,11 +252,11 @@ class BuildRepo:
     async def commit(self, message: str, allow_empty: bool = False, force: bool = False):
         """Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []))
+        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []), github_url=self.url)
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
-        await git_helper.run_git_async(["-C", local_dir, "commit", "-q"] + commit_opts + ["-m", message])
+        await git_helper.run_git_async(["-C", local_dir, "commit", "-q"] + commit_opts + ["-m", message], github_url=self.url)
         self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     @start_as_current_span_async(TRACER, "build_repo.tag")
@@ -263,7 +266,7 @@ class BuildRepo:
         :param tag: The tag to apply to the current commit.
         """
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag])
+        await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag], github_url=self.url)
 
     @start_as_current_span_async(TRACER, "build_repo.push")
     async def push(self, force: bool = False):
@@ -275,9 +278,9 @@ class BuildRepo:
         if force:
             push_cmd.append("--force")
             self._logger.info("Using force push for branch %s", self.branch)
-        await git_helper.run_git_async(push_cmd)
+        await git_helper.run_git_async(push_cmd, github_url=self.url)
         try:
-            await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"])
+            await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"], github_url=self.url)
         except Exception as e:
             # Rebase should not fail if the tags are not pushed successfully
             self._logger.warning(e)
@@ -295,13 +298,17 @@ class BuildRepo:
         if not local_dir.joinpath(".git").exists():
             raise FileNotFoundError(f"{local_dir} is not a git repository")
         local_dir = str(local_dir)
-        _, url, _ = await git_helper.gather_git_async(["-C", local_dir, "config", "--get", "remote.origin.url"])
-        _, branch, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        _, url, _ = await git_helper.gather_git_async(
+            ["-C", local_dir, "config", "--get", "remote.origin.url"], github_url=None
+        )
+        _, branch, _ = await git_helper.gather_git_async(
+            ["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"], github_url=url.strip()
+        )
 
         # Check if pull remote exists
         pull_url = None
         rc, pull_remote_url, _ = await git_helper.gather_git_async(
-            ["-C", local_dir, "config", "--get", "remote.pull.url"], check=False
+            ["-C", local_dir, "config", "--get", "remote.pull.url"], check=False, github_url=url.strip()
         )
         if rc == 0:
             pull_url = pull_remote_url.strip()
