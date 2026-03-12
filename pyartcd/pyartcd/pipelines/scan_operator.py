@@ -3,7 +3,7 @@ import logging
 from typing import List, Optional, Set
 
 import click
-from artcommonlib import exectools
+from artcommonlib import exectools, redis
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -322,32 +322,27 @@ async def scan_operator(runtime: Runtime, version: str, assembly: str, data_path
     if runtime.dry_run:
         await pipeline.run()
     else:
-        lock = Lock.SCAN_OPERATOR
-        lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path_or_random()
+        build_lock_name = Lock.BUILD_KONFLUX.value.format(version=version)
+        lock_manager = locks.LockManager([redis.redis_url()])
 
-        # Scheduled builds are already being skipped if the lock is already acquired.
-        # For manual builds, we need to check if the build and scan locks are already acquired,
-        # and skip the current build if that's the case.
-        # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
-        async def run_with_build_lock():
-            build_lock = Lock.BUILD_KONFLUX
-            build_lock_name = build_lock.value.format(version=version)
-            await locks.run_with_lock(
-                coro=pipeline.run(),
-                lock=build_lock,
-                lock_name=build_lock_name,
-                lock_id=lock_identifier,
-                skip_if_locked=True,
-            )
+        try:
+            if await lock_manager.is_locked(build_lock_name):
+                pipeline.logger.info(f'Locked on {build_lock_name}, skipping')
+                pipeline.skipped = True
+            else:
+                lock = Lock.SCAN_OPERATOR
+                lock_name = lock.value.format(version=version)
+                lock_identifier = jenkins.get_build_path_or_random()
 
-        await locks.run_with_lock(
-            coro=run_with_build_lock(),
-            lock=lock,
-            lock_name=lock_name,
-            lock_id=lock_identifier,
-            skip_if_locked=True,
-        )
+                await locks.run_with_lock(
+                    coro=pipeline.run(),
+                    lock=lock,
+                    lock_name=lock_name,
+                    lock_id=lock_identifier,
+                    skip_if_locked=True,
+                )
+        finally:
+            await lock_manager.destroy()
 
     if pipeline.skipped:
         jenkins.update_title(' [SKIPPED][LOCKED]')
