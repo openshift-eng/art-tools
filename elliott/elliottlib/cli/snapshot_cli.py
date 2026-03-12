@@ -243,34 +243,18 @@ class CreateSnapshotCli:
             if not (source_url or revision or digest):
                 raise ValueError(f"Could not find all required nvr details {source_url=} {revision=} {digest=}")
 
-            component_names = [comp_name]
-
-            # Images can have multiple delivery repos defined in the config
-            # in which case, we use a special convention to name the components in the snapshot
-            # for konflux to ship all of them
-            # This is not applicable to bundle/fbc builds
-            if isinstance(record, KonfluxBuildRecord):
-                image_metadata = self.runtime.image_map.get(record.name)
-                if not image_metadata:
-                    raise ValueError(f"Could not find image metadata for {record.name}")
-                delivery_repos = image_metadata.config.delivery.delivery_repo_names or []
-                component_names.extend([f"{comp_name}-alt-{i - 1}" for i in range(1, len(delivery_repos))])
-
-            components = [
-                {
-                    "name": comp_name,
-                    "source": {
-                        "git": {
-                            "url": source_url,
-                            "revision": revision,
-                        },
+            component = {
+                "name": comp_name,
+                "source": {
+                    "git": {
+                        "url": source_url,
+                        "revision": revision,
                     },
-                    "containerImage": record.image_pullspec,
-                }
-                for comp_name in component_names
-            ]
+                },
+                "containerImage": record.image_pullspec,
+            }
 
-            return components, app_name
+            return [component], app_name
 
         # Collect components and their applications
         app_components: dict[str, list] = defaultdict(list)
