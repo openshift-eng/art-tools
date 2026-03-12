@@ -218,6 +218,14 @@ class LockManager(Aioredlock):
             self.logger.error('Failed releasing lock %s', lock.resource)
             raise
 
+    async def is_locked(self, resource_or_lock):
+        locked = await super().is_locked(resource_or_lock)
+        if locked:
+            resource = resource_or_lock.resource if hasattr(resource_or_lock, 'resource') else resource_or_lock
+            lock_id = await self.get_lock_id(resource)
+            self.logger.info('Resource %s is currently locked by %s', resource, lock_id)
+        return locked
+
     async def get_lock_id(self, resource) -> str:
         self.logger.debug('Retrieving identifier for lock %s', resource)
         return await redis.get_value(resource)
