@@ -616,9 +616,10 @@ class GenAssemblyCli:
                         rhcos_build_url = (
                             f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
                         )
+                        self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
                         session = requests.Session()
-                        session.mount('https://', HTTPAdapter(max_retries=Retry(total=3)))
-                        rhcos_meta_json = session.get(rhcos_build_url).json()
+                        session.mount('https://', HTTPAdapter(max_retries=Retry(total=3, backoff_factor=2, status_forcelist=[502, 503, 504])))
+                        rhcos_meta_json = session.get(rhcos_build_url, timeout=60).json()
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(
                                 f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}'
