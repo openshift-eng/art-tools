@@ -412,12 +412,32 @@ class KonfluxOlmBundleRebaser:
 
         # Replace ART-built image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
+
+        # Extract NVRs from image labels
+        image_nvrs = {}
         for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']
             image_release = image_labels['release']
             image_component_name = image_labels['com.redhat.component']
-            image_nvr = f"{image_component_name}-{image_version}-{image_release}"
+            image_nvrs[pullspec] = f"{image_component_name}-{image_version}-{image_release}"
+
+        # Validate that all resolved NVRs correspond to successful builds in Konflux DB
+        # This is to prevent the case where the image in the registry is from a failed build.
+        if engine is Engine.KONFLUX and image_nvrs:
+            nvr_list = list(image_nvrs.values())
+            build_records = await self._konflux_db.get_build_records_by_nvrs(
+                nvr_list, outcome=KonfluxBuildOutcome.SUCCESS, strict=False, exclude_large_columns=True
+            )
+            for nvr, record in zip(nvr_list, build_records):
+                if record is None:
+                    raise IOError(
+                        f"Operand image NVR {nvr} does not correspond to a successful build in Konflux DB. "
+                        f"The image in the registry may be from a failed build."
+                    )
+
+        for pullspec, image_info in zip(art_references, image_infos):
+            image_nvr = image_nvrs[pullspec]
             namespace, image_short_name, image_tag = art_references[pullspec]
             image_sha = (
                 image_info['contentDigest']
