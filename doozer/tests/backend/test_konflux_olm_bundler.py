@@ -103,6 +103,9 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_oc_image_info.return_value = mock_image_info
         # operator_image_ref_mode defaults to 'manifest-list' (uses listDigest)
         self.rebaser._group_config.get.return_value = 'namespace'
+        # Mock DB to confirm the NVR is from a successful build
+        mock_record = MagicMock()
+        self.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=[mock_record])
         metadata = MagicMock()
         metadata.runtime.group = "openshift-4.19"
         new_content, found_images = await self.rebaser._replace_image_references(
@@ -129,6 +132,34 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 'test-brew-component-1.0-1',
             ),
         )
+
+    @patch("doozerlib.util.oc_image_info_for_arch_async")
+    async def test_replace_image_references_fails_for_unsuccessful_build(self, mock_oc_image_info):
+        old_registry = "registry.example.com"
+        content = "image: registry.example.com/namespace/image:tag"
+        mock_image_info = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'com.redhat.component': 'test-brew-component',
+                        'version': '1.0',
+                        'release': '1',
+                    },
+                },
+            },
+            'listDigest': 'sha256:1234567890abcdef',
+            'contentDigest': 'sha256:abcdef1234567890',
+        }
+        mock_oc_image_info.return_value = mock_image_info
+        self.rebaser._group_config.get.return_value = 'namespace'
+        # Mock DB to return None (no successful build found)
+        self.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=[None])
+        metadata = MagicMock()
+        metadata.runtime.group = "openshift-4.19"
+        with self.assertRaises(IOError) as ctx:
+            await self.rebaser._replace_image_references(old_registry, content, Engine.KONFLUX, metadata)
+        self.assertIn("test-brew-component-1.0-1", str(ctx.exception))
+        self.assertIn("does not correspond to a successful build", str(ctx.exception))
 
     def test_operator_index_mode(self):
         # Test when operator_index_mode is 'pre-release'
