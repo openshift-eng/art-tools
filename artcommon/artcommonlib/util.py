@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -24,7 +23,7 @@ from artcommonlib.constants import (
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
 )
-from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
 from artcommonlib.oc_image_info import (
     oc_image_info__cached__lru,
@@ -656,6 +655,23 @@ async def fetch_slsa_attestation(
         return None
 
 
+async def _oc_image_mirror(cmd: list, description: str, timeout: int = 1800):
+    """Run oc image mirror, capturing output and logging only summary lines."""
+    try:
+        rc, stdout, stderr = await asyncio.wait_for(cmd_gather_async(cmd, check=False), timeout=timeout)
+    except TimeoutError:
+        LOGGER.warning(f"Timeout occurred while {description} after {timeout // 60} minutes")
+        raise
+
+    for line in stdout.splitlines():
+        if line.strip().startswith("info:") or line.strip().startswith("error:"):
+            LOGGER.info(f"oc image mirror: {line.strip()}")
+
+    if rc != 0:
+        LOGGER.error(f"oc image mirror failed while {description} (rc={rc})\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        raise ChildProcessError(f"Process {cmd!r} exited with code {rc}.")
+
+
 @limit_concurrency(limit=32)
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
 async def sync_to_quay(source_pullspec, destination_repo, tags=None):
@@ -673,14 +689,8 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 
-    try:
-        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-        LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
-    except TimeoutError:
-        LOGGER.warning(
-            f"Timeout occurred while syncing image from {source_pullspec} to {destination_repo} after 30 minutes"
-        )
-        raise
+    await _oc_image_mirror(cmd, f"syncing image from {source_pullspec} to {destination_repo}")
+    LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
 
     # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
     shasum = source_pullspec.split("@sha256:")[1]
@@ -695,14 +705,11 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     ]
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
-    try:
-        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-        LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
-    except TimeoutError:
-        LOGGER.warning(
-            f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} after 30 minutes"
-        )
-        raise
+
+    await _oc_image_mirror(
+        cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}"
+    )
+    LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
 
     # Mirror optional tags if provided
     if tags:
@@ -718,14 +725,10 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
             ]
             if konflux_registry_auth_file:
                 cmd += [f'--registry-config={konflux_registry_auth_file}']
-            try:
-                await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-                LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
-            except TimeoutError:
-                LOGGER.warning(
-                    f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} after 30 minutes"
-                )
-                raise
+            await _oc_image_mirror(
+                cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}"
+            )
+            LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
 
 
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
