@@ -259,6 +259,7 @@ class KonfluxImageBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
+
                     break
 
             if not metadata.build_status and error:

@@ -173,6 +173,17 @@
       "$ref": "#/properties/base_only"
     },
     "base_only-": {},
+    "snapshot_release": {
+      "description": "If true, enables snapshot-to-release workflow for base images. Only applies to base_only images",
+      "type": "boolean"
+    },
+    "snapshot_release!": {
+      "$ref": "#/properties/snapshot_release"
+    },
+    "snapshot_release?": {
+      "$ref": "#/properties/snapshot_release"
+    },
+    "snapshot_release-": {},
     "cachito": {
       "description": "Cachito integration configuration",
       "$ref": "cachito.schema.json"
