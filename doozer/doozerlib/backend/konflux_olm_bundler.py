@@ -412,6 +412,33 @@ class KonfluxOlmBundleRebaser:
 
         # Replace ART-built image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
+        # Build a map of image short name -> delivery override short name for images that have
+        # delivery_repo_name_override set. This allows operators to reference images using a
+        # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
+        # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
+        import glob as _glob
+        import yaml as _yaml_mod
+        _delivery_override_map: Dict[str, str] = {}
+        try:
+            _data_dir = metadata.runtime.data_dir
+            for _yml_path in _glob.glob(f"{_data_dir}/images/*.yml") + _glob.glob(f"{_data_dir}/images/*.yaml"):
+                try:
+                    with open(_yml_path) as _yf:
+                        _img_data = _yaml_mod.safe_load(_yf)
+                    if not isinstance(_img_data, dict):
+                        continue
+                    _delivery = _img_data.get('delivery', {}) or {}
+                    if not _delivery.get('delivery_repo_name_override'):
+                        continue
+                    _repo_names = _delivery.get('delivery_repo_names', [])
+                    if len(_repo_names) == 1:
+                        _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
+                        _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
+                        _delivery_override_map[_img_short] = _override_short
+                except Exception:
+                    pass
+        except Exception:
+            pass
         for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']
@@ -428,13 +455,16 @@ class KonfluxOlmBundleRebaser:
                 new_namespace = namespace
             else:
                 new_namespace = 'openshift4' if namespace == csv_namespace else namespace
+            # If delivery_repo_name_override is set for this image, use the overridden short name
+            # so the final pullspec uses the preferred delivery repo name (e.g. without a version tag).
+            delivery_image_short_name = _delivery_override_map.get(image_short_name, image_short_name)
             new_pullspec = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
-                f'{new_namespace}/{image_short_name}',
+                f'{new_namespace}/{delivery_image_short_name}',
                 image_sha,
             )
             new_content = new_content.replace(pullspec, new_pullspec)
-            found_images[image_short_name] = (pullspec, new_pullspec, image_nvr)
+            found_images[delivery_image_short_name] = (pullspec, new_pullspec, image_nvr)
 
         # Step 2: Find digest-pinned images that are already resolved (e.g., external images)
         # These don't need resolution but should be included in found_images for relatedImages
