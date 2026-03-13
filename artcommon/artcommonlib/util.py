@@ -139,6 +139,33 @@ def convert_remote_git_to_ssh(url):
     return f'git@{server}:{org}/{repo_name}.git'
 
 
+def _extract_git_hostname(url: str) -> str | None:
+    """Extract the hostname from a git remote URL (standard or SCP-style)."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.hostname:
+        return parsed.hostname.lower()
+    # SCP-style: git@github.com:org/repo.git or user@host:path
+    m = re.match(r'^(?:[^@]+@)?([^:/]+)[:/]', url)
+    return m.group(1).lower() if m else None
+
+
+def ensure_github_https_url(url: str) -> str:
+    """Convert a GitHub SSH/git URL to HTTPS, leaving non-GitHub URLs unchanged.
+
+    This is used when switching git CLI operations from SSH to HTTPS + GIT_ASKPASS.
+    Non-GitHub URLs (distgit, gitlab, etc.) are returned as-is so that their
+    existing auth mechanisms (Kerberos, SSH agent) continue to work.
+
+    :param url: Any git remote URL
+    :return: HTTPS URL if the input points to github.com, otherwise the original URL
+    """
+    if _extract_git_hostname(url.strip()) != "github.com":
+        return url
+    return convert_remote_git_to_https(url)
+
+
 def split_git_url(url) -> (str, str, str):
     """
     :param url: A remote ssh or https github url
@@ -152,16 +179,25 @@ def split_git_url(url) -> (str, str, str):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def download_file_from_github(repository, branch, path, token: str, destination, session):
-    server, org, repo_name = split_git_url(repository)
-    url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
-    headers = {"Authorization": f'Bearer {token}'}
+async def download_file_from_github(repository, branch, path, github_client, destination):
+    """Download a file from a GitHub repository using the PyGithub Contents API.
 
-    LOGGER.info('Downloading %s...', url)
-    async with session.get(url, headers=headers) as resp:
-        resp.raise_for_status()
-        with open(str(destination), "wb") as f:
-            f.write((await resp.text()).encode())
+    :param repository: Git remote URL (ssh or https)
+    :param branch: Branch or commit ref to download from
+    :param path: Path to the file within the repository
+    :param github_client: An authenticated github.Github instance
+    :param destination: Local file path to write the downloaded content to
+    """
+    _, org, repo_name = split_git_url(repository)
+
+    def _fetch():
+        repo = github_client.get_repo(f"{org}/{repo_name}")
+        return repo.get_contents(path, ref=branch).decoded_content
+
+    LOGGER.info('Downloading %s/%s/%s ref=%s ...', org, repo_name, path, branch)
+    data = await asyncio.to_thread(_fetch)
+    with open(str(destination), "wb") as f:
+        f.write(data)
 
 
 def merge_objects(a, b):

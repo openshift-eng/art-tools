@@ -398,18 +398,22 @@ def limit_concurrency(limit: int = 5) -> Callable[[F], F]:
     return executor
 
 
-def fire_and_forget(cwd, shell_cmd, quiet=True):
+def fire_and_forget(cwd, shell_cmd, quiet=True, env=None):
     """
     Executes a command in a separate process that can continue to do its work
     even after doozer terminates.
     :param cwd: Path in which to launch the command
     :param shell_cmd: A string to send to the shell
     :param quiet: Whether to sink stdout & stderr to /dev/null
+    :param env: Environment variables for the subprocess; defaults to os.environ
     :return: N/A
     """
 
     if quiet:
         shell_cmd = f'{shell_cmd} > /dev/null 2>/dev/null'
+
+    if env is None:
+        env = os.environ.copy()
 
     # https://stackoverflow.com/a/13256908
     kwargs = {}
@@ -427,7 +431,7 @@ def fire_and_forget(cwd, shell_cmd, quiet=True):
 
     p = subprocess.Popen(
         f'{shell_cmd}',
-        env=os.environ.copy(),
+        env=env,
         shell=True,
         stdin=None,
         stdout=None,
