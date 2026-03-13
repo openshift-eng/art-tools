@@ -254,7 +254,7 @@ class KonfluxOcpPipeline:
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
                 state = yaml.safe_load(state_yaml)
-            failed_images = state['images:konflux:rebase'].get('failed-images', [])
+            failed_images = state.get('images:konflux:rebase', {}).get('failed-images', [])
             if not failed_images:
                 raise  # Something else went wrong
 
