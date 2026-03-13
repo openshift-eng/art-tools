@@ -416,15 +416,13 @@ class KonfluxOlmBundleRebaser:
         # delivery_repo_name_override set. This allows operators to reference images using a
         # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
         # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
-        import glob as _glob
-        import yaml as _yaml_mod
         _delivery_override_map: Dict[str, str] = {}
         try:
             _data_dir = metadata.runtime.data_dir
-            for _yml_path in _glob.glob(f"{_data_dir}/images/*.yml") + _glob.glob(f"{_data_dir}/images/*.yaml"):
+            for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
                 try:
                     with open(_yml_path) as _yf:
-                        _img_data = _yaml_mod.safe_load(_yf)
+                        _img_data = yaml.safe_load(_yf)
                     if not isinstance(_img_data, dict):
                         continue
                     _delivery = _img_data.get('delivery', {}) or {}
