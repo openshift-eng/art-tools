@@ -1,8 +1,10 @@
 import asyncio
 import hashlib
 import json
+import logging
 import pathlib
 import re
+import traceback
 from collections import OrderedDict
 from copy import copy
 from functools import lru_cache
@@ -24,6 +26,8 @@ from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
+
+LOGGER = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=256)
@@ -80,8 +84,12 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
                 golang_version = (version_fields[0], version_fields[1])
 
     except Exception:
-        # Return whatever we managed to extract before the error
-        pass
+        LOGGER.warning(
+            'Failed extracting builder info from pullspec %s (rhel_version so far: %s): %s',
+            pullspec,
+            rhel_version,
+            traceback.format_exc(),
+        )
 
     return rhel_version, golang_version
 
@@ -837,8 +845,10 @@ class ImageMetadata(Metadata):
 
         if not upstream_intended_el_version:
             raise IOError(
-                f'[{self.distgit_key}] Could not determine upstream RHEL version. '
-                'Cannot apply alternative_upstream config.'
+                f'[{self.distgit_key}] Could not determine upstream RHEL version from source at {source_dir}. '
+                'Cannot apply alternative_upstream config. Check the warnings above for details — '
+                'the upstream Dockerfile may be missing, unparseable, or use a base image '
+                'that does not contain rhel/ubi/centos version info in its tag or labels.'
             )
 
         # If ART and upstream RHEL versions match, no config merge needed
@@ -899,23 +909,49 @@ class ImageMetadata(Metadata):
         rhel_version = None
         golang_version = None
 
+        if not df_path.exists():
+            self.logger.warning(
+                '[%s] Dockerfile not found at %s (source_dir=%s, dockerfile=%s)',
+                self.distgit_key,
+                df_path,
+                source_dir,
+                df_name,
+            )
+            return rhel_version, golang_version
+
         try:
             with open(df_path) as f:
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
+        except Exception:
+            self.logger.warning(
+                '[%s] Failed parsing Dockerfile at %s:\n%s',
+                self.distgit_key,
+                df_path,
+                traceback.format_exc(),
+            )
+            return rhel_version, golang_version
 
-            # We will infer the versions from the last build layer in the upstream Dockerfile
-            last_layer_pullspec = parent_images[-1]
+        if not parent_images:
+            self.logger.warning('[%s] Dockerfile at %s has no FROM instructions', self.distgit_key, df_path)
+            return rhel_version, golang_version
 
-            # Use the cached function to extract builder info
-            rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
+        last_layer_pullspec = parent_images[-1]
+        self.logger.info(
+            '[%s] Upstream Dockerfile parent images: %s (using last: %s)',
+            self.distgit_key,
+            parent_images,
+            last_layer_pullspec,
+        )
 
-        except Exception as e:
-            # Log the exception but don't raise - caller will decide how to handle None return
-            self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
+        rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
 
         if not rhel_version:
-            self.logger.warning('[%s] Could not determine rhel version from upstream', self.distgit_key)
+            self.logger.warning(
+                '[%s] Could not determine RHEL version from upstream Dockerfile last FROM pullspec: %s',
+                self.distgit_key,
+                last_layer_pullspec,
+            )
         if not golang_version:
             self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
 
