@@ -656,20 +656,47 @@ async def fetch_slsa_attestation(
 
 
 async def _oc_image_mirror(cmd: list, description: str, timeout: int = 1800):
-    """Run oc image mirror, capturing output and logging only summary lines."""
+    """Run oc image mirror, streaming output and logging only summary/error lines."""
+
+    async def _drain_stream(stream, collected: list, label: str):
+        async for raw_line in stream:
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            collected.append(line)
+            stripped = line.strip()
+            if stripped.startswith(("info:", "error:", "warning:")):
+                LOGGER.info(f"oc image mirror [{label}]: {stripped}")
+
+    LOGGER.info(f"Executing: {' '.join(cmd)}")
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
     try:
-        rc, stdout, stderr = await asyncio.wait_for(cmd_gather_async(cmd, check=False), timeout=timeout)
+        await asyncio.wait_for(
+            asyncio.gather(
+                _drain_stream(proc.stdout, stdout_lines, "stdout"),
+                _drain_stream(proc.stderr, stderr_lines, "stderr"),
+                proc.wait(),
+            ),
+            timeout=timeout,
+        )
     except TimeoutError:
         LOGGER.warning(f"Timeout occurred while {description} after {timeout // 60} minutes")
+        proc.kill()
+        await proc.wait()
         raise
 
-    for line in stdout.splitlines():
-        if line.strip().startswith("info:") or line.strip().startswith("error:"):
-            LOGGER.info(f"oc image mirror: {line.strip()}")
-
-    if rc != 0:
-        LOGGER.error(f"oc image mirror failed while {description} (rc={rc})\nstdout:\n{stdout}\nstderr:\n{stderr}")
-        raise ChildProcessError(f"Process {cmd!r} exited with code {rc}.")
+    if proc.returncode != 0:
+        stdout_text = "\n".join(stdout_lines)
+        stderr_text = "\n".join(stderr_lines)
+        LOGGER.error(
+            f"oc image mirror failed while {description} (rc={proc.returncode})\n"
+            f"stdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+        )
+        raise ChildProcessError(f"Process {cmd!r} exited with code {proc.returncode}.")
 
 
 @limit_concurrency(limit=32)
