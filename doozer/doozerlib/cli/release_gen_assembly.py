@@ -623,11 +623,23 @@ class GenAssemblyCli:
                     )
                     self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
                     session = requests.Session()
-                    session.mount(
-                        'https://',
-                        HTTPAdapter(max_retries=Retry(total=3, backoff_factor=2, status_forcelist=[502, 503, 504])),
-                    )
-                    rhcos_meta_json = session.get(rhcos_build_url, timeout=60).json()
+                    retry_strategy = Retry(total=3, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
+                    session.mount('https://', HTTPAdapter(max_retries=retry_strategy))
+                    try:
+                        response = session.get(rhcos_build_url, timeout=60)
+                        response.raise_for_status()
+                        rhcos_meta_json = response.json()
+                    except requests.exceptions.RetryError as e:
+                        self._exit_with_error(
+                            f"RHCOS server is experiencing issues (retried 3 times). "
+                            f"URL: {rhcos_build_url}\n"
+                            f"Error: {e}\n"
+                            f"This is likely a transient server issue. Please retry the build."
+                        )
+                    except requests.exceptions.HTTPError as e:
+                        self._exit_with_error(f"Failed to fetch RHCOS metadata from {rhcos_build_url}: {e}")
+                    except requests.exceptions.JSONDecodeError as e:
+                        self._exit_with_error(f"Failed to parse RHCOS metadata JSON from {rhcos_build_url}: {e}")
                     for tag in tags_to_resolve:
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(
