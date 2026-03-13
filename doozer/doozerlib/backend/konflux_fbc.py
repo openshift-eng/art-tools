@@ -36,6 +36,7 @@ from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
+from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 
@@ -655,6 +656,7 @@ class KonfluxFbcRebaser:
         fbc_repo: str,
         upcycle: bool,
         ocp_version_override: Optional[Tuple[int, int]] = None,
+        insert_missing_entry: bool = False,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -670,10 +672,59 @@ class KonfluxFbcRebaser:
         self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        self.insert_missing_entry = insert_missing_entry
 
     @staticmethod
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
+
+    @staticmethod
+    def _extract_version_from_bundle_name(bundle_name: str) -> VersionInfo:
+        """Extract semantic version from bundle name.
+
+        Bundle names follow format: {operator-name}.v{major}.{minor}.{patch}
+        Example: "oadp-operator.v1.3.9" -> VersionInfo(1, 3, 9)
+
+        :param bundle_name: The bundle name
+        :return: VersionInfo object
+        :raises ValueError: If version cannot be parsed from bundle name
+        """
+        # Find the version part (starts with .v followed by semantic version)
+        # Split by '.' and look for the part starting with 'v'
+        parts = bundle_name.split('.')
+        for i, part in enumerate(parts):
+            if part.startswith('v') and len(parts) > i + 2:
+                # Extract vX.Y.Z format
+                version_str = '.'.join([part[1:]] + parts[i + 1 : i + 3])  # Remove 'v' prefix
+                try:
+                    return VersionInfo.parse(version_str)
+                except Exception as e:
+                    raise ValueError(
+                        f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+                        f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+                    ) from e
+        # If we reach here, no version was found
+        raise ValueError(
+            f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+            f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+        )
+
+    @staticmethod
+    def _rebuild_replaces_chain(entries: list) -> None:
+        """Rebuild replaces field for all entries based on their sorted order.
+
+        After sorting entries by version, each entry should replace the previous
+        entry in the list, forming a linear upgrade chain.
+
+        :param entries: List of channel entries sorted by version
+        """
+        for i in range(len(entries)):
+            if i == 0:
+                # First entry (oldest version) replaces nothing
+                entries[i].pop('replaces', None)
+            else:
+                # Each subsequent entry replaces the previous one
+                entries[i]['replaces'] = entries[i - 1]['name']
 
     def _find_future_release_assembly(
         self,
@@ -1140,24 +1191,41 @@ class KonfluxFbcRebaser:
                             assembly_entry["skipRange"] = assembly_csv_info.skip_range
                         channel['entries'].append(assembly_entry)
 
-            # For an operator bundle that uses replaces -- such as OADP
-            # Update "replaces" in the channel
-            replaces = None
-            if not self.group.startswith('openshift-'):
-                # Find the current head - the entry that is not replaced by any other entry
-                bundle_with_replaces = [it for it in channel['entries']]
-                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
-                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
-                if current_head:
-                    # The new bundle should replace the current head
-                    replaces = current_head['name']
-
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
                 entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
+
+                if self.insert_missing_entry:
+                    # Add entry and then sort all entries in ascending version order
+                    channel['entries'].append(entry)
+
+                    logger.info("Sorting channel entries by version order")
+                    channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+
+                    # Rebuild replaces chain for non-OpenShift groups (operators using replaces)
+                    if not self.group.startswith('openshift-'):
+                        logger.info("Rebuilding replaces chain after version sorting")
+                        self._rebuild_replaces_chain(channel['entries'])
+                else:
+                    # For an operator bundle that uses replaces -- such as OADP
+                    # Calculate replaces based on current head before appending
+                    replaces = None
+                    if not self.group.startswith('openshift-'):
+                        # Find the current head - the entry that is not replaced by any other entry
+                        bundle_with_replaces = [it for it in channel['entries']]
+                        replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                        current_head = next(
+                            (it for it in bundle_with_replaces if it['name'] not in replaced_names), None
+                        )
+                        if current_head:
+                            # The new bundle should replace the current head
+                            replaces = current_head['name']
+
+                    channel['entries'].append(entry)
+                    if replaces:
+                        entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 entry.clear()
@@ -1166,8 +1234,6 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
-            if replaces:
-                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)

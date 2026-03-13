@@ -64,6 +64,7 @@ class BuildFbcPipeline:
         group: str,
         major_minor: Optional[str],
         ignore_locks: bool,
+        insert_missing_entry: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -83,6 +84,7 @@ class BuildFbcPipeline:
         self.force = force
         self.major_minor = major_minor
         self.ignore_locks = ignore_locks
+        self.insert_missing_entry = insert_missing_entry
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -191,6 +193,8 @@ class BuildFbcPipeline:
             doozer_opts.append('--force')
         if self.major_minor:
             doozer_opts.extend(['--major-minor', self.major_minor])
+        if self.insert_missing_entry:
+            doozer_opts.append('--insert-missing-entry')
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
@@ -296,6 +300,12 @@ class BuildFbcPipeline:
     default=False,
     help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
 )
+@click.option(
+    '--insert-missing-entry',
+    is_flag=True,
+    default=False,
+    help='Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.',
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -317,6 +327,7 @@ async def build_fbc(
     group: str,
     major_minor: Optional[str],
     ignore_locks: bool,
+    insert_missing_entry: bool,
 ):
     # Validate that --major-minor is provided for non-OpenShift groups
     if not group.startswith('openshift-') and not major_minor:
@@ -341,6 +352,7 @@ async def build_fbc(
         group=group,
         major_minor=major_minor,
         ignore_locks=ignore_locks,
+        insert_missing_entry=insert_missing_entry,
     )
 
     lock_identifier = jenkins.get_build_path_or_random()

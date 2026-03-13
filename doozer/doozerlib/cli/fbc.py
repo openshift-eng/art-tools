@@ -461,6 +461,7 @@ class FbcRebaseAndBuildCli:
         reset_to_prod: bool,
         prod_registry_auth: Optional[str] = None,
         major_minor: Optional[str] = None,
+        insert_missing_entry: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -480,6 +481,7 @@ class FbcRebaseAndBuildCli:
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.major_minor = major_minor
+        self.insert_missing_entry = insert_missing_entry
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -704,6 +706,7 @@ class FbcRebaseAndBuildCli:
             fbc_repo=self.fbc_repo,
             upcycle=runtime.upcycle,
             ocp_version_override=ocp_version if self.major_minor else None,
+            insert_missing_entry=self.insert_missing_entry,
             record_logger=runtime.record_logger,
         )
 
@@ -836,6 +839,12 @@ class FbcRebaseAndBuildCli:
     metavar='MAJOR.MINOR',
     help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
+@click.option(
+    "--insert-missing-entry",
+    is_flag=True,
+    default=False,
+    help="Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.",
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -857,6 +866,7 @@ async def fbc_rebase_and_build(
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
     major_minor: Optional[str],
+    insert_missing_entry: bool,
     operator_nvrs: Tuple[str, ...],
 ):
     """
@@ -896,5 +906,6 @@ async def fbc_rebase_and_build(
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
         major_minor=major_minor,
+        insert_missing_entry=insert_missing_entry,
     )
     await cli.run()
