@@ -820,6 +820,55 @@ RUN echo "test"
         # Verify config was merged (should detect el8 from ubi8 tag)
         self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
 
+    def test_get_olm_bundle_delivery_repo_name_override_single_entry(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = ['openshift4/ose-csi-livenessprobe-rhel9']
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-csi-livenessprobe-rhel9')
+
+    def test_get_olm_bundle_delivery_repo_name_override_multiple_entries_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = [
+            'openshift4/ose-csi-livenessprobe-rhel9',
+            'openshift4/ose-csi-livenessprobe-rhel8',
+        ]
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_uses_bundle_delivery_repo_name(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = 'openshift4/ose-my-operator-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-my-operator-bundle')
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_missing_bundle_delivery_repo_name_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_not_olm_operator_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: False)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
