@@ -43,7 +43,6 @@ class Ocp4ScanPipeline:
             f'--group={group_param}',
             f'--assembly={self.assembly}',
             '--build-system=konflux',
-            '--load-okd-only',
         ]
 
     async def run(self):

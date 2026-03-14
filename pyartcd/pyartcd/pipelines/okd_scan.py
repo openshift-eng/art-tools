@@ -135,8 +135,6 @@ class OkdScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
-                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
-                '--rebase-priv',
                 '--variant=okd',
             ]
         )
