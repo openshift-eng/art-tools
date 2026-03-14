@@ -52,6 +52,7 @@ class KonfluxRebaseCli:
         image_repo: str,
         message: str,
         push: bool,
+        extra_labels: Optional[dict[str, str]] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -64,6 +65,7 @@ class KonfluxRebaseCli:
         self.image_repo = image_repo
         self.message = message
         self.push = push
+        self.extra_labels = extra_labels or {}
         self.upcycle = runtime.upcycle
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
@@ -86,6 +88,7 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
+            extra_labels=self.extra_labels,
         )
 
         await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
@@ -152,6 +155,12 @@ class KonfluxRebaseCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--extra-label',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra labels to add to the Dockerfile. Can be specified multiple times. e.g. --extra-label assembly=4.18.1',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -165,6 +174,7 @@ async def images_konflux_rebase(
     repo_type: str,
     image_repo: str,
     network_mode: Optional[str],
+    extra_label: tuple,
     message: str,
     push: bool,
 ):
@@ -173,6 +183,14 @@ async def images_konflux_rebase(
     """
     if network_mode:
         runtime.network_mode_override = network_mode
+
+    # Parse extra labels from KEY=VALUE format
+    extra_labels = {}
+    for label in extra_label:
+        if '=' not in label:
+            raise click.BadParameter(f"Extra label must be in KEY=VALUE format, got: {label}")
+        key, value = label.split('=', 1)
+        extra_labels[key] = value
 
     cli = KonfluxRebaseCli(
         runtime=runtime,
@@ -184,6 +202,7 @@ async def images_konflux_rebase(
         image_repo=image_repo,
         message=message,
         push=push,
+        extra_labels=extra_labels,
     )
     await cli.run()
 
