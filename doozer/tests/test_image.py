@@ -869,6 +869,26 @@ RUN echo "test"
             with self.assertRaises(IOError):
                 metadata.get_olm_bundle_delivery_repo_name()
 
+    def test_get_olm_bundle_delivery_repo_name_override_missing_delivery_repo_names_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_override_empty_list_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = []
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")

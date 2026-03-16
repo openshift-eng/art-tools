@@ -417,26 +417,27 @@ class KonfluxOlmBundleRebaser:
         # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
         # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
         _delivery_override_map: Dict[str, str] = {}
-        try:
-            _data_dir = metadata.runtime.data_dir
-            for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
-                try:
-                    with open(_yml_path) as _yf:
-                        _img_data = yaml.safe_load(_yf)
-                    if not isinstance(_img_data, dict):
-                        continue
-                    _delivery = _img_data.get('delivery', {}) or {}
-                    if not _delivery.get('delivery_repo_name_override'):
-                        continue
-                    _repo_names = _delivery.get('delivery_repo_names', [])
-                    if len(_repo_names) == 1:
-                        _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
-                        _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
-                        _delivery_override_map[_img_short] = _override_short
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        _data_dir = metadata.runtime.data_dir
+        for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
+            try:
+                with open(_yml_path) as _yf:
+                    _img_data = yaml.safe_load(_yf)
+                if not isinstance(_img_data, dict):
+                    continue
+                _delivery = _img_data.get('delivery', {}) or {}
+                if not _delivery.get('delivery_repo_name_override'):
+                    continue
+                _repo_names = _delivery.get('delivery_repo_names') or []
+                if len(_repo_names) != 1:
+                    raise IOError(
+                        f"delivery_repo_name_override is set in {_yml_path} but delivery_repo_names has "
+                        f"{len(_repo_names)} entries (expected exactly 1)"
+                    )
+                _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
+                _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
+                _delivery_override_map[_img_short] = _override_short
+            except (yaml.YAMLError, OSError) as e:
+                self._logger.debug("Failed to parse image YAML %s: %s", _yml_path, e)
         for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
             image_version = image_labels['version']

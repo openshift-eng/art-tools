@@ -216,7 +216,7 @@ class ImageMetadata(Metadata):
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
         if self.config.delivery.delivery_repo_name_override:
             delivery_repo_names = self.config.delivery.delivery_repo_names
-            if delivery_repo_names is Missing or len(delivery_repo_names) == 0:
+            if delivery_repo_names is Missing or not delivery_repo_names:
                 raise IOError(
                     f"[{self.distgit_key}] delivery_repo_name_override is set but delivery.delivery_repo_names is empty"
                 )
