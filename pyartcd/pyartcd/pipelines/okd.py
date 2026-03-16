@@ -116,7 +116,7 @@ class KonfluxOkdPipeline:
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
-        self.group_images = await get_group_images(
+        all_group_images = await get_group_images(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
             build_system='konflux',
@@ -125,6 +125,9 @@ class KonfluxOkdPipeline:
             doozer_data_gitref=self.data_gitref,
             load_okd_only=True,
         )
+
+        # Filter to only include payload images
+        self.group_images = await self._filter_payload_images(all_group_images)
         self.build_plan.active_image_count = len(self.group_images)
 
         # Set the image list based on the build strategies
@@ -132,6 +135,46 @@ class KonfluxOkdPipeline:
 
         # Log the initial build plan
         self.logger.info('Initial build plan:\n%s', self.build_plan)
+
+    async def _filter_payload_images(self, image_names: list) -> list:
+        """
+        Filter image list to only include images marked for_payload.
+        Non-payload images will be excluded from rebase, build, and imagestream operations.
+
+        Arg(s):
+            image_names (list): List of image names to filter
+        Return Value(s):
+            list: Filtered list containing only payload images
+        """
+        ocp_build_data_path = Path(self.runtime.doozer_working) / 'ocp-build-data' / 'images'
+        payload_images = []
+        non_payload_images = []
+
+        for image_name in image_names:
+            yaml_file = ocp_build_data_path / f'{image_name}.yml'
+
+            try:
+                with open(yaml_file) as f:
+                    image_metadata = yaml.safe_load(f)
+
+                if image_metadata.get('for_payload', False):
+                    payload_images.append(image_name)
+                else:
+                    non_payload_images.append(image_name)
+
+            except Exception as e:
+                self.logger.warning('Failed to load metadata for %s: %s. Excluding from build.', image_name, e)
+                non_payload_images.append(image_name)
+
+        if non_payload_images:
+            self.logger.info(
+                'Excluding %d non-payload images from pipeline: %s',
+                len(non_payload_images),
+                ', '.join(non_payload_images),
+            )
+
+        self.logger.info('Pipeline will operate on %d payload images', len(payload_images))
+        return payload_images
 
     def check_building_images(self):
         if self.build_plan.image_build_strategy == BuildStrategy.NONE:
@@ -144,23 +187,38 @@ class KonfluxOkdPipeline:
             jenkins.update_title(f'[{self.build_plan.active_image_count}] images')
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
-            self.build_plan.images_included = self.image_list
+            # Filter image_list to only include payload images (from self.group_images)
+            self.build_plan.images_included = [img for img in self.image_list if img in self.group_images]
             self.build_plan.images_excluded = []
 
-            n_images = len(self.build_plan.images_included)
-            if n_images == 1:
-                jenkins.update_title(f'[{self.build_plan.images_included[0]}]')
-            else:
-                jenkins.update_title(f'[{n_images} images]')
+            # Warn if any requested images are not payload images
+            non_payload_requested = [img for img in self.image_list if img not in self.group_images]
+            if non_payload_requested:
+                self.logger.warning(
+                    'Requested images are not payload images and will be skipped: %s',
+                    ', '.join(non_payload_requested),
+                )
 
-            if n_images <= 10:
+            n_images = len(self.build_plan.images_included)
+            if n_images == 0:
+                jenkins.update_title('[NO IMAGES]')
+                jenkins.update_description(
+                    'No images to build (all requested images were filtered out as non-payload).<br>'
+                )
+            elif n_images == 1:
+                jenkins.update_title(f'[{self.build_plan.images_included[0]}]')
+                jenkins.update_description(f'Building image {self.build_plan.images_included[0]}.<br>')
+            elif n_images <= 10:
+                jenkins.update_title(f'[{n_images} images]')
                 jenkins.update_description(f'Building images {", ".join(self.build_plan.images_included)}.<br>')
             else:
+                jenkins.update_title(f'[{n_images} images]')
                 jenkins.update_description(f'Building {n_images} images.<br>')
 
         else:  # build_plan.build_strategy == BuildStrategy.EXCEPT
             self.build_plan.images_included = []
-            self.build_plan.images_excluded = self.image_list
+            # Filter exclusion list to only include payload images
+            self.build_plan.images_excluded = [img for img in self.image_list if img in self.group_images]
 
             n_images = self.build_plan.active_image_count - len(self.build_plan.images_excluded)
             jenkins.update_title(f'[{n_images} images]')
@@ -422,13 +480,24 @@ class KonfluxOkdPipeline:
         CRITICAL: If embargo status cannot be determined, the pipeline will fail-safe and crash
         rather than risk releasing embargoed content.
         """
-        state = self.load_state_yaml()
+        # If no images are being built (filtered out or excluded), skip embargo detection
+        if not self.building_images():
+            self.logger.info('No images will be built; skipping embargo detection')
+            return
 
-        # Fail-safe: crash if we don't have rebase results
+        # Load state.yaml
+        try:
+            state = self.load_state_yaml()
+        except FileNotFoundError:
+            # This shouldn't happen if building_images() is True, but handle it gracefully
+            self.logger.warning('No state.yaml found but images should be built; skipping embargo detection')
+            return
+
+        # Fail-safe: if we're building images but state.yaml has no rebase results, crash
         if 'images:okd:rebase' not in state:
             raise RuntimeError(
-                'EMBARGO SAFETY: Cannot determine embargo status - no rebase results found in state.yaml. '
-                'Pipeline must abort to prevent accidental release of embargoed content.'
+                'EMBARGO SAFETY: Images should be built but state.yaml has no rebase results. '
+                'Cannot determine embargo status - pipeline must abort to prevent accidental release of embargoed content.'
             )
 
         rebase_results = state['images:okd:rebase'].get('images', {})
@@ -552,11 +621,8 @@ class KonfluxOkdPipeline:
                 failed_tags.append(image_name)
                 continue
 
-            if not image_metadata.get('for_payload', False):
-                self.logger.info('Image %s not needed for OKD payload: skipping imagestream tag update', image_name)
-                continue
-
             # Determine payload tag name
+            # Note: All images in the pipeline are already filtered to be payload images
             payload_tag = self._get_payload_tag_name(image_name, image_metadata)
             image_pullspec = image.get('image_pullspec')
             image_tag = image.get('image_tag')
@@ -683,6 +749,10 @@ class KonfluxOkdPipeline:
         Returns True if images are being built, False otherwise.
         """
 
+        # If no payload images exist in the group, no images will be built
+        if not self.group_images:
+            return False
+
         # If the build strategy is NONE, no images will be built
         if self.build_plan.image_build_strategy == BuildStrategy.NONE:
             return False
@@ -691,13 +761,21 @@ class KonfluxOkdPipeline:
         if self.build_plan.image_build_strategy == BuildStrategy.ONLY and not self.build_plan.images_included:
             return False
 
-        # If the build strategy is EXCEPT but no images are excluded,
-        # or if the build strategy is ALL, all images will be built
+        # If the build strategy is EXCEPT and all images are excluded, no images will be built
+        if self.build_plan.image_build_strategy == BuildStrategy.EXCEPT:
+            images_to_build = [img for img in self.group_images if img not in self.build_plan.images_excluded]
+            if not images_to_build:
+                return False
+
+        # Otherwise, images will be built
         return True
 
     def include_exclude_param(self):
         """
         Returns the include/exclude parameters for the Doozer command based on the image build strategy.
+        Note: self.group_images contains only payload images, and images_included/images_excluded
+        have already been filtered in check_building_images() to only contain payload images.
+        We must always pass explicit --images parameter to enforce payload-only filtering to doozer.
         """
 
         build_strategy = self.build_plan.image_build_strategy
@@ -705,13 +783,23 @@ class KonfluxOkdPipeline:
         excludes = self.build_plan.images_excluded
 
         if build_strategy == BuildStrategy.ALL:
-            return []
+            # Must explicitly pass filtered payload images to doozer
+            return [f'--images={",".join(self.group_images)}']
 
         elif build_strategy == BuildStrategy.ONLY:
+            # images_included already filtered to payload-only in check_building_images()
+            if not includes:
+                # No images to build
+                return []
             return [f'--images={",".join(includes)}']
 
         elif build_strategy == BuildStrategy.EXCEPT:
-            return ['--images=', f'--exclude={",".join(excludes)}']
+            # Calculate: payload images minus excluded ones
+            images_to_build = [img for img in self.group_images if img not in excludes]
+            if not images_to_build:
+                # All images excluded
+                return []
+            return [f'--images={",".join(images_to_build)}']
 
         else:  # BuildStrategy.NONE
             raise ValueError(f'Invalid build strategy: {build_strategy}')
