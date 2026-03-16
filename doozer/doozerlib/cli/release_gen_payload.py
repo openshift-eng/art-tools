@@ -607,8 +607,6 @@ class GenPayloadCli:
             previous_list=(),
             auto_previous=False,
             graph_url=None,
-            graph_content_stable=None,
-            graph_content_candidate=None,
             suggestions_url=None,
             gen_microshift=False,
             release_date=dummy_release_date,  # Prevent release schedule lookup
