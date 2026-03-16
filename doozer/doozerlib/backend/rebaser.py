@@ -1618,24 +1618,96 @@ class KonfluxRebaser:
         async with aiofiles.open(path, "w") as f:
             await f.write(yaml_str)
 
+    @staticmethod
+    def _heredoc_delimiter(value):
+        """Return the delimiter for a RUN heredoc (e.g. <<EORUN -> 'EORUN') or None."""
+        val = value.strip()
+        if not val.startswith("<<"):
+            return None
+        rest = val[2:].lstrip()
+        if not rest:
+            return None
+        # Quoted delimiter: <<'EOF' or <<"EOF"
+        m = re.match(r"^(['\"])(\w+)\1", rest)
+        if m:
+            return m.group(2)
+        return rest.split()[0]
+
+    @staticmethod
+    def _extract_heredoc_run_from_lines(lines, startline, delimiter):
+        """
+        Reconstruct the full RUN command string for a heredoc from raw lines.
+        Returns (full_run, endline) or (None, None) if the closing delimiter is not found.
+        """
+        if startline >= len(lines):
+            return None, None
+        first = lines[startline].rstrip("\n")
+        if "RUN " not in first.upper():
+            return None, None
+        # Content after "RUN " on the first line (e.g. "<<EORUN" or "--mount=... <<EORUN")
+        run_body_start = first.upper().index("RUN ") + 4
+        first_part = first[run_body_start:].strip()
+        for i in range(startline + 1, len(lines)):
+            line = lines[i].rstrip("\n")
+            if line.strip() == delimiter:
+                body = "\n".join(ln.rstrip("\n") for ln in lines[startline + 1 : i])
+                full_run = first_part + "\n" + body + "\n" + line
+                return full_run, i
+        return None, None
+
     def _clean_repos(self, dfp):
         """
         Remove any calls to yum --enable-repo or
         yum-config-manager in RUN instructions
         """
+        lines = dfp.lines
+        # Pre-pass: RUN instructions with heredoc (<<DELIM) - dockerfile_parse only gives
+        # the first line as entry['value'], so we reconstruct the full RUN from raw lines
+        # and replace the whole block so bashlex can parse it.
+        heredoc_replacements = []  # (startline, endline, new_value)
+        for entry in dfp.structure:
+            if entry["instruction"] != "RUN":
+                continue
+            val = entry.get("value") or ""
+            delim = self._heredoc_delimiter(val)
+            if delim is None:
+                continue
+            startline = entry.get("startline", 0)
+            full_run, endline = self._extract_heredoc_run_from_lines(lines, startline, delim)
+            if full_run is None:
+                self._logger.warning(
+                    "Could not find closing heredoc delimiter %s for RUN at line %s", delim, startline + 1
+                )
+                continue
+            try:
+                changed, new_value = self._mangle_pkgmgr(full_run)
+            except (IOError, NotImplementedError) as e:
+                self._logger.warning("Cannot parse RUN heredoc, skipping: %s", str(e)[:100])
+                continue
+            if changed:
+                heredoc_replacements.append((startline, endline, new_value))
+        # Apply from high to low so line indices stay valid
+        for startline, endline, new_value in sorted(heredoc_replacements, key=lambda x: -x[0]):
+            lines[startline : endline + 1] = ["RUN " + new_value + "\n"]
+        if heredoc_replacements:
+            dfp.lines = lines
+
         for entry in reversed(dfp.structure):
             if entry['instruction'] == 'RUN':
-                if self._runtime.group.startswith('openshift-'):
-                    changed, new_value = self._mangle_pkgmgr(entry['value'])
-                else:
-                    # Only parse if command contains package manager keywords
-                    if not re.search(r'\b(yum|dnf|microdnf|yum-config-manager)\b', entry['value']):
-                        continue
-                    try:
+                # Skip heredoc RUNs already handled in pre-pass (value still starts with << until we set dfp.lines)
+                if self._heredoc_delimiter(entry.get("value") or ""):
+                    continue
+                try:
+                    if self._runtime.group.startswith('openshift-'):
                         changed, new_value = self._mangle_pkgmgr(entry['value'])
-                    except (IOError, NotImplementedError) as e:
-                        self._logger.warning(f"Cannot parse RUN command, skipping: {str(e)[:100]}")
-                        continue
+                    else:
+                        # Only parse if command contains package manager keywords
+                        if not re.search(r'\b(yum|dnf|microdnf|yum-config-manager)\b', entry['value']):
+                            continue
+                        changed, new_value = self._mangle_pkgmgr(entry['value'])
+                except (IOError, NotImplementedError) as e:
+                    self._logger.warning(f"Cannot parse RUN command, skipping: {str(e)[:100]}")
+                    continue
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
@@ -1673,6 +1745,9 @@ class KonfluxRebaser:
         except bashlex.errors.ParsingError as e:
             raise IOError("Error while parsing Dockerfile RUN command:\n{}\n{}".format(cmd, e))
 
+        def first_word(n):
+            return getattr(n.parts[0], "word", None) if n.parts else None
+
         # note: make changes working back from the end so that positions to splice don't change
         for subcmd in reversed(cmd_nodes):
             if subcmd.kind == "operator":
@@ -1681,31 +1756,39 @@ class KonfluxRebaser:
                 cmd = splice(subcmd.pos, "\\\n " + subcmd.op)
                 continue  # not "changed" logically however
 
+            cmd_name = first_word(subcmd)
+            if cmd_name is None:
+                continue
+
             # replace package manager config with a no-op
-            if re.search(r'(^|/)(microdnf\s+|dnf\s+|yum-)config-manager$', subcmd.parts[0].word):
+            if re.search(r'(^|/)(microdnf\s+|dnf\s+|yum-)config-manager$', cmd_name):
                 cmd = splice(subcmd.pos, ": 'removed yum-config-manager'")
                 changed = True
                 continue
             if (
-                re.search(r'(^|/)(micro)?dnf$', subcmd.parts[0].word)
+                re.search(r'(^|/)(micro)?dnf$', cmd_name)
                 and len(subcmd.parts) > 1
-                and subcmd.parts[1].word == "config-manager"
+                and getattr(subcmd.parts[1], "word", None) == "config-manager"
             ):
                 cmd = splice(subcmd.pos, ": 'removed dnf config-manager'")
                 changed = True
                 continue
 
             # clear repo options from yum and dnf commands
-            if not re.search(r'(^|/)(yum|dnf|microdnf)$', subcmd.parts[0].word):
+            if not re.search(r'(^|/)(yum|dnf|microdnf)$', cmd_name):
                 continue
             next_word = None
             for word in reversed(subcmd.parts):
                 if word.kind != "word":
                     next_word = None
                     continue
+                w = getattr(word, "word", None)
+                if w is None:
+                    next_word = None
+                    continue
 
                 # seek e.g. "--enablerepo=foo" or "--disablerepo bar"
-                match = re.match(r'--(en|dis)ablerepo(=|$)', word.word)
+                match = re.match(r'--(en|dis)ablerepo(=|$)', w)
                 if match:
                     if next_word and match.group(2) != "=":
                         # no "=", next word is the repo so remove it too
