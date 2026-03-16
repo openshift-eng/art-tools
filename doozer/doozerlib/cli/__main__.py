@@ -8,12 +8,13 @@ import click
 import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
+from artcommonlib.ocp_version_ancestry import calc_upgrade_sources_async
 from artcommonlib.pushd import Dir
 from future import standard_library
 
 from doozerlib import cli as cli_package
 from doozerlib import state
-from doozerlib.cli import cli, pass_runtime
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli.config import (
     config_commit,
     config_gencsv,
@@ -56,7 +57,6 @@ from doozerlib.cli.images_okd import images_okd, images_okd_prs
 from doozerlib.cli.images_streams import images_streams, images_streams_gen_buildconfigs, images_streams_mirror
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
-from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
 from doozerlib.cli.release_gen_assembly import gen_assembly_from_releases, releases_gen_assembly
 from doozerlib.cli.release_gen_payload import release_gen_payload
 from doozerlib.cli.rpms import (
@@ -73,7 +73,7 @@ from doozerlib.cli.scan_osh import scan_osh
 from doozerlib.cli.scan_sources import config_scan_source_changes
 from doozerlib.cli.scan_sources_konflux import config_scan_source_changes_konflux
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.util import analyze_debug_timing, get_release_calc_previous
+from doozerlib.util import analyze_debug_timing
 
 standard_library.install_aliases()
 
@@ -229,30 +229,17 @@ def cleanup(runtime):
     help="Cincinnati graph URL to query",
 )
 @click.option(
-    "--graph-content-stable",
-    metavar='JSON_FILE',
-    required=False,
-    help="Override content from stable channel - primarily for testing",
-)
-@click.option(
-    "--graph-content-candidate",
-    metavar='JSON_FILE',
-    required=False,
-    help="Override content from candidate channel - primarily for testing",
-)
-@click.option(
     "--suggestions-url",
     metavar='SUGGESTIONS_URL',
     required=False,
     default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
     help="Suggestions URL, load from {major}-{minor}-{arch}.yaml",
 )
-def release_calc_previous(version, arch, graph_url, graph_content_stable, graph_content_candidate, suggestions_url):
+@click_coroutine
+async def release_calc_previous(version, arch, graph_url, suggestions_url):
     # Refer to https://docs.google.com/document/d/16eGVikCYARd6nUUtAIHFRKXa7R_rU5Exc9jUPcQoG8A/edit
     # for information on channels & edges
-    results = get_release_calc_previous(
-        version, arch, graph_url, graph_content_stable, graph_content_candidate, suggestions_url
-    )
+    results = await calc_upgrade_sources_async(version, arch, graph_url=graph_url, suggestions_url=suggestions_url)
     print(','.join(results))
 
 

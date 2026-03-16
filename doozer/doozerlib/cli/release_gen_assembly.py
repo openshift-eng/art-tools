@@ -13,6 +13,7 @@ from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing
+from artcommonlib.ocp_version_ancestry import calc_upgrade_sources_async
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import (
     get_art_prod_image_repo_for_version,
@@ -95,18 +96,6 @@ def releases_gen_assembly(ctx, name):
     help="When using --auto-previous, set custom Cincinnati graph URL to query",
 )
 @click.option(
-    "--graph-content-stable",
-    metavar='JSON_FILE',
-    required=False,
-    help="When using --auto-previous, override content from stable channel - primarily for testing",
-)
-@click.option(
-    "--graph-content-candidate",
-    metavar='JSON_FILE',
-    required=False,
-    help="When using --auto-previous, override content from candidate channel - primarily for testing",
-)
-@click.option(
     "--suggestions-url",
     metavar='SUGGESTIONS_URL',
     required=False,
@@ -137,8 +126,6 @@ async def gen_assembly_from_releases(
     previous_list: Tuple[str, ...],
     auto_previous: bool,
     graph_url: Optional[str],
-    graph_content_stable: Optional[str],
-    graph_content_candidate: Optional[str],
     suggestions_url: Optional[str],
     output_file: Optional[str],
     gen_microshift: bool,
@@ -162,8 +149,6 @@ async def gen_assembly_from_releases(
         previous_list=previous_list,
         auto_previous=auto_previous,
         graph_url=graph_url,
-        graph_content_stable=graph_content_stable,
-        graph_content_candidate=graph_content_candidate,
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
         release_date=date,
@@ -200,8 +185,6 @@ class GenAssemblyCli:
         previous_list: Tuple[str, ...] = None,
         auto_previous: bool = False,
         graph_url: Optional[str] = None,
-        graph_content_stable: Optional[str] = None,
-        graph_content_candidate: Optional[str] = None,
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
         release_date: Optional[str] = None,
@@ -216,8 +199,6 @@ class GenAssemblyCli:
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.graph_url = graph_url
-        self.graph_content_stable = graph_content_stable
-        self.graph_content_candidate = graph_content_candidate
         self.suggestions_url = suggestions_url
         self.logger = self.runtime.logger
         self.release_pullspecs: Dict[str, str] = dict()
@@ -760,13 +741,13 @@ class GenAssemblyCli:
                 version = self.gen_assembly_name
             for arch in self.runtime.arches:
                 self.logger.info("Calculating previous list for %s", arch)
-                previous_list = util.get_release_calc_previous(
-                    version,
-                    arch,
-                    self.graph_url,
-                    self.graph_content_stable,
-                    self.graph_content_candidate,
-                    self.suggestions_url,
+                previous_list = asyncio.run(
+                    calc_upgrade_sources_async(
+                        version,
+                        arch,
+                        graph_url=self.graph_url,
+                        suggestions_url=self.suggestions_url,
+                    )
                 )
                 final_previous_list |= set(map(VersionInfo.parse, previous_list))
         self.final_previous_list = sorted(final_previous_list)
