@@ -1452,7 +1452,29 @@ class PrepareReleaseKonfluxPipeline:
             "candidate_nightlies": candidate_nightlies,
         }
 
+    def _convert_release_date_to_iso(self, release_date: str | None) -> str | None:
+        """
+        Converts release date from elliott format (YYYY-Mon-DD) to ISO format
+        (YYYY-MM-DD) for use as Jira due date.
+
+        Arg(s):
+            release_date (str | None): Release date in YYYY-Mon-DD format (e.g., "2025-Oct-22").
+        Return Value(s):
+            str | None: Date in YYYY-MM-DD format, or None if input is None or invalid.
+        """
+        if not release_date:
+            return None
+        try:
+            parsed = datetime.strptime(release_date, "%Y-%b-%d")
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            self.logger.warning("Could not parse release date '%s' for Jira due date", release_date)
+            return None
+
     def create_release_jira(self, template_issue: Issue, template_vars: Dict) -> Optional[Issue]:
+        # Convert release date to ISO format for Jira due date
+        jira_due_date = self._convert_release_date_to_iso(self.release_date)
+
         def fields_transform(fields):
             labels = set(fields.get("labels", []))
             # change summary title for security
@@ -1460,7 +1482,11 @@ class PrepareReleaseKonfluxPipeline:
                 return fields  # no need to modify fields of non-template issue
             # remove "template" label
             fields["labels"] = list(labels - {"template"})
-            return self.jira_client.render_jira_template(fields, template_vars)
+            fields = self.jira_client.render_jira_template(fields, template_vars)
+            # Set due date from release date
+            if jira_due_date:
+                fields["duedate"] = jira_due_date
+            return fields
 
         if self.dry_run:
             jira_fields = fields_transform(template_issue.raw["fields"].copy())
@@ -1484,13 +1510,17 @@ class PrepareReleaseKonfluxPipeline:
 
     def update_release_jira(self, issue: Issue, template_issue: Issue, template_vars: Dict[str, int]) -> bool:
         self.logger.info("Updating release JIRA %s from template %s...", issue.key, template_issue.key)
+        jira_due_date = self._convert_release_date_to_iso(self.release_date)
+
         old_fields = {
             "summary": issue.fields.summary,
             "description": issue.fields.description.strip(),
+            "duedate": getattr(issue.fields, "duedate", None),
         }
         fields = {
             "summary": template_issue.fields.summary,
             "description": template_issue.fields.description,
+            "duedate": jira_due_date,
         }
         if "template" in template_issue.fields.labels:
             fields = self.jira_client.render_jira_template(fields, template_vars)
