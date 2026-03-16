@@ -39,10 +39,7 @@ class ScanFips:
         if not jira_token:
             raise ValueError("JIRA_TOKEN environment variable is not set")
 
-        if JIRA_SERVER_URL.endswith("atlassian.net"):
-            self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, basic_auth=(jira_email, jira_token))
-        else:
-            self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, token_auth=jira_token)
+        self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, basic_auth=(jira_email, jira_token))
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()

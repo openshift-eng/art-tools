@@ -41,10 +41,7 @@ class Runtime:
 
         jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 
-        if self.config["jira"]["url"].endswith("atlassian.net"):
-            return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
-        else:
-            return JIRAClient.from_url(self.config["jira"]["url"], token_auth=jira_token)
+        return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
 
     def new_slack_client(self, token: Optional[str] = None):
         if not token and not self.dry_run:

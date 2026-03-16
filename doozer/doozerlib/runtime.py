@@ -828,10 +828,7 @@ class Runtime(GroupRuntime):
         jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 
         jira_options = {'server': server}
-        if server.endswith("atlassian.net"):
-            client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
-        else:
-            client = JIRA(options=jira_options, token_auth=token_auth)
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     def build_retrying_koji_client(self):

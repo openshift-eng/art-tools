@@ -732,13 +732,10 @@ class JIRABugTracker(BugTracker):
 
             if not token_auth:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_TOKEN env var ")
-        if 'atlassian' in self._server:
-            username = self.config.get('user', DEFAULT_JIRA_EMAIL)
-            if username is None:
-                raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_EMAIL env var ")
-            client = JIRA(server=self._server, basic_auth=(username, token_auth))
-        else:
-            client = JIRA(self._server, token_auth=token_auth)
+        username = self.config.get('user', DEFAULT_JIRA_EMAIL)
+        if username is None:
+            raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_EMAIL env var ")
+        client = JIRA(server=self._server, basic_auth=(username, token_auth))
         return client
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
