@@ -29,7 +29,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.gitlab import GitLabClient
-from artcommonlib.jira_config import JIRA_EMAIL
+from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
@@ -154,7 +154,7 @@ class PromotePipeline:
         self._elliott_lock = asyncio.Lock()
         self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self._jira_client = JIRAClient.from_url(
-            self.runtime.config["jira"]["url"],
+            JIRA_SERVER_URL,
             basic_auth=(JIRA_EMAIL, os.environ.get("JIRA_TOKEN")),
         )
         if self._ocp_build_data_url:
