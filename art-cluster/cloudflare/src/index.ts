@@ -47,6 +47,7 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
     });
 
     // Fetch from secure pre-validated endpoint
+    // deepcode ignore Ssrf: URL is validated against a hardcoded allowlist (SECURE_PROXY_ENDPOINTS)
     const response = await fetch(proxyRequest);
 
     // Return the response to the client
