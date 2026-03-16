@@ -1025,7 +1025,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 
                 # Build the update payload using the retrieved string
                 issue_update = {
-                    'customfield_12319940': [{'name': target_version_segment}],
+                    'customfield_10855': [{'name': target_version_segment}],
                 }
                 runtime.logger.info(
                     f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
@@ -1048,16 +1048,16 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             connect_issue_with_pr(pr, issue.key)
             try:
                 # Retrieve the value of the custom field
-                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
-                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
+                release_notes_text_cf_value = getattr(issue.fields, 'customfield_10783', None)
+                release_notes_type_cf_value = getattr(issue.fields, 'customfield_10785', None)
 
                 if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
                     # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
                     issue_update = {
-                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
-                        'customfield_12320850': {
+                        'customfield_10783': 'N/A',  # customfield_10783 is Release Notes Text in JIRA
+                        'customfield_10785': {
                             'value': 'Release Note Not Required'
-                        },  # customfield_12320850 is Release Notes Type in JIRA
+                        },  # customfield_10785 is Release Notes Type in JIRA
                     }
                     # Now update the issue using the retrieved issue object
                     issue.update(fields=issue_update)

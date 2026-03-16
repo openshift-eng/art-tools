@@ -281,7 +281,7 @@ class TestJIRABugTracker(unittest.TestCase):
         version4 = flexmock(name="4.18.z")
 
         field = flexmock(
-            fieldId="customfield_12319940",
+            fieldId="customfield_10855",
             allowedValues=[version1, version2, version3, version4],
         )
         mock_fields = [field]
@@ -319,7 +319,7 @@ class TestJIRABugTracker(unittest.TestCase):
                         {
                             "name": "Bug",
                             "fields": {
-                                "customfield_12319940": {
+                                "customfield_10855": {
                                     "allowedValues": [
                                         {"name": "4.17.0"},
                                         {"name": "4.17.z"},

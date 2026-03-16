@@ -34,8 +34,8 @@ def _build_mocks(
         project (str): JIRA project key.
         component (str): JIRA component name.
         target_release (str): Target version string from bug.yml.
-        release_notes_text: Value for customfield_12317313 on the created issue.
-        release_notes_type: Value for customfield_12320850 on the created issue.
+        release_notes_text: Value for customfield_10783 on the created issue.
+        release_notes_type: Value for customfield_10785 on the created issue.
         existing_issue (bool): If True, simulate that a JIRA issue already exists.
 
     Return Value(s):
@@ -80,8 +80,8 @@ def _build_mocks(
     mock_issue.fields.summary = f"ART requests updates to {major}.{minor} image ose-metallb-operator"
 
     # Set the release notes custom fields on the created issue
-    mock_issue.fields.customfield_12317313 = release_notes_text
-    mock_issue.fields.customfield_12320850 = release_notes_type
+    mock_issue.fields.customfield_10783 = release_notes_text
+    mock_issue.fields.customfield_10785 = release_notes_type
 
     mock_jira_client.create_issue.return_value = mock_issue
 
@@ -109,7 +109,7 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
     def test_target_version_customfield_is_set(self, mock_connect):
         """
-        Verify that customfield_12319940 (Target Version) is updated
+        Verify that customfield_10855 (Target Version) is updated
         on the newly created JIRA issue.
         """
         runtime, pr_map, mock_issue, mock_jira_client = _build_mocks(
@@ -125,8 +125,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         calls = mock_issue.update.call_args_list
         target_version_call = calls[0]
         updated_fields = target_version_call.kwargs.get('fields') or target_version_call[1].get('fields')
-        self.assertIn('customfield_12319940', updated_fields)
-        self.assertEqual(updated_fields['customfield_12319940'], [{'name': '4.18.z'}])
+        self.assertIn('customfield_10855', updated_fields)
+        self.assertEqual(updated_fields['customfield_10855'], [{'name': '4.18.z'}])
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
     def test_release_notes_customfields_set_when_none(self, mock_connect):
@@ -149,8 +149,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
 
         release_notes_call = calls[1]
         updated_fields = release_notes_call.kwargs.get('fields') or release_notes_call[1].get('fields')
-        self.assertEqual(updated_fields['customfield_12317313'], 'N/A')
-        self.assertEqual(updated_fields['customfield_12320850'], {'value': 'Release Note Not Required'})
+        self.assertEqual(updated_fields['customfield_10783'], 'N/A')
+        self.assertEqual(updated_fields['customfield_10785'], {'value': 'Release Note Not Required'})
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
     def test_release_notes_customfields_not_set_when_already_populated(self, mock_connect):
@@ -170,8 +170,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         self.assertEqual(len(calls), 1, f"Expected 1 update call (Target Version only), got {len(calls)}")
 
         updated_fields = calls[0].kwargs.get('fields') or calls[0][1].get('fields')
-        self.assertIn('customfield_12319940', updated_fields)
-        self.assertNotIn('customfield_12317313', updated_fields)
+        self.assertIn('customfield_10855', updated_fields)
+        self.assertNotIn('customfield_10783', updated_fields)
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
     def test_dry_run_skips_issue_creation(self, mock_connect):

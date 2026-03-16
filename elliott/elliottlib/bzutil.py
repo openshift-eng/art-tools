@@ -702,13 +702,13 @@ class JIRABugTracker(BugTracker):
 
     # There are several @property function defined, which requires the values to be available at compile time
     # We later override them at runtime, so that if the field name changes, we'll still get the updated one
-    field_target_version = 'customfield_12319940'  # "Target Version"
-    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
-    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
-    field_severity = 'customfield_12316142'  # "Severity"
-    field_cve_id = 'customfield_12324749'  # "CVE ID"
-    field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
-    field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
+    field_target_version = 'customfield_10855'  # "Target Version"
+    field_release_blocker = 'customfield_10847'  # "Release Blocker"
+    field_blocked_reason = 'customfield_10483'  # "Blocked Reason"
+    field_severity = 'customfield_10840'  # "Severity"
+    field_cve_id = 'customfield_10667'  # "CVE ID"
+    field_cve_component = 'customfield_10669'  # "Downstream Component Name"
+    field_cve_is_embargo = 'customfield_10860'  # "Embargo Status"
     field_security_levels = 'level'  # "Security Levels"
 
     @staticmethod
