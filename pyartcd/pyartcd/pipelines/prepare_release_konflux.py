@@ -23,7 +23,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitlab import GitLabClient
-from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL
+from artcommonlib.jira_config import JIRA_EMAIL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
@@ -210,7 +210,7 @@ class PrepareReleaseKonfluxPipeline:
         await self.validate_assembly()
         self.jira_client = JIRAClient.from_url(
             self.runtime.config["jira"]["url"],
-            basic_auth=(os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL), self.jira_token),
+            basic_auth=(JIRA_EMAIL, self.jira_token),
         )
 
     async def run(self):
