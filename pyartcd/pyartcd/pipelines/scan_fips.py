@@ -13,7 +13,7 @@ from typing import Optional
 import click
 from artcommonlib import exectools
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
-from artcommonlib.jira_config import JIRA_SERVER_URL
+from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira_client import JIRAClient
@@ -34,7 +34,12 @@ class ScanFips:
         self.all_images = all_images
 
         #  Call JIRAClient.from_url() directly because Runtime.new_jira_client() does not work currently
-        self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, token_auth=os.environ["JIRA_TOKEN"])
+        jira_email = JIRA_EMAIL
+        jira_token = os.environ.get("JIRA_TOKEN")
+        if not jira_token:
+            raise ValueError("JIRA_TOKEN environment variable is not set")
+
+        self.jira_client = JIRAClient.from_url(server_url=JIRA_SERVER_URL, basic_auth=(jira_email, jira_token))
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()

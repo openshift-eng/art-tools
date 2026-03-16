@@ -813,18 +813,22 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
-        from artcommonlib.jira_config import JIRA_SERVER_URL
+        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL
 
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
-        bug_config = Model(self.get_bug_config())
-        server = bug_config.jira_config.server or JIRA_SERVER_URL
+            raise ValueError("JIRA client is not supported for OCP versions < 4.6")
+        # JIRA server is hardcoded in artcommonlib.jira_config (not read from bug.yml)
+        server = JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
-        client = JIRA(server, token_auth=token_auth)
+        # Get email for basic auth
+        jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
+
+        jira_options = {'server': server}
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     def build_retrying_koji_client(self):

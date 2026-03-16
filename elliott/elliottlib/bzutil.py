@@ -18,6 +18,7 @@ import bugzilla
 import requests
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.jira_config import JIRA_EMAIL
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
@@ -446,22 +447,19 @@ class JIRABug(Bug):
 
         :returns: a string if a value is found, otherwise None
         """
+        labels = getattr(self.bug.fields, 'labels', None) or []
         # If label "art:pscomponent:<component_name>" is set,
         # return the component name from the label
-        pscomponent = next(
-            (m.group(1) for label in self.bug.fields.labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None
-        )
+        pscomponent = next((m.group(1) for label in labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None)
         if pscomponent:
             return pscomponent
         # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
         if self.is_type_vulnerability() and (
-            pscomponent := getattr(self.bug.fields, JIRABugTracker.field_cve_component)
+            pscomponent := getattr(self.bug.fields, JIRABugTracker.field_cve_component, None)
         ):
             return pscomponent
         # Fall back to the label "pscomponent:<component_name>"
-        pscomponent = next(
-            (m.group(1) for label in self.bug.fields.labels if (m := self._PSCOMPONENT_RE.match(label))), None
-        )
+        pscomponent = next((m.group(1) for label in labels if (m := self._PSCOMPONENT_RE.match(label))), None)
         return pscomponent
 
     def _get_release_blocker(self):
@@ -715,6 +713,8 @@ class JIRABugTracker(BugTracker):
 
     @staticmethod
     def get_config(runtime) -> Dict:
+        from artcommonlib.jira_config import JIRA_SERVER_URL
+
         bug_config = runtime.gitdata.load_data(key='bug', replace_vars=runtime.group_config.vars).data
         # construct config so that all jira_config keys become toplevel keys
         jira_config = bug_config.pop('jira_config')
@@ -722,14 +722,20 @@ class JIRABugTracker(BugTracker):
             if key in bug_config:
                 raise ValueError(f"unexpected: top level config contains same key ({key}) as jira_config")
             bug_config[key] = jira_config[key]
+        # JIRA server is hardcoded (not read from bug.yml)
+        bug_config['server'] = JIRA_SERVER_URL
         return bug_config
 
     def login(self, token_auth=None) -> JIRA:
         if not token_auth:
             token_auth = os.environ.get("JIRA_TOKEN")
+
             if not token_auth:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_TOKEN env var ")
-        client = JIRA(self._server, token_auth=token_auth)
+        username = self.config.get('user') or JIRA_EMAIL
+        if username is None:
+            raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_EMAIL env var ")
+        client = JIRA(server=self._server, basic_auth=(username, token_auth))
         return client
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
@@ -757,37 +763,18 @@ class JIRABugTracker(BugTracker):
 
         Returns a list of target version names that exist in the JIRA project's "Target Version" custom field.
         This is cached after the first call to avoid repeated API calls.
+
+        Uses the createmeta API for JIRA Cloud (which does not support project_issue_types/project_issue_fields),
+        and the newer project_issue_types/project_issue_fields API for JIRA Server/DC.
         """
         if self._available_target_versions is not None:
             return self._available_target_versions
 
         try:
-            issue_types = self._client.project_issue_types(self._project)
-
-            bug_issue_type = None
-            for issue_type in issue_types:
-                if getattr(issue_type, 'name', None) == 'Bug':
-                    bug_issue_type = issue_type
-                    break
-
-            if not bug_issue_type:
-                logger.warning(f"Bug issue type not found in JIRA project {self._project}")
-                self._available_target_versions = []
-                return self._available_target_versions
-
-            bug_id = getattr(bug_issue_type, 'id', None)
-            fields = self._client.project_issue_fields(self._project, bug_id)
-
-            target_versions = []
-            for field in fields:
-                if getattr(field, 'fieldId', None) == self.field_target_version:
-                    allowed_values = getattr(field, 'allowedValues', None)
-                    if allowed_values:
-                        for v in allowed_values:
-                            version_name = getattr(v, 'name', None)
-                            if version_name:
-                                target_versions.append(version_name)
-                    break
+            if self._client.deploymentType == "Cloud":
+                target_versions = self._get_target_versions_via_createmeta()
+            else:
+                target_versions = self._get_target_versions_via_project_issue_types()
 
             self._available_target_versions = target_versions
             logger.info(f"Found {len(self._available_target_versions)} target versions in JIRA project {self._project}")
@@ -796,6 +783,68 @@ class JIRABugTracker(BugTracker):
             logger.error(f"Failed to fetch target versions for project {self._project}: {e}")
             self._available_target_versions = []
             return self._available_target_versions
+
+    def _get_target_versions_via_createmeta(self) -> list[str]:
+        """
+        Fetch available target versions using the createmeta API (works on JIRA Cloud).
+
+        Return Value(s):
+            list[str]: List of target version names for the Bug issue type.
+        """
+        # Use createmeta API which is compatible with newer JIRA Cloud instances
+        create_meta = self._client.createmeta(projectKeys=[self._project], expand='projects.issuetypes.fields')
+
+        target_versions = []
+        # Navigate through the createmeta structure to find target version field
+        if create_meta and 'projects' in create_meta:
+            for project in create_meta['projects']:
+                if project.get('key') == self._project:
+                    for issue_type in project.get('issuetypes', []):
+                        if issue_type.get('name') == 'Bug':
+                            fields = issue_type.get('fields', {})
+                            target_field = fields.get(self.field_target_version)
+                            if target_field and 'allowedValues' in target_field:
+                                for v in target_field['allowedValues']:
+                                    if 'name' in v:
+                                        target_versions.append(v['name'])
+                            break
+                    break
+        return target_versions
+
+    def _get_target_versions_via_project_issue_types(self) -> list[str]:
+        """
+        Fetch available target versions using project_issue_types/project_issue_fields APIs
+        (works on JIRA Server/DC 8.4+).
+
+        Return Value(s):
+            list[str]: List of target version names for the Bug issue type.
+        """
+        issue_types = self._client.project_issue_types(self._project)
+
+        bug_issue_type = None
+        for issue_type in issue_types:
+            if getattr(issue_type, 'name', None) == 'Bug':
+                bug_issue_type = issue_type
+                break
+
+        if not bug_issue_type:
+            logger.warning(f"Bug issue type not found in JIRA project {self._project}")
+            return []
+
+        bug_id = getattr(bug_issue_type, 'id', None)
+        fields = self._client.project_issue_fields(self._project, bug_id)
+
+        target_versions = []
+        for field in fields:
+            if getattr(field, 'fieldId', None) == self.field_target_version:
+                allowed_values = getattr(field, 'allowedValues', None)
+                if allowed_values:
+                    for v in allowed_values:
+                        version_name = getattr(v, 'name', None)
+                        if version_name:
+                            target_versions.append(version_name)
+                break
+        return target_versions
 
     @property
     def product(self):
