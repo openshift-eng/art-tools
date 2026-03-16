@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -60,6 +61,7 @@ from doozerlib.util import (
 )
 
 TRACER = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def check_multi_nightly_exists_for_model(model_nightly_name: str) -> bool:
@@ -2206,8 +2208,14 @@ class PayloadGenerator:
             # If an artist overrides one sibling's git url, but not another, the following
             # scan would not be able to detect that they were siblings. Instead, we rely on the
             # original image metadata to determine sibling-ness.
-            source_url = build_record_inspector.get_image_meta().raw_config.content.source.git.url
+            raw_source = build_record_inspector.get_image_meta().raw_config.content.source
 
+            if raw_source.allow_mismatched_siblings:
+                logger.info("Skipping sibling check for %s (allow_mismatched_siblings is set)",
+                            build_record_inspector.get_image_meta().distgit_key)
+                continue
+
+            source_url = raw_source.git.url
             source_git_commit = build_record_inspector.get_source_git_commit()
             if not source_url or not source_git_commit:
                 # This is true for distgit only components.

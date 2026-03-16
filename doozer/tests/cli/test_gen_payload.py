@@ -149,6 +149,57 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.detect_mismatched_siblings(ai)
         self.assertIsInstance(gpcli.assembly_issues[-1], AssemblyIssue)
 
+    def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False):
+        """Helper to build a mock BuildRecordInspector for sibling tests."""
+        source_config = dict(
+            git=dict(url=source_url),
+        )
+        if allow_mismatched:
+            source_config['allow_mismatched_siblings'] = True
+        raw_config = Model(dict(content=dict(source=source_config)))
+        meta = MagicMock()
+        meta.raw_config = raw_config
+        meta.distgit_key = distgit_key
+        inspector = MagicMock()
+        inspector.get_image_meta.return_value = meta
+        inspector.get_source_git_commit.return_value = commit
+        inspector.get_nvr.return_value = f"{distgit_key}-v1.0-1"
+        return inspector
+
+    def test_find_mismatched_siblings_detects_mismatch(self):
+        """Two images from the same repo at different commits should be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "bbb", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 1)
+
+    def test_find_mismatched_siblings_no_mismatch_same_commit(self):
+        """Two images from the same repo at the same commit should not be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0)
+
+    def test_find_mismatched_siblings_allow_flag_suppresses(self):
+        """An image with allow_mismatched_siblings should be excluded from sibling comparison."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0, "allow_mismatched_siblings flag should suppress the mismatch")
+
+    def test_find_mismatched_siblings_allow_flag_only_on_flagged(self):
+        """The flag only excludes the flagged image; unflagged siblings from different repos still compare."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        img_c = self._make_sibling_inspector("https://github.com/openshift/other.git", "ccc", "image-c")
+        img_d = self._make_sibling_inspector("https://github.com/openshift/other.git", "ddd", "image-d")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b, img_c, img_d])
+        self.assertEqual(len(result), 1, "only unflagged siblings from other.git should mismatch")
+
     def test_id_tags_list(self):
         gpcli = rgp_cli.GenPayloadCli()
         bbii = flexmock(Mock(BrewBuildRecordInspector), get_build_id=1)
