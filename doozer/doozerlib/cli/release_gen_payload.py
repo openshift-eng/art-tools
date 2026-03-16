@@ -2211,8 +2211,10 @@ class PayloadGenerator:
             raw_source = build_record_inspector.get_image_meta().raw_config.content.source
 
             if raw_source.allow_mismatched_siblings:
-                logger.info("Skipping sibling check for %s (allow_mismatched_siblings is set)",
-                            build_record_inspector.get_image_meta().distgit_key)
+                logger.info(
+                    "Skipping sibling check for %s (allow_mismatched_siblings is set)",
+                    build_record_inspector.get_image_meta().distgit_key,
+                )
                 continue
 
             source_url = raw_source.git.url
