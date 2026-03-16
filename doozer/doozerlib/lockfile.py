@@ -499,24 +499,17 @@ class RPMLockfileGenerator:
         self.runtime = runtime
 
     def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
-        """Validate that RPM version SETS are consistent across all architectures."""
-        # Group EVRs by package name, then by architecture
+        """Validate that RPM version sets are consistent across architectures where packages exist."""
         package_arch_evrs = {}
-        all_arches = set(rpms_info_by_arch.keys())
-
         for arch, rpm_list in rpms_info_by_arch.items():
             for rpm in rpm_list:
                 package_arch_evrs.setdefault(rpm.name, {}).setdefault(arch, set()).add(rpm.evr)
 
-        # Ensure all packages are present across all architectures (with empty sets for missing)
-        for package_name, arch_evrs in package_arch_evrs.items():
-            for arch in all_arches:
-                if arch not in arch_evrs:
-                    arch_evrs[arch] = set()
-
-        # Validate identical EVR sets across architectures
         mismatches = []
         for package_name, arch_evrs in package_arch_evrs.items():
+            if len(arch_evrs) < 2:
+                continue
+
             evr_sets = list(arch_evrs.values())
             reference_set = evr_sets[0]
 

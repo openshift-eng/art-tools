@@ -397,8 +397,8 @@ class TestCrossArchVersionSetValidation:
         # Act & Assert: Should not raise exception
         self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-    def test_partial_architecture_coverage_mismatch(self):
-        """Test validation fails when packages exist on some but not all architectures."""
+    def test_architecture_specific_packages_allowed(self):
+        """Test validation passes when packages exist on subset of architectures."""
         # Arrange: Package exists on x86_64 but not on aarch64
         rpms_info_by_arch = {
             "x86_64": [
@@ -418,15 +418,8 @@ class TestCrossArchVersionSetValidation:
             "aarch64": [],
         }
 
-        # Act & Assert: Should raise ValueError
-        with pytest.raises(ValueError) as exc_info:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
-
-        # Verify error message contains package name and architecture details
-        error_message = str(exc_info.value)
-        assert "x86-only-package" in error_message
-        assert "x86_64:{0:1.0.0-1.el9}" in error_message
-        assert "aarch64:{}" in error_message
+        # Act & Assert: Should not raise exception
+        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
     def test_complex_epoch_version_release_combinations(self):
         """Test validation with complex EVR combinations including different epochs."""
@@ -567,3 +560,142 @@ class TestCrossArchVersionSetValidation:
         error_message = str(exc_info.value)
         assert "x86_64:{0:1.0.0-1.el9,0:2.0.0-1.el9,0:3.0.0-1.el9}" in error_message
         assert "aarch64:{0:1.0.0-1.el9,0:4.0.0-1.el9}" in error_message
+
+    def test_mixed_single_and_multi_arch_packages_validation(self):
+        """Test that single-arch packages are ignored while multi-arch version mismatches still trigger failures."""
+        # Arrange: Mixed scenario with single-arch packages (ignored) and multi-arch packages (validated)
+        rpms_info_by_arch = {
+            "x86_64": [
+                RpmInfo(
+                    name="shared-lib",
+                    evr="0:2.0.0-1.el9",
+                    checksum="sha1",
+                    repoid="repo1",
+                    size=100,
+                    sourcerpm="shared-lib-2.0.0-1.el9.src.rpm",
+                    url="url1",
+                    epoch=0,
+                    version="2.0.0",
+                    release="1.el9",
+                ),
+                RpmInfo(
+                    name="x86-only-driver",
+                    evr="0:1.0.0-1.el9",
+                    checksum="sha2",
+                    repoid="repo1",
+                    size=200,
+                    sourcerpm="x86-only-driver-1.0.0-1.el9.src.rpm",
+                    url="url2",
+                    epoch=0,
+                    version="1.0.0",
+                    release="1.el9",
+                ),
+            ],
+            "aarch64": [
+                RpmInfo(
+                    name="shared-lib",
+                    evr="0:2.0.0-2.el9",
+                    checksum="sha3",
+                    repoid="repo2",
+                    size=101,
+                    sourcerpm="shared-lib-2.0.0-2.el9.src.rpm",
+                    url="url3",
+                    epoch=0,
+                    version="2.0.0",
+                    release="2.el9",
+                ),
+                RpmInfo(
+                    name="arm-specific-tool",
+                    evr="0:1.5.0-1.el9",
+                    checksum="sha4",
+                    repoid="repo2",
+                    size=300,
+                    sourcerpm="arm-specific-tool-1.5.0-1.el9.src.rpm",
+                    url="url4",
+                    epoch=0,
+                    version="1.5.0",
+                    release="1.el9",
+                ),
+            ],
+        }
+
+        # Act & Assert: Should fail due to shared-lib version mismatch but ignore single-arch packages
+        with pytest.raises(ValueError) as exc_info:
+            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+
+        error_message = str(exc_info.value)
+        assert "shared-lib" in error_message
+        assert "x86_64:{0:2.0.0-1.el9}" in error_message
+        assert "aarch64:{0:2.0.0-2.el9}" in error_message
+        assert "x86-only-driver" not in error_message
+        assert "arm-specific-tool" not in error_message
+
+    def test_mixed_single_and_multi_arch_packages_with_matching_versions(self):
+        """Test that single-arch packages are ignored and multi-arch packages with identical versions pass."""
+        # Arrange: Mixed scenario with single-arch packages (ignored) and multi-arch packages (identical versions)
+        rpms_info_by_arch = {
+            "x86_64": [
+                RpmInfo(
+                    name="shared-lib",
+                    evr="0:2.0.0-1.el9",
+                    checksum="sha1",
+                    repoid="repo1",
+                    size=100,
+                    sourcerpm="shared-lib-2.0.0-1.el9.src.rpm",
+                    url="url1",
+                    epoch=0,
+                    version="2.0.0",
+                    release="1.el9",
+                ),
+                RpmInfo(
+                    name="x86-only-driver",
+                    evr="0:1.0.0-1.el9",
+                    checksum="sha2",
+                    repoid="repo1",
+                    size=200,
+                    sourcerpm="x86-only-driver-1.0.0-1.el9.src.rpm",
+                    url="url2",
+                    epoch=0,
+                    version="1.0.0",
+                    release="1.el9",
+                ),
+            ],
+            "aarch64": [
+                RpmInfo(
+                    name="shared-lib",
+                    evr="0:2.0.0-1.el9",
+                    checksum="sha3",
+                    repoid="repo2",
+                    size=101,
+                    sourcerpm="shared-lib-2.0.0-1.el9.src.rpm",
+                    url="url3",
+                    epoch=0,
+                    version="2.0.0",
+                    release="1.el9",
+                ),
+                RpmInfo(
+                    name="arm-specific-tool",
+                    evr="0:1.5.0-1.el9",
+                    checksum="sha4",
+                    repoid="repo2",
+                    size=300,
+                    sourcerpm="arm-specific-tool-1.5.0-1.el9.src.rpm",
+                    url="url4",
+                    epoch=0,
+                    version="1.5.0",
+                    release="1.el9",
+                ),
+            ],
+        }
+
+        # Act: Should pass - single-arch packages ignored, shared-lib has identical versions
+        try:
+            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+            validation_passed = True
+        except ValueError:
+            validation_passed = False
+
+        # Assert: Validation should pass with no exceptions
+        assert validation_passed, (
+            "Validation should pass when single-arch packages are present and multi-arch packages have identical versions"
+        )
