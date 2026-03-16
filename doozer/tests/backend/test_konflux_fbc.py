@@ -221,7 +221,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image", new_callable=AsyncMock)
     async def test_get_catalog_blobs_from_index_image(self, mock_render_index_image):
         index_image = "test-index-image"
         mock_render_index_image.return_value = [
