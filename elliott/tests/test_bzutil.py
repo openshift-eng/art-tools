@@ -168,7 +168,7 @@ class TestJIRABugTracker(unittest.TestCase):
         )
 
         actual = JIRABugTracker.get_config(runtime)
-        expected = {"foo": 1, "bar": 2}
+        expected = {"foo": 1, "bar": 2, "server": "https://redhat.atlassian.net"}
         self.assertEqual(actual, expected)
 
     def test_security_filtering_in_query(self):

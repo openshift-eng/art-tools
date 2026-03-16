@@ -813,7 +813,7 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
-        from artcommonlib.jira_config import JIRA_SERVER_URL
+        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL
 
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
@@ -825,9 +825,7 @@ class Runtime(GroupRuntime):
         if not token_auth:
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
         # Get email for basic auth
-        jira_email = os.environ.get("JIRA_EMAIL")
-        if not jira_email:
-            raise ValueError(f"Jira activity requires JIRA_EMAIL environment variable for {server}")
+        jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 
         jira_options = {'server': server}
         if server.endswith("atlassian.net"):

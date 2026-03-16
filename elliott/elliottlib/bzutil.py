@@ -18,6 +18,7 @@ import bugzilla
 import requests
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
@@ -732,8 +733,7 @@ class JIRABugTracker(BugTracker):
             if not token_auth:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_TOKEN env var ")
         if 'atlassian' in self._server:
-            env_username = os.environ.get("JIRA_EMAIL")
-            username = self.config.get('user', env_username)
+            username = self.config.get('user', DEFAULT_JIRA_EMAIL)
             if username is None:
                 raise ValueError(f"elliott requires login credentials for {self._server}. Set a JIRA_EMAIL env var ")
             client = JIRA(server=self._server, basic_auth=(username, token_auth))

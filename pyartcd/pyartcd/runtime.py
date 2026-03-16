@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import tomli
 from artcommonlib import model, runtime
 from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL
 
 from pyartcd import constants, jenkins, util
 from pyartcd.jira_client import JIRAClient
@@ -38,9 +39,7 @@ class Runtime:
             if not jira_token:
                 raise ValueError("JIRA_TOKEN environment variable is not set")
 
-        jira_email = os.environ.get("JIRA_EMAIL")
-        if not jira_email:
-            raise ValueError("JIRA_EMAIL environment variable is not set")
+        jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
 
         if self.config["jira"]["url"].endswith("atlassian.net"):
             return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
