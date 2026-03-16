@@ -206,11 +206,26 @@ class ImageMetadata(Metadata):
     def get_olm_bundle_delivery_repo_name(self):
         """Returns the delivery repository name for the OLM bundle of this OLM operator.
 
+        If delivery.delivery_repo_name_override is true, the first entry from delivery.delivery_repo_names
+        is used as the delivery repo name. Exactly one entry must be present in that case.
+
         :return: The delivery repository name for the OLM bundle.
-        :raises IOError: If the image is not an OLM operator.
+        :raises IOError: If the image is not an OLM operator, or if the delivery repo name cannot be determined.
         """
         if not self.is_olm_operator:
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        if self.config.delivery.delivery_repo_name_override:
+            delivery_repo_names = self.config.delivery.delivery_repo_names
+            if delivery_repo_names is Missing or not delivery_repo_names:
+                raise IOError(
+                    f"[{self.distgit_key}] delivery_repo_name_override is set but delivery.delivery_repo_names is empty"
+                )
+            if len(delivery_repo_names) != 1:
+                raise IOError(
+                    f"[{self.distgit_key}] delivery_repo_name_override is set but delivery.delivery_repo_names has "
+                    f"{len(delivery_repo_names)} entries (expected exactly 1)"
+                )
+            return cast(str, delivery_repo_names[0])
         repo_name = self.config.delivery.bundle_delivery_repo_name
         if repo_name is Missing:
             raise IOError(
