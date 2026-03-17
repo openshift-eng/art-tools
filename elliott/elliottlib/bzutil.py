@@ -709,6 +709,8 @@ class JIRABugTracker(BugTracker):
     field_cve_id = 'customfield_10667'  # "CVE ID"
     field_cve_component = 'customfield_10669'  # "Downstream Component Name"
     field_cve_is_embargo = 'customfield_10860'  # "Embargo Status"
+    field_release_notes_text = 'customfield_10783'  # "Release Notes Text"
+    field_release_notes_type = 'customfield_10785'  # "Release Notes Type"
     field_security_levels = 'level'  # "Security Levels"
 
     @staticmethod
@@ -749,6 +751,10 @@ class JIRABugTracker(BugTracker):
                 self.field_blocked_reason = f['id']
             if f['name'] == 'Severity':
                 self.field_severity = f['id']
+            if f['name'] == 'Release Notes Text':
+                self.field_release_notes_text = f['id']
+            if f['name'] == 'Release Notes Type':
+                self.field_release_notes_type = f['id']
 
     def __init__(self, config):
         super().__init__(config, 'jira')

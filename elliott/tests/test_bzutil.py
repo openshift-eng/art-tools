@@ -280,8 +280,10 @@ class TestJIRABugTracker(unittest.TestCase):
         version3 = flexmock(name="4.18.0")
         version4 = flexmock(name="4.18.z")
 
+        from elliottlib.bzutil import JIRABugTracker
+
         field = flexmock(
-            fieldId="customfield_10855",
+            fieldId=JIRABugTracker.field_target_version,
             allowedValues=[version1, version2, version3, version4],
         )
         mock_fields = [field]
@@ -319,7 +321,7 @@ class TestJIRABugTracker(unittest.TestCase):
                         {
                             "name": "Bug",
                             "fields": {
-                                "customfield_10855": {
+                                JIRABugTracker.field_target_version: {
                                     "allowedValues": [
                                         {"name": "4.17.0"},
                                         {"name": "4.17.z"},
