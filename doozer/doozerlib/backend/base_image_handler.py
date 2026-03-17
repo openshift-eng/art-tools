@@ -79,8 +79,7 @@ class BaseImageHandler:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
 
-            group_version = self.runtime.group.replace('openshift-', '').replace('.', '-')
-            release_plan = f"ocp-art-base-images-silent-{group_version}-rhel9"
+            release_plan = "ocp-art-images-base-silent"
 
             release_name = await self._create_release_from_snapshot(snapshot_name, release_plan)
             if not release_name:
