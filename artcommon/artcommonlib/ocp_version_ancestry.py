@@ -14,7 +14,7 @@ Key components:
 """
 
 import functools
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 import semver
@@ -33,16 +33,18 @@ class SuggestionsSpec(BaseModel):
     - z_* fields control upgrades within the CURRENT minor version (e.g., 5.0.0 → 5.0.1)
 
     All version strings must be valid semver (e.g., '4.22.0-rc.0', '5.0.9999').
-    All fields are required and must be explicitly specified in the YAML.
+    minor_max and z_max are optional; if omitted, all versions >= the corresponding
+    min with the same major.minor are included.
     """
 
     minor_min: str = Field(
         ...,
         description="Minimum version from previous minor to include (e.g., '4.22.0-rc.0')",
     )
-    minor_max: str = Field(
-        ...,
-        description="Maximum version from previous minor, typically 'X.Y.9999' as placeholder",
+    minor_max: Optional[str] = Field(
+        None,
+        description="Maximum version from previous minor, typically 'X.Y.9999' as placeholder. "
+        "If omitted, all versions >= minor_min with the same major.minor are included.",
     )
     minor_block_list: list[str] = Field(
         ...,
@@ -52,9 +54,10 @@ class SuggestionsSpec(BaseModel):
         ...,
         description="Minimum version from current minor to include (e.g., '5.0.0-ec.0')",
     )
-    z_max: str = Field(
-        ...,
-        description="Maximum version from current minor, typically 'X.Y.9999' as placeholder",
+    z_max: Optional[str] = Field(
+        None,
+        description="Maximum version from current minor, typically 'X.Y.9999' as placeholder. "
+        "If omitted, all versions >= z_min with the same major.minor are included.",
     )
     z_block_list: list[str] = Field(
         ...,
@@ -63,8 +66,10 @@ class SuggestionsSpec(BaseModel):
 
     @field_validator('minor_min', 'minor_max', 'z_min', 'z_max')
     @classmethod
-    def validate_semver(cls, v: str) -> str:
+    def validate_semver(cls, v: Optional[str]) -> Optional[str]:
         """Validate that version strings are valid semver."""
+        if v is None:
+            return v
         try:
             semver.VersionInfo.parse(v)
         except ValueError as e:
@@ -136,7 +141,10 @@ class BuildSuggestions(BaseModel):
                 # Parse architecture override as SuggestionsSpec
                 parsed[key] = SuggestionsSpec.model_validate(value)
             else:
-                parsed[key] = value
+                raise ValueError(
+                    f"Architecture override '{key}' must be a mapping of version constraints, "
+                    f"got {type(value).__name__}"
+                )
 
         return parsed
 
@@ -230,22 +238,23 @@ def get_previous_minor_version_from_suggestions(
     spec = suggestions.get_for_arch(go_arch)
 
     try:
-        # Parse minor_min and minor_max to extract major.minor
         min_info = semver.VersionInfo.parse(spec.minor_min)
-        max_info = semver.VersionInfo.parse(spec.minor_max)
     except (ValueError, AttributeError) as e:
-        raise ValueError(
-            f"Cannot parse minor_min '{spec.minor_min}' or minor_max '{spec.minor_max}' as valid semver. Error: {e}"
-        ) from e
+        raise ValueError(f"Cannot parse minor_min '{spec.minor_min}' as valid semver. Error: {e}") from e
 
-    # Validate that minor_min and minor_max have the same major.minor version
-    if (min_info.major, min_info.minor) != (max_info.major, max_info.minor):
-        raise ValueError(
-            f"Build-suggestions constraint error: minor_min and minor_max must have the same major.minor version. "
-            f"Found minor_min='{spec.minor_min}' ({min_info.major}.{min_info.minor}) "
-            f"and minor_max='{spec.minor_max}' ({max_info.major}.{max_info.minor}). "
-            f"Please contact the OTA team to fix the build-suggestions file."
-        )
+    # If minor_max is provided, validate it has the same major.minor as minor_min
+    if spec.minor_max is not None:
+        try:
+            max_info = semver.VersionInfo.parse(spec.minor_max)
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Cannot parse minor_max '{spec.minor_max}' as valid semver. Error: {e}") from e
+        if (min_info.major, min_info.minor) != (max_info.major, max_info.minor):
+            raise ValueError(
+                f"Build-suggestions constraint error: minor_min and minor_max must have the same major.minor version. "
+                f"Found minor_min='{spec.minor_min}' ({min_info.major}.{min_info.minor}) "
+                f"and minor_max='{spec.minor_max}' ({max_info.major}.{max_info.minor}). "
+                f"Please contact the OTA team to fix the build-suggestions file."
+            )
 
     return (min_info.major, min_info.minor)
 
@@ -315,6 +324,21 @@ async def get_channel_versions_async(
     return descending_versions, edges
 
 
+def _version_in_range(version: str, v_min: str, v_max: Optional[str]) -> bool:
+    """Check if version is within [v_min, v_max] range (inclusive).
+
+    If v_max is None, includes all versions >= v_min with the same major.minor.
+    """
+    v_info = semver.VersionInfo.parse(version)
+    min_info = semver.VersionInfo.parse(v_min)
+    if v_info < min_info:
+        return False
+    if v_max is not None:
+        return v_info <= semver.VersionInfo.parse(v_max)
+    # No upper bound: include if same major.minor as v_min
+    return v_info.major == min_info.major and v_info.minor == min_info.minor
+
+
 async def calc_upgrade_sources_async(
     version: str,
     arch: str,
@@ -366,20 +390,12 @@ async def calc_upgrade_sources_async(
 
     # STEP 5: Filter previous minor versions based on minor_min/minor_max constraints
     for v in prev_versions:
-        v_info = semver.VersionInfo.parse(v)
-        min_info = semver.VersionInfo.parse(spec.minor_min)
-        max_info = semver.VersionInfo.parse(spec.minor_max)
-
-        if v_info >= min_info and v_info < max_info and v not in spec.minor_block_list:
+        if _version_in_range(v, spec.minor_min, spec.minor_max) and v not in spec.minor_block_list:
             upgrade_from.add(v)
 
     # STEP 6: Filter current minor versions based on z_min/z_max constraints
     for v in curr_versions:
-        v_info = semver.VersionInfo.parse(v)
-        z_min_info = semver.VersionInfo.parse(spec.z_min)
-        z_max_info = semver.VersionInfo.parse(spec.z_max)
-
-        if v_info >= z_min_info and v_info < z_max_info and v not in spec.z_block_list:
+        if _version_in_range(v, spec.z_min, spec.z_max) and v not in spec.z_block_list:
             upgrade_from.add(v)
 
     # STEP 7: Include eligible hotfix releases (only for standard releases)

@@ -233,7 +233,7 @@ def cleanup(runtime):
     metavar='SUGGESTIONS_URL',
     required=False,
     default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
-    help="Suggestions URL, load from {major}-{minor}-{arch}.yaml",
+    help="Suggestions URL, load from {major}.{minor}.yaml",
 )
 @click_coroutine
 async def release_calc_previous(version, arch, graph_url, suggestions_url):

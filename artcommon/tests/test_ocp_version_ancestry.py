@@ -95,6 +95,20 @@ class TestSuggestionsSpec(unittest.TestCase):
 
         self.assertIn("Invalid semver format in block list", str(context.exception))
 
+    def test_optional_max_fields(self):
+        """Test that minor_max and z_max can be omitted"""
+        spec = SuggestionsSpec(
+            minor_min="4.22.0-rc.0",
+            minor_block_list=[],
+            z_min="5.0.0-ec.0",
+            z_block_list=[],
+        )
+
+        self.assertEqual(spec.minor_min, "4.22.0-rc.0")
+        self.assertIsNone(spec.minor_max)
+        self.assertEqual(spec.z_min, "5.0.0-ec.0")
+        self.assertIsNone(spec.z_max)
+
     def test_missing_required_fields(self):
         """Test that missing required fields raise ValidationError"""
         with self.assertRaises(ValidationError) as context:
@@ -212,6 +226,23 @@ class TestBuildSuggestions(unittest.TestCase):
         # Request default explicitly
         spec_default = suggestions.get_for_arch("default")
         self.assertEqual(spec_default.minor_min, "4.22.0")
+
+    def test_malformed_arch_override_rejected(self):
+        """Test that non-mapping architecture overrides are rejected"""
+        data = {
+            "default": {
+                "minor_min": "4.22.0",
+                "minor_max": "4.22.9999",
+                "minor_block_list": [],
+                "z_min": "5.0.0",
+                "z_max": "5.0.9999",
+                "z_block_list": [],
+            },
+            "s390x": "oops",
+        }
+
+        with self.assertRaises(ValidationError):
+            BuildSuggestions.model_validate(data)
 
     def test_missing_default_section(self):
         """Test that missing default section raises ValidationError"""
@@ -590,6 +621,40 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
         result = await calc_upgrade_sources_async("5.0.0-rc.0", "x86_64")
 
         self.assertEqual(result, ['5.0.0-ec.1', '5.0.0-ec.0', '4.22.2', '4.22.1', '4.22.0'])
+
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_no_max_includes_same_minor(self, mock_suggestions, mock_channel):
+        """When minor_max/z_max are omitted, include all versions >= min with same major.minor"""
+        mock_suggestions.return_value = self._make_suggestions(
+            {
+                "default": {
+                    "minor_min": "4.22.0-rc.0",
+                    # minor_max omitted
+                    "minor_block_list": [],
+                    "z_min": "5.0.0-ec.0",
+                    # z_max omitted
+                    "z_block_list": [],
+                },
+            }
+        )
+        mock_channel.side_effect = [
+            # candidate-4.22: includes a mix of versions
+            (['4.22.0', '4.22.1', '4.22.9999'], {}),
+            # candidate-5.0
+            (['5.0.0-ec.0', '5.0.0-rc.0', '5.0.9999'], {}),
+        ]
+
+        result = await calc_upgrade_sources_async("5.0.0-rc.0", "x86_64")
+
+        # All 4.22 versions >= minor_min should be included (no upper bound)
+        self.assertIn('4.22.0', result)
+        self.assertIn('4.22.1', result)
+        self.assertIn('4.22.9999', result)
+
+        # All 5.0 versions >= z_min should be included (no upper bound)
+        self.assertIn('5.0.0-ec.0', result)
+        self.assertIn('5.0.9999', result)
 
 
 if __name__ == "__main__":
