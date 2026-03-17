@@ -305,6 +305,29 @@ def is_build_running(build_path: str) -> bool:
     return build.is_running()
 
 
+def get_propagatable_params() -> dict:
+    """
+    Get parameters that should automatically propagate to downstream jobs.
+    Only non-empty parameters are included.
+
+    Returns:
+        dict: Parameters to propagate (e.g., {'ART_TOOLS_COMMIT': 'user@branch'})
+    """
+    propagatable = {}
+
+    # Check for ART_TOOLS_COMMIT
+    art_tools_commit = os.getenv('ART_TOOLS_COMMIT', '').strip()
+    if art_tools_commit:
+        propagatable['ART_TOOLS_COMMIT'] = art_tools_commit
+
+    # Check for PLR_TEMPLATE_COMMIT
+    plr_template_commit = os.getenv('PLR_TEMPLATE_COMMIT', '').strip()
+    if plr_template_commit:
+        propagatable['PLR_TEMPLATE_COMMIT'] = plr_template_commit
+
+    return propagatable
+
+
 @check_env_vars
 def start_build(
     job: Jobs,
@@ -625,6 +648,7 @@ def start_olm_bundle_konflux(
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     group: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
@@ -641,6 +665,11 @@ def start_olm_bundle_konflux(
 
     if group:
         params['GROUP'] = group
+
+    # Automatically propagate parameters if provided
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info(f"Propagating parameters to olm_bundle_konflux: {propagate_params}")
 
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
@@ -723,6 +752,7 @@ def start_build_fbc(
     force_build: Optional[bool] = None,
     group: Optional[str] = None,
     ocp_target_version: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -737,6 +767,11 @@ def start_build_fbc(
         params['OCP_TARGET_VERSION'] = ocp_target_version
     if force_build:
         params["FORCE_BUILD"] = force_build
+
+    # Automatically propagate parameters if provided
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info(f"Propagating parameters to build-fbc: {propagate_params}")
 
     return start_build(
         job=Jobs.BUILD_FBC,

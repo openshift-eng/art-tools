@@ -82,6 +82,11 @@ class BuildLayeredProductsPipeline:
                 if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                     operator_nvrs.append(record['nvrs'].split(',')[0])
             if operator_nvrs:
+                # Automatically propagate parameters if set in environment
+                propagate_params = jenkins.get_propagatable_params()
+                if propagate_params:
+                    self._logger.info(f"Propagating parameters to olm_bundle_konflux: {propagate_params}")
+
                 jenkins.start_olm_bundle_konflux(
                     build_version=self.version,
                     assembly=self.assembly,
@@ -89,6 +94,7 @@ class BuildLayeredProductsPipeline:
                     operator_nvrs=operator_nvrs,
                     doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
                     doozer_data_gitref=self.data_gitref or '',
+                    propagate_params=propagate_params,
                 )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
