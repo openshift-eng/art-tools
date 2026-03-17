@@ -332,7 +332,7 @@ class ReleaseFromFbcPipeline:
                 is_from_group = nvr_parts[0] == assembly_parts[0] and nvr_parts[1] == assembly_parts[1]
 
             if not is_from_group:
-                self.logger.debug(
+                self.logger.info(
                     f"NVR {nvr} (version: {nvr_version}) does not match assembly {self.assembly} "
                     f"- marking as external dependency"
                 )
@@ -376,7 +376,7 @@ class ReleaseFromFbcPipeline:
         if categorized['external']:
             self.logger.info(f"  • External dependencies (filtered): {len(categorized['external'])}")
             for ext_nvr in categorized['external']:
-                self.logger.debug(f"    - {ext_nvr}")
+                self.logger.info(f"    - {ext_nvr}")
 
         return categorized
 
