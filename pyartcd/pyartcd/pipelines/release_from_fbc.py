@@ -312,33 +312,42 @@ class ReleaseFromFbcPipeline:
         Example:
             Assembly "6.3.3" matches NVR version "6.3.3-202602032201..." -> True
             Assembly "6.3.3" does NOT match NVR version "v4.20.0-202512150315..." -> False
+            Assembly "6.3" does NOT match NVR version "6.30.0-..." -> False (prevents false positives)
         """
         try:
             nvr_dict = parse_nvr(nvr)
-            nvr_version = nvr_dict.get('version', '')
+            nvr_version = nvr_dict.get('version', '').lstrip('v')
+            assembly_version = self.assembly.lstrip('v')
 
-            # Extract major.minor prefix from assembly (e.g., "6.3.3" -> "6.3")
-            assembly_parts = self.assembly.split('.')
-            if len(assembly_parts) >= 2:
-                assembly_prefix = f"{assembly_parts[0]}.{assembly_parts[1]}"
+            # Split into version components
+            nvr_parts = nvr_version.split('.')
+            assembly_parts = assembly_version.split('.')
+
+            # Require at least major.minor for matching
+            if len(assembly_parts) < 2 or len(nvr_parts) < 2:
+                # If assembly has < 2 parts, fall back to startswith for compatibility
+                is_from_group = nvr_version.startswith(assembly_version)
             else:
-                assembly_prefix = assembly_parts[0] if assembly_parts else ""
-
-            # Check if NVR version starts with assembly prefix or full assembly
-            # This handles both "6.3.3-..." and "6.3-..." version formats
-            is_from_group = nvr_version.startswith(self.assembly) or nvr_version.startswith(assembly_prefix)
+                # Compare major.minor segments exactly (prevents "6.3" matching "6.30")
+                is_from_group = nvr_parts[0] == assembly_parts[0] and nvr_parts[1] == assembly_parts[1]
 
             if not is_from_group:
                 self.logger.debug(
                     f"NVR {nvr} (version: {nvr_version}) does not match assembly {self.assembly} "
-                    f"(prefix: {assembly_prefix}) - marking as external dependency"
+                    f"- marking as external dependency"
                 )
 
             return is_from_group
 
-        except Exception as e:
-            self.logger.warning(f"Failed to parse NVR {nvr} for group checking: {e}. Treating as from current group.")
-            return True  # If we can't parse, assume it belongs to current group to be safe
+        except ValueError as e:
+            # Fail-open: unparsable NVRs are treated as from current group
+            # to avoid accidentally excluding legitimate builds
+            self.logger.error(
+                f"Failed to parse NVR {nvr} for group checking: {e}. "
+                f"Treating as from current group to avoid excluding builds. "
+                f"INVESTIGATE THIS IF SEEN IN PRODUCTION."
+            )
+            return True
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
@@ -623,14 +632,19 @@ class ReleaseFromFbcPipeline:
                     tag = fbc_pullspec.split(':')[-1]
                     if '-fbc-' in tag:
                         operator = tag.split('-fbc-')[0]
+                        self.logger.error(
+                            f"Missing __doozer_key label for {fbc_pullspec}, using extracted operator name: {operator}"
+                        )
                     else:
-                        operator = "unknown"
-                    self.logger.warning(
-                        f"Missing __doozer_key label for {fbc_pullspec}, using extracted operator name: {operator}"
-                    )
+                        # Use unique key per FBC to prevent unrelated FBCs from being grouped
+                        operator = f"UNKNOWN-{hash(fbc_pullspec) & 0xFFFFFFFF:08x}"
+                        self.logger.error(
+                            f"Missing __doozer_key label for {fbc_pullspec}, using generated operator identifier: {operator}"
+                        )
                 except Exception as e:
-                    self.logger.warning(f"Failed to extract operator from {fbc_pullspec}: {e}")
-                    operator = "unknown"
+                    self.logger.error(f"Failed to extract operator from {fbc_pullspec}: {e}")
+                    # Use unique key per FBC to prevent unrelated FBCs from being grouped
+                    operator = f"UNKNOWN-{hash(fbc_pullspec) & 0xFFFFFFFF:08x}"
 
             fbc_to_operator[fbc_pullspec] = operator
 
