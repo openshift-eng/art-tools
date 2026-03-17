@@ -199,36 +199,6 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
             raise IOError(f'Unable to add nvrs to advisory {advisory_id}: {to_add}')
 
 
-@retry(
-    retry=retry_if_exception_type(IOError),
-    stop=stop_after_delay(600),  # 10 minutes
-    wait=wait_fixed(30),
-    reraise=True,
-    before_sleep=lambda retry_state: logger.info('Waiting for signed RPMs to become available, retrying in 30s...'),
-)
-def _list_and_validate_signed_rpms(brewroot_arch_path: str, expected: set, nvre: str, arch: str) -> List[str]:
-    """
-    Lists RPMs in a signed arch directory and validates that all expected RPMs
-    are present. Retries for up to 10 minutes if the directory is incomplete,
-    to allow time for signing to propagate.
-    :param brewroot_arch_path: the path to the signed arch directory
-    :param expected: set of expected RPM filenames from Koji
-    :param nvre: the nvre string (for error messages)
-    :param arch: the architecture (for error messages)
-    :return: list of RPM filenames in the directory
-    """
-    rpms = os.listdir(brewroot_arch_path)
-    if not rpms:
-        raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
-    if expected:
-        missing = expected - set(rpms)
-        if missing:
-            raise IOError(
-                f'Signed {arch} directory for {nvre} is incomplete; missing {len(missing)} RPM(s): {sorted(missing)}'
-            )
-    return rpms
-
-
 def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.ClientSession = None):
     """
     This method is intended to be wrapped by assemble_repo.
@@ -245,6 +215,26 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
     An exception will be thrown if no RPMs can be found matching an nvr.
     """
 
+    @retry(
+        retry=retry_if_exception_type(IOError),
+        stop=stop_after_delay(600),
+        wait=wait_fixed(30),
+        reraise=True,
+        before_sleep=lambda retry_state: logger.info('Waiting for signed RPMs to become available, retrying in 30s...'),
+    )
+    def _wait_for_signed_rpms(brewroot_arch_path: str, expected_rpm_filenames: set, nvre: str, arch: str) -> List[str]:
+        rpms = os.listdir(brewroot_arch_path)
+        if not rpms:
+            raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
+        if expected_rpm_filenames:
+            missing = expected_rpm_filenames - set(rpms)
+            if missing:
+                raise IOError(
+                    f'Signed {arch} directory for {nvre} is incomplete; '
+                    f'missing {len(missing)} RPM(s): {sorted(missing)}'
+                )
+        return rpms
+
     # Pre-fetch expected RPMs per build for completeness validation when signing
     expected_rpms_by_nvr: Dict[str, Dict[str, set]] = {}  # nvr -> {arch -> set of filenames}
     if koji_api and any(mode == 'signed' for _, mode in config.arch):
@@ -258,7 +248,7 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
             by_arch: Dict[str, set] = {}
             for rpm in rpms:
                 arch = rpm["arch"]
-                filename = f"{rpm['name']}-{rpm['version']}-{rpm['release']}.{arch}.rpm"
+                filename = os.path.basename(koji.pathinfo.rpm(rpm))
                 by_arch.setdefault(arch, set()).add(filename)
             expected_rpms_by_nvr[nvr] = by_arch
 
@@ -310,8 +300,8 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
                     os.symlink(brewroot_arch_path, package_link_path)
 
                     if signed and nvr in expected_rpms_by_nvr:
-                        expected = expected_rpms_by_nvr[nvr].get(a, set())
-                        rpms = _list_and_validate_signed_rpms(brewroot_arch_path, expected, nvre, a)
+                        expected_rpm_filenames = expected_rpms_by_nvr[nvr].get(a, set())
+                        rpms = _wait_for_signed_rpms(brewroot_arch_path, expected_rpm_filenames, nvre, a)
                     else:
                         rpms = os.listdir(package_link_path)
                         if not rpms:
