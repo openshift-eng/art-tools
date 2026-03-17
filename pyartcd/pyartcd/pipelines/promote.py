@@ -112,10 +112,12 @@ class PromotePipeline:
         skip_mirror_binaries: bool = False,
         use_multi_hack: bool = False,
         signing_env: Optional[str] = None,
+        sign_only: bool = False,
     ) -> None:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
+        self.sign_only = sign_only
         self.skip_blocker_bug_check = skip_blocker_bug_check
         self.skip_attached_bug_check = skip_attached_bug_check
         self.skip_image_list = skip_image_list
@@ -135,8 +137,13 @@ class PromotePipeline:
         self._multi_enabled = False
         if not self.skip_signing and not signing_env:
             raise ValueError("--signing-env is required unless --skip-signing is set")
-        if not self.skip_sigstore and not signing_env:
+        if not self.skip_sigstore and not signing_env and not sign_only:
             raise ValueError("--signing-env is required unless --skip-sigstore is set")
+        if sign_only:
+            if self.skip_sigstore:
+                raise ValueError("--sign-only cannot be used with --skip-sigstore")
+            if not signing_env:
+                raise ValueError("--signing-env is required for --sign-only")
         self.signing_env = signing_env
 
         self._logger = self.runtime.logger
@@ -163,6 +170,16 @@ class PromotePipeline:
 
     def check_environment_variables(self):
         logger = self.runtime.logger
+
+        if self.sign_only:
+            required_vars = ["KMS_CRED_FILE", "KMS_KEY_ID", "QUAY_PASSWORD"]
+            for env_var in required_vars:
+                if not os.environ.get(env_var):
+                    msg = f"Environment variable {env_var} is not set."
+                    if not self.runtime.dry_run:
+                        raise ValueError(msg)
+                    logger.warning(msg)
+            return
 
         required_vars = ["GITHUB_TOKEN", "JIRA_TOKEN", "QUAY_PASSWORD"]
         if not self.skip_mirror_binaries and not self.skip_signing:
@@ -207,6 +224,32 @@ class PromotePipeline:
         if not VersionInfo.is_valid(release_name):
             raise ValueError(f"Release name `{release_name}` is not a valid semver.")
         logger.info("Release name: %s", release_name)
+
+        if self.sign_only:
+            # One-off: only run sigstore/cosign for an already-promoted release (ART-14732).
+            logger.info("Sign-only mode: resolving release images from Quay and running sigstore sign.")
+            _multi_enabled = group_config.get("multi_arch", {}).get("enabled", False)
+            arches = group_config.get("arches", [])
+            arches = list(set(map(brew_arch_for_go_arch, arches)))
+            if not arches:
+                raise ValueError("No arches specified in group config.")
+            if _multi_enabled:
+                arches = list(arches) + ["multi"]
+            release_infos: Dict = {}
+            for arch in arches:
+                pullspec = f"{self.DEST_RELEASE_IMAGE_REPO}:{release_name}-{arch}"
+                logger.info("Resolving %s for %s...", pullspec, arch)
+                info = await get_release_image_info(pullspec, raise_if_not_found=True)
+                if not info:
+                    raise ValueError(f"Release image not found: {pullspec}")
+                release_infos[arch] = {
+                    "image": info["image"],
+                    "digest": info["digest"],
+                    "metadata": info.get("metadata") or {"version": release_name},
+                }
+            await self.sigstore_sign(release_name, release_infos)
+            logger.info("Sign-only completed for %s.", release_name)
+            return
 
         self._slack_client.bind_channel(release_name)
         await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
@@ -2557,6 +2600,12 @@ class PromotePipeline:
     "--use-multi-hack", is_flag=True, help="Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue"
 )
 @click.option("--signing-env", type=click.Choice(("prod", "stage")), help="Signing server environment: prod or stage")
+@click.option(
+    "--sign-only",
+    "sign_only",
+    is_flag=True,
+    help="One-off: only run sigstore/cosign for an already-promoted release (e.g. repromote cosign). Skips promotion, shipment, and all other steps.",
+)
 @pass_runtime
 @click_coroutine
 async def promote(
@@ -2577,6 +2626,7 @@ async def promote(
     skip_mirror_binaries: bool,
     use_multi_hack: bool,
     signing_env: Optional[str],
+    sign_only: bool,
 ):
     pipeline = await PromotePipeline.create(
         runtime,
@@ -2596,5 +2646,6 @@ async def promote(
         skip_mirror_binaries,
         use_multi_hack,
         signing_env,
+        sign_only,
     )
     await pipeline.run()
