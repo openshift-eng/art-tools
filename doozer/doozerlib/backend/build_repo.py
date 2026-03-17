@@ -253,7 +253,7 @@ class BuildRepo:
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
-        await git_helper.run_git_async(["-C", local_dir, "commit"] + commit_opts + ["-m", message])
+        await git_helper.run_git_async(["-C", local_dir, "commit", "-q"] + commit_opts + ["-m", message])
         self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     @start_as_current_span_async(TRACER, "build_repo.tag")
