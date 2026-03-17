@@ -278,7 +278,7 @@ class ReleaseFromFbcPipeline:
             if konflux_art_images_auth_file:
                 oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
 
-            rc, stdout, stderr = exectools.cmd_gather(oc_cmd, check=False)
+            rc, stdout, stderr = exectools.cmd_gather(oc_cmd)
             if rc != 0:
                 raise RuntimeError(f"Failed to get image info for FBC {fbc_pullspec}: {stderr}")
             return stdout
@@ -851,20 +851,20 @@ async def release_from_fbc(
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
-    
+
     This command is designed for products other than OpenShift (e.g., OADP, MTA, MTC, logging).
-    It extracts NVRs from an FBC image and creates separate shipment files for 
+    It extracts NVRs from an FBC image and creates separate shipment files for
     image builds and FBC builds.
-    
+
     Note: For OpenShift releases, use the prepare-release-konflux command instead.
-    
+
     \b
     # Create shipment files using default OCP shipment repository:
     $ artcd release-from-fbc \\
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444
-    
+
     \b
     # Create shipment files with custom shipment repository:
     $ artcd release-from-fbc \\
@@ -872,7 +872,7 @@ async def release_from_fbc(
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
         --shipment-path /path/to/custom-shipment-data
-    
+
     \b
     # Create shipment files and MR (requires GITLAB_TOKEN env var):
     $ artcd release-from-fbc \\
