@@ -100,7 +100,7 @@ def releases_gen_assembly(ctx, name):
     metavar='SUGGESTIONS_URL',
     required=False,
     default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
-    help="When using --auto-previous, set custom suggestions URL, load from {major}-{minor}-{arch}.yaml",
+    help="When using --auto-previous, set custom suggestions URL, load from {major}.{minor}.yaml",
 )
 @click.option(
     '--output-file', '-o', required=False, help='Specify a file path to write the generated assembly definition to'
@@ -253,7 +253,7 @@ class GenAssemblyCli:
         await self._select_images()
         self._get_rhcos_container()
         await self._select_rpms()
-        self._calculate_previous_list()
+        await self._calculate_previous_list()
         return self._generate_assembly_definition()
 
     @staticmethod
@@ -721,7 +721,7 @@ class GenAssemblyCli:
                     )
                     self.force_is.add(package_name)
 
-    def _calculate_previous_list(self):
+    async def _calculate_previous_list(self):
         final_previous_list: Set[VersionInfo] = set()
         if self.in_flight:
             final_previous_list.add(VersionInfo.parse(self.in_flight))
@@ -739,16 +739,18 @@ class GenAssemblyCli:
                 )
             else:
                 version = self.gen_assembly_name
-            for arch in self.runtime.arches:
-                self.logger.info("Calculating previous list for %s", arch)
-                previous_list = asyncio.run(
-                    calc_upgrade_sources_async(
-                        version,
-                        arch,
-                        graph_url=self.graph_url,
-                        suggestions_url=self.suggestions_url,
-                    )
+            self.logger.info("Calculating previous list for arches: %s", self.runtime.arches)
+
+            async def _calc_for_arch(arch):
+                return await calc_upgrade_sources_async(
+                    version,
+                    arch,
+                    graph_url=self.graph_url,
+                    suggestions_url=self.suggestions_url,
                 )
+
+            results = await asyncio.gather(*(_calc_for_arch(arch) for arch in self.runtime.arches))
+            for previous_list in results:
                 final_previous_list |= set(map(VersionInfo.parse, previous_list))
         self.final_previous_list = sorted(final_previous_list)
 
