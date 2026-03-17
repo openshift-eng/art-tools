@@ -100,6 +100,7 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": True,
             "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
             "include_previous_packages": previous_packages,
+            "exclude_packages": ["kernel", "kernel-rt"] if (int(major), int(minor)) >= (4, 13) else [],
         },
         "rhel-8-server-ose-rpms": {
             "slug": "el8",
@@ -108,6 +109,7 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": False,
             "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
             "include_previous_packages": previous_packages,
+            "exclude_packages": ["kernel", "kernel-rt"] if (int(major), int(minor)) >= (4, 13) else [],
         },
         "rhel-8-server-ironic-rpms": {
             "slug": "ironic-el8",
@@ -157,6 +159,7 @@ def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
             embargo_aware=True,
             include_embargoed=config.get("include_embargoed", False),
             include_previous_packages=config.get("include_previous_packages", []),
+            exclude_packages=config.get("exclude_packages", []),
             source=BrewSource(
                 type="brew",
                 from_tags=[
@@ -329,6 +332,7 @@ async def build_plashets(
             embargoed_tags=config.source.embargoed_tags,
             tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
             include_previous_packages=config.include_previous_packages,
+            exclude_packages=config.exclude_packages,
             repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,
             dry_run=dry_run,
@@ -374,6 +378,7 @@ async def build_plashet_from_tags(
     tag_pvs: Sequence[Tuple[str, str]],
     embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
+    exclude_packages: Optional[Sequence[str]] = None,
     repo_subdir: str | None = 'os',
     poll_for: int = 0,
     data_path: str = constants.OCP_BUILD_DATA_URL,
@@ -425,6 +430,8 @@ async def build_plashet_from_tags(
         cmd.extend(["--brew-tag", tag, pv])
     for pkg in include_previous_packages:
         cmd.extend(["--include-previous-for", pkg])
+    for pkg in exclude_packages or []:
+        cmd.extend(["--exclude-package", pkg])
     if poll_for:
         cmd.extend(["--poll-for", str(poll_for)])
 
