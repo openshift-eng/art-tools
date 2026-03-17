@@ -1065,11 +1065,48 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(metadata.installed_rpms, [])
         self.logger.error.assert_not_called()
 
-    async def test_fetch_rpms_from_build_no_parent_full_package_set(self):
-        """Test fetch_rpms_from_build when no parent found, uses full package set"""
-        metadata = self._create_image_metadata('openshift/test-no-parent')
+    async def test_fetch_rpms_from_build_converts_nvrs_to_names(self):
+        """Test fetch_rpms_from_build extracts package names from NVRs stored in the DB"""
+        metadata = self._create_image_metadata('openshift/test-nvr-conversion')
 
-        # Ensure no cached packages
+        metadata.installed_rpms = None
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = [
+            'golang-race-1.19.13-1.el9_2',
+            'coreutils-single-8.32-35.el9',
+            'python3-devel-3.9.16-1.el9_2.1',
+        ]
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'golang-race', 'coreutils-single', 'python3-devel'})
+        self.assertEqual(set(metadata.installed_rpms), {'golang-race', 'coreutils-single', 'python3-devel'})
+
+    async def test_fetch_rpms_from_build_deduplicates_cross_arch_nvrs(self):
+        """Test that different NVRs of the same package (from different arches) collapse to one name"""
+        metadata = self._create_image_metadata('openshift/test-cross-arch')
+
+        metadata.installed_rpms = None
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = [
+            'golang-race-1.19.13-1.el9_2',
+            'golang-race-1.22.12-11.el9',
+        ]
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'golang-race'})
+
+    async def test_fetch_rpms_from_build_plain_names_passthrough(self):
+        """Test fetch_rpms_from_build passes through entries that aren't parseable as NVRs"""
+        metadata = self._create_image_metadata('openshift/test-plain-names')
+
         metadata.installed_rpms = None
 
         mock_build = MagicMock()
@@ -1077,12 +1114,22 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
 
-        # Mock no parent members
-        with patch.object(metadata, 'get_parent_members', return_value={}):
-            result = await metadata.fetch_rpms_from_build()
+        result = await metadata.fetch_rpms_from_build()
 
         self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
         self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2', 'pkg3'})
+
+    def test_nvr_to_name_valid_nvrs(self):
+        """Test _nvr_to_name extracts names from valid NVR strings"""
+        self.assertEqual(image.ImageMetadata._nvr_to_name('golang-race-1.19.13-1.el9_2'), 'golang-race')
+        self.assertEqual(image.ImageMetadata._nvr_to_name('coreutils-single-8.32-35.el9'), 'coreutils-single')
+        self.assertEqual(image.ImageMetadata._nvr_to_name('python3-3.6.8-51.el8_8.11'), 'python3')
+
+    def test_nvr_to_name_fallback_for_plain_names(self):
+        """Test _nvr_to_name returns original string for non-NVR inputs"""
+        self.assertEqual(image.ImageMetadata._nvr_to_name('golang-race'), 'golang-race')
+        self.assertEqual(image.ImageMetadata._nvr_to_name('python3-devel'), 'python3-devel')
+        self.assertEqual(image.ImageMetadata._nvr_to_name('pkg1'), 'pkg1')
 
     async def test_fetch_rpms_from_build_exception_handling(self):
         """Test fetch_rpms_from_build handles exceptions gracefully"""

@@ -1090,16 +1090,28 @@ class ImageMetadata(Metadata):
 
         return False
 
+    @staticmethod
+    def _nvr_to_name(nvr_string: str) -> str:
+        """Extract the package name from an NVR string, falling back to the original string."""
+        try:
+            parsed = parse_nvr(nvr_string)
+            name = parsed.get('name')
+            if name:
+                return name
+        except Exception:
+            pass
+        return nvr_string
+
     async def fetch_rpms_from_build(self) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.
 
-        Returns either the full image RPM set or difference from parent packages,
-        based on the inspect_parent configuration. Caches result in installed_rpms attribute.
+        The DB stores NVRs (e.g. "golang-race-1.19.13-1.el9_2"), but callers
+        need package names so the lockfile resolver uses the latest-version
+        code path instead of pinning stale per-arch versions.
 
         Returns:
-            set[str]: Source RPM package names - full set if inspect_parent=False,
-                     otherwise difference between this image's packages and parent packages
+            set[str]: RPM package names extracted from the stored NVRs
         """
         if hasattr(self, 'installed_rpms') and self.installed_rpms is not None:
             self.logger.debug(f"Using cached installed_rpms for {self.distgit_key}: {len(self.installed_rpms)} RPMs")
@@ -1120,15 +1132,16 @@ class ImageMetadata(Metadata):
                 self.installed_rpms = []
                 return set()
 
-            rpms = set(build.installed_rpms or [])
+            raw_rpms = set(build.installed_rpms or [])
 
-            if not rpms:
+            if not raw_rpms:
                 self.logger.debug(
                     f"Build record for {self.distgit_key} has no installed_rpms, skipping parent calculation"
                 )
                 self.installed_rpms = []
                 return set()
 
+            rpms = {self._nvr_to_name(entry) for entry in raw_rpms}
             self.installed_rpms = list(rpms)
             return rpms
 
