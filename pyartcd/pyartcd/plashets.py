@@ -411,6 +411,8 @@ async def build_plashet_from_tags(
         cmd.extend(["--repo-subdir", repo_subdir])
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
+    for pkg in exclude_packages or []:
+        cmd.extend(["--exclude-package", pkg])
     cmd.extend(
         [
             "from-tags",
@@ -428,10 +430,10 @@ async def build_plashet_from_tags(
             cmd.extend(["--embargoed-brew-tag", t])
     for tag, pv in tag_pvs:
         cmd.extend(["--brew-tag", tag, pv])
+    exclude_set = set(exclude_packages or [])
     for pkg in include_previous_packages:
-        cmd.extend(["--include-previous-for", pkg])
-    for pkg in exclude_packages or []:
-        cmd.extend(["--exclude-package", pkg])
+        if pkg not in exclude_set:
+            cmd.extend(["--include-previous-for", pkg])
     if poll_for:
         cmd.extend(["--poll-for", str(poll_for)])
 
