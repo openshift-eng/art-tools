@@ -18,6 +18,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
 from dockerfile_parse import DockerfileParser
+from elliottlib.bzutil import JIRABugTracker
 from github import Github, GithubException, PullRequest, UnknownObjectException
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -1025,7 +1026,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 
                 # Build the update payload using the retrieved string
                 issue_update = {
-                    'customfield_12319940': [{'name': target_version_segment}],
+                    JIRABugTracker.field_target_version: [{'name': target_version_segment}],
                 }
                 runtime.logger.info(
                     f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
@@ -1048,16 +1049,14 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             connect_issue_with_pr(pr, issue.key)
             try:
                 # Retrieve the value of the custom field
-                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
-                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
+                release_notes_text_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_text, None)
+                release_notes_type_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_type, None)
 
                 if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
                     # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
                     issue_update = {
-                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
-                        'customfield_12320850': {
-                            'value': 'Release Note Not Required'
-                        },  # customfield_12320850 is Release Notes Type in JIRA
+                        JIRABugTracker.field_release_notes_text: 'N/A',
+                        JIRABugTracker.field_release_notes_type: {'value': 'Release Note Not Required'},
                     }
                     # Now update the issue using the retrieved issue object
                     issue.update(fields=issue_update)
