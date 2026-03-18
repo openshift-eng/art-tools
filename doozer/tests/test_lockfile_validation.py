@@ -197,11 +197,11 @@ class TestCrossArchVersionSetValidation:
         with pytest.raises(ValueError) as exc_info:
             self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Verify error message contains specific details
+        # Verify error message contains specific details (now shows only latest versions)
         error_message = str(exc_info.value)
         assert "audit-libs" in error_message
-        assert "x86_64:{0:3.1.2-2.el9,0:3.1.5-4.el9}" in error_message
-        assert "aarch64:{0:3.1.2-2.el9,0:3.1.5-6.el9}" in error_message
+        assert "x86_64:{0:3.1.5-4.el9}" in error_message
+        assert "aarch64:{0:3.1.5-6.el9}" in error_message
 
     def test_version_set_mismatch_multiple_packages_multiple_architectures(self):
         """Test validation fails with detailed errors for multiple package mismatches across architectures."""
@@ -482,6 +482,83 @@ class TestCrossArchVersionSetValidation:
         # Act & Assert: Should not raise exception (identical version sets)
         self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
+    def test_valid_latest_version_cross_arch_with_different_historical_versions(self):
+        """Test validation passes when latest versions match across architectures despite different historical versions."""
+        # Arrange: x86_64 has 2 versions, others have 1, but latest is same across all architectures
+        rpms_info_by_arch = {
+            "x86_64": [
+                RpmInfo(
+                    name="test-package",
+                    evr="0:1.19.13-1.el9_2",
+                    checksum="sha1",
+                    repoid="repo1",
+                    size=100,
+                    sourcerpm="test-package-1.19.13-1.el9_2.src.rpm",
+                    url="url1",
+                    epoch=0,
+                    version="1.19.13",
+                    release="1.el9_2",
+                ),
+                RpmInfo(
+                    name="test-package",
+                    evr="0:1.22.12-11.el9",
+                    checksum="sha2",
+                    repoid="repo1",
+                    size=200,
+                    sourcerpm="test-package-1.22.12-11.el9.src.rpm",
+                    url="url2",
+                    epoch=0,
+                    version="1.22.12",
+                    release="11.el9",
+                ),
+            ],
+            "ppc64le": [
+                RpmInfo(
+                    name="test-package",
+                    evr="0:1.22.12-11.el9",
+                    checksum="sha3",
+                    repoid="repo2",
+                    size=200,
+                    sourcerpm="test-package-1.22.12-11.el9.src.rpm",
+                    url="url3",
+                    epoch=0,
+                    version="1.22.12",
+                    release="11.el9",
+                ),
+            ],
+            "s390x": [
+                RpmInfo(
+                    name="test-package",
+                    evr="0:1.22.12-11.el9",
+                    checksum="sha4",
+                    repoid="repo3",
+                    size=200,
+                    sourcerpm="test-package-1.22.12-11.el9.src.rpm",
+                    url="url4",
+                    epoch=0,
+                    version="1.22.12",
+                    release="11.el9",
+                ),
+            ],
+            "aarch64": [
+                RpmInfo(
+                    name="test-package",
+                    evr="0:1.22.12-11.el9",
+                    checksum="sha5",
+                    repoid="repo4",
+                    size=200,
+                    sourcerpm="test-package-1.22.12-11.el9.src.rpm",
+                    url="url5",
+                    epoch=0,
+                    version="1.22.12",
+                    release="11.el9",
+                ),
+            ],
+        }
+
+        # Act & Assert: Should pass validation (latest versions are identical across architectures)
+        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+
     def test_error_message_formatting_with_sorted_versions(self):
         """Test that error messages format version sets in sorted order for consistency."""
         # Arrange: Version sets that will be unsorted to test sorting behavior
@@ -556,10 +633,10 @@ class TestCrossArchVersionSetValidation:
         with pytest.raises(ValueError) as exc_info:
             self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Verify error message has sorted version sets for readability
+        # Verify error message shows only latest versions (not all historical versions)
         error_message = str(exc_info.value)
-        assert "x86_64:{0:1.0.0-1.el9,0:2.0.0-1.el9,0:3.0.0-1.el9}" in error_message
-        assert "aarch64:{0:1.0.0-1.el9,0:4.0.0-1.el9}" in error_message
+        assert "x86_64:{0:3.0.0-1.el9}" in error_message
+        assert "aarch64:{0:4.0.0-1.el9}" in error_message
 
     def test_mixed_single_and_multi_arch_packages_validation(self):
         """Test that single-arch packages are ignored while multi-arch version mismatches still trigger failures."""
