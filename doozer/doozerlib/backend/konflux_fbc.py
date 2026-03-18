@@ -1814,7 +1814,7 @@ class KonfluxFbcBuilder:
                     record["status"] = 0
 
                     # Sync FBC related images to art-images-share
-                    if self.assembly == "stream":
+                    if self.assembly in ["stream", "test"]:
                         if not self.dry_run:
                             try:
                                 results = pipelinerun_dict.get('status', {}).get('results', [])
