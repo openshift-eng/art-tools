@@ -32,7 +32,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     async def test_commit(self, run_git: AsyncMock, gather_git: AsyncMock):
         await self.repo.commit("commit message")
         run_git.assert_any_await(["-C", "/path/to/repo", "add", "."])
-        run_git.assert_any_await(["-C", "/path/to/repo", "commit", "-m", "commit message"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "commit", "-q", "-m", "commit message"])
         gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "rev-parse", "HEAD"], check=False)
         self.assertEqual(self.repo.commit_hash, "deadbeef")
 
