@@ -499,11 +499,27 @@ class RPMLockfileGenerator:
         self.runtime = runtime
 
     def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
-        """Validate that RPM version sets are consistent across architectures where packages exist."""
+        """Validate that RPM latest version sets are consistent across architectures where packages exist."""
         package_arch_evrs = {}
+
         for arch, rpm_list in rpms_info_by_arch.items():
+            # Group RPMs by package name
+            packages = {}
             for rpm in rpm_list:
-                package_arch_evrs.setdefault(rpm.name, {}).setdefault(arch, set()).add(rpm.evr)
+                packages.setdefault(rpm.name, []).append(rpm)
+
+            # For each package, find latest version and add to validation set
+            for package_name, package_rpms in packages.items():
+                if len(package_rpms) == 1:
+                    latest_rpm = package_rpms[0]
+                else:
+                    # Find latest using RpmInfo comparison (leverages @total_ordering)
+                    latest_rpm = package_rpms[0]
+                    for rpm in package_rpms[1:]:
+                        if rpm > latest_rpm:
+                            latest_rpm = rpm
+
+                package_arch_evrs.setdefault(package_name, {}).setdefault(arch, set()).add(latest_rpm.evr)
 
         mismatches = []
         for package_name, arch_evrs in package_arch_evrs.items():
