@@ -84,8 +84,6 @@ class BuildLayeredProductsPipeline:
             if operator_nvrs:
                 # Automatically propagate parameters if set in environment
                 propagate_params = jenkins.get_propagatable_params()
-                if propagate_params:
-                    self._logger.info(f"Propagating parameters to olm_bundle_konflux: {propagate_params}")
 
                 jenkins.start_olm_bundle_konflux(
                     build_version=self.version,

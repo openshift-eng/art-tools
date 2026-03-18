@@ -202,8 +202,6 @@ async def olm_bundle_konflux(
 
         # Automatically propagate parameters if set in environment
         propagate_params = jenkins.get_propagatable_params()
-        if propagate_params:
-            runtime.logger.info(f"Propagating parameters to build-fbc: {propagate_params}")
 
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
         if group and not group.startswith("openshift-"):

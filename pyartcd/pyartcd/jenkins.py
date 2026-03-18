@@ -667,9 +667,10 @@ def start_olm_bundle_konflux(
         params['GROUP'] = group
 
     # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
     if propagate_params:
         params.update(propagate_params)
-        logger.info(f"Propagating parameters to olm_bundle_konflux: {propagate_params}")
+        logger.info("Propagating parameters to olm_bundle_konflux: %s", propagate_params)
 
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
@@ -769,9 +770,10 @@ def start_build_fbc(
         params["FORCE_BUILD"] = force_build
 
     # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
     if propagate_params:
         params.update(propagate_params)
-        logger.info(f"Propagating parameters to build-fbc: {propagate_params}")
+        logger.info("Propagating parameters to build-fbc: %s", propagate_params)
 
     return start_build(
         job=Jobs.BUILD_FBC,
