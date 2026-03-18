@@ -630,6 +630,56 @@ Thanks for your help!\n"""
         )
 
 
+def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
+    """
+    Notify component owners when their upstream branch does not have branch protection enabled.
+    ART-14540: Builds from unprotected branches are not allowed.
+    """
+    with open(Path(doozer_working) / "record.log", "r") as file:
+        record_log: dict = record.parse_record_log(file)
+
+    entries = record.get_branch_protection_notify(record_log)
+    for entry in entries:
+        owners = entry.get("owners", "")
+        if not owners:
+            continue
+
+        source_url = entry.get("source_url", "unknown")
+        branch = entry.get("branch", "unknown")
+        distgit = entry.get("distgit", "unknown")
+        email_subject = f"[ACTION REQUIRED] Branch protection missing for {distgit} in OCP v{version}"
+        explanation_body = f"""Why am I receiving this?
+------------------------
+You are receiving this message because you are listed as an owner for an
+OpenShift related image or RPM, and the upstream source branch used to build
+it does not have branch protection enabled.
+
+Per Red Hat internal audit requirements, all branches contributing to released
+code must have branch protection enabled.
+
+What needs to happen?
+---------------------
+Branch protection must be enabled for:
+  Repository: {source_url}
+  Branch: {branch}
+
+Please enable branch protection on this branch. Until branch protection is
+enabled, builds for {distgit} will fail.
+
+If this is a temporary situation (onboarding, hotfix, emergency), the ART team
+can set 'allow_unprotected_branch: true' in the image/RPM metadata as a
+short-term override.
+
+Please direct any questions to the Automated Release Tooling team (#forum-ocp-art on slack).
+"""
+
+        mail_client.send_mail(
+            to=owners,
+            subject=email_subject,
+            content=explanation_body,
+        )
+
+
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
     """
      Send email to owners of failed image builds.

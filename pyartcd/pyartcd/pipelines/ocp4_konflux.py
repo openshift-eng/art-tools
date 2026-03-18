@@ -672,6 +672,14 @@ class KonfluxOcpPipeline:
             )
 
         await self.rebase_images(f"v{self.version}.0", self.release)
+
+        # ART-14540: Notify component owners about missing branch protection
+        util.notify_branch_protection_missing(
+            version=self.version,
+            doozer_working=self.runtime.doozer_working,
+            mail_client=self.runtime.new_mail_client(),
+        )
+
         await self.build_images()
 
         if self.mass_rebuild:
