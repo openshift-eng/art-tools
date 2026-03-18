@@ -79,7 +79,7 @@ class BaseImageHandler:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
 
-            release_plan = "ocp-art-images-base-silent"
+            ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 
             release_name = await self._create_release_from_snapshot(snapshot_name, release_plan)
             if not release_name:
