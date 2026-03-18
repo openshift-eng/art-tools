@@ -17,11 +17,19 @@ GENERAL_RHCOS_ALLOWLIST = {"gcp", "initramfs", "iso", "kernel", "metal", "openst
 BFB_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb"
 GENERAL_RHCOS_S3_URL = ""
 
+# Confidential clusters configuration
+CONFIDENTIAL_ALLOWLIST = {"azure", "qemu"}
+CONFIDENTIAL_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential"
+
 
 class SyncRhcosBfbPipeline:
     """
     Pipeline to sync RHCOS artifacts
     from the RHCOS release browser to mirror.openshift.com
+
+    Supports:
+    - BFB: NVIDIA BFB artifacts (aarch64)
+    - Confidential: Confidential clusters images (x86_64)
     """
 
     def __init__(self, runtime: Runtime, stream: str, build: str, sync_type: str = "bfb"):
@@ -32,20 +40,28 @@ class SyncRhcosBfbPipeline:
         self.major_minor = self.stream.split("-")[0]
         self.working_dir = self.runtime.working_dir
         self.artifacts_dir = self.working_dir / "rhcos-artifacts"
-        self.rhcos_base_url = f"https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/{self.stream}/builds/{self.build}/aarch64"
 
-        if sync_type not in ["bfb"]:
-            raise ValueError(f"Sync type '{sync_type}' not yet implemented.")
+        if sync_type not in ["bfb", "confidential"]:
+            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: 'bfb', 'confidential'")
 
-        # TODO: Add --enforce-allowlist as a CLI option after rhcos_sync is migrated
-        self.enforce_allowlist = self.sync_type == "bfb"  # `bfb` type syncs only certain images from meta.json
-
+        # Set architecture based on sync type
         if self.sync_type == "bfb":
+            self.arch = "aarch64"
             self.allowlist = BFB_ALLOWLIST
             self.s3_base_url = BFB_S3_URL
+        elif self.sync_type == "confidential":
+            self.arch = "x86_64"
+            self.allowlist = CONFIDENTIAL_ALLOWLIST
+            self.s3_base_url = CONFIDENTIAL_S3_URL
         else:
+            self.arch = "x86_64"  # Default for general RHCOS
             self.allowlist = GENERAL_RHCOS_ALLOWLIST
             self.s3_base_url = GENERAL_RHCOS_S3_URL
+
+        self.rhcos_base_url = f"https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/{self.stream}/builds/{self.build}/{self.arch}"
+
+        # TODO: Add --enforce-allowlist as a CLI option after rhcos_sync is migrated
+        self.enforce_allowlist = self.sync_type in ["bfb", "confidential"]  # Both bfb and confidential enforce allowlists
 
         self.meta_json = None
         self.ocp_version = None
@@ -142,9 +158,11 @@ class SyncRhcosBfbPipeline:
         """
         if self.sync_type == "bfb":
             return self.build_bfb_destinations()
+        elif self.sync_type == "confidential":
+            return self.build_confidential_destinations()
         else:
             # TODO Implement support for "general" RHCOS sync
-            raise Exception(f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' is supported.")
+            raise Exception(f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' and 'confidential' are supported.")
 
     def build_bfb_destinations(self) -> Tuple[List[str], List[str]]:
         """Build destination paths for BFB artifacts"""
@@ -172,6 +190,15 @@ class SyncRhcosBfbPipeline:
                 ]
             )
 
+        return versioned_paths, latest_paths
+
+    def build_confidential_destinations(self) -> Tuple[List[str], List[str]]:
+        """
+        Build destination paths for confidential cluster artifacts.
+        Returns (versioned_paths, latest_paths).
+        """
+        versioned_paths = [f"{self.s3_base_url}/{self.build}"]
+        latest_paths = [f"{self.s3_base_url}/latest"]  # Single global latest
         return versioned_paths, latest_paths
 
     async def sync_to_destination(self, dest_path: str):
@@ -251,6 +278,59 @@ class SyncRhcosBfbPipeline:
         else:
             raise ChildProcessError(f"AWS S3 ls failed: {stderr}")
 
+    async def should_update_confidential_latest(self) -> bool:
+        """
+        Check if we should update confidential latest directory.
+        Compares build IDs (format: RHEL_VERSION.YYYYMMDD-N) to determine newest.
+        Returns True if current build is newer than what's in latest, or if latest doesn't exist.
+        """
+        latest_path = f"{self.s3_base_url}/latest/"
+
+        rc, stdout, _ = await exectools.cmd_gather_async(["aws", "s3", "ls", latest_path], check=False)
+
+        if rc != 0 or not stdout.strip():
+            # Latest doesn't exist yet or is empty, safe to update
+            self.runtime.logger.info("Latest directory doesn't exist or is empty, will create it")
+            return True
+
+        # Parse current build ID from one of the files in latest
+        # Files look like: rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz or rhcos-qemu.x86_64.qcow2.gz (stable name)
+        # We need to find the versioned filename to extract the build ID
+        current_build = None
+        for line in stdout.strip().split('\n'):
+            if 'rhcos-' in line:
+                filename = line.split()[-1]  # Last column is filename
+                # Look for versioned filenames (contain date pattern)
+                # Format: rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz
+                if filename.startswith('rhcos-') and filename.count('-') >= 3:
+                    # Extract build ID by removing 'rhcos-' prefix and artifact suffix
+                    # rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz -> 9.6.20260309-0-qemu.x86_64.qcow2.gz
+                    without_prefix = filename[6:]  # Remove 'rhcos-'
+                    # Split and take first 4 parts: ['9', '6', '20260309', '0', ...]
+                    parts = without_prefix.split('-')
+                    if len(parts) >= 4:
+                        # Reconstruct build ID: 9.6.20260309-0
+                        current_build = f"{parts[0]}.{parts[1]}.{parts[2]}-{parts[3]}"
+                        break
+
+        if current_build is None:
+            # Couldn't parse current build, update to be safe
+            self.runtime.logger.warning(f"Could not parse current build from latest directory, will update")
+            return True
+
+        # Compare build IDs using string comparison (works because of YYYYMMDD format)
+        # Examples:
+        # "9.6.20260309-0" > "9.6.20260301-5" = True (newer date)
+        # "9.6.20260309-2" > "9.6.20260309-0" = True (same date, higher sequence)
+        is_newer = self.build > current_build
+
+        if is_newer:
+            self.runtime.logger.info(f"Build {self.build} is newer than current latest {current_build}, will update")
+        else:
+            self.runtime.logger.info(f"Build {self.build} is not newer than current latest {current_build}, skipping update")
+
+        return is_newer
+
     async def sync_artifacts(self):
         """Sync artifacts to all appropriate destinations with proper latest management"""
         versioned_paths, latest_paths = self.build_mirror_destinations()
@@ -261,28 +341,34 @@ class SyncRhcosBfbPipeline:
 
         # After versioned sync is complete, add copies with stable filenames to artifacts_dir
         # which will be synced to `latest` directories
-        self.add_stable_files_to_artifacts_dir()
+        if latest_paths:
+            self.add_stable_files_to_artifacts_dir()
 
         latest_tasks = []
 
         for latest_path in latest_paths:
-            # Check if this is the global latest (path ends with just "/latest")
-            # vs Y-stream latest - path ends with "/{major.minor}/latest" (or just "/latest-{major.minor}" for pre-release)
-            is_global_latest = latest_path.endswith("/latest") and not latest_path.endswith(
-                f"/{self.major_minor}/latest"
-            )
-
-            if is_global_latest:
-                if await self.should_update_global_latest():
-                    self.runtime.logger.info(
-                        f"Newer version does not exist on mirror, updating global latest {latest_path}"
-                    )
+            if self.sync_type == "confidential":
+                # For confidential, check if current build is newer than what's in latest
+                if await self.should_update_confidential_latest():
                     latest_tasks.append(self.sync_to_destination(latest_path))
+            elif self.sync_type == "bfb":
+                # Check if this is the global latest (path ends with just "/latest")
+                # vs Y-stream latest - path ends with "/{major.minor}/latest" (or just "/latest-{major.minor}" for pre-release)
+                is_global_latest = latest_path.endswith("/latest") and not latest_path.endswith(
+                    f"/{self.major_minor}/latest"
+                )
+
+                if is_global_latest:
+                    if await self.should_update_global_latest():
+                        self.runtime.logger.info(
+                            f"Newer version does not exist on mirror, updating global latest {latest_path}"
+                        )
+                        latest_tasks.append(self.sync_to_destination(latest_path))
+                    else:
+                        self.runtime.logger.info(f"Skipping {latest_path} update (newer version exists)")
                 else:
-                    self.runtime.logger.info(f"Skipping {latest_path} update (newer version exists)")
-            else:
-                # Y-stream latest (both stable and pre-release) - always update
-                latest_tasks.append(self.sync_to_destination(latest_path))
+                    # Y-stream latest (both stable and pre-release) - always update
+                    latest_tasks.append(self.sync_to_destination(latest_path))
 
         if latest_tasks:
             await asyncio.gather(*latest_tasks)
@@ -318,13 +404,13 @@ class SyncRhcosBfbPipeline:
 
 
 @cli.command("sync-rhcos-bfb", help="Sync RHCOS artifacts to mirror.openshift.com")
-@click.option("--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb')")
+@click.option("--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb', 'rhel-9.6-te-preview')")
 @click.option("--build", required=True, help="RHCOS build identifier (e.g., '9.6.20250707-1.3')")
 @click.option(
     "--type",
     "sync_type",
     default="bfb",
-    help="Type of RHCOS artifacts to sync: 'bfb' for NVIDIA BFB artifacts (default)",
+    help="Type: 'bfb' (NVIDIA BFB, aarch64) or 'confidential' (confidential cluster images, x86_64)",
 )
 @pass_runtime
 @click_coroutine
