@@ -64,7 +64,23 @@ class WatchReleaseCli:
         message = released_condition.message
         if message == "Release processing failed on managed pipelineRun":
             managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
-            message += f" {managed_plr}"
+            tenant, plr_name = managed_plr.split('/')
+            application_name = (
+                release_obj['metadata']
+                .get('labels', {})
+                .get("appstudio.openshift.io/application", "unknown-application")
+            )
+            managed_plr_resource = {
+                "kind": "PipelineRun",
+                "metadata": {
+                    "name": plr_name,
+                    "namespace": tenant,
+                },
+                "labels": {
+                    "appstudio.openshift.io/application": application_name,
+                },
+            }
+            message += f" {KonfluxClient.resource_url(managed_plr_resource)}"
         LOGGER.error(message)
         return False, release_obj
 
