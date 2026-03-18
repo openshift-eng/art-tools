@@ -21,6 +21,7 @@ from doozerlib.image import ImageMetadata
 from kubernetes.dynamic import exceptions
 
 LOGGER = logutil.get_logger(__name__)
+ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 
 
 class BaseImageHandler:
@@ -79,9 +80,7 @@ class BaseImageHandler:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
 
-            release_plan = "ocp-art-images-base-silent"
-
-            release_name = await self._create_release_from_snapshot(snapshot_name, release_plan)
+            release_name = await self._create_release_from_snapshot(snapshot_name)
             if not release_name:
                 self.logger.error("Failed to create release, aborting workflow")
                 return None
@@ -94,7 +93,7 @@ class BaseImageHandler:
             self.logger.info("✓ Base image workflow completed successfully")
             self.logger.info(f"  Snapshot: {snapshot_name}")
             self.logger.info(f"  Release: {release_name}")
-            self.logger.info(f"  Release plan: {release_plan}")
+            self.logger.info(f"  Release plan: {ART_IMAGES_BASE_RELEASE_PLAN}")
 
             # TODO: URL extraction and streams.yml update will be implemented
             # once we have clarity on the Release artifact structure
@@ -170,24 +169,25 @@ class BaseImageHandler:
             self.logger.error(f"Exception details: {str(e)}")
             return None
 
-    async def _create_release_from_snapshot(self, snapshot_name: str, release_plan: str) -> Optional[str]:
+    async def _create_release_from_snapshot(self, snapshot_name: str) -> Optional[str]:
         """
         Create Konflux release using the same pattern as CreateReleaseCli.new_release().
 
         Args:
             snapshot_name: Name of the snapshot to create release from
-            release_plan: Release plan to use
 
         Returns:
             str: Release name if successful, None if failed
         """
         try:
             if not self.dry_run:
-                self.logger.info(f"Verifying release plan {release_plan} exists...")
+                self.logger.info(f"Verifying release plan {ART_IMAGES_BASE_RELEASE_PLAN} exists...")
                 try:
-                    await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan)
+                    await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, ART_IMAGES_BASE_RELEASE_PLAN)
                 except exceptions.NotFoundError:
-                    raise RuntimeError(f"Release plan {release_plan} not found in namespace {self.namespace}")
+                    raise RuntimeError(
+                        f"Release plan {ART_IMAGES_BASE_RELEASE_PLAN} not found in namespace {self.namespace}"
+                    )
 
                 self.logger.info(f"Waiting for snapshot {snapshot_name} to become available...")
                 snapshot_available = await self._wait_for_snapshot_availability(snapshot_name)
@@ -215,13 +215,13 @@ class BaseImageHandler:
                 "kind": KIND_RELEASE,
                 "metadata": metadata,
                 "spec": {
-                    "releasePlan": release_plan,
+                    "releasePlan": ART_IMAGES_BASE_RELEASE_PLAN,
                     "snapshot": snapshot_name,
                 },
             }
 
             if self.dry_run:
-                self.logger.info(f"[DRY-RUN] Would create release with plan: {release_plan}")
+                self.logger.info(f"[DRY-RUN] Would create release with plan: {ART_IMAGES_BASE_RELEASE_PLAN}")
                 self.logger.info(f"[DRY-RUN] Release object: {release_obj}")
                 return f"dry-run-release-{snapshot_name}"
 
