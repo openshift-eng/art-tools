@@ -75,9 +75,9 @@ class WatchReleaseCli:
                 "metadata": {
                     "name": plr_name,
                     "namespace": tenant,
-                },
-                "labels": {
-                    "appstudio.openshift.io/application": application_name,
+                    "labels": {
+                        "appstudio.openshift.io/application": application_name,
+                    },
                 },
             }
             message += f" {KonfluxClient.resource_url(managed_plr_resource)}"
