@@ -600,6 +600,8 @@ class RPMLockfileGenerator:
             )
 
             if repos_by_arch:
+                # Note: loading repos across arches in parallel (asyncio.gather) was tested
+                # and did not improve performance. Keep sequential loading.
                 for arch, repos_for_arch in repos_by_arch.items():
                     await self.builder._load_repos(repos_for_arch, arch)
             else:
