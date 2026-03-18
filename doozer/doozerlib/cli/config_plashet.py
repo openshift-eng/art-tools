@@ -274,7 +274,7 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str]):
                         "it is not required for that arch"
                     )
 
-        exectools.cmd_assert('createrepo_c -i rpm_list .', cwd=dest_arch_path)
+        exectools.cmd_assert('createrepo_c --no-database -i rpm_list .', cwd=dest_arch_path)
         logger.info(f'Successfully created repo at {dest_arch_path}')
 
 
