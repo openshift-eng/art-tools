@@ -22,7 +22,7 @@ CONFIDENTIAL_ALLOWLIST = {"azure", "qemu"}
 CONFIDENTIAL_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential"
 
 
-class SyncRhcosBfbPipeline:
+class SyncRhcosSpecializedPipeline:
     """
     Pipeline to sync RHCOS artifacts
     from the RHCOS release browser to mirror.openshift.com
@@ -403,7 +403,7 @@ class SyncRhcosBfbPipeline:
             raise
 
 
-@cli.command("sync-rhcos-bfb", help="Sync RHCOS artifacts to mirror.openshift.com")
+@cli.command("sync-rhcos-specialized", help="Sync specialized RHCOS artifacts to mirror.openshift.com")
 @click.option("--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb', 'rhel-9.6-te-preview')")
 @click.option("--build", required=True, help="RHCOS build identifier (e.g., '9.6.20250707-1.3')")
 @click.option(
@@ -414,6 +414,6 @@ class SyncRhcosBfbPipeline:
 )
 @pass_runtime
 @click_coroutine
-async def sync_rhcos_bfb(runtime: Runtime, stream: str, build: str, sync_type: str):
-    pipeline = SyncRhcosBfbPipeline(runtime, stream, build, sync_type)
+async def sync_rhcos_specialized(runtime: Runtime, stream: str, build: str, sync_type: str):
+    pipeline = SyncRhcosSpecializedPipeline(runtime, stream, build, sync_type)
     await pipeline.run()
