@@ -541,9 +541,9 @@ class KonfluxImageBuilder:
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir, group=self._config.group_name)
 
-        # Check if SAST tasks needs to be enabled
+        # Check if SAST tasks should be enabled (default: True)
         # Image config value overrides group config value
-        group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
+        group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", True)
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
