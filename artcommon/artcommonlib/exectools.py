@@ -29,7 +29,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from future.utils import as_native_str
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from tenacity import stop_after_attempt, wait_fixed
+from tenacity import stop_after_attempt, wait_exponential
 
 SUCCESS = 0
 
@@ -493,13 +493,14 @@ def unpack_tuple_args(func):
     return wrapper
 
 
-@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
-async def manifest_tool(options, dry_run=False):
+async def manifest_tool(options: str | list[str], dry_run: bool = False, auth_file: str | None = None):
     auth_opt = ""
-    if os.environ.get("XDG_RUNTIME_DIR"):
-        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
-        if Path(auth_file).is_file():
-            auth_opt = f"--docker-cfg={auth_file}"
+    if auth_file:
+        auth_opt = f"--docker-cfg={auth_file}"
+    elif os.environ.get("XDG_RUNTIME_DIR"):
+        default_auth = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+        if Path(default_auth).is_file():
+            auth_opt = f"--docker-cfg={default_auth}"
 
     if isinstance(options, str):
         cmd = f'manifest-tool {auth_opt} {options}'
@@ -515,7 +516,31 @@ async def manifest_tool(options, dry_run=False):
         logger.warning("[DRY RUN] Would have run %s", cmd)
         return
 
-    await cmd_assert_async(cmd)
+    rc, stdout, stderr = await cmd_gather_async(cmd, check=False)
+    if rc != 0:
+        raise ChildProcessError(f"manifest-tool exited with code {rc}.\nstdout: {stdout}\nstderr: {stderr}")
+
+
+def _is_rate_limit_or_auth_error(exception: BaseException) -> bool:
+    msg = str(exception).lower()
+    return '401' in msg or '429' in msg or 'unauthorized' in msg or 'too many requests' in msg
+
+
+@limit_concurrency(10)
+@tenacity.retry(
+    reraise=True,
+    retry=tenacity.retry_if_exception(_is_rate_limit_or_auth_error),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=10, max=120),
+)
+async def manifest_tool_with_throttle(options: str | list[str], dry_run: bool = False, auth_file: str | None = None):
+    """Wrapper around manifest_tool that limits concurrency and retries on rate-limit/auth errors.
+
+    Each manifest-tool invocation spawns a separate process that independently authenticates
+    with the registry's OAuth endpoint. When many are launched in parallel, the auth endpoint
+    can rate-limit requests (429), causing subsequent API calls to fail with 401 Unauthorized.
+    """
+    await manifest_tool(options, dry_run=dry_run, auth_file=auth_file)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")

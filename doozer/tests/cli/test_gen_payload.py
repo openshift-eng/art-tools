@@ -845,7 +845,7 @@ spec:
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
-    @patch("artcommonlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
         os.environ['XDG_RUNTIME_DIR'] = 'fake'
@@ -854,7 +854,7 @@ spec:
 
         buffer = io.StringIO()
         open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
-        exec_mock.return_value = None  # do not actually run the command
+        exec_mock.return_value = (0, "", "")
         fmlsha_mock.return_value = "sha256:abcdef"
 
         arch_to_payload_entry = dict(
@@ -903,7 +903,7 @@ spec:
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
     @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.mirror_payload_content")
-    @patch("artcommonlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     @patch("aiofiles.open")
     async def test_create_multi_release_manifest_list(
         self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
@@ -911,7 +911,7 @@ spec:
         os.environ['XDG_RUNTIME_DIR'] = 'fake'
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
-        exec_mock.return_value = None  # do not actually execute command
+        exec_mock.return_value = (0, "", "")
         buffer = io.StringIO()
         open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
         fmlsha_mock.return_value = "sha256:abcdef"

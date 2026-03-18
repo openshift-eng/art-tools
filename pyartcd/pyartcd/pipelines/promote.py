@@ -27,7 +27,7 @@ from artcommonlib.arch_util import (
 )
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
-from artcommonlib.exectools import manifest_tool, to_thread
+from artcommonlib.exectools import manifest_tool_with_throttle, to_thread
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
 from artcommonlib.oc_image_info import oc_image_info__cached_async
@@ -1795,7 +1795,9 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
-        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
+        await manifest_tool_with_throttle(
+            ["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run
+        )
         auth_opt = ""
         if os.environ.get("XDG_RUNTIME_DIR"):
             auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
