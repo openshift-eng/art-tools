@@ -79,8 +79,7 @@ class BaseImageHandler:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
 
-            group_version = self.runtime.group.replace('openshift-', '').replace('.', '-')
-            release_plan = f"ocp-art-base-images-silent-{group_version}-rhel9"
+            ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 
             release_name = await self._create_release_from_snapshot(snapshot_name, release_plan)
             if not release_name:
@@ -190,11 +189,10 @@ class BaseImageHandler:
                 except exceptions.NotFoundError:
                     raise RuntimeError(f"Release plan {release_plan} not found in namespace {self.namespace}")
 
-                self.logger.info(f"Verifying snapshot {snapshot_name} exists...")
-                try:
-                    await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot_name)
-                except exceptions.NotFoundError:
-                    raise RuntimeError(f"Snapshot {snapshot_name} not found in namespace {self.namespace}")
+                self.logger.info(f"Waiting for snapshot {snapshot_name} to become available...")
+                snapshot_available = await self._wait_for_snapshot_availability(snapshot_name)
+                if not snapshot_available:
+                    raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
             application_name = self.runtime.group_config.name.replace('.', '-')
 
@@ -301,4 +299,40 @@ class BaseImageHandler:
 
         except Exception as e:
             self.logger.error(f"Failed to monitor release {release_name}: {e}")
+            return False
+
+    async def _wait_for_snapshot_availability(self, snapshot_name: str, timeout_minutes: int = 1) -> bool:
+        """
+        Wait for Konflux snapshot to become available after creation.
+
+        Args:
+            snapshot_name: Name of the snapshot to wait for
+            timeout_minutes: Maximum time to wait
+
+        Returns:
+            bool: True if snapshot becomes available, False otherwise
+        """
+        try:
+            if self.dry_run:
+                return True
+
+            timeout_seconds = timeout_minutes * 60
+            poll_interval = 10
+            elapsed = 0
+
+            while elapsed < timeout_seconds:
+                try:
+                    await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot_name)
+                    self.logger.info(f"✓ Snapshot {snapshot_name} is available")
+                    return True
+                except exceptions.NotFoundError:
+                    self.logger.info(f"Waiting for snapshot {snapshot_name}... ({elapsed}s elapsed)")
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+
+            self.logger.error(f"Snapshot {snapshot_name} not available after {timeout_minutes} minutes")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to wait for snapshot {snapshot_name}: {e}")
             return False
