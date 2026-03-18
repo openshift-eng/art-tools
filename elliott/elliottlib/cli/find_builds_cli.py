@@ -705,14 +705,14 @@ def _filter_out_attached_builds(
 
 async def find_builds_konflux(runtime, payload) -> list[dict]:
     """
-    Find konflux builds for group/assembly, respecting network mode configuration.
+    Find konflux builds for group/assembly.
 
     Args:
         runtime: The runtime object providing access to image metadata and the Konflux database.
         payload: If True, only include payload images; if False, only non-payload images.
 
     Returns:
-        list[dict]: List of build records matching the configured network mode for each image.
+        list[dict]: List of build records for each image.
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
@@ -726,10 +726,7 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
 
     LOGGER.info("Fetching NVRs from DB...")
     tasks = [
-        image.get_latest_build(
-            enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
-        )
-        for image in image_metas
+        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
     ]
     records = await asyncio.gather(*tasks)
     images_not_found: list[str] = [image_metas[i].name for i, r in enumerate(records) if r is None]
@@ -743,11 +740,11 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
 async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
-    and fetch related OLM bundle builds. Respects network mode configuration for each image.
+    and fetch related OLM bundle builds.
 
     This function:
     - Iterates over image metadata from the runtime, filtering out base-only and non-release images.
-    - For each image, determines the configured network mode and queries for the latest build matching that mode.
+    - For each image, queries for the latest build.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
     - Returns a dictionary with four categorized lists:
@@ -782,11 +779,7 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(
-            image.get_latest_build(
-                enforce_network_mode=True, el_target=image.branch_el_target(), exclude_large_columns=True
-            )
-        )
+        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
     results = await asyncio.gather(*tasks)
     images_not_found: list[str] = [image_metas[i][1].name for i, r in enumerate(results) if r is None]
     if images_not_found:

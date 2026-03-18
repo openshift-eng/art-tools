@@ -435,7 +435,6 @@ class MetadataBase(object):
         completed_before: datetime.datetime | None = None,
         extra_patterns: dict | None = None,
         exclude_large_columns: bool = False,
-        enforce_network_mode: bool = False,
         **kwargs,
     ) -> KonfluxBuildRecord | None:
         """
@@ -454,10 +453,6 @@ class MetadataBase(object):
         :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
                                       BigQuery queries to reduce query cost and latency.
                                       Default is False (include all columns).
-        :param enforce_network_mode: If True, filters builds by the configured network mode (hermetic vs non-hermetic).
-                                     For hermetic images, only hermetic builds are retrieved.
-                                     For internal-only and open images, only non-hermetic builds are retrieved.
-                                     Default is False (no network mode filtering).
         """
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
@@ -471,15 +466,6 @@ class MetadataBase(object):
                 # If this component is defined by 'is', history failures, etc, do not matter.
                 return None
             return await self.get_pinned_konflux_build(el_target=el_target)
-
-        # Handle network mode enforcement
-        if enforce_network_mode:
-            configured_network_mode = self.get_konflux_network_mode()
-            is_hermetic = configured_network_mode == "hermetic"
-            self.logger.debug(
-                f"Querying latest build for {self.distgit_key} with network_mode={configured_network_mode} (hermetic={is_hermetic})"
-            )
-            extra_patterns["hermetic"] = is_hermetic
 
         # Determine the correct group and el_target for querying builds
         # For OKD variant scans, use okd-* group for ALL images

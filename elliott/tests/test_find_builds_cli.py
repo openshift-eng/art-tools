@@ -75,9 +75,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         actual_records = await find_builds_konflux(runtime, payload=True)
         self.assertEqual(len(actual_records), 1)
         self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
-        image_meta_1.get_latest_build.assert_called_once_with(
-            enforce_network_mode=True, el_target="el8", exclude_large_columns=True
-        )
+        image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
 
 
 class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
@@ -129,12 +127,8 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         self.assertEqual(len(builds_map['olm_builds']), 1)
         self.assertEqual(builds_map['olm_builds'][0], build_3.nvr)
         self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
-        image_meta_1.get_latest_build.assert_called_once_with(
-            enforce_network_mode=True, el_target="el8", exclude_large_columns=True
-        )
-        image_meta_2.get_latest_build.assert_called_once_with(
-            enforce_network_mode=True, el_target="el9", exclude_large_columns=True
-        )
+        image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
+        image_meta_2.get_latest_build.assert_called_once_with(el_target="el9", exclude_large_columns=True)
 
 
 if __name__ == "__main__":
