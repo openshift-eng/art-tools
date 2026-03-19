@@ -182,12 +182,17 @@ class FindBugsGolangCli:
         fixed_in_versions = set()
         for existing_version in versions_to_build_map.keys():
             for fixed_version in tracker_fixed_in:
-                if (
-                    existing_version.major == fixed_version.major
-                    and existing_version.minor == fixed_version.minor
-                    and existing_version.patch >= fixed_version.patch
-                ):
-                    self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {str(existing_version)}")
+                # We only want to compare versions with the same major and minor version
+                # This is because backported patches are specific, e.g. 1.22.Y-Z can have a fix which is not present in 1.23.A-B
+                if (existing_version.major, existing_version.minor) != (fixed_version.major, fixed_version.minor):
+                    continue
+
+                existing_pre = int(existing_version.prerelease) if existing_version.prerelease else 0
+                fixed_pre = int(fixed_version.prerelease) if fixed_version.prerelease else 0
+                if existing_version.patch >= fixed_version.patch and existing_pre >= fixed_pre:
+                    self._logger.info(
+                        f"{bug.id} for {bug.whiteboard_component} is considered fixed in {str(existing_version)} since it's greater than or equal to the fixed version {str(fixed_version)} mentioned in the tracker bug."
+                    )
                     fixed_in_versions.add(existing_version)
 
         fixed = False
@@ -434,13 +439,13 @@ class FindBugsGolangCli:
                 "Then will filter to just the golang CVEs and trackers"
             )
 
+            always_exclude_statuses = ['Closed']
             exclude_status_clause = (
-                f"and status not in ({', '.join(self.exclude_bug_statuses)}) " if self.exclude_bug_statuses else ""
+                f"and status not in ({', '.join(always_exclude_statuses + self.exclude_bug_statuses)})"
             )
 
             query = (
                 'project = "OCPBUGS" '
-                'and statusCategory != done '
                 'and labels = "SecurityTracking" '
                 'and component = "Release" '
                 f'and "Target Version" in ({tr}) '
@@ -453,6 +458,7 @@ class FindBugsGolangCli:
 
             bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
             logger.info(f"Found {len(bugs)} issues from JIRA search")
+            logger.debug(f"JIRA bugs found: {[b.id for b in bugs]}")
 
         def is_valid(b: JIRABug):
             if not b.cve_id:
