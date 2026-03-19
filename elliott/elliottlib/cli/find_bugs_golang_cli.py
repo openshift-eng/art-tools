@@ -182,12 +182,17 @@ class FindBugsGolangCli:
         fixed_in_versions = set()
         for existing_version in versions_to_build_map.keys():
             for fixed_version in tracker_fixed_in:
-                if (
-                    existing_version.major == fixed_version.major
-                    and existing_version.minor == fixed_version.minor
-                    and existing_version.patch >= fixed_version.patch
+                # We only want to compare versions with the same major and minor version
+                # This is because backported patches are specific, e.g. 1.22.Y-Z can have a fix which is not present in 1.23.A-B
+                if (existing_version.major, existing_version.minor) != (fixed_version.major, fixed_version.minor):
+                    continue
+
+                if existing_version.patch >= fixed_version.patch and int(existing_version.prerelease) >= int(
+                    fixed_version.prerelease
                 ):
-                    self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {str(existing_version)}")
+                    self._logger.info(
+                        f"{bug.id} for {bug.whiteboard_component} is considered fixed in {str(existing_version)} since it's greater than or equal to the fixed version {str(fixed_version)} mentioned in the tracker bug."
+                    )
                     fixed_in_versions.add(existing_version)
 
         fixed = False
