@@ -1,4 +1,5 @@
 import asyncio
+import re
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -11,15 +12,23 @@ from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
-BFB_ALLOWLIST = {"nvidiabfb", "ostree", "oci-manifest"}
-GENERAL_RHCOS_ALLOWLIST = {"gcp", "initramfs", "iso", "kernel", "metal", "openstack", "qemu", "vmware", "dasd"}
-
-BFB_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb"
-GENERAL_RHCOS_S3_URL = ""
-
-# Confidential clusters configuration
-CONFIDENTIAL_ALLOWLIST = {"azure", "qemu"}
-CONFIDENTIAL_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential"
+# Configuration for each sync type
+SYNC_TYPE_CONFIG = {
+    "bfb": {
+        "arch": "aarch64",
+        "allowlist": {"nvidiabfb", "ostree", "oci-manifest"},
+        "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb",
+        "extract_major_minor": lambda stream: stream.split("-")[0],  # Extract OCP version: "4.20-9.6-nvidia-bfb" -> "4.20"
+        "enforce_allowlist": True,
+    },
+    "confidential": {
+        "arch": "x86_64",
+        "allowlist": {"azure", "qemu"},
+        "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential",
+        "extract_major_minor": lambda stream: stream.split("-")[1],  # Extract RHEL version: "rhel-9.6-te-preview" -> "9.6"
+        "enforce_allowlist": True,
+    },
+}
 
 
 class SyncRhcosSpecializedPipeline:
@@ -37,31 +46,21 @@ class SyncRhcosSpecializedPipeline:
         self.stream = stream
         self.build = build
         self.sync_type = sync_type
-        self.major_minor = self.stream.split("-")[0]
         self.working_dir = self.runtime.working_dir
         self.artifacts_dir = self.working_dir / "rhcos-artifacts"
 
-        if sync_type not in ["bfb", "confidential"]:
-            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: 'bfb', 'confidential'")
+        if sync_type not in SYNC_TYPE_CONFIG:
+            supported_types = ", ".join(f"'{t}'" for t in SYNC_TYPE_CONFIG.keys())
+            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: {supported_types}")
 
-        # Set architecture based on sync type
-        if self.sync_type == "bfb":
-            self.arch = "aarch64"
-            self.allowlist = BFB_ALLOWLIST
-            self.s3_base_url = BFB_S3_URL
-        elif self.sync_type == "confidential":
-            self.arch = "x86_64"
-            self.allowlist = CONFIDENTIAL_ALLOWLIST
-            self.s3_base_url = CONFIDENTIAL_S3_URL
-        else:
-            self.arch = "x86_64"  # Default for general RHCOS
-            self.allowlist = GENERAL_RHCOS_ALLOWLIST
-            self.s3_base_url = GENERAL_RHCOS_S3_URL
+        config = SYNC_TYPE_CONFIG[sync_type]
+        self.arch = config["arch"]
+        self.allowlist = config["allowlist"]
+        self.s3_base_url = config["s3_base_url"]
+        self.major_minor = config["extract_major_minor"](stream)
+        self.enforce_allowlist = config["enforce_allowlist"]
 
         self.rhcos_base_url = f"https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/{self.stream}/builds/{self.build}/{self.arch}"
-
-        # TODO: Add --enforce-allowlist as a CLI option after rhcos_sync is migrated
-        self.enforce_allowlist = self.sync_type in ["bfb", "confidential"]  # Both bfb and confidential enforce allowlists
 
         self.meta_json = None
         self.ocp_version = None
@@ -195,10 +194,15 @@ class SyncRhcosSpecializedPipeline:
     def build_confidential_destinations(self) -> Tuple[List[str], List[str]]:
         """
         Build destination paths for confidential cluster artifacts.
-        Returns (versioned_paths, latest_paths).
+        Uses RHEL version-based structure, similar to BFB's OCP version structure.
         """
-        versioned_paths = [f"{self.s3_base_url}/{self.build}"]
-        latest_paths = [f"{self.s3_base_url}/latest"]  # Single global latest
+        versioned_paths = [f"{self.s3_base_url}/{self.major_minor}/{self.build}"]
+
+        latest_paths = [
+            f"{self.s3_base_url}/{self.major_minor}/latest",  # RHEL-version-specific latest
+            f"{self.s3_base_url}/latest"                       # Global latest
+        ]
+
         return versioned_paths, latest_paths
 
     async def sync_to_destination(self, dest_path: str):
@@ -249,87 +253,53 @@ class SyncRhcosSpecializedPipeline:
 
     async def should_update_global_latest(self) -> bool:
         """
-        Check if we should update global latest directory ("latest" or "/pre-release/latest")
-        For pre-release, check existence of latest-{major}.{minor+1}/.
-        For GA'd releases, check {major}.{minor+1}/.
-        Only update if that directory does not exist.
+        Check if we should update global latest directory.
+        Only update if no higher version exists.
+
+        This handles cases where versions might skip numbers (e.g., 9.6 → 9.8, skipping 9.7)
         """
+        def parse_version(version_str: str) -> tuple:
+            major, minor = version_str.split(".")
+            return (int(major), int(minor))
 
-        # For both stable and pre-release, check if next major.minor exists
-        def get_next_major_minor(major_minor: str) -> str:
-            major, minor = map(int, major_minor.split("."))
-            return f"{major}.{minor + 1}"
-
-        next_major_minor = get_next_major_minor(self.major_minor)
+        current_version_tuple = parse_version(self.major_minor)
 
         if self.is_prerelease:
-            path_to_check = f"{self.s3_base_url}/pre-release/latest-{next_major_minor}/"
+            # For pre-release, list all latest-* directories under pre-release/
+            list_path = f"{self.s3_base_url}/pre-release/"
+            # Match: "PRE latest-4.20/" -> extract "4.20"
+            version_pattern = re.compile(r'PRE\s+latest-(\d+\.\d+)/')
         else:
-            path_to_check = f"{self.s3_base_url}/{next_major_minor}/"
+            list_path = f"{self.s3_base_url}/"
+            # Match: "PRE 4.20/" or "PRE 9.6/" -> extract "4.20" or "9.6"
+            version_pattern = re.compile(r'PRE\s+(\d+\.\d+)/')
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(["aws", "s3", "ls", path_to_check], check=False)
+        rc, stdout, stderr = await exectools.cmd_gather_async(["aws", "s3", "ls", list_path], check=False)
 
-        # If command succeeds and has non-empty output, next version exists
-        if rc == 0:
-            return not bool(stdout.strip())
-        # If command fails and has empty stderr, next version does not exist
-        elif not stderr.strip():
-            return True
-        else:
+        if rc != 0:
+            if not stderr.strip():
+                # Base path doesn't exist, safe to update
+                return True
             raise ChildProcessError(f"AWS S3 ls failed: {stderr}")
 
-    async def should_update_confidential_latest(self) -> bool:
-        """
-        Check if we should update confidential latest directory.
-        Compares build IDs (format: RHEL_VERSION.YYYYMMDD-N) to determine newest.
-        Returns True if current build is newer than what's in latest, or if latest doesn't exist.
-        """
-        latest_path = f"{self.s3_base_url}/latest/"
-
-        rc, stdout, _ = await exectools.cmd_gather_async(["aws", "s3", "ls", latest_path], check=False)
-
-        if rc != 0 or not stdout.strip():
-            # Latest doesn't exist yet or is empty, safe to update
-            self.runtime.logger.info("Latest directory doesn't exist or is empty, will create it")
-            return True
-
-        # Parse current build ID from one of the files in latest
-        # Files look like: rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz or rhcos-qemu.x86_64.qcow2.gz (stable name)
-        # We need to find the versioned filename to extract the build ID
-        current_build = None
         for line in stdout.strip().split('\n'):
-            if 'rhcos-' in line:
-                filename = line.split()[-1]  # Last column is filename
-                # Look for versioned filenames (contain date pattern)
-                # Format: rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz
-                if filename.startswith('rhcos-') and filename.count('-') >= 3:
-                    # Extract build ID by removing 'rhcos-' prefix and artifact suffix
-                    # rhcos-9.6.20260309-0-qemu.x86_64.qcow2.gz -> 9.6.20260309-0-qemu.x86_64.qcow2.gz
-                    without_prefix = filename[6:]  # Remove 'rhcos-'
-                    # Split and take first 4 parts: ['9', '6', '20260309', '0', ...]
-                    parts = without_prefix.split('-')
-                    if len(parts) >= 4:
-                        # Reconstruct build ID: 9.6.20260309-0
-                        current_build = f"{parts[0]}.{parts[1]}.{parts[2]}-{parts[3]}"
-                        break
+            if not line.strip():
+                continue
 
-        if current_build is None:
-            # Couldn't parse current build, update to be safe
-            self.runtime.logger.warning(f"Could not parse current build from latest directory, will update")
-            return True
+            match = version_pattern.search(line)
+            if not match:
+                continue
 
-        # Compare build IDs using string comparison (works because of YYYYMMDD format)
-        # Examples:
-        # "9.6.20260309-0" > "9.6.20260301-5" = True (newer date)
-        # "9.6.20260309-2" > "9.6.20260309-0" = True (same date, higher sequence)
-        is_newer = self.build > current_build
+            version_str = match.group(1)
+            existing_version_tuple = parse_version(version_str)
 
-        if is_newer:
-            self.runtime.logger.info(f"Build {self.build} is newer than current latest {current_build}, will update")
-        else:
-            self.runtime.logger.info(f"Build {self.build} is not newer than current latest {current_build}, skipping update")
+            if existing_version_tuple and existing_version_tuple > current_version_tuple:
+                self.runtime.logger.info(
+                    f"Higher version {version_str} exists, skipping global latest update for {self.major_minor}"
+                )
+                return False
 
-        return is_newer
+        return True
 
     async def sync_artifacts(self):
         """Sync artifacts to all appropriate destinations with proper latest management"""
@@ -347,28 +317,20 @@ class SyncRhcosSpecializedPipeline:
         latest_tasks = []
 
         for latest_path in latest_paths:
-            if self.sync_type == "confidential":
-                # For confidential, check if current build is newer than what's in latest
-                if await self.should_update_confidential_latest():
-                    latest_tasks.append(self.sync_to_destination(latest_path))
-            elif self.sync_type == "bfb":
-                # Check if this is the global latest (path ends with just "/latest")
-                # vs Y-stream latest - path ends with "/{major.minor}/latest" (or just "/latest-{major.minor}" for pre-release)
-                is_global_latest = latest_path.endswith("/latest") and not latest_path.endswith(
-                    f"/{self.major_minor}/latest"
-                )
+            is_global_latest = latest_path.endswith("/latest") and not latest_path.endswith(
+                f"/{self.major_minor}/latest"
+            )
 
-                if is_global_latest:
-                    if await self.should_update_global_latest():
-                        self.runtime.logger.info(
-                            f"Newer version does not exist on mirror, updating global latest {latest_path}"
-                        )
-                        latest_tasks.append(self.sync_to_destination(latest_path))
-                    else:
-                        self.runtime.logger.info(f"Skipping {latest_path} update (newer version exists)")
-                else:
-                    # Y-stream latest (both stable and pre-release) - always update
+            if is_global_latest:
+                if await self.should_update_global_latest():
+                    self.runtime.logger.info(
+                        f"Newer version does not exist on mirror, updating global latest {latest_path}"
+                    )
                     latest_tasks.append(self.sync_to_destination(latest_path))
+                else:
+                    self.runtime.logger.info(f"Skipping {latest_path} update (newer version exists)")
+            else:
+                latest_tasks.append(self.sync_to_destination(latest_path))
 
         if latest_tasks:
             await asyncio.gather(*latest_tasks)
@@ -381,13 +343,14 @@ class SyncRhcosSpecializedPipeline:
         try:
             self.meta_json = await self.fetch_rhcos_metadata()
 
-            self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get("rhcos.version", None)
-            if self.ocp_version is None:
-                raise Exception(
-                    f"Could not retrieve OCP version from `coreos-assembler.oci-imported-labels.rhcos_version` in {self.rhcos_base_url}/meta.json"
-                )
-
-            self.is_prerelease = "ec" in self.ocp_version or "rc" in self.ocp_version
+            # BFB needs OCP version for directory structure and pre-release detection
+            if self.sync_type == "bfb":
+                self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get("rhcos.version", None)
+                if self.ocp_version is None:
+                    raise Exception(
+                        f"Could not retrieve OCP version from `coreos-assembler.oci-imported-labels.rhcos_version` in {self.rhcos_base_url}/meta.json"
+                    )
+                self.is_prerelease = "ec" in self.ocp_version or "rc" in self.ocp_version
 
             artifacts = self.discover_artifacts()
             self.runtime.logger.info(f"Discovered the following artifacts: {', '.join(artifacts)}")
