@@ -440,7 +440,9 @@ class FindBugsGolangCli:
             )
 
             always_exclude_statuses = ['Closed']
-            exclude_status_clause = f"and status not in ({', '.join(always_exclude_statuses + self.exclude_bug_statuses)})"
+            exclude_status_clause = (
+                f"and status not in ({', '.join(always_exclude_statuses + self.exclude_bug_statuses)})"
+            )
 
             query = (
                 'project = "OCPBUGS" '
