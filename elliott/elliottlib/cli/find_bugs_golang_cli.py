@@ -187,9 +187,9 @@ class FindBugsGolangCli:
                 if (existing_version.major, existing_version.minor) != (fixed_version.major, fixed_version.minor):
                     continue
 
-                if existing_version.patch >= fixed_version.patch and int(existing_version.prerelease) >= int(
-                    fixed_version.prerelease
-                ):
+                existing_pre = int(existing_version.prerelease) if existing_version.prerelease else 0
+                fixed_pre = int(fixed_version.prerelease) if fixed_version.prerelease else 0
+                if existing_version.patch >= fixed_version.patch and existing_pre >= fixed_pre:
                     self._logger.info(
                         f"{bug.id} for {bug.whiteboard_component} is considered fixed in {str(existing_version)} since it's greater than or equal to the fixed version {str(fixed_version)} mentioned in the tracker bug."
                     )
@@ -439,13 +439,11 @@ class FindBugsGolangCli:
                 "Then will filter to just the golang CVEs and trackers"
             )
 
-            exclude_status_clause = (
-                f"and status not in ({', '.join(self.exclude_bug_statuses)}) " if self.exclude_bug_statuses else ""
-            )
+            always_exclude_statuses = ['Closed']
+            exclude_status_clause = f"and status not in ({', '.join(always_exclude_statuses + self.exclude_bug_statuses)})"
 
             query = (
                 'project = "OCPBUGS" '
-                'and statusCategory != done '
                 'and labels = "SecurityTracking" '
                 'and component = "Release" '
                 f'and "Target Version" in ({tr}) '
@@ -458,6 +456,7 @@ class FindBugsGolangCli:
 
             bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
             logger.info(f"Found {len(bugs)} issues from JIRA search")
+            logger.debug(f"JIRA bugs found: {[b.id for b in bugs]}")
 
         def is_valid(b: JIRABug):
             if not b.cve_id:
