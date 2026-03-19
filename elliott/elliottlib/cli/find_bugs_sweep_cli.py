@@ -467,6 +467,18 @@ def categorize_bugs_by_type(
     # Process tracker bugs
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
+    # Make sure these belong to the repos ART ships to e.g. "openshift<digit>/.."
+    invalid_tracker_bugs = set()
+    for b in tracker_bugs:
+        if '/' in b.whiteboard_component:
+            component = get_component_by_delivery_repo(runtime, b.whiteboard_component)
+            if not component:
+                logger.warning(
+                    f"Tracker bug {b.id} does not belong to the delivery repo ART ships to: {b.whiteboard_component}"
+                )
+                invalid_tracker_bugs.add(b)
+    tracker_bugs -= invalid_tracker_bugs
+
     # Validate tracker bugs' summary suffixes
     invalid_summary_trackers: type_bug_set = set()
     for b in tracker_bugs:
@@ -509,7 +521,7 @@ def categorize_bugs_by_type(
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
-            if "openshift4/" in package_name:
+            if "/" in package_name:
                 package_name = get_component_by_delivery_repo(runtime, package_name)
             if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
@@ -541,7 +553,7 @@ def categorize_bugs_by_type(
         )
 
     def _is_image_component(component: str) -> bool:
-        return component.endswith("-container") or "openshift4/" in component
+        return component.endswith("-container") or "/" in component
 
     not_found = set(tracker_bugs) - found
     if not_found:
