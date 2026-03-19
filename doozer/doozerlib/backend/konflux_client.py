@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -139,19 +140,32 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
                     LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
                     # Fall through to clone
 
-        # Clone the repository
+        # Clone the repository with retries
         cache_dir = _get_template_cache_dir()
         repo_path = cache_dir / cache_key
 
-        if repo_path.exists():
-            # Remove stale clone
-            import shutil
+        # Retry clone operation with deletion between attempts to handle race conditions
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Remove any existing directory to avoid "already exists" errors
+                if repo_path.exists():
+                    shutil.rmtree(repo_path, ignore_errors=True)
 
-            shutil.rmtree(repo_path, ignore_errors=True)
-
-        LOGGER.info(f"Cloning template repo {git_url} to {repo_path}")
-        exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}', retries=3)
-        exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                LOGGER.info(f"Cloning template repo {git_url} to {repo_path} (attempt {attempt + 1}/{max_retries})")
+                exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}')
+                exectools.cmd_assert(f'git -C {repo_path} checkout {ref}')
+                break  # Success, exit retry loop
+            except ChildProcessError as e:
+                if attempt < max_retries - 1:
+                    # Not the last attempt, wait and retry
+                    LOGGER.warning(f"Clone attempt {attempt + 1} failed: {e}. Retrying in 5 seconds...")
+                    time.sleep(5)
+                    continue
+                else:
+                    # Last attempt failed, raise the error
+                    LOGGER.error(f"All {max_retries} clone attempts failed for {git_url}")
+                    raise
 
         _TEMPLATE_REPO_CACHE[cache_key] = repo_path
         return repo_path

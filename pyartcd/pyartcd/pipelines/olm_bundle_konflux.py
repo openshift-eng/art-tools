@@ -231,7 +231,7 @@ async def olm_bundle_konflux(
                         force_build=True,
                         propagate_params=propagate_params,
                     )
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)
             else:
                 runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                 # No OCP_TARGET_VERSIONS defined, use original behavior
