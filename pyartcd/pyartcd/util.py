@@ -630,9 +630,10 @@ Thanks for your help!\n"""
         )
 
 
-def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
+async def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
     """
     Notify component owners when their upstream branch does not have branch protection enabled.
+    Uses Redis to throttle notifications: owners are only emailed once per 7 days per repo/branch.
     ART-14540: Builds from unprotected branches are not allowed.
     """
     with open(Path(doozer_working) / "record.log", "r") as file:
@@ -647,6 +648,20 @@ def notify_branch_protection_missing(version: str, doozer_working: str, mail_cli
         source_url = entry.get("source_url", "unknown")
         branch = entry.get("branch", "unknown")
         distgit = entry.get("distgit", "unknown")
+
+        # Throttle: only notify once per 7 days per repo/branch
+        # Use owner/repo instead of full URL to avoid colons in Redis keys
+        _, repo_owner, repo_name = artcommonlib.util.split_git_url(source_url)
+        redis_key = f"appdata:branch-protection-notified:{version}:{repo_owner}/{repo_name}:{branch}"
+        already_notified = await redis.get_value(redis_key)
+        if already_notified:
+            logger.info(
+                "Skipping branch protection notification for %s branch %s (already notified)",
+                source_url,
+                branch,
+            )
+            continue
+
         email_subject = f"[ACTION REQUIRED] Branch protection missing for {distgit} in OCP v{version}"
         explanation_body = f"""Why am I receiving this?
 ------------------------
@@ -678,6 +693,9 @@ Please direct any questions to the Automated Release Tooling team (#forum-ocp-ar
             subject=email_subject,
             content=explanation_body,
         )
+
+        # Mark as notified with 7-day TTL
+        await redis.set_value(redis_key, "1", expiry=604800)
 
 
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
