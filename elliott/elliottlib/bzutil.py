@@ -999,8 +999,7 @@ class JIRABugTracker(BugTracker):
         if exclude_labels:
             query += f" and labels not in ({','.join(exclude_labels)})"
         if exclude_components:
-            # https://docs.adaptavist.com/sr4js/6.55.1/features/jql-functions/included-jql-functions/calculations
-            val = ','.join(f'componentMatch("{c}*")' for c in exclude_components)
+            val = ','.join(f'"{c}"' for c in exclude_components)
             query += f" and component not in ({val})"
         # if security filtering is enabled, add the security level filter is empty or in the allowlist
         # this is to ensure that we return bugs with security levels that are allowed.
