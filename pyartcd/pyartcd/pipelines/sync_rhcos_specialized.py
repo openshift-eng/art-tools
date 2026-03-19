@@ -18,14 +18,18 @@ SYNC_TYPE_CONFIG = {
         "arch": "aarch64",
         "allowlist": {"nvidiabfb", "ostree", "oci-manifest"},
         "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb",
-        "extract_major_minor": lambda stream: stream.split("-")[0],  # Extract OCP version: "4.20-9.6-nvidia-bfb" -> "4.20"
+        "extract_major_minor": lambda stream: stream.split("-")[
+            0
+        ],  # Extract OCP version: "4.20-9.6-nvidia-bfb" -> "4.20"
         "enforce_allowlist": True,
     },
     "confidential": {
         "arch": "x86_64",
         "allowlist": {"azure", "qemu"},
         "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential",
-        "extract_major_minor": lambda stream: stream.split("-")[1],  # Extract RHEL version: "rhel-9.6-te-preview" -> "9.6"
+        "extract_major_minor": lambda stream: stream.split("-")[
+            1
+        ],  # Extract RHEL version: "rhel-9.6-te-preview" -> "9.6"
         "enforce_allowlist": True,
     },
 }
@@ -161,7 +165,9 @@ class SyncRhcosSpecializedPipeline:
             return self.build_confidential_destinations()
         else:
             # TODO Implement support for "general" RHCOS sync
-            raise Exception(f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' and 'confidential' are supported.")
+            raise Exception(
+                f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' and 'confidential' are supported."
+            )
 
     def build_bfb_destinations(self) -> Tuple[List[str], List[str]]:
         """Build destination paths for BFB artifacts"""
@@ -200,7 +206,7 @@ class SyncRhcosSpecializedPipeline:
 
         latest_paths = [
             f"{self.s3_base_url}/{self.major_minor}/latest",  # RHEL-version-specific latest
-            f"{self.s3_base_url}/latest"                       # Global latest
+            f"{self.s3_base_url}/latest",  # Global latest
         ]
 
         return versioned_paths, latest_paths
@@ -258,6 +264,7 @@ class SyncRhcosSpecializedPipeline:
 
         This handles cases where versions might skip numbers (e.g., 9.6 → 9.8, skipping 9.7)
         """
+
         def parse_version(version_str: str) -> tuple:
             major, minor = version_str.split(".")
             return (int(major), int(minor))
@@ -345,7 +352,9 @@ class SyncRhcosSpecializedPipeline:
 
             # BFB needs OCP version for directory structure and pre-release detection
             if self.sync_type == "bfb":
-                self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get("rhcos.version", None)
+                self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get(
+                    "rhcos.version", None
+                )
                 if self.ocp_version is None:
                     raise Exception(
                         f"Could not retrieve OCP version from `coreos-assembler.oci-imported-labels.rhcos_version` in {self.rhcos_base_url}/meta.json"
@@ -367,7 +376,9 @@ class SyncRhcosSpecializedPipeline:
 
 
 @cli.command("sync-rhcos-specialized", help="Sync specialized RHCOS artifacts to mirror.openshift.com")
-@click.option("--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb', 'rhel-9.6-te-preview')")
+@click.option(
+    "--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb', 'rhel-9.6-te-preview')"
+)
 @click.option("--build", required=True, help="RHCOS build identifier (e.g., '9.6.20250707-1.3')")
 @click.option(
     "--type",
