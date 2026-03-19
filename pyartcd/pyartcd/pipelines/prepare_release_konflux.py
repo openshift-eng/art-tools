@@ -1277,8 +1277,14 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("[DRY-RUN] Would have auto-merged PR with number %s", pull_number)
             else:
                 try:
-                    # Auto-merge the PR
-                    api.pulls.merge(pull_number)
+                    # Retry merge to handle race conditions where the base branch
+                    # is modified between PR creation and the merge attempt
+                    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+                    def merge_pr():
+                        api.pulls.merge(pull_number)
+
+                    merge_pr()
+
                     self.logger.info("PR to update assembly was auto-merged: %s", result.html_url)
                     await self._slack_client.say_in_thread(f":white_check_mark: PR auto-merged: {result.html_url}")
                 except Exception as ex:
