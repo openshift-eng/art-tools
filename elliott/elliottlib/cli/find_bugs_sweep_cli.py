@@ -467,7 +467,8 @@ def categorize_bugs_by_type(
     # Process tracker bugs
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
-    # Make sure these belong to the repos ART ships to e.g. "openshift<digit>/.."
+    # The newer style tracker bugs have the delivery repo as the whiteboard component
+    # Make sure these belong to the repos ART ships to (defined in image configs)
     invalid_tracker_bugs = set()
     for b in tracker_bugs:
         if '/' in b.whiteboard_component:
