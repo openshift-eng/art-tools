@@ -1,13 +1,16 @@
+import logging
 from pprint import pprint
 
 import click
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.cli.release_gen_payload import PayloadGenerator
 from doozerlib.runtime import Runtime
+
+LOGGER = logging.getLogger(__name__)
 
 
 @cli.command("inspect:stream", short_help="Inspect stream assembly for assembly issues")
@@ -18,6 +21,13 @@ from doozerlib.runtime import Runtime
 @click_coroutine
 @click.pass_obj
 async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool):
+    if runtime.build_system != "konflux" or runtime.assembly != "stream":
+        LOGGER.warning("This command is only intended to be used with --build-system=konflux and assembly=stream")
+
+    runtime.build_system = "konflux"
+    runtime.assembly = "stream"
+    runtime.assembly_type = AssemblyTypes.STREAM
+
     code = AssemblyIssueCode[code]
     runtime.initialize(config_only=True)
 
@@ -31,20 +41,20 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
         )
         if rhcos_inconsistencies:
             msg = f'Found RHCOS inconsistencies in builds {rhcos_builds}'
-            print(msg)
+            LOGGER.info(msg)
             pprint(rhcos_inconsistencies)
             assembly_issue = AssemblyIssue(msg, component='rhcos', code=code)
             if assembly_inspector.does_permit(assembly_issue):
-                print(f'Assembly permits code {code}.')
+                LOGGER.info(f'Assembly permits code {code}.')
                 if not strict:
                     exit(0)
-                print('Running in strict mode')
+                LOGGER.info('Running in strict mode')
             exit(1)
-        print(f'RHCOS builds consistent {rhcos_builds}')
+        LOGGER.info(f'RHCOS builds consistent {rhcos_builds}')
     elif code == AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT:
         requirements = runtime.group_config.rhcos.require_consistency
         if not requirements:
-            print("No cross-payload consistency requirements defined in group.yml")
+            LOGGER.info("No cross-payload consistency requirements defined in group.yml")
             exit(0)
 
         runtime.logger.info("Checking cross-payload consistency requirements defined in group.yml")
@@ -58,19 +68,16 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
             runtime, assembly_inspector, payload_generator, requirements
         )
         if issues:
-            print('Payload contents consistency requirements not satisfied')
+            LOGGER.info('Payload contents consistency requirements not satisfied')
             pprint(issues)
             not_permitted = [issue for issue in issues if not assembly_inspector.does_permit(issue)]
             if not_permitted:
-                print(f'Assembly does not permit: {not_permitted}')
-                exit(1)
+                raise ValueError(f'Assembly does not permit: {not_permitted}')
             elif strict:
-                print('Running in strict mode; saw: {issues}')
-                exit(1)
-        print('Payload contents consistency requirements satisfied')
+                raise ValueError(f'Running in strict mode; saw: {issues}')
+        LOGGER.info('Payload contents consistency requirements satisfied')
     else:
-        print(f'AssemblyIssueCode {code} not supported at this time :(')
-        exit(1)
+        raise ValueError(f'AssemblyIssueCode {code} not supported at this time :(')
 
 
 def _check_inconsistent_rhcos_rpms(
