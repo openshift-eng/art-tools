@@ -1095,6 +1095,76 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, set())
         self.assertEqual(metadata.installed_rpms, [])
 
+    async def test_fetch_rpms_from_build_uses_lockfile_seed_nvrs(self):
+        """Test fetch_rpms_from_build uses seed NVR when its DB record matches the distgit key"""
+        metadata = self._create_image_metadata('openshift/test-seed')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['seed-pkg1', 'seed-pkg2']
+        mock_build.name = 'test-image'
+
+        metadata.runtime.lockfile_seed_nvrs = ['test-image-container-v4.22.0-assembly.test']
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'seed-pkg1', 'seed-pkg2'})
+        metadata.runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
+            nvr='test-image-container-v4.22.0-assembly.test', strict=False
+        )
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+
+    async def test_fetch_rpms_from_build_seed_nvrs_no_match(self):
+        """Test fetch_rpms_from_build falls back to latest build when no seed NVR matches"""
+        metadata = self._create_image_metadata('openshift/test-no-seed')
+
+        mock_seed_build = MagicMock()
+        mock_seed_build.name = 'other-image'
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['latest-pkg1']
+
+        metadata.runtime.lockfile_seed_nvrs = ['other-container-v4.22.0-assembly.test']
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_seed_build)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'latest-pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
+
+    async def test_fetch_rpms_from_build_seed_nvr_not_in_db(self):
+        """Test fetch_rpms_from_build falls back when seed NVR not found in DB"""
+        metadata = self._create_image_metadata('openshift/test-seed-missing')
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['pkg1']
+
+        metadata.runtime.lockfile_seed_nvrs = ['nonexistent-v4.22.0-assembly.test']
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
+
+    async def test_fetch_rpms_from_build_no_seed_nvrs_attr(self):
+        """Test fetch_rpms_from_build works when runtime has no lockfile_seed_nvrs attribute"""
+        metadata = self._create_image_metadata('openshift/test-no-attr')
+
+        if hasattr(metadata.runtime, 'lockfile_seed_nvrs'):
+            del metadata.runtime.lockfile_seed_nvrs
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['pkg1']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
+
     def _setup_mock_config(self, metadata, lockfile_rpms=None):
         """Helper to setup mock config with lockfile RPMs."""
         mock_config = MagicMock()

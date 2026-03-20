@@ -1106,15 +1106,25 @@ class ImageMetadata(Metadata):
             return set(self.installed_rpms)
 
         try:
-            base_search_params = {
-                'group': self.runtime.group,
-                'outcome': "success",
-                'engine': self.runtime.build_system,
-            }
+            build = None
+            seed_nvrs = getattr(self.runtime, 'lockfile_seed_nvrs', None)
+            if isinstance(seed_nvrs, list) and seed_nvrs:
+                for nvr in seed_nvrs:
+                    candidate = await self.runtime.konflux_db.get_build_record_by_nvr(nvr=nvr, strict=False)
+                    if candidate and candidate.name == self.distgit_key:
+                        self.logger.info(f"Using seed NVR {nvr} for {self.distgit_key}")
+                        build = candidate
+                        break
 
-            base_search_params['name'] = self.distgit_key
-            # Need installed_rpms column for this operation, so don't exclude any columns
-            build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
+            if build is None:
+                base_search_params = {
+                    'group': self.runtime.group,
+                    'outcome': "success",
+                    'engine': self.runtime.build_system,
+                    'name': self.distgit_key,
+                }
+                build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
+
             if not build:
                 self.logger.debug(f"No build record found for {self.distgit_key}/{self.runtime.group}")
                 self.installed_rpms = []
