@@ -1163,6 +1163,50 @@ class KonfluxRebaser:
         self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
         return matching_artifact
 
+    def _iter_run_command_names(self, cmd: str):
+        """
+        Yield command names from a RUN instruction value.
+
+        Parses the shell command and yields only the command executables,
+        not arguments or package names.
+
+        Args:
+            cmd: RUN instruction value (shell command)
+
+        Yields:
+            Command names (e.g., 'microdnf', 'dnf')
+        """
+        # Build a list of command nodes from the AST
+        cmd_nodes = []
+
+        def append_nodes_from(node):
+            if node.kind in ["list", "compound"]:
+                sublist = node.parts if node.kind == "list" else node.list
+                for subnode in sublist:
+                    append_nodes_from(subnode)
+            elif node.kind == "command":
+                cmd_nodes.append(node)
+
+        # Remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        for word in cmd.split():
+            if word.startswith("--"):
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
+        try:
+            append_nodes_from(bashlex.parse(cmd)[0])
+        except bashlex.errors.ParsingError:
+            # If we can't parse, skip this RUN instruction
+            return
+
+        # Yield first word (command name) from each command node
+        for subcmd in cmd_nodes:
+            if subcmd.parts:
+                cmd_name = getattr(subcmd.parts[0], "word", None)
+                if cmd_name:
+                    yield cmd_name
+
     def _detect_package_manager_from_dockerfile(self, dfp: DockerfileParser) -> str:
         """
         Detect which package manager is used in the Dockerfile.
@@ -1179,11 +1223,12 @@ class KonfluxRebaser:
 
         for instruction in dfp.structure:
             if instruction['instruction'] == 'RUN':
-                value = instruction['value']
-                if re.search(r'\bmicrodnf\b', value):
-                    has_microdnf = True
-                if re.search(r'\bdnf\b', value):
-                    has_dnf = True
+                value = instruction.get('value') or ""
+                for cmd_name in self._iter_run_command_names(value):
+                    if re.search(r'(^|/)microdnf$', cmd_name):
+                        has_microdnf = True
+                    elif re.search(r'(^|/)dnf$', cmd_name):
+                        has_dnf = True
 
         if has_microdnf and has_dnf:
             self._logger.warning(

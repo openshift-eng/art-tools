@@ -843,6 +843,44 @@ USER 3000
             "Expected warning about mixed package managers",
         )
 
+    def test_get_module_enablement_commands_microdnf_with_dnf_package(self):
+        """Test _get_module_enablement_commands correctly detects microdnf when dnf appears only as package name"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
+        mock_metadata.branch_el_target.return_value = 9
+        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
+
+        # Create mock DockerfileParser with microdnf installing dnf-plugins-core package
+        # This should NOT trigger "both detected" warning
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [
+            {'instruction': 'FROM', 'value': 'ubi9-minimal'},
+            {'instruction': 'RUN', 'value': 'microdnf install -y dnf-plugins-core'},
+        ]
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
+
+        # Should use microdnf (not dnf) since dnf appears only as package name
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], "USER 0")
+        self.assertIn("RUN microdnf module enable -y", result[1])
+        self.assertIn("postgresql:15", result[1])
+
+        # Should NOT have logged a warning about mixed package managers
+        if rebaser._logger.warning.called:
+            log_calls = [call[0][0] for call in rebaser._logger.warning.call_args_list]
+            self.assertFalse(
+                any("Both dnf and microdnf detected" in msg for msg in log_calls),
+                "Should not warn about mixed package managers when 'dnf' is only a package name",
+            )
+
     def test_make_actual_release_string_ocp_with_el_suffix(self):
         """Test _make_actual_release_string uses el# suffix for OCP builds"""
         from artcommonlib.variants import BuildVariant
