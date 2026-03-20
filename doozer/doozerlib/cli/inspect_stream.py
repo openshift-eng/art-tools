@@ -2,10 +2,12 @@ from pprint import pprint
 
 import click
 from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.cli.release_gen_payload import PayloadGenerator
+from doozerlib.runtime import Runtime
 
 
 @cli.command("inspect:stream", short_help="Inspect stream assembly for assembly issues")
@@ -15,14 +17,18 @@ from doozerlib.cli.release_gen_payload import PayloadGenerator
 @click.option("--strict", default=False, type=bool, is_flag=True, help='Fail even if permitted')
 @click_coroutine
 @click.pass_obj
-async def inspect_stream(runtime, code, strict):
+async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool):
     code = AssemblyIssueCode[code]
     runtime.initialize(config_only=True)
 
     if code == AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS:
         assembly_inspector = AssemblyInspector(runtime)
         await assembly_inspector.initialize(lookup_mode=None)
-        rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(runtime, assembly_inspector)
+        package_rpm_finder = PackageRpmFinder(runtime)
+        payload_generator = PayloadGenerator(runtime, package_rpm_finder)
+        rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(
+            runtime, assembly_inspector, payload_generator
+        )
         if rhcos_inconsistencies:
             msg = f'Found RHCOS inconsistencies in builds {rhcos_builds}'
             print(msg)
@@ -42,9 +48,15 @@ async def inspect_stream(runtime, code, strict):
             exit(0)
 
         runtime.logger.info("Checking cross-payload consistency requirements defined in group.yml")
+        for img in requirements.keys():
+            runtime.late_resolve_image(img, add=True)
         assembly_inspector = AssemblyInspector(runtime)
         await assembly_inspector.initialize(lookup_mode="images")
-        issues = _check_cross_payload_consistency_requirements(runtime, assembly_inspector, requirements)
+        package_rpm_finder = PackageRpmFinder(runtime)
+        payload_generator = PayloadGenerator(runtime, package_rpm_finder)
+        issues = _check_cross_payload_consistency_requirements(
+            runtime, assembly_inspector, payload_generator, requirements
+        )
         if issues:
             print('Payload contents consistency requirements not satisfied')
             pprint(issues)
@@ -61,22 +73,28 @@ async def inspect_stream(runtime, code, strict):
         exit(1)
 
 
-def _check_inconsistent_rhcos_rpms(runtime, assembly_inspector):
+def _check_inconsistent_rhcos_rpms(
+    runtime: Runtime, assembly_inspector: AssemblyInspector, payload_generator: PayloadGenerator
+):
     rhcos_builds = []
     for arch in runtime.group_config.arches:
         build_inspector = assembly_inspector.get_rhcos_build(arch)
         rhcos_builds.append(build_inspector)
     runtime.logger.info(f"Checking following builds for inconsistency: {rhcos_builds}")
-    rhcos_inconsistencies = PayloadGenerator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
+    rhcos_inconsistencies = payload_generator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
     return rhcos_builds, rhcos_inconsistencies
 
 
-def _check_cross_payload_consistency_requirements(runtime, assembly_inspector, requirements):
+def _check_cross_payload_consistency_requirements(
+    runtime: Runtime, assembly_inspector: AssemblyInspector, payload_generator: PayloadGenerator, requirements: dict
+):
     issues = []
     for arch in runtime.group_config.arches:
         issues.extend(
-            PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
-                assembly_inspector.get_rhcos_build(arch), assembly_inspector.get_group_release_images(), requirements
+            payload_generator.find_rhcos_payload_rpm_inconsistencies(
+                assembly_inspector.get_rhcos_build(arch),
+                assembly_inspector.get_group_release_images(),
+                requirements,
             )
         )
     return issues
