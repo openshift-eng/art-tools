@@ -21,7 +21,7 @@ import click
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE, KONFLUX_RELEASE_DATA_RPA_BASE_URL
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_RPA_BASE_URL, SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
