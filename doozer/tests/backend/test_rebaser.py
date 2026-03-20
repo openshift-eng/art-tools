@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import semver
 from artcommonlib.model import Missing, Model
@@ -880,6 +880,7 @@ USER 3000
                 any("Both dnf and microdnf detected" in msg for msg in log_calls),
                 "Should not warn about mixed package managers when 'dnf' is only a package name",
             )
+
 
     def test_make_actual_release_string_ocp_with_el_suffix(self):
         """Test _make_actual_release_string uses el# suffix for OCP builds"""

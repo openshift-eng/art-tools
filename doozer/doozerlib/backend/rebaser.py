@@ -1220,10 +1220,27 @@ class KonfluxRebaser:
         """
         has_microdnf = False
         has_dnf = False
+        lines = dfp.lines
 
         for instruction in dfp.structure:
             if instruction['instruction'] == 'RUN':
                 value = instruction.get('value') or ""
+
+                # Handle heredoc RUN instructions (e.g., RUN <<EOF ... EOF)
+                delim = self._heredoc_delimiter(value)
+                if delim:
+                    startline = instruction.get("startline", 0)
+                    full_run, endline = self._extract_heredoc_run_from_lines(lines, startline, delim)
+                    if full_run is None:
+                        self._logger.warning(
+                            "Could not find closing heredoc delimiter %s for RUN at line %s",
+                            delim,
+                            startline + 1,
+                        )
+                        continue
+                    value = full_run
+
+                # Extract command names from RUN instruction
                 for cmd_name in self._iter_run_command_names(value):
                     if re.search(r'(^|/)microdnf$', cmd_name):
                         has_microdnf = True
