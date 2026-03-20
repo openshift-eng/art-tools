@@ -1163,12 +1163,55 @@ class KonfluxRebaser:
         self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
         return matching_artifact
 
-    def _get_module_enablement_commands(self, metadata: ImageMetadata, previous_lines: List[str] = None) -> List[str]:
+    def _detect_package_manager_from_dockerfile(self, dfp: DockerfileParser) -> str:
         """
-        Generate DNF module enable commands for RHEL 9+ images with lockfile modules.
+        Detect which package manager is used in the Dockerfile.
+
+        Scans RUN instructions for microdnf or dnf commands. If both are found
+        (e.g., in multistage builds with different package managers), defaults to dnf
+        with a warning.
+
+        Returns:
+            str: 'microdnf' if only microdnf is found, otherwise 'dnf'
+        """
+        has_microdnf = False
+        has_dnf = False
+
+        for instruction in dfp.structure:
+            if instruction['instruction'] == 'RUN':
+                value = instruction['value']
+                if re.search(r'\bmicrodnf\b', value):
+                    has_microdnf = True
+                if re.search(r'\bdnf\b', value):
+                    has_dnf = True
+
+        if has_microdnf and has_dnf:
+            self._logger.warning(
+                "Both dnf and microdnf detected in multistage build. "
+                "Defaulting to 'dnf module enable'. "
+                "Set dnf_modules_enable: false if module enablement fails in microdnf-only stages."
+            )
+            return 'dnf'
+
+        if has_microdnf:
+            self._logger.info("Detected microdnf usage in Dockerfile, will use 'microdnf module enable'")
+            return 'microdnf'
+
+        # Default to dnf (standard for EL9+)
+        self._logger.info("No microdnf detected in Dockerfile, defaulting to 'dnf module enable'")
+        return 'dnf'
+
+    def _get_module_enablement_commands(
+        self, metadata: ImageMetadata, dfp: DockerfileParser, previous_lines: List[str] = None
+    ) -> List[str]:
+        """
+        Generate module enable commands for RHEL 9+ images with lockfile modules.
+
+        Detects the package manager used in the Dockerfile and generates appropriate module enable commands.
 
         Args:
             metadata: ImageMetadata for the image being processed
+            dfp: DockerfileParser instance to detect package manager
             previous_lines: List of previous Dockerfile lines to check for existing USER 0
 
         Returns:
@@ -1177,9 +1220,9 @@ class KonfluxRebaser:
         if not metadata.is_lockfile_generation_enabled():
             return []
 
-        # Check if DNF module enablement is disabled
+        # Check if module enablement is disabled
         if not metadata.is_dnf_modules_enable_enabled():
-            self._logger.info(f"DNF module enablement disabled for {metadata.distgit_key}")
+            self._logger.info(f"Module enablement disabled for {metadata.distgit_key}")
             return []
 
         try:
@@ -1196,6 +1239,9 @@ class KonfluxRebaser:
         modules_list = ' '.join(sorted(modules_to_install))
         self._logger.info(f"Enabling modules for {metadata.distgit_key}: {modules_list}")
 
+        # Detect which package manager to use
+        pkg_manager = self._detect_package_manager_from_dockerfile(dfp)
+
         # Check if USER 0 was already added in recent lines
         user_zero_needed = True
         if previous_lines:
@@ -1210,7 +1256,7 @@ class KonfluxRebaser:
         commands = []
         if user_zero_needed:
             commands.append("USER 0")
-        commands.append(f"RUN dnf module enable -y {modules_list}")
+        commands.append(f"RUN {pkg_manager} module enable -y {modules_list}")
 
         return commands
 
@@ -1412,7 +1458,7 @@ class KonfluxRebaser:
                 "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
             ]
 
-        module_enable_commands = self._get_module_enablement_commands(metadata, konflux_lines)
+        module_enable_commands = self._get_module_enablement_commands(metadata, dfp, konflux_lines)
         if module_enable_commands:
             konflux_lines.extend(module_enable_commands)
 
