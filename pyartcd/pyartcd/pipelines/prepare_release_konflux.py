@@ -21,7 +21,7 @@ import click
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE, KONFLUX_RELEASE_DATA_RPA_BASE_URL
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -1519,7 +1519,7 @@ class PrepareReleaseKonfluxPipeline:
         version_major = release_version[0]
         version_minor = release_version[1]
         policy_filename = f"ocp-art-advisory-stage-{version_major}-{version_minor}.yaml"
-        policy_url = f"https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art/{policy_filename}"
+        policy_url = f"{KONFLUX_RELEASE_DATA_RPA_BASE_URL}/{policy_filename}"
 
         try:
             # Fetch the policy file

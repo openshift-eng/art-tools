@@ -204,11 +204,12 @@ class CreateReleaseCli:
                         f"ReleasePlanAdmission not found at {rpa_url}. "
                         f"Please ensure the file exists for release plan '{release_plan}'."
                     )
-                if response.status != 200:
-                    error_msg = f"Failed to fetch ReleasePlanAdmission from {rpa_url}: HTTP {response.status}"
-                    if response.status == 403:
-                        error_msg += ". 403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
-                    raise ValueError(error_msg)
+                if response.status == 403:
+                    raise ValueError(
+                        f"Failed to fetch ReleasePlanAdmission from {rpa_url}: HTTP {response.status}. "
+                        "403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
+                    )
+                response.raise_for_status()
                 content = await response.text()
 
         rpa_data = yaml.load(content)
