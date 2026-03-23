@@ -40,6 +40,7 @@ class Jobs(Enum):
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
+    BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
@@ -649,6 +650,36 @@ def start_olm_bundle_konflux(
     )
 
 
+def start_base_image_release(
+    build_version: str,
+    assembly: str,
+    base_image_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    if not base_image_nvrs:
+        logger.warning('Empty base image NVR list: skipping base image release')
+        return
+
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'NVRS': ','.join(base_image_nvrs),
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'DRY_RUN': str(dry_run).lower(),
+        'ART_TOOLS_COMMIT': 'lgarciaaco@refactor/base-image-handler-component-mapping',
+    }
+
+    return start_build(
+        job=Jobs.BASE_IMAGE_RELEASE,
+        params=params,
+        **kwargs,
+    )
+
+
 def start_sync_for_ci(version: str, **kwargs):
     return start_build(
         job=Jobs.SYNC_FOR_CI,
@@ -799,6 +830,10 @@ def update_title(title: str, append: bool = True):
     Set build title to <title>. If append is True, retrieve current title,
     append <title> and update. Otherwise, replace current title
     """
+    # Skip Jenkins API calls during debugging
+    if os.environ.get('DEBUG_MODE') == 'true':
+        logger.debug(f"Skipping Jenkins update_title: {title}")
+        return
 
     job = jenkins_client.get_job(current_job_name)
     jenkins_url = get_jenkins_url()
@@ -823,6 +858,10 @@ def update_description(description: str, append: bool = True):
     Set build description to <description>. If append is True, retrieve current description,
     append <description> and update. Otherwise, replace current description
     """
+    # Skip Jenkins API calls during debugging
+    if os.environ.get('DEBUG_MODE') == 'true':
+        logger.debug(f"Skipping Jenkins update_description: {description}")
+        return
 
     job = jenkins_client.get_job(current_job_name)
     jenkins_url = get_jenkins_url()

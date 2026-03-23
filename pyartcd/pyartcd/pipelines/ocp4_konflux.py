@@ -27,6 +27,7 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
     build_history_link_url,
+    get_base_only_images,
     get_group_images,
     get_group_rpms,
     increment_rebase_fail_counter,
@@ -133,6 +134,7 @@ class KonfluxOcpPipeline:
         self.rpm_list = [rpm.strip() for rpm in rpm_list.split(',')] if rpm_list else []
 
         self.group_images = []
+        self.base_only_images = []
         self.rebase_failures = []
 
         self.slack_client = runtime.new_slack_client()
@@ -491,6 +493,15 @@ class KonfluxOcpPipeline:
         )
         self.build_plan.active_rpm_count = len(group_rpms)
 
+        # Get list of base_only images for dynamic detection
+        self.base_only_images = await get_base_only_images(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            working_dir=Path(self.runtime.doozer_working),
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+
         # Set the image and RPM lists based on the build strategies
         self.check_building_images()
         self.check_building_rpms()
@@ -637,6 +648,35 @@ class KonfluxOcpPipeline:
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
+    def release_base_images(self):
+        """Release base images using batch NVR processing - mirrors trigger_bundle_build() pattern"""
+        if getattr(self, 'skip_base_image_release', False):
+            LOGGER.warning("Skipping base image release because --skip-base-image-release flag is set")
+            return
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            LOGGER.warning('record.log not found, skipping base image release')
+            return
+
+        try:
+            records = record_log.get('image_build_konflux', [])
+            base_image_nvrs = []
+            for record in records:
+                if record['name'] in self.base_only_images and record['status'] == '0' and record.get('nvrs', None):
+                    base_image_nvrs.append(record['nvrs'].split(',')[0])
+
+            if base_image_nvrs:
+                jenkins.start_base_image_release(
+                    build_version=self.version,
+                    assembly=self.assembly,
+                    base_image_nvrs=base_image_nvrs,
+                    doozer_data_path=self.data_path or '',
+                    doozer_data_gitref=self.data_gitref or '',
+                )
+        except Exception as e:
+            LOGGER.exception(f"Failed to trigger base image release: {e}")
+
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
         if not record_log_path.exists():
@@ -666,6 +706,11 @@ class KonfluxOcpPipeline:
         )
 
     async def rebase_and_build_images(self):
+        # Skip actual build operations during debugging
+        if os.environ.get('DEBUG_MODE') == 'true':
+            LOGGER.info("DEBUG_MODE: Skipping rebase_and_build_images operations")
+            return
+
         if self.mass_rebuild:
             await self.slack_client.say(
                 f':construction: Starting image builds for {self.version} mass rebuild :construction:'
@@ -747,6 +792,7 @@ class KonfluxOcpPipeline:
             # Track critical failures while ensuring problematic operations attempt to run
             critical_failures = []
 
+            self.release_base_images()
             await self.sync_images()
 
             if uses_konflux_imagestream_override(self.version):
@@ -757,6 +803,7 @@ class KonfluxOcpPipeline:
                     f'Skipping bug sweep for {self.version} since it is not in the override list and is handled by ocp4'
                 )
 
+            # self.release_base_images()
             self.trigger_bundle_build()
 
             # Wrap problematic operations to prevent them from blocking each other or clean_up

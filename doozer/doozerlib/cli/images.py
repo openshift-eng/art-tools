@@ -1548,8 +1548,8 @@ def release_to_base_repo(runtime, nvrs):
                 validated_images.append((metadata, nvr, pullspec))
 
             if not validated_images:
-                red_print("No images qualified for workflow")
-                return False
+                green_print("No images qualified for workflow - skipping as successful no-op")
+                return True
 
             green_print(f"✓ Processing {len(validated_images)} base images through snapshot-to-release workflow:")
             print(f"  Group: {runtime.group}")
