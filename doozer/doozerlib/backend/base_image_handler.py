@@ -7,7 +7,7 @@ with URL extraction and streams.yml updates to be implemented later.
 """
 
 import asyncio
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from artcommonlib import logutil
 from artcommonlib.util import (
@@ -38,20 +38,17 @@ class BaseImageHandler:
     - Create PR to update streams.yml with new URLs
     """
 
-    def __init__(self, metadata: ImageMetadata, nvr: str, image_pullspec: str, dry_run: bool = False):
+    def __init__(self, runtime, image_data_list: List[Tuple[ImageMetadata, str, str]], dry_run: bool = False):
         """
-        Initialize BaseImageHandler.
+        Initialize handler for batch processing (single image = batch of 1).
 
         Args:
-            metadata: ImageMetadata instance containing component information
-            nvr: Build NVR (Name-Version-Release)
-            image_pullspec: Original Konflux build image pullspec
-            dry_run: Whether this is a dry run
+            runtime: Runtime instance
+            image_data_list: List of (ImageMetadata, nvr, pullspec) tuples
+            dry_run: Whether to perform dry run
         """
-        self.metadata = metadata
-        self.runtime = metadata.runtime
-        self.nvr = nvr
-        self.image_pullspec = image_pullspec
+        self.runtime = runtime
+        self.image_data_list = image_data_list
         self.dry_run = dry_run
         self.logger = LOGGER
 
@@ -73,9 +70,9 @@ class BaseImageHandler:
             Tuple[str, str]: (release_name, snapshot_name) if successful, None if failed
         """
         try:
-            self.logger.info(f"Starting base image snapshot-release workflow for NVR: {self.nvr}")
+            self.logger.info(f"Starting base image snapshot-release workflow for {len(self.image_data_list)} images")
 
-            snapshot_name = await self._create_snapshot(self.nvr)
+            snapshot_name = await self._create_snapshot()
             if not snapshot_name:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
@@ -95,35 +92,26 @@ class BaseImageHandler:
             self.logger.info(f"  Release: {release_name}")
             self.logger.info(f"  Release plan: {ART_IMAGES_BASE_RELEASE_PLAN}")
 
-            # TODO: URL extraction and streams.yml update will be implemented
-            # once we have clarity on the Release artifact structure
-
-            return release_name, snapshot_name  # Return release info instead of URLs for now
+            return release_name, snapshot_name
 
         except Exception as e:
             self.logger.error(f"Base image workflow failed: {e}")
             return None
 
-    async def _create_snapshot(self, nvr: str) -> Optional[str]:
+    async def _create_snapshot(self) -> Optional[str]:
         """
-        Create Konflux snapshot using the same pattern as CreateSnapshotCli.
-
-        This creates the snapshot object directly and uses konflux_client._create()
-        to match the existing patterns in CreateSnapshotCli and CreateReleaseCli.
-
-        Args:
-            nvr: Build NVR to create snapshot from
+        Create snapshot from image_data_list (always batch)
 
         Returns:
             str: Snapshot name if successful, None if failed
         """
         try:
-            component_name = self.metadata.distgit_key
-            timestamp = get_utc_now_formatted_str()
             group_safe = normalize_group_name_for_k8s(self.runtime.group)
             if not group_safe:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
-            snapshot_name = f"{group_safe}-{component_name}-{timestamp}"
+
+            timestamp = get_utc_now_formatted_str()
+            snapshot_name = f"{group_safe}-batch-base-images-{timestamp}"
 
             if self.dry_run:
                 self.logger.info(f"[DRY-RUN] Would create snapshot: {snapshot_name}")
@@ -131,8 +119,20 @@ class BaseImageHandler:
 
             application_name = self.runtime.group_config.name.replace('.', '-')
 
-            comp_name = f"{application_name}-{self.metadata.distgit_key}".replace(".", "-").replace("_", "-")
-            comp_name = f"ose-{comp_name[10:]}" if comp_name.startswith("openshift-") else comp_name
+            components = []
+            for metadata, nvr, image_pullspec in self.image_data_list:
+                base_component = metadata.config.distgit.component
+                if base_component.endswith("-container"):
+                    base_component = base_component[:-10]
+
+                comp_name = f"{application_name}-{base_component}".replace(".", "-").replace("_", "-")
+                comp_name = f"ose-{comp_name[10:]}" if comp_name.startswith("openshift-") else comp_name
+                components.append(
+                    {
+                        "name": comp_name,
+                        "containerImage": image_pullspec,
+                    }
+                )
 
             snapshot_obj = {
                 "apiVersion": API_VERSION,
@@ -147,26 +147,27 @@ class BaseImageHandler:
                 },
                 "spec": {
                     "application": application_name,
-                    "components": [
-                        {
-                            "name": comp_name,
-                            "containerImage": self.image_pullspec,
-                        }
-                    ],
+                    "components": components,
                 },
             }
 
-            created_snapshot = await self.konflux_client._create(snapshot_obj)
-            actual_snapshot_name = created_snapshot.metadata.name
-            snapshot_url = self.konflux_client.resource_url(created_snapshot)
-
-            self.logger.info(f"✓ Created base-image snapshot: {snapshot_url}")
-            return actual_snapshot_name
+            return await self._create_snapshot_object(snapshot_obj)
 
         except Exception as e:
-            self.logger.error(f"Failed to create snapshot from NVR {nvr}: {e}")
+            self.logger.error(f"Failed to create snapshot: {e}")
             self.logger.error(f"Exception type: {type(e).__name__}")
             self.logger.error(f"Exception details: {str(e)}")
+            return None
+
+    async def _create_snapshot_object(self, snapshot_obj) -> Optional[str]:
+        """Create snapshot resource with unique timestamped name"""
+        try:
+            result_snapshot = await self.konflux_client._create(snapshot_obj)
+            snapshot_url = self.konflux_client.resource_url(result_snapshot)
+            self.logger.info(f"✓ Created base-image snapshot: {snapshot_url}")
+            return result_snapshot.metadata.name
+        except Exception as e:
+            self.logger.error(f"Failed to create snapshot: {e}")
             return None
 
     async def _create_release_from_snapshot(self, snapshot_name: str) -> Optional[str]:

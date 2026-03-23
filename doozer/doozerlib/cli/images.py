@@ -17,6 +17,7 @@ import koji
 import yaml
 from artcommonlib import exectools, logutil
 from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
@@ -27,7 +28,6 @@ from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, option_commit_message, option_push, pass_runtime, validate_semver_major_minor_patch
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
 
 
@@ -1453,46 +1453,76 @@ def query_rpm_version(runtime, repo_type):
     click.echo("version: {}".format(version))
 
 
-@cli.command("images:release-to-base-repo", short_help="Process base image through snapshot-to-release workflow")
+@cli.command("images:release-to-base-repo", short_help="Process base images through snapshot-to-release workflow")
 @click.option(
-    '--image',
-    metavar='IMAGE_NAME',
+    '--nvrs',
+    metavar='NVRS',
     required=True,
-    help='Image name/distgit key to process (e.g., openshift-enterprise-base-rhel9)',
-)
-@click.option(
-    '--nvr',
-    metavar='NVR',
-    required=True,
-    help='Build NVR (Name-Version-Release) for the completed build',
-)
-@click.option(
-    '--image-pullspec',
-    metavar='PULLSPEC',
-    required=True,
-    help='Konflux build image pullspec (e.g., quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:...)',
+    help='Comma-separated list of build NVRs to process',
 )
 @pass_runtime
-def release_to_base_repo(runtime, image, nvr, image_pullspec):
+def release_to_base_repo(runtime, nvrs):
     """
-    Process a completed base image build through the snapshot-to-release workflow.
+    Process completed base image builds through the snapshot-to-release workflow.
     
-    This command handles the base image workflow that:
-    1. Creates a Konflux snapshot from the build NVR
-    2. Creates a release from the snapshot using the appropriate release plan
-    3. Waits for release completion
+    This command handles the batch base image workflow that:
+    1. Resolves NVRs to image metadata using Konflux infrastructure
+    2. Creates a unified Konflux snapshot from all base image builds
+    3. Creates a release from the snapshot using the appropriate release plan
+    4. Waits for release completion
     
     This is intended to be called as a separate job after base image builds complete.
     Only processes images configured with base_only: true and snapshot_release: true.
     
     Examples:
     
-    Process base image workflow:
+    Process single base image workflow:
     doozer --group openshift-4.22 images:release-to-base-repo \\
-        --image openshift-enterprise-base-rhel9 \\
-        --nvr openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9 \\
-        --image-pullspec quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:59bc2e8f4365f01f6dcdba4b7f8a43e61f85d90ffc59d7031f145ae06592a656
+        --nvrs openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9
+    
+    Process multiple base images workflow:
+    doozer --group openshift-4.22 images:release-to-base-repo \\
+        --nvrs "nvr1,nvr2,nvr3"
     """
+
+    async def _resolve_nvrs_to_image_params(runtime, nvr_list):
+        """
+        Resolve NVRs to image parameters using Konflux infrastructure.
+        Returns list of (ImageMetadata, nvr, pullspec) tuples.
+        """
+        # Bind KonfluxBuildRecord for queries
+        runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        # Batch fetch build records (Konflux equivalent of get_build_objects)
+        build_records = await runtime.konflux_db.get_build_records_by_nvrs(nvr_list, exclude_large_columns=True)
+
+        resolved_params = []
+        for record, nvr in zip(build_records, nvr_list):
+            try:
+                if record is None:
+                    red_print(f"Warning: No build record found for NVR '{nvr}'")
+                    continue
+
+                # Extract component name from Konflux record
+                component_name = record.name
+
+                # Use existing runtime.image_map for metadata resolution
+                if component_name not in runtime.image_map:
+                    red_print(
+                        f"Warning: Component '{component_name}' from NVR '{nvr}' not found in group {runtime.group}"
+                    )
+                    continue
+
+                metadata = runtime.image_map[component_name]
+                pullspec = record.image_pullspec
+
+                resolved_params.append((metadata, nvr, pullspec))
+
+            except Exception as e:
+                red_print(f"Error processing NVR '{nvr}': {e}")
+                continue
+
+        return resolved_params
 
     async def run_workflow():
         logger = logutil.get_logger(__name__)
@@ -1500,56 +1530,55 @@ def release_to_base_repo(runtime, image, nvr, image_pullspec):
         try:
             runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
 
-            if image not in runtime.image_map:
-                red_print(f"Error: Image '{image}' not found in group {runtime.group}")
-                available_images = list(runtime.image_map.keys())
-                yellow_print(
-                    f"Available images: {', '.join(available_images[:10])}{'...' if len(available_images) > 10 else ''}"
-                )
+            nvr_list = [nvr.strip() for nvr in nvrs.split(',')]
+
+            # Resolve NVRs to image data (async)
+            image_data_list = await _resolve_nvrs_to_image_params(runtime, nvr_list)
+
+            if not image_data_list:
+                red_print("No valid base images found")
                 return False
 
-            metadata: ImageMetadata = runtime.image_map[image]
+            # Validate all qualify for base image workflow
+            validated_images = []
+            for metadata, nvr, pullspec in image_data_list:
+                if not (metadata.is_base_image() and metadata.is_snapshot_release_enabled()):
+                    red_print(f"Skipping {metadata.distgit_key}: not configured for base image workflow")
+                    continue
+                validated_images.append((metadata, nvr, pullspec))
 
-            is_base_image = metadata.is_base_image()
-            is_snapshot_release = metadata.is_snapshot_release_enabled()
-
-            if not is_base_image:
-                red_print(f"Error: Image '{image}' is not configured as a base image (base_only: true)")
-                logger.info(f"Image {metadata.distgit_key} is not a base image, skipping snapshot-release workflow")
+            if not validated_images:
+                red_print("No images qualified for workflow")
                 return False
 
-            if not is_snapshot_release:
-                red_print(f"Error: Image '{image}' does not have snapshot_release enabled")
-                logger.info(f"Image {metadata.distgit_key} does not have snapshot_release enabled, skipping workflow")
-                return False
-
-            green_print("✓ Processing base image through snapshot-to-release workflow:")
+            green_print(f"✓ Processing {len(validated_images)} base images through snapshot-to-release workflow:")
             print(f"  Group: {runtime.group}")
-            print(f"  Image: {image}")
-            print(f"  NVR: {nvr}")
-            print(f"  Pullspec: {image_pullspec}")
+            for metadata, nvr, pullspec in validated_images:
+                print(f"  Image: {metadata.distgit_key}")
+                print(f"  NVR: {nvr}")
             print()
 
-            handler = BaseImageHandler(metadata, nvr, image_pullspec, dry_run=False)
+            # Always batch mode (might be batch of 1)
+            handler = BaseImageHandler(runtime, validated_images, dry_run=False)
             result = await handler.process_base_image_completion()
 
             if result:
                 release_name, snapshot_name = result
-                green_print(f"✓ Base image workflow completed successfully for {metadata.distgit_key}")
+                green_print(f"✓ Base image workflow completed successfully for {len(validated_images)} images")
                 print(f"  Release: {release_name}")
                 print(f"  Snapshot: {snapshot_name}")
-                logger.info(f"✓ Base image workflow completed successfully for {metadata.distgit_key}")
+                logger.info(f"✓ Base image workflow completed successfully for {len(validated_images)} images")
                 logger.info(f"  Release: {release_name}")
                 logger.info(f"  Snapshot: {snapshot_name}")
                 return True
             else:
-                red_print(f"✗ Base image workflow failed for {metadata.distgit_key}")
-                logger.warning(f"Base image workflow failed for {metadata.distgit_key}")
+                red_print("✗ Base image workflow failed for batch")
+                logger.warning("Base image workflow failed for batch")
                 return False
 
         except Exception as e:
             red_print(f"✗ Base image workflow failed with exception: {e}")
-            logger.error(f"Base image workflow error for {image}: {e}")
+            logger.error(f"Base image workflow error: {e}")
             logger.debug(f"Base image workflow traceback: {traceback.format_exc()}")
             return False
 

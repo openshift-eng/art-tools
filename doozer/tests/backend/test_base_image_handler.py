@@ -14,13 +14,23 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.runtime.assembly = "stream"
         self.runtime.product = "ocp"
 
-        image_model = Model({"name": "test-base", "base_only": True, "snapshot_release": True})
+        image_model = Model(
+            {
+                "name": "test-base",
+                "base_only": True,
+                "snapshot_release": True,
+                "distgit": {"component": "ose-test-base-container"},
+            }
+        )
         data_obj = Model({"key": "test-base", "data": image_model, "filename": "test-base.yaml"})
         self.metadata = ImageMetadata(self.runtime, data_obj)
         self.metadata.distgit_key = "test-base"
 
         self.nvr = "test-base-container-v1.0.0-1.el9"
         self.image_pullspec = "quay.io/test/test-base:latest"
+
+        # Create image_data_list for new constructor
+        self.image_data_list = [(self.metadata, self.nvr, self.image_pullspec)]
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -34,7 +44,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.metadata, self.nvr, self.image_pullspec, dry_run=True)
+        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=True)
 
         with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
             with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
@@ -56,7 +66,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.metadata, self.nvr, self.image_pullspec, dry_run=False)
+        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=False)
 
         with patch.object(handler, "_create_snapshot", return_value=None):
             result = await handler.process_base_image_completion()
