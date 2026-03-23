@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -111,7 +110,8 @@ class PrepareReleaseKonfluxPipeline:
         self.updated_assembly_group_config = None
         self.olm_operators = None
         self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
-        self.fbc_build_errors = []  # Track FBC build errors for UNSTABLE marking
+        self.bundle_build_errors = []
+        self.fbc_build_errors = []
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -235,25 +235,14 @@ class PrepareReleaseKonfluxPipeline:
         if err:
             raise err
 
-        await self.set_shipment_mr_ready()
+        deferred_build_errors = self._deferred_build_errors()
+        if not deferred_build_errors:
+            await self.set_shipment_mr_ready()
         await self.verify_payload()
 
-        # Check for FBC build errors and exit with code 2 for UNSTABLE status
-        if self.fbc_build_errors:
-            error_count = len(self.fbc_build_errors)
-            error_summary = f"Completed with {error_count} FBC build error(s):\n" + "\n".join(
-                f"  - {error.split(chr(10))[0]}"
-                for error in self.fbc_build_errors  # Only include first line of each error
-            )
-            self.logger.warning(error_summary)
-            await self._slack_client.say_in_thread(
-                f":warning: prepare-release-konflux completed with {error_count} FBC build error(s). "
-                f"Successfully built FBC builds have been attached. Job marked as UNSTABLE.\n"
-                f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in self.fbc_build_errors)}"
-            )
-            # Exit with code 2 to mark Jenkins job as UNSTABLE
-            # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
-            sys.exit(2)
+        if deferred_build_errors:
+            await self.report_deferred_build_failures(deferred_build_errors)
+            raise RuntimeError("Deferred bundle/FBC build failures were encountered. Shipment MR will remain draft.")
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -542,8 +531,18 @@ class PrepareReleaseKonfluxPipeline:
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
         if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
-            bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            bundle_nvrs, bundle_errors = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
             kind_to_builds["metadata"] += bundle_nvrs
+            if bundle_errors:
+                self.record_deferred_build_errors(
+                    "bundle",
+                    bundle_errors,
+                    [
+                        ("operator", "operator"),
+                        ("operator_nvr", "operator_nvr"),
+                        ("bundle_nvr", "bundle_nvr"),
+                    ],
+                )
 
         await self.verify_attached_operators(kind_to_builds)
 
@@ -555,15 +554,15 @@ class PrepareReleaseKonfluxPipeline:
             )
             kind_to_builds["fbc"] = fbc_builds
             if fbc_errors:
-                # Track FBC build errors for later reporting
-                for error in fbc_errors:
-                    error_summary = (
-                        f"FBC build failed for operator={error.get('operator')}, "
-                        f"operator_nvr={error.get('operator_nvr')}, "
-                        f"bundle_nvr={error.get('bundle_nvr')}: {error.get('error')}\n"
-                        f"Traceback: {error.get('traceback')}"
-                    )
-                    self.fbc_build_errors.append(error_summary)
+                self.record_deferred_build_errors(
+                    "FBC",
+                    fbc_errors,
+                    [
+                        ("operator", "operator"),
+                        ("operator_nvr", "operator_nvr"),
+                        ("bundle_nvr", "bundle_nvr"),
+                    ],
+                )
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
@@ -736,7 +735,7 @@ class PrepareReleaseKonfluxPipeline:
         self.logger.info(f"Returning {len(successful_nvrs)} successful FBC build(s)")
         return successful_nvrs, errors
 
-    async def find_or_build_bundle_builds(self, nvrs: list[str]) -> list[str]:
+    async def find_or_build_bundle_builds(self, nvrs: list[str]) -> tuple[list[str], list[dict]]:
         """
         For the given list of NVRs, determine which are OLM operators and fetch bundle builds for them.
         Trigger bundle builds for them if needed.
@@ -745,7 +744,10 @@ class PrepareReleaseKonfluxPipeline:
             nvrs (list[str]): List of NVRs to check and build bundles for.
 
         Returns:
-            list[str]: List of bundle NVRs that were found or built.
+            tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
+
+        Raises:
+            IOError: If the command produces no parseable output.
         """
 
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
@@ -768,9 +770,71 @@ class PrepareReleaseKonfluxPipeline:
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
-        stdout = await self.execute_command_with_logging(cmd)
-        bundle_nvrs = json.loads(stdout).get("nvrs", []) if stdout else []
-        return bundle_nvrs
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+
+        try:
+            output_data = json.loads(stdout)
+        except json.JSONDecodeError as ex:
+            error_msg = f"Failed to parse bundle build JSON output (rc={rc}): {ex}"
+            if stdout:
+                error_msg += f"\nStdout: {stdout}"
+            if stderr:
+                error_msg += f"\nStderr: {stderr}"
+            self.logger.error(error_msg)
+            raise IOError(error_msg)
+
+        successful_nvrs = output_data.get("nvrs", [])
+        errors = output_data.get("errors", [])
+        failed_count = output_data.get("failed_count", 0)
+        success_count = output_data.get("success_count", 0)
+
+        if errors:
+            self.logger.warning(
+                f"Bundle rebase-and-build completed with {failed_count} failure(s) and {success_count} success(es)"
+            )
+            for error in errors:
+                error_msg = (
+                    f"Failed to build bundle for operator={error.get('operator')}, "
+                    f"operator_nvr={error.get('operator_nvr')}: {error.get('error')}"
+                )
+                self.logger.error(error_msg)
+
+        self.logger.info(f"Returning {len(successful_nvrs)} successful bundle build(s)")
+        return successful_nvrs, errors
+
+    def _deferred_build_errors(self) -> list[str]:
+        return self.bundle_build_errors + self.fbc_build_errors
+
+    def record_deferred_build_errors(
+        self, build_kind: str, errors: list[dict], detail_fields: list[tuple[str, str]]
+    ) -> None:
+        formatted_errors = []
+        for error in errors:
+            details = ", ".join(
+                f"{label}={error.get(field)}" for field, label in detail_fields if error.get(field) is not None
+            )
+            error_summary = f"{build_kind} build failed"
+            if details:
+                error_summary += f" for {details}"
+            error_summary += f": {error.get('error')}\nTraceback: {error.get('traceback')}"
+            formatted_errors.append(error_summary)
+
+        if build_kind.lower() == "bundle":
+            self.bundle_build_errors.extend(formatted_errors)
+        else:
+            self.fbc_build_errors.extend(formatted_errors)
+
+    async def report_deferred_build_failures(self, deferred_build_errors: list[str]) -> None:
+        error_count = len(deferred_build_errors)
+        error_summary = f"Completed with {error_count} deferred bundle/FBC build failure(s):\n" + "\n".join(
+            f"  - {error.split(chr(10))[0]}" for error in deferred_build_errors
+        )
+        self.logger.warning(error_summary)
+        await self._slack_client.say_in_thread(
+            f":warning: prepare-release-konflux completed with {error_count} deferred bundle/FBC build failure(s). "
+            "Successfully built bundle/FBC builds have been attached, but the shipment MR remains draft.\n"
+            f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in deferred_build_errors)}"
+        )
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
