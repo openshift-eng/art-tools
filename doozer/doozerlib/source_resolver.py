@@ -12,6 +12,7 @@ from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
+from github import Github, GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
 
@@ -185,6 +186,33 @@ class SourceResolver:
                     url, self._group_config.public_upstreams
                 )
 
+            # ART-14540: Check branch protection for the resolved branch
+            if not self.is_branch_commit_hash(clone_branch):
+                allow_unprotected = source_details.get("allow_unprotected_branch", False)
+                if not allow_unprotected:
+                    # Check the public upstream URL if available, otherwise the source URL
+                    check_url = meta.public_upstream_url if has_public_upstream else url
+                    check_branch = (
+                        (meta.public_upstream_branch or clone_branch) if has_public_upstream else clone_branch
+                    )
+                    is_protected = self._check_branch_protection(check_url, check_branch)
+                    if not is_protected:
+                        owners = list(meta.config.owners or [])
+                        if self._record_logger:
+                            self._record_logger.add_record(
+                                "branch_protection_missing",
+                                distgit=meta.qualified_key,
+                                source_url=check_url,
+                                branch=check_branch,
+                                owners=",".join(owners),
+                            )
+                        raise IOError(
+                            f"Branch '{check_branch}' in {check_url} does not have branch protection enabled. "
+                            f"Builds from unprotected branches are not allowed. "
+                            f"Please enable branch protection or set 'allow_unprotected_branch: true' "
+                            f"in the image/rpm metadata under content.source.git to override."
+                        )
+
             if no_clone:
                 https_url = art_util.convert_remote_git_to_https(url)
                 return SourceResolution(
@@ -343,6 +371,78 @@ class SourceResolver:
             return branch  # It is valid hex; just return it
 
         return result.split()[0] if result else None
+
+    @staticmethod
+    def _check_branch_protection(git_url: str, branch: str) -> bool:
+        """
+        Check if a GitHub branch has branch protection enabled.
+        Uses the PyGithub Branch object's `protected` boolean, which does NOT
+        require admin access (unlike the /protection endpoint).
+
+        Returns True if the branch is protected or if the check cannot be performed
+        (non-GitHub repo, missing token, API errors). Returns False only when the
+        API confirms the branch is unprotected.
+
+        Arg(s):
+            git_url (str): The git URL of the repository (SSH or HTTPS).
+            branch (str): The branch name to check.
+        Return Value(s):
+            bool: True if protected or check is inconclusive, False if confirmed unprotected.
+        """
+        https_url = art_util.convert_remote_git_to_https(git_url)
+        if "github.com" not in https_url:
+            LOGGER.info("Skipping branch protection check for non-GitHub repo: %s", https_url)
+            return True
+
+        _, owner, repo = art_util.split_git_url(git_url)
+
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if not github_token:
+            # No token available — try an anonymous API call (60 req/hour limit)
+            LOGGER.warning(
+                "GITHUB_TOKEN not set; attempting anonymous branch protection check for %s/%s branch %s",
+                owner,
+                repo,
+                branch,
+            )
+
+        try:
+            gh = Github(github_token) if github_token else Github()
+            gh_repo = gh.get_repo(f"{owner}/{repo}")
+            gh_branch = gh_repo.get_branch(branch)
+            if gh_branch.protected:
+                LOGGER.info("Branch protection confirmed for %s/%s branch %s", owner, repo, branch)
+                return True
+            LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
+            return False
+        except UnknownObjectException:
+            # 404 — repo or branch doesn't exist. Fail-open: let the clone
+            # step surface the real error rather than blocking here.
+            LOGGER.warning(
+                "Branch %s or repo %s/%s not found on GitHub; failing open",
+                branch,
+                owner,
+                repo,
+            )
+            return True
+        except GithubException as e:
+            LOGGER.warning(
+                "GitHub API error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
+        except Exception as e:
+            LOGGER.warning(
+                "Unexpected error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
 
     def register_source_alias(self, alias: str, path: str):
         LOGGER.info("Registering source alias %s: %s" % (alias, path))

@@ -191,3 +191,99 @@ class SourceResolverTestCase(TestCase):
 
         result = sr.detect_remote_source_branch(source_details, stage=False)
         self.assertEqual(result, ("main_branch", "commit_hash"))
+
+    # Branch protection tests (ART-14540)
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_protected(self, mock_github_cls):
+        """
+        Test that _check_branch_protection returns True when the branch is protected.
+        """
+        mock_branch = Mock(protected=True)
+        mock_github_cls.return_value.get_repo.return_value.get_branch.return_value = mock_branch
+        result = SourceResolver._check_branch_protection("git@github.com:openshift/etcd.git", "openshift-4.19")
+        self.assertTrue(result)
+        mock_github_cls.return_value.get_repo.assert_called_with("openshift/etcd")
+        mock_github_cls.return_value.get_repo.return_value.get_branch.assert_called_with("openshift-4.19")
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_unprotected(self, mock_github_cls):
+        """
+        Test that _check_branch_protection returns False when the branch is not protected.
+        """
+        mock_branch = Mock(protected=False)
+        mock_github_cls.return_value.get_repo.return_value.get_branch.return_value = mock_branch
+        result = SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "openshift-4.19")
+        self.assertFalse(result)
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_not_found(self, mock_github_cls):
+        """
+        Test that _check_branch_protection returns True (fail-open) when repo/branch
+        is not found (404). Let the clone step surface the real error.
+        """
+        from github import UnknownObjectException
+
+        mock_github_cls.return_value.get_repo.return_value.get_branch.side_effect = UnknownObjectException(
+            404, {"message": "Not Found"}, None
+        )
+        result = SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "openshift-4.19")
+        self.assertTrue(result)
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_api_error(self, mock_github_cls):
+        """
+        Test that _check_branch_protection returns True on GitHub API errors
+        (don't block builds on API issues).
+        """
+        from github import GithubException
+
+        mock_github_cls.return_value.get_repo.return_value.get_branch.side_effect = GithubException(
+            500, {"message": "Internal Server Error"}, None
+        )
+        result = SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "openshift-4.19")
+        self.assertTrue(result)
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_network_error(self, mock_github_cls):
+        """
+        Test that _check_branch_protection returns True on network errors.
+        """
+        mock_github_cls.return_value.get_repo.side_effect = Exception("Connection refused")
+        result = SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "openshift-4.19")
+        self.assertTrue(result)
+
+    def test_check_branch_protection_non_github(self):
+        """
+        Test that _check_branch_protection skips non-GitHub repos.
+        """
+        result = SourceResolver._check_branch_protection("https://gitlab.internal.example.com/org/repo", "main")
+        self.assertTrue(result)
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {}, clear=True)
+    def test_check_branch_protection_no_token_anonymous(self, mock_github_cls):
+        """
+        Test that _check_branch_protection attempts an anonymous API call when GITHUB_TOKEN is not set.
+        """
+        mock_branch = Mock(protected=True)
+        mock_github_cls.return_value.get_repo.return_value.get_branch.return_value = mock_branch
+        result = SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "openshift-4.19")
+        self.assertTrue(result)
+        # Should be called without arguments (anonymous)
+        mock_github_cls.assert_called_once_with()
+
+    @patch("doozerlib.source_resolver.Github")
+    @patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token"})
+    def test_check_branch_protection_special_chars_in_branch(self, mock_github_cls):
+        """
+        Test that branch names with special characters are passed correctly to PyGithub.
+        """
+        mock_branch = Mock(protected=True)
+        mock_github_cls.return_value.get_repo.return_value.get_branch.return_value = mock_branch
+        SourceResolver._check_branch_protection("https://github.com/openshift/etcd", "release/4.19")
+        mock_github_cls.return_value.get_repo.return_value.get_branch.assert_called_with("release/4.19")
