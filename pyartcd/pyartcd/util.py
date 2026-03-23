@@ -630,6 +630,74 @@ Thanks for your help!\n"""
         )
 
 
+async def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
+    """
+    Notify component owners when their upstream branch does not have branch protection enabled.
+    Uses Redis to throttle notifications: owners are only emailed once per 7 days per repo/branch.
+    ART-14540: Builds from unprotected branches are not allowed.
+    """
+    with open(Path(doozer_working) / "record.log", "r") as file:
+        record_log: dict = record.parse_record_log(file)
+
+    entries = record.get_branch_protection_notify(record_log)
+    for entry in entries:
+        owners = entry.get("owners", "")
+        if not owners:
+            continue
+
+        source_url = entry.get("source_url", "unknown")
+        branch = entry.get("branch", "unknown")
+        distgit = entry.get("distgit", "unknown")
+
+        # Throttle: only notify once per 7 days per repo/branch
+        # Use owner/repo instead of full URL to avoid colons in Redis keys
+        _, repo_owner, repo_name = artcommonlib.util.split_git_url(source_url)
+        redis_key = f"appdata:branch-protection-notified:{version}:{repo_owner}/{repo_name}:{branch}"
+        already_notified = await redis.get_value(redis_key)
+        if already_notified:
+            logger.info(
+                "Skipping branch protection notification for %s branch %s (already notified)",
+                source_url,
+                branch,
+            )
+            continue
+
+        email_subject = f"[ACTION REQUIRED] Branch protection missing for {distgit} in OCP v{version}"
+        explanation_body = f"""Why am I receiving this?
+------------------------
+You are receiving this message because you are listed as an owner for an
+OpenShift related image or RPM, and the upstream source branch used to build
+it does not have branch protection enabled.
+
+Per Red Hat internal audit requirements, all branches contributing to released
+code must have branch protection enabled.
+
+What needs to happen?
+---------------------
+Branch protection must be enabled for:
+  Repository: {source_url}
+  Branch: {branch}
+
+Please enable branch protection on this branch. Until branch protection is
+enabled, builds for {distgit} will fail.
+
+If this is a temporary situation (onboarding, hotfix, emergency), the ART team
+can set 'allow_unprotected_branch: true' in the image/RPM metadata as a
+short-term override.
+
+Please direct any questions to the Automated Release Tooling team (#forum-ocp-art on slack).
+"""
+
+        mail_client.send_mail(
+            to=owners,
+            subject=email_subject,
+            content=explanation_body,
+        )
+
+        # Mark as notified with 1-day TTL
+        await redis.set_value(redis_key, "1", expiry=86400)
+
+
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
     """
      Send email to owners of failed image builds.
