@@ -1278,7 +1278,7 @@ class ImageMetadata(Metadata):
         snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
         if snapshot_release_config not in [Missing, None]:
             return bool(snapshot_release_config)
-        return False
+        return True
 
     def get_required_artifacts(self) -> list:
         """

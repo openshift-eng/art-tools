@@ -98,6 +98,32 @@ class BaseImageHandler:
             self.logger.error(f"Base image workflow failed: {e}")
             return None
 
+    def _derive_component_name(self, group_name: str, base_component: str) -> str:
+        """
+        Derive the correct component name for snapshot creation.
+
+        Args:
+            group_name: Raw group name from runtime (e.g., "openshift-4.21")
+            base_component: Component name from distgit.component with "-container" suffix removed
+
+        Returns:
+            str: Properly formatted component name matching ReleasePlanAdmission.yml expectations
+        """
+        ose_group = group_name.replace('.', '-')
+        if ose_group.startswith("openshift-"):
+            ose_group = ose_group.replace("openshift-", "ose-", 1)
+
+        if base_component == "openshift-base-nodejs":
+            component = "openshift-base-nodejs-rhel9"
+        elif base_component == "ose-aws-efs-utils":
+            component = "ose-aws-efs-utils-base"
+        elif base_component == "ose-ovn-kubernetes-base":
+            component = "ovn-kubernetes-base"
+        else:
+            component = base_component
+
+        return f"{ose_group}-{component}"
+
     async def _create_snapshot(self) -> Optional[str]:
         """
         Create snapshot from image_data_list (always batch)
@@ -117,22 +143,21 @@ class BaseImageHandler:
                 self.logger.info(f"[DRY-RUN] Would create snapshot: {snapshot_name}")
                 return snapshot_name
 
-            application_name = self.runtime.group_config.name.replace('.', '-')
-
             components = []
             for metadata, nvr, image_pullspec in self.image_data_list:
                 base_component = metadata.config.distgit.component
                 if base_component.endswith("-container"):
                     base_component = base_component[:-10]
 
-                comp_name = f"{application_name}-{base_component}".replace(".", "-").replace("_", "-")
-                comp_name = f"ose-{comp_name[10:]}" if comp_name.startswith("openshift-") else comp_name
+                comp_name = self._derive_component_name(self.runtime.group_config.name, base_component)
                 components.append(
                     {
                         "name": comp_name,
                         "containerImage": image_pullspec,
                     }
                 )
+
+            application_name = self.runtime.group_config.name.replace('.', '-')
 
             snapshot_obj = {
                 "apiVersion": API_VERSION,

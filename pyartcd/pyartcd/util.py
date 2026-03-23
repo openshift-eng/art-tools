@@ -909,6 +909,77 @@ async def get_group_images(
     return json.loads(out)['images']
 
 
+async def get_base_only_images(
+    group: str,
+    assembly: str,
+    working_dir: Path,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> List[str]:
+    """
+    Get the list of images marked with base_only: true for a given group and assembly.
+
+    This function uses doozer's config:print command to dynamically get metadata
+    configurations and filter for images with base_only: true.
+
+    :param group: The group name (e.g. 'openshift-4.21')
+    :param assembly: The assembly name (e.g. 'stream', 'rc.1')
+    :param working_dir: Working directory for doozer
+    :param doozer_data_path: Path to ocp-build-data repository
+    :param doozer_data_gitref: Git reference to use in ocp-build-data
+    :return: List of image distgit keys marked with base_only: true
+    """
+
+    working_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build doozer command similar to BuildMergedFbcPipeline._run_doozer
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+
+    cmd = [
+        'doozer',
+        '--build-system=konflux',
+        f'--working-dir={working_dir}',
+        f'--assembly={assembly}',
+        group_param,
+    ]
+
+    if doozer_data_path:
+        cmd.append(f'--data-path={doozer_data_path}')
+
+    # Add the config:print command to get metadata configurations
+    cmd.extend(
+        [
+            'config:print',
+            '--yaml',
+        ]
+    )
+
+    try:
+        logger.info(f'Running doozer command: {" ".join(cmd)}')
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+
+        # Parse the YAML output to get metadata configurations
+        configs = yaml.safe_load(out)
+
+        # Extract images with base_only: true
+        base_only_images = []
+        if isinstance(configs, dict) and 'images' in configs:
+            for image_name, image_config in configs['images'].items():
+                if isinstance(image_config, dict) and image_config.get('base_only', False):
+                    base_only_images.append(image_name)
+
+        logger.info(f"Found {len(base_only_images)} base_only images: {base_only_images}")
+        return base_only_images
+
+    except Exception as e:
+        logger.error(f"Failed to get base_only images using doozer config:print: {e}")
+        # Return empty list on failure rather than falling back to hardcoded patterns
+        # This ensures we don't accidentally include non-base images
+        return []
+
+
 async def get_group_rpms(
     group: str,
     assembly: str,

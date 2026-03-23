@@ -1490,10 +1490,8 @@ def release_to_base_repo(runtime, nvrs):
         Resolve NVRs to image parameters using Konflux infrastructure.
         Returns list of (ImageMetadata, nvr, pullspec) tuples.
         """
-        # Bind KonfluxBuildRecord for queries
         runtime.konflux_db.bind(KonfluxBuildRecord)
 
-        # Batch fetch build records (Konflux equivalent of get_build_objects)
         build_records = await runtime.konflux_db.get_build_records_by_nvrs(nvr_list, exclude_large_columns=True)
 
         resolved_params = []
@@ -1503,10 +1501,8 @@ def release_to_base_repo(runtime, nvrs):
                     red_print(f"Warning: No build record found for NVR '{nvr}'")
                     continue
 
-                # Extract component name from Konflux record
                 component_name = record.name
 
-                # Use existing runtime.image_map for metadata resolution
                 if component_name not in runtime.image_map:
                     red_print(
                         f"Warning: Component '{component_name}' from NVR '{nvr}' not found in group {runtime.group}"
@@ -1532,14 +1528,12 @@ def release_to_base_repo(runtime, nvrs):
 
             nvr_list = [nvr.strip() for nvr in nvrs.split(',')]
 
-            # Resolve NVRs to image data (async)
             image_data_list = await _resolve_nvrs_to_image_params(runtime, nvr_list)
 
             if not image_data_list:
                 red_print("No valid base images found")
                 return False
 
-            # Validate all qualify for base image workflow
             validated_images = []
             for metadata, nvr, pullspec in image_data_list:
                 if not (metadata.is_base_image() and metadata.is_snapshot_release_enabled()):
@@ -1548,8 +1542,8 @@ def release_to_base_repo(runtime, nvrs):
                 validated_images.append((metadata, nvr, pullspec))
 
             if not validated_images:
-                red_print("No images qualified for workflow")
-                return False
+                green_print("No images qualified for workflow - skipping as successful no-op")
+                return True
 
             green_print(f"✓ Processing {len(validated_images)} base images through snapshot-to-release workflow:")
             print(f"  Group: {runtime.group}")
@@ -1558,7 +1552,6 @@ def release_to_base_repo(runtime, nvrs):
                 print(f"  NVR: {nvr}")
             print()
 
-            # Always batch mode (might be batch of 1)
             handler = BaseImageHandler(runtime, validated_images, dry_run=False)
             result = await handler.process_base_image_completion()
 

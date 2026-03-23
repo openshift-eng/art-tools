@@ -1353,7 +1353,12 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         enabled_metadata = ImageMetadata(runtime, enabled_data)
         self.assertTrue(enabled_metadata.is_snapshot_release_enabled())
 
-        disabled_image = Model({'name': 'test-regular'})
+        disabled_image = Model({'name': 'test-regular', 'snapshot_release': False})
         disabled_data = Model({'key': 'test-regular', 'data': disabled_image, 'filename': 'test-regular.yaml'})
         disabled_metadata = ImageMetadata(runtime, disabled_data)
         self.assertFalse(disabled_metadata.is_snapshot_release_enabled())
+
+        default_image = Model({'name': 'test-default'})
+        default_data = Model({'key': 'test-default', 'data': default_image, 'filename': 'test-default.yaml'})
+        default_metadata = ImageMetadata(runtime, default_data)
+        self.assertTrue(default_metadata.is_snapshot_release_enabled())
