@@ -206,11 +206,12 @@ class SourceResolver:
                                 branch=check_branch,
                                 owners=",".join(owners),
                             )
-                        raise IOError(
-                            f"Branch '{check_branch}' in {check_url} does not have branch protection enabled. "
-                            f"Builds from unprotected branches are not allowed. "
-                            f"Please enable branch protection or set 'allow_unprotected_branch: true' "
-                            f"in the image/rpm metadata under content.source.git to override."
+                        LOGGER.warning(
+                            "Branch '%s' in %s does not have branch protection enabled. "
+                            "Please enable branch protection or set 'allow_unprotected_branch: true' "
+                            "in the image/rpm metadata under content.source.git to override.",
+                            check_branch,
+                            check_url,
                         )
 
             if no_clone:
