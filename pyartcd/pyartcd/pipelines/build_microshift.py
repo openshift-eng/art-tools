@@ -115,6 +115,9 @@ class BuildMicroShiftPipeline:
             # Check if microshift advisory is defined in assembly
             if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
                 self.advisory_num = await self.create_microshift_advisory()
+                # Persist advisory ID to ocp-build-data immediately so retries reuse it
+                # instead of creating duplicate advisories
+                await self._create_or_update_pull_request(nvrs=[])
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
@@ -512,8 +515,12 @@ class BuildMicroShiftPipeline:
             record_log = parse_record_log(file)
             return record_log["build_rpm"][-1]["nvrs"].split(",")
 
-    def _pin_nvrs(self, nvrs: List[str], releases_config) -> Dict:
-        """Update releases.yml to pin the specified NVRs.
+    def _pin_nvrs(self, nvrs: List[str], releases_config) -> Optional[Dict]:
+        """Update releases.yml to pin the advisory and/or NVRs.
+
+        When called with an empty nvrs list, only the advisory ID is pinned.
+        When called with NVRs, both the advisory and NVRs are pinned.
+
         Example:
             releases:
                 4.11.7:
@@ -525,6 +532,14 @@ class BuildMicroShiftPipeline:
                             is:
                                 el8: microshift-4.11.7-202209300751.p0.g7ebffc3.assembly.4.11.7.el8
         """
+        if self.advisory_num:
+            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault(
+                "advisories", {}
+            ).setdefault("microshift", self.advisory_num)
+
+        if not nvrs:
+            return None
+
         is_entry = {}
         dg_key = "microshift"
         for nvr in nvrs:
@@ -532,10 +547,6 @@ class BuildMicroShiftPipeline:
             assert el_version is not None
             is_entry[f"el{el_version}"] = nvr
 
-        if self.advisory_num:
-            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault(
-                "advisories", {}
-            ).setdefault("microshift", self.advisory_num)
         rpms_entry = (
             releases_config["releases"][self.assembly]
             .setdefault("assembly", {})
