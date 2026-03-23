@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
-import requests
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
+from github import Github, GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
 
@@ -375,7 +375,10 @@ class SourceResolver:
     @staticmethod
     def _check_branch_protection(git_url: str, branch: str) -> bool:
         """
-        Check if a GitHub branch has branch protection enabled via the GitHub API.
+        Check if a GitHub branch has branch protection enabled.
+        Uses the PyGithub Branch object's `protected` boolean, which does NOT
+        require admin access (unlike the /protection endpoint).
+
         Returns True if the branch is protected or if the check cannot be performed
         (non-GitHub repo, missing token, API errors). Returns False only when the
         API confirms the branch is unprotected.
@@ -391,48 +394,49 @@ class SourceResolver:
             LOGGER.info("Skipping branch protection check for non-GitHub repo: %s", https_url)
             return True
 
-        server, owner, repo = art_util.split_git_url(git_url)
+        _, owner, repo = art_util.split_git_url(git_url)
 
         github_token = os.environ.get("GITHUB_TOKEN")
         if not github_token:
+            # No token available — try an anonymous API call (60 req/hour limit)
             LOGGER.warning(
-                "GITHUB_TOKEN not set, cannot verify branch protection for %s/%s branch %s",
+                "GITHUB_TOKEN not set; attempting anonymous branch protection check for %s/%s branch %s",
                 owner,
                 repo,
                 branch,
             )
-            return True
-
-        # NOTE: The /protection endpoint requires GITHUB_TOKEN with admin access to the repo.
-        # The openshift-bot token has admin access. Do not downgrade to a non-admin token
-        # or this check will return 404 for all branches, blocking all builds.
-        encoded_branch = urllib.parse.quote(branch, safe="")
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/branches/{encoded_branch}/protection"
-        headers = {
-            "Authorization": f"token {github_token}",
-            "Accept": "application/vnd.github.v3+json",
-        }
 
         try:
-            response = requests.get(api_url, headers=headers, timeout=30)
-            if response.status_code == 200:
+            gh = Github(github_token) if github_token else Github()
+            gh_repo = gh.get_repo(f"{owner}/{repo}")
+            gh_branch = gh_repo.get_branch(branch)
+            if gh_branch.protected:
                 LOGGER.info("Branch protection confirmed for %s/%s branch %s", owner, repo, branch)
                 return True
-            if response.status_code == 404:
-                LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
-                return False
+            LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
+            return False
+        except UnknownObjectException:
+            # 404 — repo or branch doesn't exist. Fail-open: let the clone
+            # step surface the real error rather than blocking here.
             LOGGER.warning(
-                "Unexpected HTTP %d checking branch protection for %s/%s branch %s",
-                response.status_code,
+                "Branch %s or repo %s/%s not found on GitHub; failing open",
+                branch,
+                owner,
+                repo,
+            )
+            return True
+        except GithubException as e:
+            LOGGER.warning(
+                "GitHub API error checking branch protection for %s/%s branch %s: %s",
                 owner,
                 repo,
                 branch,
+                e,
             )
-            # Don't block builds on unexpected API errors
             return True
-        except requests.RequestException as e:
+        except Exception as e:
             LOGGER.warning(
-                "Error checking branch protection for %s/%s branch %s: %s",
+                "Unexpected error checking branch protection for %s/%s branch %s: %s",
                 owner,
                 repo,
                 branch,
