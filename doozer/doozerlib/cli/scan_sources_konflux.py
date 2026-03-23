@@ -1715,6 +1715,22 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
 
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
+
+    # IMPORTANT: For OKD scans, merge OKD configuration BEFORE loading images
+    # This ensures that when images (including parent images) are loaded during initialization,
+    # they use the correct OKD-specific branch (e.g., rhel-10 instead of rhel-9 for OKD 5.0)
+    if variant == BuildVariant.OKD.value:
+        group_config = runtime.group_config.copy()
+        if group_config.get('okd'):
+            runtime._logger.info('Scanning sources using OKD group configuration')
+            group_config = deep_merge(group_config, group_config['okd'])
+            runtime._group_config = Model(group_config)
+            # Update runtime.branch to use the OKD branch override
+            # This ensures parent images use the correct rhel-10 branch instead of rhel-9
+            if group_config.get('branch'):
+                runtime.branch = group_config['branch']
+                runtime._logger.info(f'Updated runtime branch to OKD variant: {runtime.branch}')
+
     runtime.initialize(mode='both' if variant != BuildVariant.OKD.value else 'images', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:

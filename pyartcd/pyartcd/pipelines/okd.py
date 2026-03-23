@@ -126,8 +126,11 @@ class KonfluxOkdPipeline:
             load_okd_only=True,
         )
 
-        # Filter to only include payload images
-        self.group_images = await self._filter_payload_images(all_group_images)
+        # For OKD, do NOT filter to payload-only images
+        # We need to include base/parent images (like openshift-enterprise-base-rhel9)
+        # even though they don't have for_payload=true, because they're needed to build payload images.
+        # Doozer's images:okd rebase/build commands will process whatever images are loaded.
+        self.group_images = all_group_images
         self.build_plan.active_image_count = len(self.group_images)
 
         # Set the image list based on the build strategies
@@ -135,46 +138,6 @@ class KonfluxOkdPipeline:
 
         # Log the initial build plan
         self.logger.info('Initial build plan:\n%s', self.build_plan)
-
-    async def _filter_payload_images(self, image_names: list) -> list:
-        """
-        Filter image list to only include images marked for_payload.
-        Non-payload images will be excluded from rebase, build, and imagestream operations.
-
-        Arg(s):
-            image_names (list): List of image names to filter
-        Return Value(s):
-            list: Filtered list containing only payload images
-        """
-        ocp_build_data_path = Path(self.runtime.doozer_working) / 'ocp-build-data' / 'images'
-        payload_images = []
-        non_payload_images = []
-
-        for image_name in image_names:
-            yaml_file = ocp_build_data_path / f'{image_name}.yml'
-
-            try:
-                with open(yaml_file) as f:
-                    image_metadata = yaml.safe_load(f)
-
-                if image_metadata.get('for_payload', False):
-                    payload_images.append(image_name)
-                else:
-                    non_payload_images.append(image_name)
-
-            except Exception as e:
-                self.logger.warning('Failed to load metadata for %s: %s. Excluding from build.', image_name, e)
-                non_payload_images.append(image_name)
-
-        if non_payload_images:
-            self.logger.info(
-                'Excluding %d non-payload images from pipeline: %s',
-                len(non_payload_images),
-                ', '.join(non_payload_images),
-            )
-
-        self.logger.info('Pipeline will operate on %d payload images', len(payload_images))
-        return payload_images
 
     def check_building_images(self):
         if self.build_plan.image_build_strategy == BuildStrategy.NONE:
@@ -187,16 +150,16 @@ class KonfluxOkdPipeline:
             jenkins.update_title(f'[{self.build_plan.active_image_count}] images')
 
         elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
-            # Filter image_list to only include payload images (from self.group_images)
+            # Filter image_list to only include images that exist in the group
             self.build_plan.images_included = [img for img in self.image_list if img in self.group_images]
             self.build_plan.images_excluded = []
 
-            # Warn if any requested images are not payload images
-            non_payload_requested = [img for img in self.image_list if img not in self.group_images]
-            if non_payload_requested:
+            # Warn if any requested images don't exist in the group
+            non_existent_requested = [img for img in self.image_list if img not in self.group_images]
+            if non_existent_requested:
                 self.logger.warning(
-                    'Requested images are not payload images and will be skipped: %s',
-                    ', '.join(non_payload_requested),
+                    'Requested images do not exist in the group and will be skipped: %s',
+                    ', '.join(non_existent_requested),
                 )
 
             n_images = len(self.build_plan.images_included)
@@ -622,7 +585,11 @@ class KonfluxOkdPipeline:
                 continue
 
             # Determine payload tag name
-            # Note: All images in the pipeline are already filtered to be payload images
+            # Note: Only images with for_payload=true should be tagged into imagestreams
+            if not image_metadata.get('for_payload', False):
+                self.logger.debug('Skipping non-payload image %s from imagestream tagging', image_name)
+                continue
+
             payload_tag = self._get_payload_tag_name(image_name, image_metadata)
             image_pullspec = image.get('image_pullspec')
             image_tag = image.get('image_tag')
@@ -773,9 +740,9 @@ class KonfluxOkdPipeline:
     def include_exclude_param(self):
         """
         Returns the include/exclude parameters for the Doozer command based on the image build strategy.
-        Note: self.group_images contains only payload images, and images_included/images_excluded
-        have already been filtered in check_building_images() to only contain payload images.
-        We must always pass explicit --images parameter to enforce payload-only filtering to doozer.
+        Note: self.group_images contains all enabled OKD images (including base/parent images).
+        images_included/images_excluded have already been filtered in check_building_images()
+        to only contain images that exist in the group.
         """
 
         build_strategy = self.build_plan.image_build_strategy
