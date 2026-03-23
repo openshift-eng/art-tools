@@ -220,14 +220,32 @@ class KonfluxBuildCli:
     @start_as_current_span_async(TRACER, "images:konflux:build")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False)
 
+        # IMPORTANT: For OKD builds, set up OKD configuration BEFORE loading images
+        # This ensures that when images (including parent images) are loaded during initialization,
+        # they use the correct OKD-specific branch (e.g., rhel-10 instead of rhel-9 for OKD 5.0)
         if self.variant is BuildVariant.OKD:
-            group_config = self.runtime.group_config.copy()
+            # Step 1: Initialize only group and assembly configs (config_only=True)
+            # This loads group_config but doesn't load images yet
+            runtime.initialize(mode='images', clone_distgits=False, config_only=True)
+
+            # Step 2: Merge OKD configuration into group config BEFORE loading images
+            group_config = runtime.group_config.copy()
             if group_config.get('okd'):
                 LOGGER.info('Build images using OKD group configuration')
                 group_config = deep_merge(group_config, group_config['okd'])
-                runtime.group_config = Model(group_config)
+                runtime._group_config = Model(group_config)
+                # Update runtime.branch to use the OKD branch override
+                # This ensures parent images use the correct rhel-10 branch instead of rhel-9
+                if group_config.get('branch'):
+                    runtime.branch = group_config['branch']
+                    LOGGER.info(f'Updated runtime branch to OKD variant: {runtime.branch}')
+
+            # Step 3: Now do full initialization with OKD config already applied
+            runtime.initialize(mode='images', clone_distgits=False)
+        else:
+            # For non-OKD builds, initialize normally
+            runtime.initialize(mode='images', clone_distgits=False)
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
