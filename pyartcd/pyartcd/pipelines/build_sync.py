@@ -442,14 +442,15 @@ class BuildSyncPipeline:
             [
                 'release:gen-payload',
                 f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
-                '--apply',
             ]
         )
+        if not self.runtime.dry_run:
+            cmd.append('--apply')
         if self.emergency_ignore_issues:
             cmd.append('--emergency-ignore-issues')
         if self.embargo_permit_ack:
             cmd.append('--embargo-permit-ack')
-        if not self.skip_multiarch_payload:
+        if not self.skip_multiarch_payload and not self.runtime.dry_run:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:
             cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
