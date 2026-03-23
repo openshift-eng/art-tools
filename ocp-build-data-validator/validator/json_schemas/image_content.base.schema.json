@@ -423,18 +423,7 @@
             "web!": {
               "$ref": "#/properties/source/properties/git/properties/web"
             },
-            "web-": {},
-            "allow_unprotected_branch": {
-              "description": "If true, allow builds from branches without branch protection enabled. Use for onboarding, hotfixes, or emergency situations.",
-              "type": "boolean"
-            },
-            "allow_unprotected_branch?": {
-              "$ref": "#/properties/source/properties/git/properties/allow_unprotected_branch"
-            },
-            "allow_unprotected_branch!": {
-              "$ref": "#/properties/source/properties/git/properties/allow_unprotected_branch"
-            },
-            "allow_unprotected_branch-": {}
+            "web-": {}
           },
           "additionalProperties": false
         },
