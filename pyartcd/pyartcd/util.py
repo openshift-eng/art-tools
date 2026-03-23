@@ -694,8 +694,8 @@ Please direct any questions to the Automated Release Tooling team (#forum-ocp-ar
             content=explanation_body,
         )
 
-        # Mark as notified with 7-day TTL
-        await redis.set_value(redis_key, "1", expiry=604800)
+        # Mark as notified with 1-day TTL
+        await redis.set_value(redis_key, "1", expiry=86400)
 
 
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
