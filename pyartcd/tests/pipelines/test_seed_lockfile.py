@@ -244,7 +244,11 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         """_build_url produces /build? link when record_id is present."""
         url = SeedLockfilePipeline._build_url(
             'openshift-4.22',
-            {'nvrs': 'ironic-container-v4.22.0-202603201234.p0.assembly.stream.el9', 'record_id': 'abc-123', 'status': '0'},
+            {
+                'nvrs': 'ironic-container-v4.22.0-202603201234.p0.assembly.stream.el9',
+                'record_id': 'abc-123',
+                'status': '0',
+            },
         )
         self.assertIn('/build?', url)
         self.assertIn('nvr=ironic-container', url)
