@@ -29,7 +29,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.nvr = "test-base-container-v1.0.0-1.el9"
         self.image_pullspec = "quay.io/test/test-base:latest"
 
-        self.image_data_list = [(self.metadata, self.nvr, self.image_pullspec)]
+        self.nvr_list = [self.nvr]
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -43,12 +43,22 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=True)
+        handler = BaseImageHandler(self.runtime, self.nvr_list, dry_run=True)
 
-        with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
-            with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
-                with patch.object(handler, "_wait_for_release_completion", return_value=True):
-                    result = await handler.process_base_image_completion()
+        # Mock the component_map and build records
+        mock_build_record = MagicMock()
+        mock_build_record.name = "test-base"
+        mock_build_record.image_pullspec = self.image_pullspec
+        mock_build_record.rebase_repo_url = "https://example.com/repo.git"
+        mock_build_record.rebase_commitish = "abc123"
+
+        self.runtime.component_map = {"test-base-container": self.metadata}
+
+        with patch.object(handler, "_fetch_build_records", return_value={self.nvr: mock_build_record}):
+            with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                    with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                        result = await handler.process_base_image_completion()
 
         self.assertIsNotNone(result)
         self.assertEqual(result, ("test-release", "test-snapshot"))
@@ -65,9 +75,12 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=False)
+        handler = BaseImageHandler(self.runtime, self.nvr_list, dry_run=False)
 
-        with patch.object(handler, "_create_snapshot", return_value=None):
+        # Mock empty component_map to cause failure
+        self.runtime.component_map = {}
+
+        with patch.object(handler, "_fetch_build_records", return_value={}):
             result = await handler.process_base_image_completion()
 
         self.assertIsNone(result)
@@ -75,91 +88,121 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
-    def test_derive_component_name_all_rpa_components(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
-        """Test component name derivation against actual ReleasePlanAdmission.yml components."""
+    async def test_process_base_image_completion_critical_errors_with_success(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
         mock_namespace.return_value = "ocp-art-tenant"
         mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=True)
-        group_name = "openshift-4.22"
+        valid_nvr = "valid-base-container-v1.0.0-1.el9"
+        invalid_nvr = "invalid-base-container-v1.0.0-1.el9"
 
-        test_cases = [
-            ("openshift-base-rhel9", "ose-4-22-openshift-base-rhel9"),
-            ("openshift-enterprise-base-rhel9", "ose-4-22-openshift-enterprise-base-rhel9"),
-            ("openshift-base-nodejs", "ose-4-22-openshift-base-nodejs-rhel9"),
-            ("ose-aws-efs-utils", "ose-4-22-ose-aws-efs-utils-base"),
-            ("ose-azure-storage-azcopy-base", "ose-4-22-ose-azure-storage-azcopy-base"),
-            ("ose-haproxy-router-base", "ose-4-22-ose-haproxy-router-base"),
-            ("ose-ovn-kubernetes-base", "ose-4-22-ovn-kubernetes-base"),
-            ("ose-installer-etcd-artifacts", "ose-4-22-ose-installer-etcd-artifacts"),
-            ("ose-installer-kube-apiserver-artifacts", "ose-4-22-ose-installer-kube-apiserver-artifacts"),
-        ]
+        handler = BaseImageHandler(self.runtime, [valid_nvr, invalid_nvr], dry_run=True)
 
-        for input_component, expected in test_cases:
-            with self.subTest(component=input_component):
-                actual = handler._derive_component_name(group_name, input_component)
-                self.assertEqual(
-                    actual,
-                    expected,
-                    f"Component name derivation failed:\n"
-                    f"  Group: {group_name}\n"
-                    f"  Component: {input_component}\n"
-                    f"  Expected: {expected}\n"
-                    f"  Actual: {actual}",
-                )
+        valid_build_record = MagicMock()
+        valid_build_record.name = "valid-base"
+        valid_build_record.image_pullspec = "quay.io/test/valid-base:latest"
+
+        invalid_build_record = MagicMock()
+        invalid_build_record.name = "invalid-base"
+        invalid_build_record.image_pullspec = None
+
+        self.runtime.component_map = {"valid-base-container": self.metadata}
+
+        build_records = {valid_nvr: valid_build_record, invalid_nvr: invalid_build_record}
+
+        with patch.object(handler, "_fetch_build_records", return_value=build_records):
+            with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                    with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                        with self.assertRaises(RuntimeError) as context:
+                            await handler.process_base_image_completion()
+
+        error_message = str(context.exception)
+        self.assertIn("Snapshot/Release completed successfully", error_message)
+        self.assertIn("1 critical validation failures", error_message)
+        self.assertIn("Could not resolve metadata", error_message)
+        self.assertIn("invalid-base", error_message)
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
-    def test_derive_component_name_different_versions(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
-        """Test component name derivation works with different OCP versions."""
+    async def test_process_base_image_completion_metadata_missing_error(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
         mock_namespace.return_value = "ocp-art-tenant"
         mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
         konflux_client = AsyncMock()
         mock_konflux_client_init.return_value = konflux_client
 
-        handler = BaseImageHandler(self.runtime, self.image_data_list, dry_run=True)
+        valid_nvr = "valid-base-container-v1.0.0-1.el9"
+        missing_metadata_nvr = "missing-metadata-container-v1.0.0-1.el9"
 
-        version_tests = [
-            ("openshift-4.21", "openshift-base-rhel9", "ose-4-21-openshift-base-rhel9"),
-            ("openshift-4.21", "openshift-enterprise-base-rhel9", "ose-4-21-openshift-enterprise-base-rhel9"),
-            ("openshift-4.21", "openshift-base-nodejs", "ose-4-21-openshift-base-nodejs-rhel9"),
-            ("openshift-4.21", "ose-aws-efs-utils", "ose-4-21-ose-aws-efs-utils-base"),
-            ("openshift-4.21", "ose-azure-storage-azcopy-base", "ose-4-21-ose-azure-storage-azcopy-base"),
-            ("openshift-4.21", "ose-haproxy-router-base", "ose-4-21-ose-haproxy-router-base"),
-            ("openshift-4.21", "ose-installer-etcd-artifacts", "ose-4-21-ose-installer-etcd-artifacts"),
-            (
-                "openshift-4.21",
-                "ose-installer-kube-apiserver-artifacts",
-                "ose-4-21-ose-installer-kube-apiserver-artifacts",
-            ),
-            ("openshift-4.21", "ose-ovn-kubernetes-base", "ose-4-21-ovn-kubernetes-base"),
-            ("openshift-4.22", "openshift-base-rhel9", "ose-4-22-openshift-base-rhel9"),
-            ("openshift-4.22", "openshift-enterprise-base-rhel9", "ose-4-22-openshift-enterprise-base-rhel9"),
-            ("openshift-4.22", "openshift-base-nodejs", "ose-4-22-openshift-base-nodejs-rhel9"),
-            ("openshift-4.22", "ose-aws-efs-utils", "ose-4-22-ose-aws-efs-utils-base"),
-            ("openshift-4.22", "ose-azure-storage-azcopy-base", "ose-4-22-ose-azure-storage-azcopy-base"),
-            ("openshift-4.22", "ose-haproxy-router-base", "ose-4-22-ose-haproxy-router-base"),
-            ("openshift-4.22", "ose-installer-etcd-artifacts", "ose-4-22-ose-installer-etcd-artifacts"),
-            (
-                "openshift-4.22",
-                "ose-installer-kube-apiserver-artifacts",
-                "ose-4-22-ose-installer-kube-apiserver-artifacts",
-            ),
-            ("openshift-4.22", "ose-ovn-kubernetes-base", "ose-4-22-ovn-kubernetes-base"),
-        ]
+        handler = BaseImageHandler(self.runtime, [valid_nvr, missing_metadata_nvr], dry_run=True)
 
-        for group_name, component, expected in version_tests:
-            with self.subTest(group=group_name, component=component):
-                actual = handler._derive_component_name(group_name, component)
-                self.assertEqual(
-                    actual,
-                    expected,
-                    f"Version-specific component name derivation failed:\n"
-                    f"  Group: {group_name}\n"
-                    f"  Component: {component}\n"
-                    f"  Expected: {expected}\n"
-                    f"  Actual: {actual}",
-                )
+        valid_build_record = MagicMock()
+        valid_build_record.name = "valid-base"
+        valid_build_record.image_pullspec = "quay.io/test/valid-base:latest"
+
+        missing_metadata_record = MagicMock()
+        missing_metadata_record.name = "missing-metadata"
+        missing_metadata_record.image_pullspec = "quay.io/test/missing:latest"
+
+        self.runtime.component_map = {"valid-base-container": self.metadata}
+
+        build_records = {valid_nvr: valid_build_record, missing_metadata_nvr: missing_metadata_record}
+
+        with patch.object(handler, "_fetch_build_records", return_value=build_records):
+            with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                    with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                        with self.assertRaises(RuntimeError) as context:
+                            await handler.process_base_image_completion()
+
+        error_message = str(context.exception)
+        self.assertIn("Could not resolve metadata", error_message)
+        self.assertIn("missing-metadata", error_message)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_process_base_image_completion_missing_component_name_error(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        mock_konflux_client_init.return_value = konflux_client
+
+        valid_nvr = "valid-base-container-v1.0.0-1.el9"
+        missing_name_nvr = "missing-name-container-v1.0.0-1.el9"
+
+        handler = BaseImageHandler(self.runtime, [valid_nvr, missing_name_nvr], dry_run=True)
+
+        valid_build_record = MagicMock()
+        valid_build_record.name = "valid-base"
+        valid_build_record.image_pullspec = "quay.io/test/valid-base:latest"
+
+        missing_name_record = MagicMock()
+        missing_name_record.name = None
+        missing_name_record.image_pullspec = "quay.io/test/missing-name:latest"
+
+        self.runtime.component_map = {"valid-base-container": self.metadata}
+
+        build_records = {valid_nvr: valid_build_record, missing_name_nvr: missing_name_record}
+
+        with patch.object(handler, "_fetch_build_records", return_value=build_records):
+            with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                    with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                        with self.assertRaises(RuntimeError) as context:
+                            await handler.process_base_image_completion()
+
+        error_message = str(context.exception)
+        self.assertIn("No component name found", error_message)
+        self.assertIn(missing_name_nvr, error_message)

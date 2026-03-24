@@ -16,7 +16,7 @@ import click
 import koji
 import yaml
 from artcommonlib import exectools, logutil
-from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
+from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -1485,93 +1485,36 @@ def release_to_base_repo(runtime, nvrs):
         --nvrs "nvr1,nvr2,nvr3"
     """
 
-    async def _resolve_nvrs_to_image_params(runtime, nvr_list):
-        """
-        Resolve NVRs to image parameters using Konflux infrastructure.
-        Returns list of (ImageMetadata, nvr, pullspec) tuples.
-        """
-        runtime.konflux_db.bind(KonfluxBuildRecord)
-
-        build_records = await runtime.konflux_db.get_build_records_by_nvrs(nvr_list, exclude_large_columns=True)
-
-        resolved_params = []
-        for record, nvr in zip(build_records, nvr_list):
-            try:
-                if record is None:
-                    red_print(f"Warning: No build record found for NVR '{nvr}'")
-                    continue
-
-                component_name = record.name
-
-                if component_name not in runtime.image_map:
-                    red_print(
-                        f"Warning: Component '{component_name}' from NVR '{nvr}' not found in group {runtime.group}"
-                    )
-                    continue
-
-                metadata = runtime.image_map[component_name]
-                pullspec = record.image_pullspec
-
-                resolved_params.append((metadata, nvr, pullspec))
-
-            except Exception as e:
-                red_print(f"Error processing NVR '{nvr}': {e}")
-                continue
-
-        return resolved_params
-
     async def run_workflow():
         logger = logutil.get_logger(__name__)
 
         try:
             runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
 
+            runtime.konflux_db.bind(KonfluxBuildRecord)
+
             nvr_list = [nvr.strip() for nvr in nvrs.split(',')]
 
-            image_data_list = await _resolve_nvrs_to_image_params(runtime, nvr_list)
+            logger.info(f"Processing {len(nvr_list)} NVRs through base image snapshot-to-release workflow")
+            logger.info(f"Group: {runtime.group}")
+            for nvr in nvr_list:
+                logger.info(f"NVR: {nvr}")
 
-            if not image_data_list:
-                red_print("No valid base images found")
-                return False
-
-            validated_images = []
-            for metadata, nvr, pullspec in image_data_list:
-                if not (metadata.is_base_image() and metadata.is_snapshot_release_enabled()):
-                    red_print(f"Skipping {metadata.distgit_key}: not configured for base image workflow")
-                    continue
-                validated_images.append((metadata, nvr, pullspec))
-
-            if not validated_images:
-                green_print("No images qualified for workflow - skipping as successful no-op")
-                return True
-
-            green_print(f"✓ Processing {len(validated_images)} base images through snapshot-to-release workflow:")
-            print(f"  Group: {runtime.group}")
-            for metadata, nvr, pullspec in validated_images:
-                print(f"  Image: {metadata.distgit_key}")
-                print(f"  NVR: {nvr}")
-            print()
-
-            handler = BaseImageHandler(runtime, validated_images, dry_run=False)
+            handler = BaseImageHandler(runtime, nvr_list, dry_run=False)
             result = await handler.process_base_image_completion()
 
             if result:
                 release_name, snapshot_name = result
-                green_print(f"✓ Base image workflow completed successfully for {len(validated_images)} images")
-                print(f"  Release: {release_name}")
-                print(f"  Snapshot: {snapshot_name}")
-                logger.info(f"✓ Base image workflow completed successfully for {len(validated_images)} images")
-                logger.info(f"  Release: {release_name}")
-                logger.info(f"  Snapshot: {snapshot_name}")
+                logger.info("Base image workflow completed successfully")
+                logger.info(f"Release: {release_name}")
+                logger.info(f"Snapshot: {snapshot_name}")
                 return True
             else:
-                red_print("✗ Base image workflow failed for batch")
-                logger.warning("Base image workflow failed for batch")
+                logger.error("Base image workflow failed")
                 return False
 
         except Exception as e:
-            red_print(f"✗ Base image workflow failed with exception: {e}")
-            logger.error(f"Base image workflow error: {e}")
+            logger.error(f"Base image workflow failed: {e}")
             logger.debug(f"Base image workflow traceback: {traceback.format_exc()}")
             return False
 

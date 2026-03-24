@@ -7,9 +7,11 @@ with URL extraction and streams.yml updates to be implemented later.
 """
 
 import asyncio
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from artcommonlib import logutil
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     normalize_group_name_for_k8s,
@@ -17,11 +19,12 @@ from artcommonlib.util import (
     resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
-from doozerlib.image import ImageMetadata
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from kubernetes.dynamic import exceptions
 
 LOGGER = logutil.get_logger(__name__)
 ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
+ART_IMAGES_BASE_APPLICATION = "art-images-base"
 
 
 class BaseImageHandler:
@@ -38,19 +41,24 @@ class BaseImageHandler:
     - Create PR to update streams.yml with new URLs
     """
 
-    def __init__(self, runtime, image_data_list: List[Tuple[ImageMetadata, str, str]], dry_run: bool = False):
+    def __init__(self, runtime, nvr_list: List[str], konflux_db: Optional[KonfluxDb] = None, dry_run: bool = False):
         """
         Initialize handler for batch processing (single image = batch of 1).
 
         Args:
             runtime: Runtime instance
-            image_data_list: List of (ImageMetadata, nvr, pullspec) tuples
+            nvr_list: List of NVRs to process
+            konflux_db: Optional KonfluxDb instance for source information lookup
             dry_run: Whether to perform dry run
         """
         self.runtime = runtime
-        self.image_data_list = image_data_list
+        self.nvr_list = nvr_list
         self.dry_run = dry_run
         self.logger = LOGGER
+
+        self.konflux_db = konflux_db
+        if self.konflux_db is None and hasattr(runtime, 'konflux_db') and runtime.konflux_db:
+            self.konflux_db = runtime.konflux_db
 
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
         kubeconfig = resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
@@ -70,9 +78,48 @@ class BaseImageHandler:
             Tuple[str, str]: (release_name, snapshot_name) if successful, None if failed
         """
         try:
-            self.logger.info(f"Starting base image snapshot-release workflow for {len(self.image_data_list)} images")
+            self.logger.info(f"Starting base image snapshot-release workflow for {len(self.nvr_list)} NVRs")
 
-            snapshot_name = await self._create_snapshot()
+            build_records = await self._fetch_build_records(self.nvr_list)
+            valid_records = {}
+            critical_errors = []
+
+            for nvr in self.nvr_list:
+                if nvr not in build_records:
+                    self.logger.warning(f"No build record found for {nvr}, skipping")
+                    continue
+
+                build_record = build_records[nvr]
+
+                if not build_record.name:
+                    critical_errors.append(f"No component name found for build record {nvr}")
+                    continue
+
+                metadata = self.runtime.component_map.get(nvr.split('-v')[0] if '-v' in nvr else nvr)
+                if not metadata:
+                    critical_errors.append(f"Could not resolve metadata for component {build_record.name} from {nvr}")
+                    continue
+
+                if not metadata.is_base_image():
+                    self.logger.warning(f"Image {nvr} is not marked as base image, skipping")
+                    continue
+
+                if not metadata.is_snapshot_release_enabled():
+                    self.logger.warning(f"Image {nvr} has snapshot release disabled, skipping")
+                    continue
+
+                if not build_record.image_pullspec:
+                    critical_errors.append(f"No image pullspec found for {nvr}")
+                    continue
+
+                valid_records[nvr] = build_record
+
+            if not valid_records:
+                self.logger.error("No valid base image components found after resolution and filtering")
+                return None
+
+            self.logger.info(f"Processing {len(valid_records)} valid base images")
+            snapshot_name = await self._create_snapshot(valid_records)
             if not snapshot_name:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
@@ -92,41 +139,51 @@ class BaseImageHandler:
             self.logger.info(f"  Release: {release_name}")
             self.logger.info(f"  Release plan: {ART_IMAGES_BASE_RELEASE_PLAN}")
 
+            if critical_errors:
+                error_summary = (
+                    f"Snapshot/Release completed successfully but {len(critical_errors)} critical validation failures occurred:\n"
+                    + "\n".join(critical_errors)
+                )
+                raise RuntimeError(error_summary)
+
             return release_name, snapshot_name
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Base image workflow failed: {e}")
             return None
 
-    def _derive_component_name(self, group_name: str, base_component: str) -> str:
+    async def _fetch_build_records(self, nvrs: List[str]) -> Dict[str, KonfluxBuildRecord]:
         """
-        Derive the correct component name for snapshot creation.
+        Fetch build records from Konflux database to get source information.
 
         Args:
-            group_name: Raw group name from runtime (e.g., "openshift-4.21")
-            base_component: Component name from distgit.component with "-container" suffix removed
+            nvrs: List of NVRs to fetch records for
 
         Returns:
-            str: Properly formatted component name matching ReleasePlanAdmission.yml expectations
+            Dict mapping NVR to KonfluxBuildRecord
         """
-        ose_group = group_name.replace('.', '-')
-        if ose_group.startswith("openshift-"):
-            ose_group = ose_group.replace("openshift-", "ose-", 1)
+        if not self.konflux_db:
+            self.logger.warning("No Konflux database available for source information lookup")
+            return {}
 
-        if base_component == "openshift-base-nodejs":
-            component = "openshift-base-nodejs-rhel9"
-        elif base_component == "ose-aws-efs-utils":
-            component = "ose-aws-efs-utils-base"
-        elif base_component == "ose-ovn-kubernetes-base":
-            component = "ovn-kubernetes-base"
-        else:
-            component = base_component
+        try:
+            where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
+            records = await self.konflux_db.get_build_records_by_nvrs(
+                nvrs, where=where, strict=False, exclude_large_columns=True
+            )
+            return {record.nvr: record for record in records}
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch build records from database: {e}")
+            return {}
 
-        return f"{ose_group}-{component}"
-
-    async def _create_snapshot(self) -> Optional[str]:
+    async def _create_snapshot(self, valid_records: Dict[str, KonfluxBuildRecord]) -> Optional[str]:
         """
-        Create snapshot from image_data_list (always batch)
+        Create snapshot from valid build records (always batch)
+
+        Args:
+            valid_records: Dict mapping NVR to KonfluxBuildRecord for valid base images
 
         Returns:
             str: Snapshot name if successful, None if failed
@@ -144,20 +201,26 @@ class BaseImageHandler:
                 return snapshot_name
 
             components = []
-            for metadata, nvr, image_pullspec in self.image_data_list:
-                base_component = metadata.config.distgit.component
-                if base_component.endswith("-container"):
-                    base_component = base_component[:-10]
+            for nvr, build_record in valid_records.items():
+                app_name = KonfluxImageBuilder.get_application_name(self.runtime.group_config.name)
+                comp_name = KonfluxImageBuilder.get_component_name(app_name, build_record.name)
+                component = {
+                    "name": comp_name,
+                    "containerImage": build_record.image_pullspec,
+                }
 
-                comp_name = self._derive_component_name(self.runtime.group_config.name, base_component)
-                components.append(
-                    {
-                        "name": comp_name,
-                        "containerImage": image_pullspec,
+                if build_record.rebase_repo_url and build_record.rebase_commitish:
+                    component["source"] = {
+                        "git": {
+                            "url": build_record.rebase_repo_url,
+                            "revision": build_record.rebase_commitish,
+                        }
                     }
-                )
+                    self.logger.debug(f"Added source information for {nvr} from database")
+                else:
+                    self.logger.warning(f"No source information found for {nvr} in database")
 
-            application_name = self.runtime.group_config.name.replace('.', '-')
+                components.append(component)
 
             snapshot_obj = {
                 "apiVersion": API_VERSION,
@@ -167,11 +230,11 @@ class BaseImageHandler:
                     "namespace": self.namespace,
                     "labels": {
                         "test.appstudio.openshift.io/type": "override",
-                        "appstudio.openshift.io/application": application_name,
+                        "appstudio.openshift.io/application": ART_IMAGES_BASE_APPLICATION,
                     },
                 },
                 "spec": {
-                    "application": application_name,
+                    "application": ART_IMAGES_BASE_APPLICATION,
                     "components": components,
                 },
             }
@@ -220,13 +283,11 @@ class BaseImageHandler:
                 if not snapshot_available:
                     raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
-            application_name = self.runtime.group_config.name.replace('.', '-')
-
             metadata = {
                 "generateName": "ocp-base-image-release-",
                 "namespace": self.namespace,
                 "labels": {
-                    "appstudio.openshift.io/application": application_name,
+                    "appstudio.openshift.io/application": ART_IMAGES_BASE_APPLICATION,
                 },
                 "annotations": {
                     "art.redhat.com/kind": "image",

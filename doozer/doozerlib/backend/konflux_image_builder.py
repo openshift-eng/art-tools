@@ -249,6 +249,15 @@ class KonfluxImageBuilder:
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
                     )
 
+                    # Check base image release AFTER saving to database
+                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.is_base_image():
+                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
+                        if not base_image_release_success:
+                            logger.error(
+                                f"Base image release failed for {metadata.distgit_key}, but build already stored in database"
+                            )
+                            outcome = KonfluxBuildOutcome.FAILURE
+
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
@@ -259,7 +268,6 @@ class KonfluxImageBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
-
                     break
 
             if not metadata.build_status and error:
@@ -989,3 +997,41 @@ class KonfluxImageBuilder:
                 parent_image_nvrs.append(pullspec)
 
         return parent_image_nvrs
+
+    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
+        """Trigger base image release for a single successful base image build.
+
+        Returns:
+            bool: True if base image release was triggered successfully, False otherwise
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        if not metadata.is_snapshot_release_enabled():
+            logger.info(f"Skipping base image release for {nvr}: snapshot_release disabled")
+            return True
+
+        logger.info(f"Triggering base image release for {nvr}")
+
+        from pyartcd import jenkins
+
+        try:
+            version_parts = self._config.group_name.split('-')
+            if len(version_parts) >= 2:
+                build_version = '-'.join(version_parts[1:])
+            else:
+                build_version = self._config.group_name
+
+            jenkins.start_base_image_release(
+                build_version=build_version,
+                assembly=metadata.runtime.assembly,
+                base_image_nvrs=[nvr],
+                doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
+                doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
+                dry_run=self._config.dry_run,
+            )
+            logger.info(f"Successfully triggered base image release for {nvr}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to trigger base image release for {nvr}: {e}")
+            return False
