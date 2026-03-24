@@ -2,7 +2,7 @@ import logging
 from pprint import pprint
 
 import click
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 
 from doozerlib.assembly_inspector import AssemblyInspector
@@ -23,7 +23,6 @@ LOGGER = logging.getLogger(__name__)
 async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool):
     if runtime.build_system != "konflux" or runtime.assembly != "stream":
         raise ValueError("This command is only intended to be used with --build-system=konflux and assembly=stream")
-
 
     code = AssemblyIssueCode[code]
     runtime.initialize(config_only=True)
