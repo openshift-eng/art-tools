@@ -1,4 +1,5 @@
 import asyncio
+import re
 import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -11,17 +12,37 @@ from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
-BFB_ALLOWLIST = {"nvidiabfb", "ostree", "oci-manifest"}
-GENERAL_RHCOS_ALLOWLIST = {"gcp", "initramfs", "iso", "kernel", "metal", "openstack", "qemu", "vmware", "dasd"}
+# Configuration for each sync type
+SYNC_TYPE_CONFIG = {
+    "bfb": {
+        "arch": "aarch64",
+        "allowlist": {"nvidiabfb", "ostree", "oci-manifest"},
+        "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb",
+        "extract_major_minor": lambda stream: stream.split("-")[
+            0
+        ],  # Extract OCP version: "4.20-9.6-nvidia-bfb" -> "4.20"
+        "enforce_allowlist": True,
+    },
+    "confidential": {
+        "arch": "x86_64",
+        "allowlist": {"azure", "qemu"},
+        "s3_base_url": "s3://art-srv-enterprise/pub/openshift-v4/x86_64/dependencies/rhcos-confidential",
+        "extract_major_minor": lambda stream: stream.split("-")[
+            1
+        ],  # Extract RHEL version: "rhel-9.6-te-preview" -> "9.6"
+        "enforce_allowlist": True,
+    },
+}
 
-BFB_S3_URL = "s3://art-srv-enterprise/pub/openshift-v4/aarch64/dependencies/rhcos-nvidiabfb"
-GENERAL_RHCOS_S3_URL = ""
 
-
-class SyncRhcosBfbPipeline:
+class SyncRhcosSpecializedPipeline:
     """
     Pipeline to sync RHCOS artifacts
     from the RHCOS release browser to mirror.openshift.com
+
+    Supports:
+    - BFB: NVIDIA BFB artifacts (aarch64)
+    - Confidential: Confidential clusters images (x86_64)
     """
 
     def __init__(self, runtime: Runtime, stream: str, build: str, sync_type: str = "bfb"):
@@ -29,23 +50,21 @@ class SyncRhcosBfbPipeline:
         self.stream = stream
         self.build = build
         self.sync_type = sync_type
-        self.major_minor = self.stream.split("-")[0]
         self.working_dir = self.runtime.working_dir
         self.artifacts_dir = self.working_dir / "rhcos-artifacts"
-        self.rhcos_base_url = f"https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/{self.stream}/builds/{self.build}/aarch64"
 
-        if sync_type not in ["bfb"]:
-            raise ValueError(f"Sync type '{sync_type}' not yet implemented.")
+        if sync_type not in SYNC_TYPE_CONFIG:
+            supported_types = ", ".join(f"'{t}'" for t in SYNC_TYPE_CONFIG.keys())
+            raise ValueError(f"Sync type '{sync_type}' not supported. Valid types: {supported_types}")
 
-        # TODO: Add --enforce-allowlist as a CLI option after rhcos_sync is migrated
-        self.enforce_allowlist = self.sync_type == "bfb"  # `bfb` type syncs only certain images from meta.json
+        config = SYNC_TYPE_CONFIG[sync_type]
+        self.arch = config["arch"]
+        self.allowlist = config["allowlist"]
+        self.s3_base_url = config["s3_base_url"]
+        self.major_minor = config["extract_major_minor"](stream)
+        self.enforce_allowlist = config["enforce_allowlist"]
 
-        if self.sync_type == "bfb":
-            self.allowlist = BFB_ALLOWLIST
-            self.s3_base_url = BFB_S3_URL
-        else:
-            self.allowlist = GENERAL_RHCOS_ALLOWLIST
-            self.s3_base_url = GENERAL_RHCOS_S3_URL
+        self.rhcos_base_url = f"https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/{self.stream}/builds/{self.build}/{self.arch}"
 
         self.meta_json = None
         self.ocp_version = None
@@ -142,9 +161,13 @@ class SyncRhcosBfbPipeline:
         """
         if self.sync_type == "bfb":
             return self.build_bfb_destinations()
+        elif self.sync_type == "confidential":
+            return self.build_confidential_destinations()
         else:
             # TODO Implement support for "general" RHCOS sync
-            raise Exception(f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' is supported.")
+            raise Exception(
+                f"Sync type '{self.sync_type}' not yet implemented. Currently only 'bfb' and 'confidential' are supported."
+            )
 
     def build_bfb_destinations(self) -> Tuple[List[str], List[str]]:
         """Build destination paths for BFB artifacts"""
@@ -171,6 +194,20 @@ class SyncRhcosBfbPipeline:
                     f"{self.s3_base_url}/latest",  # Global latest
                 ]
             )
+
+        return versioned_paths, latest_paths
+
+    def build_confidential_destinations(self) -> Tuple[List[str], List[str]]:
+        """
+        Build destination paths for confidential cluster artifacts.
+        Uses RHEL version-based structure, similar to BFB's OCP version structure.
+        """
+        versioned_paths = [f"{self.s3_base_url}/{self.major_minor}/{self.build}"]
+
+        latest_paths = [
+            f"{self.s3_base_url}/{self.major_minor}/latest",  # RHEL-version-specific latest
+            f"{self.s3_base_url}/latest",  # Global latest
+        ]
 
         return versioned_paths, latest_paths
 
@@ -222,34 +259,54 @@ class SyncRhcosBfbPipeline:
 
     async def should_update_global_latest(self) -> bool:
         """
-        Check if we should update global latest directory ("latest" or "/pre-release/latest")
-        For pre-release, check existence of latest-{major}.{minor+1}/.
-        For GA'd releases, check {major}.{minor+1}/.
-        Only update if that directory does not exist.
+        Check if we should update global latest directory.
+        Only update if no higher version exists.
+
+        This handles cases where versions might skip numbers (e.g., 9.6 → 9.8, skipping 9.7)
         """
 
-        # For both stable and pre-release, check if next major.minor exists
-        def get_next_major_minor(major_minor: str) -> str:
-            major, minor = map(int, major_minor.split("."))
-            return f"{major}.{minor + 1}"
+        def parse_version(version_str: str) -> tuple:
+            major, minor = version_str.split(".")
+            return (int(major), int(minor))
 
-        next_major_minor = get_next_major_minor(self.major_minor)
+        current_version_tuple = parse_version(self.major_minor)
 
         if self.is_prerelease:
-            path_to_check = f"{self.s3_base_url}/pre-release/latest-{next_major_minor}/"
+            # For pre-release, list all latest-* directories under pre-release/
+            list_path = f"{self.s3_base_url}/pre-release/"
+            # Match: "PRE latest-4.20/" -> extract "4.20"
+            version_pattern = re.compile(r'PRE\s+latest-(\d+\.\d+)/')
         else:
-            path_to_check = f"{self.s3_base_url}/{next_major_minor}/"
+            list_path = f"{self.s3_base_url}/"
+            # Match: "PRE 4.20/" or "PRE 9.6/" -> extract "4.20" or "9.6"
+            version_pattern = re.compile(r'PRE\s+(\d+\.\d+)/')
 
-        rc, stdout, stderr = await exectools.cmd_gather_async(["aws", "s3", "ls", path_to_check], check=False)
+        rc, stdout, stderr = await exectools.cmd_gather_async(["aws", "s3", "ls", list_path], check=False)
 
-        # If command succeeds and has non-empty output, next version exists
-        if rc == 0:
-            return not bool(stdout.strip())
-        # If command fails and has empty stderr, next version does not exist
-        elif not stderr.strip():
-            return True
-        else:
+        if rc != 0:
+            if not stderr.strip():
+                # Base path doesn't exist, safe to update
+                return True
             raise ChildProcessError(f"AWS S3 ls failed: {stderr}")
+
+        for line in stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+
+            match = version_pattern.search(line)
+            if not match:
+                continue
+
+            version_str = match.group(1)
+            existing_version_tuple = parse_version(version_str)
+
+            if existing_version_tuple and existing_version_tuple > current_version_tuple:
+                self.runtime.logger.info(
+                    f"Higher version {version_str} exists, skipping global latest update for {self.major_minor}"
+                )
+                return False
+
+        return True
 
     async def sync_artifacts(self):
         """Sync artifacts to all appropriate destinations with proper latest management"""
@@ -261,13 +318,12 @@ class SyncRhcosBfbPipeline:
 
         # After versioned sync is complete, add copies with stable filenames to artifacts_dir
         # which will be synced to `latest` directories
-        self.add_stable_files_to_artifacts_dir()
+        if latest_paths:
+            self.add_stable_files_to_artifacts_dir()
 
         latest_tasks = []
 
         for latest_path in latest_paths:
-            # Check if this is the global latest (path ends with just "/latest")
-            # vs Y-stream latest - path ends with "/{major.minor}/latest" (or just "/latest-{major.minor}" for pre-release)
             is_global_latest = latest_path.endswith("/latest") and not latest_path.endswith(
                 f"/{self.major_minor}/latest"
             )
@@ -281,7 +337,6 @@ class SyncRhcosBfbPipeline:
                 else:
                     self.runtime.logger.info(f"Skipping {latest_path} update (newer version exists)")
             else:
-                # Y-stream latest (both stable and pre-release) - always update
                 latest_tasks.append(self.sync_to_destination(latest_path))
 
         if latest_tasks:
@@ -295,13 +350,16 @@ class SyncRhcosBfbPipeline:
         try:
             self.meta_json = await self.fetch_rhcos_metadata()
 
-            self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get("rhcos.version", None)
-            if self.ocp_version is None:
-                raise Exception(
-                    f"Could not retrieve OCP version from `coreos-assembler.oci-imported-labels.rhcos_version` in {self.rhcos_base_url}/meta.json"
+            # BFB needs OCP version for directory structure and pre-release detection
+            if self.sync_type == "bfb":
+                self.ocp_version = self.meta_json.get("coreos-assembler.oci-imported-labels", {}).get(
+                    "rhcos.version", None
                 )
-
-            self.is_prerelease = "ec" in self.ocp_version or "rc" in self.ocp_version
+                if self.ocp_version is None:
+                    raise Exception(
+                        f"Could not retrieve OCP version from `coreos-assembler.oci-imported-labels.rhcos_version` in {self.rhcos_base_url}/meta.json"
+                    )
+                self.is_prerelease = "ec" in self.ocp_version or "rc" in self.ocp_version
 
             artifacts = self.discover_artifacts()
             self.runtime.logger.info(f"Discovered the following artifacts: {', '.join(artifacts)}")
@@ -317,17 +375,19 @@ class SyncRhcosBfbPipeline:
             raise
 
 
-@cli.command("sync-rhcos-bfb", help="Sync RHCOS artifacts to mirror.openshift.com")
-@click.option("--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb')")
+@cli.command("sync-rhcos-specialized", help="Sync specialized RHCOS artifacts to mirror.openshift.com")
+@click.option(
+    "--stream", required=True, help="RHCOS stream identifier (e.g., '4.20-9.6-nvidia-bfb', 'rhel-9.6-te-preview')"
+)
 @click.option("--build", required=True, help="RHCOS build identifier (e.g., '9.6.20250707-1.3')")
 @click.option(
     "--type",
     "sync_type",
     default="bfb",
-    help="Type of RHCOS artifacts to sync: 'bfb' for NVIDIA BFB artifacts (default)",
+    help="Type: 'bfb' (NVIDIA BFB, aarch64) or 'confidential' (confidential cluster images, x86_64)",
 )
 @pass_runtime
 @click_coroutine
-async def sync_rhcos_bfb(runtime: Runtime, stream: str, build: str, sync_type: str):
-    pipeline = SyncRhcosBfbPipeline(runtime, stream, build, sync_type)
+async def sync_rhcos_specialized(runtime: Runtime, stream: str, build: str, sync_type: str):
+    pipeline = SyncRhcosSpecializedPipeline(runtime, stream, build, sync_type)
     await pipeline.run()
