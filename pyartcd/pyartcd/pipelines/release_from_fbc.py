@@ -796,8 +796,8 @@ class ReleaseFromFbcPipeline:
                 shipments_by_kind[shipment_kind] = shipment_config
                 fbc_counter += 1
 
-        # Write shipment files to local repository
-        if shipments_by_kind:
+        # Write shipment files to local repository (only when not creating MR)
+        if shipments_by_kind and not self.create_mr:
             await self.write_shipment_files_locally(shipments_by_kind, "prod", timestamp)
 
         # Create MR if requested
