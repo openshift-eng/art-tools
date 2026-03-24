@@ -79,6 +79,7 @@ class OkdScanPipeline:
             f'--assembly={self.assembly}',
             '--build-system=konflux',
             '--load-okd-only',
+            '--variant=okd',
         ]
 
     async def run(self):
@@ -135,7 +136,6 @@ class OkdScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
-                '--variant=okd',
             ]
         )
 

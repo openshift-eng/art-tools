@@ -63,13 +63,14 @@ class ImagesHealthPipeline:
             f'--working-dir={doozer_working}',
             f'--data-path={self.data_path}',
             '--load-okd-only',
+            '--variant=okd',
             group_param,
         ]
 
         if self.image_list:
             cmd.append(f'--images={",".join(self.image_list)}')
 
-        cmd.extend(['images:health', f'--group={OKD_GROUP_TEMPLATE.format(version)}', '--variant=okd'])
+        cmd.extend(['images:health', f'--group={OKD_GROUP_TEMPLATE.format(version)}'])
 
         if self.assembly:
             cmd.append(f'--assembly={self.assembly}')

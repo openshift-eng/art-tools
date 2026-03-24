@@ -881,6 +881,20 @@ class ImageMetadata(Metadata):
                 break
 
         if not matched:
+            # For OKD variant, RHEL version mismatches are expected (e.g., OKD 5.0 uses el10 while upstream uses el9)
+            # Log a warning instead of raising an error to allow canonical builders to work
+            from artcommonlib.variants import BuildVariant
+
+            if self.runtime.variant == BuildVariant.OKD:
+                self.logger.warning(
+                    '[%s] OKD variant: Upstream uses el%s but ART uses el%s. '
+                    'No alternative_upstream config found, but continuing anyway for OKD.',
+                    self.distgit_key,
+                    upstream_intended_el_version,
+                    art_intended_el_version,
+                )
+                return
+
             raise IOError(
                 f'[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses '
                 f'el{art_intended_el_version}, and no matching alternative_upstream config was found. '

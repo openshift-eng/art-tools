@@ -185,6 +185,12 @@ def print_version(ctx, param, value):
     '--load-okd-only', default=False, is_flag=True, help='Load images with mode: disabled but okd.mode: enabled'
 )
 @click.option(
+    '--variant',
+    type=click.Choice(['ocp', 'okd'], case_sensitive=False),
+    default='ocp',
+    help='Build variant (ocp or okd). Affects metadata resolution and branch selection.',
+)
+@click.option(
     '--local/--osbs',
     default=False,
     is_flag=True,

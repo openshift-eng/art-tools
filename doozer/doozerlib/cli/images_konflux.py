@@ -14,9 +14,8 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.model import Model
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import deep_merge, validate_build_priority
+from artcommonlib.util import validate_build_priority
 from artcommonlib.variants import BuildVariant
 from opentelemetry import trace
 
@@ -201,7 +200,6 @@ class KonfluxBuildCli:
         dry_run: bool,
         plr_template: str,
         build_priority: Optional[str],
-        variant: BuildVariant,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -213,7 +211,6 @@ class KonfluxBuildCli:
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
-        self.variant = variant
 
         validate_build_priority(self.build_priority)
 
@@ -221,31 +218,8 @@ class KonfluxBuildCli:
     async def run(self):
         runtime = self.runtime
 
-        # IMPORTANT: For OKD builds, set up OKD configuration BEFORE loading images
-        # This ensures that when images (including parent images) are loaded during initialization,
-        # they use the correct OKD-specific branch (e.g., rhel-10 instead of rhel-9 for OKD 5.0)
-        if self.variant is BuildVariant.OKD:
-            # Step 1: Initialize only group and assembly configs (config_only=True)
-            # This loads group_config but doesn't load images yet
-            runtime.initialize(mode='images', clone_distgits=False, config_only=True)
-
-            # Step 2: Merge OKD configuration into group config BEFORE loading images
-            group_config = runtime.group_config.copy()
-            if group_config.get('okd'):
-                LOGGER.info('Build images using OKD group configuration')
-                group_config = deep_merge(group_config, group_config['okd'])
-                runtime._group_config = Model(group_config)
-                # Update runtime.branch to use the OKD branch override
-                # This ensures parent images use the correct rhel-10 branch instead of rhel-9
-                if group_config.get('branch'):
-                    runtime.branch = group_config['branch']
-                    LOGGER.info(f'Updated runtime branch to OKD variant: {runtime.branch}')
-
-            # Step 3: Now do full initialization with OKD config already applied
-            runtime.initialize(mode='images', clone_distgits=False)
-        else:
-            # For non-OKD builds, initialize normally
-            runtime.initialize(mode='images', clone_distgits=False)
+        # OKD configuration is automatically merged in get_group_config() when variant=okd
+        runtime.initialize(mode='images', clone_distgits=False)
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
@@ -256,7 +230,7 @@ class KonfluxBuildCli:
         span.update_name(f"images:konflux:build.{len(metas)}metas")
         span.set_attribute("doozer.images.count", len(metas))
 
-        if self.variant is BuildVariant.OKD:
+        if self.runtime.variant is BuildVariant.OKD:
             major, minor = runtime.get_major_minor_fields()
             group = f'okd-{major}.{minor}'
         else:
@@ -329,12 +303,6 @@ class KonfluxBuildCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
-@click.option(
-    '--variant',
-    type=click.Choice([v.value for v in BuildVariant]),
-    default=BuildVariant.OCP.value,
-    help='Build variant.',
-)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -348,7 +316,6 @@ async def images_konflux_build(
     plr_template: str,
     build_priority: Optional[str],
     network_mode: Optional[str],
-    variant: str,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -364,7 +331,6 @@ async def images_konflux_build(
         dry_run=dry_run,
         plr_template=plr_template,
         build_priority=build_priority,
-        variant=BuildVariant(variant),
     )
     await cli.run()
 

@@ -1,5 +1,6 @@
 import atexit
 import datetime
+import functools
 import io
 import itertools
 import os
@@ -29,6 +30,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.variants import BuildVariant
 from jira import JIRA
 from semver import Version
 
@@ -89,6 +91,7 @@ class Runtime(GroupRuntime):
         self.load_wip = False
         self.load_disabled = False
         self.load_okd_only = False
+        self.variant = BuildVariant.OCP  # Default to OCP variant
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -148,6 +151,10 @@ class Runtime(GroupRuntime):
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
+
+        # Convert variant string to BuildVariant enum if it's a string
+        if isinstance(self.variant, str):
+            self.variant = BuildVariant(self.variant.lower())
 
         self.network_mode_override = None
 
@@ -240,13 +247,31 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
+        """
+        Load and cache group configuration. Automatically merges OKD config when variant=okd.
+        Cached to prevent reloading from disk when initialize() is called multiple times.
+        """
         replace_vars = self.get_replace_vars(None)
         group_config = self._build_data_loader.load_group_config(
             self.assembly,
             self.get_releases_config(),
             additional_vars=replace_vars,
         )
+
+        # For OKD variant, automatically merge the optional okd: field
+        from artcommonlib.util import deep_merge
+        from artcommonlib.variants import BuildVariant
+
+        if self.variant == BuildVariant.OKD and 'okd' in group_config:
+            self._logger.info('Merging OKD group configuration')
+            group_config = deep_merge(group_config, group_config['okd'])
+            # Update runtime.branch if OKD specifies a different branch
+            if 'branch' in group_config:
+                self.branch = group_config['branch']
+                self._logger.info(f'Updated runtime branch to OKD variant: {self.branch}')
+
         return Model(group_config)
 
     def get_errata_config(self):
