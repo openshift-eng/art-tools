@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -235,14 +236,16 @@ class PrepareReleaseKonfluxPipeline:
         if err:
             raise err
 
-        deferred_build_errors = self._deferred_build_errors()
-        if not deferred_build_errors:
-            await self.set_shipment_mr_ready()
         await self.verify_payload()
+        await self.set_shipment_mr_ready()
 
+        # Check for deferred bundle/FBC build errors and exit with code 2 for UNSTABLE status
+        deferred_build_errors = self._deferred_build_errors()
         if deferred_build_errors:
             await self.report_deferred_build_failures(deferred_build_errors)
-            raise RuntimeError("Deferred bundle/FBC build failures were encountered. Shipment MR will remain draft.")
+            # Exit with code 2 to mark Jenkins job as UNSTABLE
+            # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
+            sys.exit(2)
 
     def check_env_vars(self):
         github_token = os.getenv('GITHUB_TOKEN')
@@ -670,9 +673,6 @@ class PrepareReleaseKonfluxPipeline:
             tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
                 - successful_nvrs: List of FBC NVRs that were successfully found or built.
                 - errors: List of error dictionaries with details about failed builds.
-
-        Raises:
-            IOError: If the command produces no parseable output.
         """
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
 
@@ -701,20 +701,9 @@ class PrepareReleaseKonfluxPipeline:
 
         # Run command and tolerate non-zero exit code
         # The doozer command returns partial results in JSON even on failure
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
 
-        # Parse JSON output to get both successful builds and errors
-        try:
-            output_data = json.loads(stdout)
-        except json.JSONDecodeError as ex:
-            error_msg = f"Failed to parse FBC rebase-and-build JSON output (rc={rc}): {ex}"
-            if stdout:
-                error_msg += f"\nStdout: {stdout}"
-            if stderr:
-                error_msg += f"\nStderr: {stderr}"
-            self.logger.error(error_msg)
-            raise IOError(error_msg)
-
+        output_data = json.loads(stdout)
         successful_nvrs = output_data.get("nvrs", [])
         errors = output_data.get("errors", [])
         failed_count = output_data.get("failed_count", 0)
@@ -745,9 +734,6 @@ class PrepareReleaseKonfluxPipeline:
 
         Returns:
             tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
-
-        Raises:
-            IOError: If the command produces no parseable output.
         """
 
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
@@ -770,19 +756,9 @@ class PrepareReleaseKonfluxPipeline:
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
 
-        try:
-            output_data = json.loads(stdout)
-        except json.JSONDecodeError as ex:
-            error_msg = f"Failed to parse bundle build JSON output (rc={rc}): {ex}"
-            if stdout:
-                error_msg += f"\nStdout: {stdout}"
-            if stderr:
-                error_msg += f"\nStderr: {stderr}"
-            self.logger.error(error_msg)
-            raise IOError(error_msg)
-
+        output_data = json.loads(stdout)
         successful_nvrs = output_data.get("nvrs", [])
         errors = output_data.get("errors", [])
         failed_count = output_data.get("failed_count", 0)
@@ -832,7 +808,7 @@ class PrepareReleaseKonfluxPipeline:
         self.logger.warning(error_summary)
         await self._slack_client.say_in_thread(
             f":warning: prepare-release-konflux completed with {error_count} deferred bundle/FBC build failure(s). "
-            "Successfully built bundle/FBC builds have been attached, but the shipment MR remains draft.\n"
+            f"Successfully built builds have been attached. Job marked as UNSTABLE.\n"
             f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in deferred_build_errors)}"
         )
 

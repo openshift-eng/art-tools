@@ -927,7 +927,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
-    async def test_run_keeps_mr_draft_when_deferred_build_failures_exist(
+    async def test_run_exits_unstable_when_deferred_build_failures_exist(
         self,
         mock_initialize,
         mock_check_advisory_stage_policy,
@@ -949,8 +949,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.bundle_build_errors = ["bundle build failed for operator=test-operator: boom"]
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(SystemExit) as cm:
             await pipeline.run()
+        self.assertEqual(cm.exception.code, 2)
 
         mock_initialize.assert_awaited_once()
         mock_check_advisory_stage_policy.assert_awaited_once_with(AssemblyTypes.STANDARD)
@@ -959,6 +960,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_prepare_shipment.assert_awaited_once()
         mock_handle_jira_ticket.assert_awaited_once()
         mock_create_update_build_data_pr.assert_awaited_once()
-        mock_set_shipment_mr_ready.assert_not_awaited()
+        mock_set_shipment_mr_ready.assert_awaited_once()
         mock_verify_payload.assert_awaited_once()
         mock_report_deferred_build_failures.assert_awaited_once_with(pipeline.bundle_build_errors)
