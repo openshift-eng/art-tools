@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.brew import BuildStates
 from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import CgitAtomFeedEntry, Metadata, RebuildHintCode
 
@@ -16,6 +17,7 @@ class TestMetadata(TestCase):
         runtime.group_config.urls.cgit = "http://distgit.example.com/cgit"
         runtime.group_config.scan_freshness.threshold_hours = 6
         runtime.logger = Mock()
+        runtime.variant = BuildVariant.OCP
 
         koji_mock = Mock()
         koji_mock.__enter__ = Mock()

@@ -70,6 +70,15 @@ class MetadataBase(object):
         self.data_obj.save()
 
     def branch(self):
+        # For OKD variant, check if okd.distgit.branch is configured
+        # runtime.variant is set by commands like scan-sources --variant=okd
+        if self.runtime.variant == BuildVariant.OKD:
+            if self.config.okd is not Missing and self.config.okd.distgit is not Missing:
+                okd_branch = self.config.okd.distgit.branch
+                if okd_branch is not Missing:
+                    return okd_branch
+
+        # Fall back to standard branch logic
         if self.config.distgit.branch is not Missing:
             return self.config.distgit.branch
         return self.runtime.branch

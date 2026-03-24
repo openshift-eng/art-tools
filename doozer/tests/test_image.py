@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
+from artcommonlib.variants import BuildVariant
 from doozerlib import build_info, image
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
@@ -1331,6 +1332,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         runtime = MagicMock()
         runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
 
         base_image = Model({'name': 'test-base', 'base_only': True})
         base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
@@ -1347,6 +1349,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         runtime = MagicMock()
         runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
 
         enabled_image = Model({'name': 'test-snapshot', 'snapshot_release': True})
         enabled_data = Model({'key': 'test-snapshot', 'data': enabled_image, 'filename': 'test-snapshot.yaml'})

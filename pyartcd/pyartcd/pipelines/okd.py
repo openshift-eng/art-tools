@@ -10,7 +10,6 @@ from typing import Optional
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.variants import BuildVariant
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
@@ -93,6 +92,7 @@ class KonfluxOkdPipeline:
             f'--data-path={data_path}',
             '--build-system=konflux',
             '--load-okd-only',
+            '--variant=okd',
             f'--arches={",".join(OKD_ARCHES)}',
             group_param,
         ]
@@ -363,7 +363,6 @@ class KonfluxOkdPipeline:
         cmd.extend(
             [
                 'beta:images:konflux:build',
-                f'--variant={BuildVariant.OKD.value}',
                 '--network-mode=open',
                 '--konflux-namespace=ocp-art-tenant',
                 f'--image-repo={OKD_DEFAULT_IMAGE_REPO}',

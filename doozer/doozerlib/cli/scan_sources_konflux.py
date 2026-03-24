@@ -76,8 +76,8 @@ class ConfigScanSources:
         self.dry_run = dry_run
         self.variant = BuildVariant(variant.lower())
 
-        # Set the variant on runtime so metadata methods can use it for OKD builds
-        # This allows get_latest_konflux_build to query with okd-* group instead of openshift-*
+        # Ensure runtime.variant matches (should already be set by the command function)
+        # This is kept for backward compatibility in case ConfigScanSources is instantiated directly
         self.runtime.variant = self.variant
 
         # Only load RPM metadata for OCP variant (OKD doesn't check RPM changes)
@@ -1681,15 +1681,9 @@ class ConfigScanSources:
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
 @click.option("--rebase-priv", default=False, is_flag=True, help='Try to reconcile public upstream into openshift-priv')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
-@click.option(
-    '--variant',
-    type=click.Choice(['ocp', 'okd'], case_sensitive=False),
-    default='ocp',
-    help='Build variant to scan for (ocp or okd). OKD skips network mode checks.',
-)
 @click_coroutine
 @pass_runtime
-async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run, variant):
+async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -1713,25 +1707,9 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
     It will report RHCOS updates available per imagestream.
     """
 
-    # Initialize group config: we need this to determine the canonical builders behavior
-    runtime.initialize(config_only=True)
-
-    # IMPORTANT: For OKD scans, merge OKD configuration BEFORE loading images
-    # This ensures that when images (including parent images) are loaded during initialization,
-    # they use the correct OKD-specific branch (e.g., rhel-10 instead of rhel-9 for OKD 5.0)
-    if variant == BuildVariant.OKD.value:
-        group_config = runtime.group_config.copy()
-        if group_config.get('okd'):
-            runtime._logger.info('Scanning sources using OKD group configuration')
-            group_config = deep_merge(group_config, group_config['okd'])
-            runtime._group_config = Model(group_config)
-            # Update runtime.branch to use the OKD branch override
-            # This ensures parent images use the correct rhel-10 branch instead of rhel-9
-            if group_config.get('branch'):
-                runtime.branch = group_config['branch']
-                runtime._logger.info(f'Updated runtime branch to OKD variant: {runtime.branch}')
-
-    runtime.initialize(mode='both' if variant != BuildVariant.OKD.value else 'images', clone_distgits=False)
+    # runtime.variant is already set by the global --variant option (defaults to BuildVariant.OCP)
+    # OKD configuration is automatically merged in get_group_config() when variant=okd
+    runtime.initialize(mode='both' if runtime.variant != BuildVariant.OKD else 'images', clone_distgits=False)
 
     async with aiohttp.ClientSession() as session:
         await ConfigScanSources(
@@ -1740,6 +1718,6 @@ async def config_scan_source_changes_konflux(runtime: Runtime, ci_kubeconfig, as
             as_yaml=as_yaml,
             rebase_priv=rebase_priv,
             dry_run=dry_run,
-            variant=variant,
+            variant=runtime.variant.value,
             session=session,
         ).run()

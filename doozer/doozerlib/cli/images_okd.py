@@ -94,33 +94,12 @@ class OkdRebaseCli:
         self.state = {}
 
     async def run(self):
-        # IMPORTANT: Set up OKD configuration BEFORE loading images
-        # This ensures that when images (including parent images) are loaded during initialization,
-        # they use the correct OKD-specific branch (e.g., rhel-10 instead of rhel-9 for OKD 5.0)
-
-        # Step 1: Initialize only group and assembly configs (config_only=True)
-        # This loads group_config but doesn't load images yet
-        self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux', config_only=True)
-
-        # Step 2: Merge OKD configuration into group config BEFORE loading images
-        group_config = self.runtime.group_config.copy()
-        if group_config.get('okd', None):
-            self.logger.info('Using OKD group configuration')
-            group_config = deep_merge(group_config, group_config['okd'])
-            # Set the merged config on runtime BEFORE loading images
-            self.runtime._group_config = Model(group_config)
-            # Update runtime.branch to use the OKD branch override
-            # This ensures parent images use the correct rhel-10 branch instead of rhel-9
-            if group_config.get('branch'):
-                self.runtime.branch = group_config['branch']
-                self.logger.info(f'Updated runtime branch to OKD variant: {self.runtime.branch}')
-
-        # Step 3: Now do full initialization with OKD config already applied
+        # OKD configuration is automatically merged in get_group_config() when variant=okd
         # Initialize with disabled=True to load all images (including those with mode: disabled)
         # This is necessary because some parent images may be disabled for OCP but enabled for OKD
         self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux', disabled=True)
 
-        # Step 4: Apply OKD config to ALL loaded images
+        # Apply OKD config to ALL loaded images
         # This ensures that parent images also get the OKD branch overrides
         for image_meta in self.runtime.image_metas():
             if image_meta.config.okd is not Missing:
@@ -128,7 +107,7 @@ class OkdRebaseCli:
                 image_meta.config = self.get_okd_image_config(image_meta)
                 self.logger.debug(f'Applied OKD config to {image_meta.distgit_key}')
 
-        # Step 5: Wrap late_resolve_image to apply OKD config to any images loaded during rebase
+        # Wrap late_resolve_image to apply OKD config to any images loaded during rebase
         # This handles parent images that are loaded on-demand when not explicitly included via --images
         original_late_resolve_image = self.runtime.late_resolve_image
 
