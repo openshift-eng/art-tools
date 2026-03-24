@@ -669,7 +669,13 @@ def get_konflux_build_priority(metadata, group):
 
     # 4. Higher than default priority for main & pre-GA N-1 streams.
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):
+        if metadata.children:
+            return higher_by(3)
         return higher_by(2)
+
+    # 5. Non-leaf images get a priority bump since they block dependent builds.
+    if metadata.children:
+        return higher_by(1)
 
     # Default
     return higher_by(0)

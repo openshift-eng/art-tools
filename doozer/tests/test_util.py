@@ -2,7 +2,7 @@ import logging
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
@@ -556,6 +556,57 @@ class TestInjectCoverageProducer(unittest.TestCase):
             # Only server in other dir
             self.assertTrue((other_dir / 'coverage_server.go').exists())
             self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+
+class TestGetKonfluxBuildPriority(unittest.TestCase):
+    is_leaf = []
+    is_parent = [MagicMock()]
+
+    def _make_metadata(self, children, phase="release", image_config_priority=None, group_config_priority=None):
+        metadata = MagicMock()
+        metadata.distgit_key = "test-image"
+        metadata.children = children
+        metadata.config.konflux.get.return_value = image_config_priority
+        metadata.runtime.group_config.konflux.get.return_value = group_config_priority
+        metadata.runtime.group_config.software_lifecycle.phase = phase
+        return metadata
+
+    def test_parent_images_get_higher_priority_than_leaf_images(self):
+        cases = [
+            # (group, phase, children, expected, description)
+            ("openshift-4.19", "release", self.is_leaf, "5", "leaf default"),
+            ("openshift-4.19", "release", self.is_parent, "4", "parent default"),
+            ("openshift-4.19", "pre-release", self.is_leaf, "3", "leaf pre-release"),
+            ("openshift-4.19", "pre-release", self.is_parent, "2", "parent pre-release"),
+            ("openshift-4.19", "signing", self.is_leaf, "3", "leaf signing"),
+            ("openshift-4.19", "signing", self.is_parent, "2", "parent signing"),
+            ("oadp-1.5", "release", self.is_leaf, "5", "leaf non-openshift"),
+            ("oadp-1.5", "release", self.is_parent, "4", "parent non-openshift"),
+        ]
+        for group, phase, children, expected, desc in cases:
+            with self.subTest(desc):
+                metadata = self._make_metadata(children=children, phase=phase)
+                self.assertEqual(util.get_konflux_build_priority(metadata, group), expected)
+
+    def test_explicit_overrides_ignore_parent_status(self):
+        cases = [
+            # (override_type, override_value, expected)
+            ("image_config", 7, "7"),
+            ("group_config", 8, "8"),
+        ]
+        for override_type, value, expected in cases:
+            with self.subTest(f"{override_type}={value} on parent"):
+                kwargs = {f"{override_type}_priority": value}
+                metadata = self._make_metadata(children=self.is_parent, **kwargs)
+                self.assertEqual(util.get_konflux_build_priority(metadata, "openshift-4.19"), expected)
+
+    def test_golang_group_overrides_parent_status(self):
+        metadata = self._make_metadata(children=self.is_parent)
+        self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
+
+    def test_priority_never_goes_below_1(self):
+        metadata = self._make_metadata(children=self.is_parent, phase="pre-release")
+        self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)
 
 
 if __name__ == "__main__":
