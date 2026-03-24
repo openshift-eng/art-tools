@@ -274,15 +274,10 @@ class KonfluxWatcher:
 
             # Count pod statuses
             successful_pods = sum(1 for p in pods.values() if p.phase == "Succeeded")
-            pod_desc = [
-                f"\tPod {p.name} [phase={p.phase}][age={p.get_age(datetime.datetime.now(tz=datetime.timezone.utc))}]"
-                for p in pods.values()
-                if p.phase != "Succeeded"
-            ]
 
             self._logger.info(
                 f"Observed PipelineRun {pipelinerun_name} [status={succeeded_status}][reason={succeeded_reason}]; "
-                f"pods[total={len(pods)}][successful={successful_pods}]\n" + "\n".join(pod_desc)
+                f"pods[total={len(pods)}][successful={successful_pods}]"
             )
 
     def _cancel_if_timed_out(self, pipelinerun_name: str, pipelinerun_dict: Dict, api):
