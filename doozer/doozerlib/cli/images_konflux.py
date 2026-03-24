@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -519,16 +520,38 @@ class KonfluxBundleCli:
             tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, image_meta, record)))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        successful_nvrs = []
         failed_tasks = []
+        errors = []
         for dgk, result in zip(dgk_records, results):
             if isinstance(result, Exception):
                 failed_tasks.append(dgk)
                 stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                errors.append(
+                    {
+                        "operator": dgk,
+                        "operator_nvr": dgk_records[dgk].nvr,
+                        "bundle_nvr": None,
+                        "error": str(result),
+                        "traceback": stack_trace,
+                    }
+                )
                 LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
-        if failed_tasks:
-            raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
+            else:
+                successful_nvrs.append(result)
         if self.output == 'json':
-            click.echo(json.dumps({"nvrs": results}, indent=4))
+            output_data = {
+                "nvrs": successful_nvrs,
+                "errors": errors,
+                "failed_count": len(failed_tasks),
+                "success_count": len(successful_nvrs),
+            }
+            click.echo(json.dumps(output_data, indent=4))
+            if failed_tasks:
+                LOGGER.error(f"Failed to rebase/build bundles: {failed_tasks}")
+                sys.exit(1)
+        elif failed_tasks:
+            raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         LOGGER.info("Build complete")
 
 

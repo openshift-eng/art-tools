@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
@@ -697,7 +698,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_builds_all.side_effect = find_builds_all
 
         def find_or_build_bundle_builds(nvrs):
-            return ["extras-bundle-nvr"]
+            return ["extras-bundle-nvr"], []
 
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
 
@@ -871,3 +872,94 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
+        self.assertEqual(pipeline.bundle_build_errors, [])
+        self.assertEqual(pipeline.fbc_build_errors, [])
+
+    @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
+    async def test_find_or_build_bundle_builds_allows_partial_failures(
+        self, mock_filter_olm_operators, mock_cmd_gather_async
+    ):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.release_name = "4.18.1"
+        mock_filter_olm_operators.return_value = ["test-operator-1.0.0-1"]
+        mock_cmd_gather_async.return_value = (
+            1,
+            json.dumps(
+                {
+                    "nvrs": ["test-operator-bundle-1.0.0-1"],
+                    "errors": [
+                        {
+                            "operator": "test-operator",
+                            "operator_nvr": "test-operator-1.0.0-1",
+                            "bundle_nvr": None,
+                            "error": "build failed",
+                            "traceback": "traceback text",
+                        }
+                    ],
+                    "failed_count": 1,
+                    "success_count": 1,
+                }
+            ),
+            "stderr output",
+        )
+
+        with patch.dict('os.environ', {"KONFLUX_SA_KUBECONFIG": "/tmp/kubeconfig"}):
+            successful_nvrs, errors = await pipeline.find_or_build_bundle_builds(["test-operator-1.0.0-1"])
+
+        self.assertEqual(successful_nvrs, ["test-operator-bundle-1.0.0-1"])
+        self.assertEqual(errors[0]["operator"], "test-operator")
+        self.assertEqual(errors[0]["error"], "build failed")
+        mock_cmd_gather_async.assert_awaited_once()
+
+    @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'handle_jira_ticket', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_shipment', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
+    async def test_run_exits_unstable_when_deferred_build_failures_exist(
+        self,
+        mock_initialize,
+        mock_check_advisory_stage_policy,
+        mock_check_blockers,
+        mock_prepare_et_advisories,
+        mock_prepare_shipment,
+        mock_handle_jira_ticket,
+        mock_create_update_build_data_pr,
+        mock_set_shipment_mr_ready,
+        mock_verify_payload,
+        mock_report_deferred_build_failures,
+    ):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.bundle_build_errors = ["bundle build failed for operator=test-operator: boom"]
+
+        with self.assertRaises(SystemExit) as cm:
+            await pipeline.run()
+        self.assertEqual(cm.exception.code, 2)
+
+        mock_initialize.assert_awaited_once()
+        mock_check_advisory_stage_policy.assert_awaited_once_with(AssemblyTypes.STANDARD)
+        mock_check_blockers.assert_awaited_once()
+        mock_prepare_et_advisories.assert_awaited_once()
+        mock_prepare_shipment.assert_awaited_once()
+        mock_handle_jira_ticket.assert_awaited_once()
+        mock_create_update_build_data_pr.assert_awaited_once()
+        mock_set_shipment_mr_ready.assert_awaited_once()
+        mock_verify_payload.assert_awaited_once()
+        mock_report_deferred_build_failures.assert_awaited_once_with(pipeline.bundle_build_errors)
