@@ -245,9 +245,11 @@ class KonfluxImageBuilder:
 
                 else:
                     # Create a build record after every attempt (both success and failure)
-                    await self.update_konflux_db(
+                    build_record = await self.update_konflux_db(
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
                     )
+                    if build_record:
+                        record["record_id"] = build_record.record_id
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(

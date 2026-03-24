@@ -240,6 +240,31 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(solved, ['img-b'])
         self.assertEqual(stream_failed, ['img-c'])
 
+    def test_build_url_with_record_id(self):
+        """_build_url produces /build? link when record_id is present."""
+        url = SeedLockfilePipeline._build_url(
+            'openshift-4.22',
+            {'nvrs': 'ironic-container-v4.22.0-202603201234.p0.assembly.stream.el9', 'record_id': 'abc-123', 'status': '0'},
+        )
+        self.assertIn('/build?', url)
+        self.assertIn('nvr=ironic-container', url)
+        self.assertIn('record_id=abc-123', url)
+        self.assertIn('outcome=success', url)
+
+    def test_build_url_without_record_id(self):
+        """_build_url falls back to search page when record_id is absent."""
+        url = SeedLockfilePipeline._build_url(
+            'openshift-4.22',
+            {'nvrs': 'ironic-container-v4.22.0-202603201234.p0.assembly.stream.el9', 'status': '-1'},
+        )
+        self.assertIn('/?nvr=', url)
+        self.assertNotIn('/build?', url)
+
+    def test_build_url_no_nvr(self):
+        """_build_url returns empty string when no NVR is available."""
+        url = SeedLockfilePipeline._build_url('openshift-4.22', {'nvrs': 'n/a', 'status': '-1'})
+        self.assertEqual(url, '')
+
     def test_slack_report_content(self):
         """Slack report contains expected sections."""
         pipeline = self._create_pipeline(image_list='img-a,img-b,img-c')

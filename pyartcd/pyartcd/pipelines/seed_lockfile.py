@@ -252,11 +252,19 @@ class SeedLockfilePipeline:
         LOGGER.info('Seeded lockfile rebase and build complete')
 
     @staticmethod
-    def _build_history_url(group: str, name: str, assembly: str) -> str:
-        return (
-            f'{ART_BUILD_HISTORY_URL}/?name={name}&group={group}'
-            f'&assembly={assembly}&outcome=success&outcome=failure&engine=konflux'
-        )
+    def _build_url(group: str, entry: dict) -> str:
+        """Build a direct link to a build page in art-build-history."""
+        nvr = entry.get('nvrs', '').split(',')[0]
+        record_id = entry.get('record_id', '')
+        outcome = 'success' if int(entry.get('status', -1)) == 0 else 'failure'
+        if nvr and nvr != 'n/a' and record_id:
+            return (
+                f'{ART_BUILD_HISTORY_URL}/build?nvr={nvr}&record_id={record_id}'
+                f'&group={group}&outcome={outcome}&type=image'
+            )
+        if nvr and nvr != 'n/a':
+            return f'{ART_BUILD_HISTORY_URL}/?nvr={nvr}&group={group}&engine=konflux'
+        return ''
 
     def _categorize_results(self) -> tuple[list[str], list[str], list[str]]:
         test_failed: list[str] = []
@@ -277,6 +285,12 @@ class SeedLockfilePipeline:
 
         return test_failed, solved, stream_failed
 
+    def _link(self, name: str, phase: str, group: str) -> str:
+        """Return an art-build-history URL for a build, or empty string if unavailable."""
+        results = self.test_results if phase == 'test' else self.stream_results
+        entry = results.get(name, {})
+        return self._build_url(group, entry) if entry else ''
+
     def _build_slack_report(self, test_failed: list[str], solved: list[str], stream_failed: list[str]) -> str:
         group = f'openshift-{self.version}'
         job_url = os.getenv('BUILD_URL', '')
@@ -290,21 +304,32 @@ class SeedLockfilePipeline:
         if test_failed:
             lines.append('\n*`network_mode: open` build failed:*')
             for name in test_failed:
-                url = self._build_history_url(group, name, 'test')
-                lines.append(f'  - `{name}` (<{url}|build history>)')
+                url = self._link(name, 'test', group)
+                if url:
+                    lines.append(f'  - <{url}|`{name}`>')
+                else:
+                    lines.append(f'  - `{name}`')
 
         if solved:
             lines.append('\n*Solved:*')
             for name in solved:
-                url = self._build_history_url(group, name, self.assembly)
-                lines.append(f'  - `{name}` (<{url}|build history>)')
+                url = self._link(name, 'stream', group)
+                if url:
+                    lines.append(f'  - <{url}|`{name}`>')
+                else:
+                    lines.append(f'  - `{name}`')
 
         if stream_failed:
             lines.append('\n*Stream build failed after successful test build:*')
             for name in stream_failed:
-                test_url = self._build_history_url(group, name, 'test')
-                stream_url = self._build_history_url(group, name, self.assembly)
-                lines.append(f'  - `{name}` — <{test_url}|test> | <{stream_url}|stream>')
+                test_url = self._link(name, 'test', group)
+                stream_url = self._link(name, 'stream', group)
+                parts = [f'`{name}`']
+                if test_url:
+                    parts.append(f'<{test_url}|test>')
+                if stream_url:
+                    parts.append(f'<{stream_url}|stream>')
+                lines.append(f'  - {" | ".join(parts)}')
 
         if not test_failed and not solved and not stream_failed:
             lines.append('No build results recorded.')
@@ -318,23 +343,34 @@ class SeedLockfilePipeline:
         if test_failed:
             lines.append('<b>network_mode: open build failed:</b><ul>')
             for name in test_failed:
-                url = self._build_history_url(group, name, 'test')
-                lines.append(f'<li><a href="{url}">{name}</a></li>')
+                url = self._link(name, 'test', group)
+                if url:
+                    lines.append(f'<li><a href="{url}">{name}</a></li>')
+                else:
+                    lines.append(f'<li>{name}</li>')
             lines.append('</ul>')
 
         if solved:
             lines.append('<b>Solved:</b><ul>')
             for name in solved:
-                url = self._build_history_url(group, name, self.assembly)
-                lines.append(f'<li><a href="{url}">{name}</a></li>')
+                url = self._link(name, 'stream', group)
+                if url:
+                    lines.append(f'<li><a href="{url}">{name}</a></li>')
+                else:
+                    lines.append(f'<li>{name}</li>')
             lines.append('</ul>')
 
         if stream_failed:
             lines.append('<b>Stream build failed after successful test build:</b><ul>')
             for name in stream_failed:
-                test_url = self._build_history_url(group, name, 'test')
-                stream_url = self._build_history_url(group, name, self.assembly)
-                lines.append(f'<li>{name} — <a href="{test_url}">test</a> | <a href="{stream_url}">stream</a></li>')
+                test_url = self._link(name, 'test', group)
+                stream_url = self._link(name, 'stream', group)
+                parts = [name]
+                if test_url:
+                    parts.append(f'<a href="{test_url}">test</a>')
+                if stream_url:
+                    parts.append(f'<a href="{stream_url}">stream</a>')
+                lines.append(f'<li>{" — ".join(parts)}</li>')
             lines.append('</ul>')
 
         if not lines:
