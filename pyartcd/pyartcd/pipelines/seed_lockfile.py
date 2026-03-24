@@ -28,6 +28,14 @@ class SeedLockfilePipeline:
     uses those builds' RPM data.
     """
 
+    @staticmethod
+    def _parse_plr_template(plr_template: str) -> tuple[str, str]:
+        if not plr_template:
+            return 'openshift-priv', 'main'
+        if '@' not in plr_template:
+            raise click.BadParameter(f"Invalid --plr-template format '{plr_template}': expected <owner>@<branch>")
+        return plr_template.split('@', 1)
+
     def __init__(
         self,
         runtime: Runtime,
@@ -37,7 +45,7 @@ class SeedLockfilePipeline:
         data_path: Optional[str] = None,
         data_gitref: Optional[str] = None,
         kubeconfig: Optional[str] = None,
-        arches: Tuple[str, ...] = None,
+        arches: Optional[Tuple[str, ...]] = None,
         plr_template: str = '',
         build_priority: str = 'auto',
         seed_nvrs: Optional[str] = None,
@@ -144,11 +152,9 @@ class SeedLockfilePipeline:
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
-            plr_template_owner, plr_template_branch = (
-                self.plr_template.split('@') if self.plr_template else ['openshift-priv', 'main']
-            )
+            owner, branch = self._parse_plr_template(self.plr_template)
             plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
-                owner=plr_template_owner, branch_name=plr_template_branch
+                owner=owner, branch_name=branch
             )
             cmd.extend(['--plr-template', plr_template_url])
         if self.runtime.dry_run:
@@ -233,11 +239,9 @@ class SeedLockfilePipeline:
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
-            plr_template_owner, plr_template_branch = (
-                self.plr_template.split('@') if self.plr_template else ['openshift-priv', 'main']
-            )
+            owner, branch = self._parse_plr_template(self.plr_template)
             plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
-                owner=plr_template_owner, branch_name=plr_template_branch
+                owner=owner, branch_name=branch
             )
             cmd.extend(['--plr-template', plr_template_url])
         if self.runtime.dry_run:

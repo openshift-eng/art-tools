@@ -493,10 +493,17 @@ class RPMLockfileGenerator:
     for asynchronous RPM metadata retrieval and outputs YAML lockfiles along with digest files.
     """
 
-    def __init__(self, repos: Repos, logger: Optional[Logger] = None, runtime=None):
+    def __init__(
+        self,
+        repos: Repos,
+        logger: Optional[Logger] = None,
+        runtime=None,
+        lockfile_seed_nvrs: Optional[list[str]] = None,
+    ):
         self.logger = logger or logutil.get_logger(__name__)
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
+        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
     def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
         """Validate that RPM latest version sets are consistent across architectures where packages exist."""
@@ -558,7 +565,7 @@ class RPMLockfileGenerator:
             self.logger.info(f"Skipping lockfile generation for {image_meta.distgit_key}: repositories set is empty")
             return False, set()
 
-        rpms_to_install = await image_meta.get_lockfile_rpms_to_install()
+        rpms_to_install = await image_meta.get_lockfile_rpms_to_install(lockfile_seed_nvrs=self.lockfile_seed_nvrs)
 
         if not rpms_to_install:
             self.logger.warning(

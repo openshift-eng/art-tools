@@ -1090,12 +1090,17 @@ class ImageMetadata(Metadata):
 
         return False
 
-    async def fetch_rpms_from_build(self) -> set[str]:
+    async def fetch_rpms_from_build(self, lockfile_seed_nvrs: Optional[list[str]] = None) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.
 
         Returns either the full image RPM set or difference from parent packages,
         based on the inspect_parent configuration. Caches result in installed_rpms attribute.
+
+        Args:
+            lockfile_seed_nvrs: NVRs of builds whose installed RPMs should seed lockfile
+                generation. When provided, the method checks these NVRs first and uses the
+                matching build record instead of the latest build.
 
         Returns:
             set[str]: Source RPM package names - full set if inspect_parent=False,
@@ -1107,9 +1112,8 @@ class ImageMetadata(Metadata):
 
         try:
             build = None
-            seed_nvrs = getattr(self.runtime, 'lockfile_seed_nvrs', None)
-            if isinstance(seed_nvrs, list) and seed_nvrs:
-                for nvr in seed_nvrs:
+            if lockfile_seed_nvrs:
+                for nvr in lockfile_seed_nvrs:
                     candidate = await self.runtime.konflux_db.get_build_record_by_nvr(nvr=nvr, strict=False)
                     if candidate and candidate.name == self.distgit_key:
                         self.logger.info(f"Using seed NVR {nvr} for {self.distgit_key}")
@@ -1147,7 +1151,7 @@ class ImageMetadata(Metadata):
             self.installed_rpms = []
             return set()
 
-    async def get_lockfile_rpms_to_install(self) -> set[str]:
+    async def get_lockfile_rpms_to_install(self, lockfile_seed_nvrs: Optional[list[str]] = None) -> set[str]:
         """
         Get the union of RPMs from build and lockfile configuration for lockfile generation.
 
@@ -1158,13 +1162,16 @@ class ImageMetadata(Metadata):
         The method follows the same pattern as other lockfile-related methods,
         checking if lockfile generation is enabled before proceeding.
 
+        Args:
+            lockfile_seed_nvrs: Passed through to fetch_rpms_from_build.
+
         Returns:
             set[str]: Union of RPM package names from both sources, or empty set if
                      lockfile generation is not enabled
         """
 
         # Get RPMs from build
-        rpms_from_build = await self.fetch_rpms_from_build()
+        rpms_from_build = await self.fetch_rpms_from_build(lockfile_seed_nvrs=lockfile_seed_nvrs)
 
         # Get RPMs from lockfile config
         rpms_from_config = set()

@@ -1103,10 +1103,9 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_build.installed_rpms = ['seed-pkg1', 'seed-pkg2']
         mock_build.name = 'test-image'
 
-        metadata.runtime.lockfile_seed_nvrs = ['test-image-container-v4.22.0-assembly.test']
         metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_build)
 
-        result = await metadata.fetch_rpms_from_build()
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['test-image-container-v4.22.0-assembly.test'])
 
         self.assertEqual(result, {'seed-pkg1', 'seed-pkg2'})
         metadata.runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
@@ -1124,11 +1123,10 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_latest = MagicMock()
         mock_latest.installed_rpms = ['latest-pkg1']
 
-        metadata.runtime.lockfile_seed_nvrs = ['other-container-v4.22.0-assembly.test']
         metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_seed_build)
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
 
-        result = await metadata.fetch_rpms_from_build()
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['other-container-v4.22.0-assembly.test'])
 
         self.assertEqual(result, {'latest-pkg1'})
         metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
@@ -1140,21 +1138,17 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         mock_latest = MagicMock()
         mock_latest.installed_rpms = ['pkg1']
 
-        metadata.runtime.lockfile_seed_nvrs = ['nonexistent-v4.22.0-assembly.test']
         metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
         metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
 
-        result = await metadata.fetch_rpms_from_build()
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['nonexistent-v4.22.0-assembly.test'])
 
         self.assertEqual(result, {'pkg1'})
         metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
 
-    async def test_fetch_rpms_from_build_no_seed_nvrs_attr(self):
-        """Test fetch_rpms_from_build works when runtime has no lockfile_seed_nvrs attribute"""
-        metadata = self._create_image_metadata('openshift/test-no-attr')
-
-        if hasattr(metadata.runtime, 'lockfile_seed_nvrs'):
-            del metadata.runtime.lockfile_seed_nvrs
+    async def test_fetch_rpms_from_build_no_seed_nvrs(self):
+        """Test fetch_rpms_from_build works when no lockfile_seed_nvrs are provided"""
+        metadata = self._create_image_metadata('openshift/test-no-seed-param')
 
         mock_build = MagicMock()
         mock_build.installed_rpms = ['pkg1']
