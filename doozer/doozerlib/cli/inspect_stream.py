@@ -22,11 +22,8 @@ LOGGER = logging.getLogger(__name__)
 @click.pass_obj
 async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool):
     if runtime.build_system != "konflux" or runtime.assembly != "stream":
-        LOGGER.warning("This command is only intended to be used with --build-system=konflux and assembly=stream")
+        raise ValueError("This command is only intended to be used with --build-system=konflux and assembly=stream")
 
-    runtime.build_system = "konflux"
-    runtime.assembly = "stream"
-    runtime.assembly_type = AssemblyTypes.STREAM
 
     code = AssemblyIssueCode[code]
     runtime.initialize(config_only=True)
