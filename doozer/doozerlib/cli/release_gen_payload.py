@@ -2368,7 +2368,12 @@ class PayloadGenerator:
             for pkg in consistent_pkgs:
                 issues.append(
                     self.validate_pkg_consistency_req(
-                        payload_tag, pkg, bbii, rhcos_rpm_vrs, str(primary_rhcos_build), package_rpm_finder
+                        payload_tag,
+                        pkg,
+                        bbii,
+                        rhcos_rpm_vrs,
+                        str(primary_rhcos_build),
+                        package_rpm_finder or self.package_rpm_finder,
                     )
                 )
 
@@ -2387,7 +2392,9 @@ class PayloadGenerator:
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(package_rpm_finder)  # by name
+        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(
+            package_rpm_finder or self.package_rpm_finder
+        )  # by name
         try:
             build = member_nvrs[pkg]
         except KeyError:
