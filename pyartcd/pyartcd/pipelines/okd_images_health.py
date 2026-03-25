@@ -21,7 +21,8 @@ class ImagesHealthPipeline:
         self,
         runtime: Runtime,
         versions: str,
-        send_to_release_channel: str,
+        send_to_release_channel: bool,
+        send_to_okd_channel: bool,
         data_path: str,
         data_gitref: str,
         image_list: str,
@@ -31,6 +32,7 @@ class ImagesHealthPipeline:
         self.versions = versions.split(',') if versions else OKD_ENABLED_VERSIONS
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
+        self.send_to_okd_channel = send_to_okd_channel
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.image_list = image_list.split(',') if image_list else []
@@ -47,9 +49,11 @@ class ImagesHealthPipeline:
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
         if self.send_to_release_channel:
-            self.slack_client.bind_channel(self.send_to_release_channel)
             for version in self.scanned_versions:
                 await self.notify_release_channel(version)
+
+        if self.send_to_okd_channel:
+            await self.notify_okd_channel()
 
     async def get_report(self, version: str) -> Optional[list]:
         # Get doozer report for the given version
@@ -131,7 +135,8 @@ class ImagesHealthPipeline:
 
     async def notify_release_channel(self, version):
         """
-        Send notifications to #art-okd-release channel for a specific OKD version.
+        Send notifications to version-specific release channel (e.g., #art-release-4-21) for a specific OKD version.
+        Uses the same channels as OCP releases.
         Filters out LATEST_BUILD_SUCCEEDED concerns (successful builds not reported).
         Posts parent message with concern count, details in thread.
         Includes rebase failure information from Redis.
@@ -139,6 +144,10 @@ class ImagesHealthPipeline:
         Arg(s):
             version (str): OKD version (e.g., "4.21")
         """
+        # Bind to version-specific channel (same as OCP: #art-release-4-21)
+        channel = f"#art-release-{version.replace('.', '-')}"
+        self.slack_client.bind_channel(channel)
+
         # Filter concerns for this version, excluding successful builds
         concerns = [
             concern
@@ -196,6 +205,80 @@ class ImagesHealthPipeline:
 
         await self.slack_client.say(report, thread_ts=response['ts'])
 
+    async def notify_okd_channel(self):
+        """
+        Send aggregated notifications to #art-okd-release channel for all OKD versions.
+        Groups concerns and rebase failures by image name across all versions.
+        Excludes NEVER_BUILT and LATEST_BUILD_SUCCEEDED concerns.
+        """
+        self.slack_client.bind_channel('#art-okd-release')
+
+        # Group concerns by image name
+        image_concerns = {}
+        for concern in self.report:
+            if (
+                concern['code'] == ConcernCode.NEVER_BUILT.value
+                or concern['code'] == ConcernCode.LATEST_BUILD_SUCCEEDED.value
+            ):
+                # We don't report NEVER_BUILT concerns to art-okd-release. Latest built succeeded is not a concern.
+                continue
+            image_name = concern['image_name']
+            image_concerns.setdefault(image_name, []).append(concern)
+
+        # Group rebase failures by image name across all versions
+        image_rebase_failures = {}
+        for version, failures in self.rebase_failures.items():
+            for image_name, failure_info in failures.items():
+                if image_name not in image_rebase_failures:
+                    image_rebase_failures[image_name] = []
+                image_rebase_failures[image_name].append(
+                    {
+                        'version': version,
+                        'failure_count': failure_info.get('failure_count', 0),
+                        'url': failure_info.get('url', ''),
+                    }
+                )
+
+        # If no concerns and no rebase failures, report all healthy
+        if not image_concerns and not image_rebase_failures:
+            await self.slack_client.say(':white_check_mark: All OKD images are healthy for all monitored releases')
+            return
+
+        # Build summary message
+        summary_parts = []
+        if image_concerns:
+            n_build_issues = len(image_concerns)
+            summary_parts.append(f'{n_build_issues} image{"s" if n_build_issues > 1 else ""} with build issues')
+        if image_rebase_failures:
+            n_rebase_issues = len(image_rebase_failures)
+            summary_parts.append(f'{n_rebase_issues} image{"s" if n_rebase_issues > 1 else ""} with rebase failures')
+
+        issues = '\n- '.join(summary_parts)
+        response = await self.slack_client.say(
+            f':alert: There are some issues to look into for OKD builds:\n- {issues}',
+            link_build_url=False,
+        )
+
+        # Post detailed report in thread
+        # Build concerns
+        for image_name, concerns in image_concerns.items():
+            image_message = f'`{image_name}` (build issues):'
+            for concern in concerns:
+                image_message += f'\n• {self.get_message_for_okd_channel(concern)}'
+            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
+
+        # Rebase failures
+        for image_name, failures in sorted(image_rebase_failures.items()):
+            image_message = f'`{image_name}` (rebase failures):'
+            for failure in failures:
+                version = failure['version']
+                failure_count = failure['failure_count']
+                job_url = failure['url']
+                image_message += f'\n• okd-{version}: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
+                if job_url:
+                    image_message += f' ({self.url_text(job_url, "Last failure job")})'
+            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
+
     def get_message_for_release(self, concern: dict):
         """
         Format a concern message for the release channel (#art-okd-release).
@@ -227,6 +310,35 @@ class ImagesHealthPipeline:
 
         # ConcernCode.LATEST_ATTEMPT_FAILED
         message += f' - Latest attempt failed ({concern["latest_success_idx"]} attempts since last success)'
+        return message
+
+    def get_message_for_okd_channel(self, concern: dict):
+        """
+        Format a concern message for the general #art-okd-release channel.
+        Shows group (version) and failure details with links.
+
+        Arg(s):
+            concern (dict): Concern data from doozer images:health
+        Return Value(s):
+            str: Formatted message with links and details
+        """
+        code = concern['code']
+        group = concern['group']
+        # Transform openshift-X.Y to okd-X.Y for display
+        okd_group = group.replace('openshift-', 'okd-')
+
+        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
+        logs_link = self.url_text(self.get_logs_url(concern), "logs")
+
+        message = f'{self.url_text(art_dash_link, f"{okd_group}")}: '
+
+        if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
+            message += f'more than {LIMIT_BUILD_RESULTS} failures ({logs_link}).'
+        else:  # ConcernCode.LATEST_ATTEMPT_FAILED
+            message += f'{concern["latest_success_idx"]} failures ({logs_link}).'
+
         return message
 
     @staticmethod
@@ -301,7 +413,8 @@ class ImagesHealthPipeline:
 
 @cli.command('okd-images-health')
 @click.option('--versions', required=False, default='', help='OCP versions to scan')
-@click.option('--send-to-release-channel', default='#art-okd-release', help='If set, send output to the Slack channel')
+@click.option('--send-to-release-channel', is_flag=True, help='If true, send output to #art-release-4-<version>')
+@click.option('--send-to-okd-channel', is_flag=True, help='If true, send aggregated notification to #art-okd-release')
 @click.option(
     '--data-path',
     required=False,
@@ -320,7 +433,8 @@ class ImagesHealthPipeline:
 async def okd_images_health(
     runtime: Runtime,
     versions: str,
-    send_to_release_channel: str,
+    send_to_release_channel: bool,
+    send_to_okd_channel: bool,
     data_path: str,
     data_gitref: str,
     image_list: str,
@@ -330,6 +444,7 @@ async def okd_images_health(
         runtime,
         versions,
         send_to_release_channel,
+        send_to_okd_channel,
         data_path,
         data_gitref,
         image_list,
