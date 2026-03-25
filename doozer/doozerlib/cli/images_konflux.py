@@ -52,6 +52,7 @@ class KonfluxRebaseCli:
         image_repo: str,
         message: str,
         push: bool,
+        lockfile_seed_nvrs: Optional[List[str]] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -65,6 +66,7 @@ class KonfluxRebaseCli:
         self.message = message
         self.push = push
         self.upcycle = runtime.upcycle
+        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
@@ -86,6 +88,7 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
             image_repo=self.image_repo,
+            lockfile_seed_nvrs=self.lockfile_seed_nvrs,
         )
 
         await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
@@ -152,6 +155,15 @@ class KonfluxRebaseCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--lockfile-seed-nvrs',
+    default=None,
+    metavar='NVRS',
+    help='NVRs of builds whose installed RPMs should seed lockfile generation. '
+    'The distgit key is resolved internally from the build DB. '
+    'Format: NVR[,NVR,...]. '
+    'Example: ironic-container-v4.22.0-assembly.test',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -165,6 +177,7 @@ async def images_konflux_rebase(
     repo_type: str,
     image_repo: str,
     network_mode: Optional[str],
+    lockfile_seed_nvrs: Optional[str],
     message: str,
     push: bool,
 ):
@@ -173,6 +186,10 @@ async def images_konflux_rebase(
     """
     if network_mode:
         runtime.network_mode_override = network_mode
+
+    parsed_seed_nvrs = None
+    if lockfile_seed_nvrs:
+        parsed_seed_nvrs = [nvr.strip() for nvr in lockfile_seed_nvrs.split(',') if nvr.strip()]
 
     cli = KonfluxRebaseCli(
         runtime=runtime,
@@ -184,6 +201,7 @@ async def images_konflux_rebase(
         image_repo=image_repo,
         message=message,
         push=push,
+        lockfile_seed_nvrs=parsed_seed_nvrs,
     )
     await cli.run()
 

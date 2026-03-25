@@ -89,6 +89,7 @@ class KonfluxRebaser:
         logger: Optional[logging.Logger] = None,
         variant: BuildVariant = BuildVariant.OCP,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+        lockfile_seed_nvrs: Optional[list[str]] = None,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -99,7 +100,9 @@ class KonfluxRebaser:
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
         self._logger = logger or LOGGER
-        self.rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
+        self.rpm_lockfile_generator = RPMLockfileGenerator(
+            runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
+        )
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self.image_repo = image_repo
         self.uuid_tag = ''
