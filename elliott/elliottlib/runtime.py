@@ -16,6 +16,7 @@ from artcommonlib.config import BuildDataLoader
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Missing, Model
 from artcommonlib.runtime import GroupRuntime
+from artcommonlib.variants import BuildVariant
 
 from elliottlib import brew, constants
 from elliottlib.brew import brew_event_from_datetime
@@ -59,6 +60,7 @@ class Runtime(GroupRuntime):
         self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
+        self.variant = BuildVariant.OCP  # Default to OCP variant
         self.disable_gssapi = False
         self._logger = None
         self.use_jira = True
