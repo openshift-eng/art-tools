@@ -5,10 +5,11 @@ from typing import Optional
 from urllib.parse import quote
 
 import click
-from artcommonlib import exectools, redis
+from artcommonlib import exectools
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
+from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL, OKD_ENABLED_VERSIONS
 from pyartcd.runtime import Runtime
@@ -94,44 +95,12 @@ class ImagesHealthPipeline:
         Arg(s):
             version (str): OKD version (e.g., "4.21")
         """
-        try:
-            # Get all rebase failure keys for this version
-            pattern = f'count:okd-rebase-failure:konflux:{version}:*:failure'
-            failure_keys = await redis.get_keys(pattern)
-
-            if not failure_keys:
-                self.runtime.logger.info('No rebase failures found in Redis for version %s', version)
-                self.rebase_failures[version] = {}
-                return
-
-            self.runtime.logger.info('Found %d rebase failure keys for version %s', len(failure_keys), version)
-
-            # Parse failure keys to extract image names and fetch counts + URLs
-            version_failures = {}
-            for failure_key in failure_keys:
-                # Extract image name from key: count:okd-rebase-failure:konflux:4.21:ptp-operator:failure
-                parts = failure_key.split(':')
-                if len(parts) >= 5:
-                    image_name = parts[4]  # ptp-operator
-                    url_key = f'count:okd-rebase-failure:konflux:{version}:{image_name}:url'
-
-                    # Fetch failure count and URL
-                    failure_count = await redis.get_value(failure_key)
-                    job_url = await redis.get_value(url_key)
-
-                    version_failures[image_name] = {
-                        'failure_count': int(failure_count) if failure_count else 0,
-                        'url': job_url or '',
-                    }
-
-            self.rebase_failures[version] = version_failures
-            self.runtime.logger.info(
-                'Rebase failures for version %s: %s', version, json.dumps(version_failures, indent=2)
-            )
-
-        except Exception as e:
-            self.runtime.logger.warning('Failed to fetch rebase failures from Redis for version %s: %s', version, e)
-            self.rebase_failures[version] = {}
+        self.rebase_failures[version] = await util.get_rebase_failures(
+            version=version,
+            branches=['okd-rebase-failure'],
+            build_systems=['konflux'],
+            logger=self.runtime.logger,
+        )
 
     async def notify_release_channel(self, version):
         """

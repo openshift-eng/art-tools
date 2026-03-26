@@ -1047,3 +1047,81 @@ async def reset_rebase_fail_counter(image, version, build_system, branch='rebase
 
     redis_branch = f'count:{branch}:{build_system}:{version}:{image}:*'
     await redis.delete_keys_by_pattern(redis_branch)
+
+
+async def get_rebase_failures(version: str, branches: list[str], build_systems: list[str], logger=None):
+    """
+    Fetch rebase failure data from Redis for a specific version.
+    Checks multiple branch patterns and build systems.
+
+    Arg(s):
+        version (str): Version (e.g., "4.18")
+        branches (list[str]): Branch identifiers (e.g., ['rebase-failure'] or ['okd-rebase-failure'])
+        build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
+        logger (Logger): Optional logger for debugging
+    Return Value(s):
+        dict: {image_name: {failure_count, url, build_system, branch}}
+    """
+    failures = {}
+
+    try:
+        for branch in branches:
+            for build_system in build_systems:
+                pattern = f'count:{branch}:{build_system}:{version}:*:failure'
+                failure_keys = await redis.get_keys(pattern)
+
+                if not failure_keys:
+                    if logger:
+                        logger.info('No %s %s rebase failures found for version %s', branch, build_system, version)
+                    continue
+
+                if logger:
+                    logger.info(
+                        'Found %d %s %s rebase failure keys for version %s',
+                        len(failure_keys),
+                        branch,
+                        build_system,
+                        version,
+                    )
+
+                # Parse failure keys to extract image names and fetch counts + URLs
+                for failure_key in failure_keys:
+                    # Extract image name from key: count:rebase-failure:konflux:4.18:ironic:failure
+                    parts = failure_key.split(':')
+                    if len(parts) >= 5:
+                        image_name = parts[4]
+                        url_key = f'count:{branch}:{build_system}:{version}:{image_name}:url'
+
+                        # Fetch failure count and URL
+                        failure_count = await redis.get_value(failure_key)
+                        job_url = await redis.get_value(url_key)
+
+                        # If image already exists (from another build system/branch), keep the one with higher count
+                        if image_name in failures:
+                            existing_count = failures[image_name]['failure_count']
+                            new_count = int(failure_count or 0)
+                            if new_count > existing_count:
+                                failures[image_name] = {
+                                    'failure_count': new_count,
+                                    'url': job_url or '',
+                                    'build_system': build_system,
+                                    'branch': branch,
+                                }
+                        else:
+                            failures[image_name] = {
+                                'failure_count': int(failure_count) if failure_count else 0,
+                                'url': job_url or '',
+                                'build_system': build_system,
+                                'branch': branch,
+                            }
+
+        if logger and failures:
+            import json
+
+            logger.info('Rebase failures for version %s: %s', version, json.dumps(failures, indent=2))
+
+    except Exception as e:
+        if logger:
+            logger.warning('Failed to fetch rebase failures from Redis for version %s: %s', version, e)
+
+    return failures
