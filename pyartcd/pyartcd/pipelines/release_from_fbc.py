@@ -58,6 +58,7 @@ class ReleaseFromFbcPipeline:
         create_mr: bool = False,
         shipment_data_repo_url: Optional[str] = None,
         shipment_path: Optional[str] = None,
+        jira_bugs: Optional[List[str]] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -92,6 +93,8 @@ class ReleaseFromFbcPipeline:
         )
         # GitRepository expects a local filesystem path, not a URL
         self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
+
+        self.jira_bugs = jira_bugs
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -428,7 +431,37 @@ class ReleaseFromFbcPipeline:
             self.logger.debug(f"Raw output was: {stdout}")
             raise
 
-    def create_shipment_config(self, kind: str, snapshot: Optional[Snapshot]) -> ShipmentConfig:
+    async def generate_release_notes(self) -> Optional[ReleaseNotes]:
+        """
+        Call elliott process-release-from-fbc-bugs to process JIRAs and return ReleaseNotes.
+        """
+        if not self.jira_bugs:
+            return None
+
+        jira_bugs_str = ",".join(self.jira_bugs)
+        self.logger.info("Processing JIRA bugs for release notes: %s", jira_bugs_str)
+
+        cmd = self._elliott_base_command + [
+            "process-release-from-fbc-bugs",
+            f"--jira-bugs={jira_bugs_str}",
+        ]
+
+        self.logger.info("Running: %s", " ".join(cmd))
+        stdout, _ = exectools.cmd_assert(cmd)
+
+        release_notes_data = stdlib_yaml.safe_load(stdout)
+        release_notes = ReleaseNotes(**release_notes_data)
+        self.logger.info(
+            "Generated release notes: type=%s, issues=%d, cves=%d",
+            release_notes.type,
+            len(release_notes.issues.fixed) if release_notes.issues and release_notes.issues.fixed else 0,
+            len(release_notes.cves) if release_notes.cves else 0,
+        )
+        return release_notes
+
+    def create_shipment_config(
+        self, kind: str, snapshot: Optional[Snapshot], release_notes: Optional[ReleaseNotes] = None
+    ) -> ShipmentConfig:
         """
         Create a shipment configuration for the given kind and snapshot.
         """
@@ -473,20 +506,22 @@ class ReleaseFromFbcPipeline:
 
         environments = Environments(stage=ShipmentEnv(releasePlan=stage_rpa), prod=ShipmentEnv(releasePlan=prod_rpa))
 
-        # Create release notes data - set to null for release-from-fbc pipeline
+        # Create release notes data
+        # If release_notes was provided (from JIRA bug processing), use it for image shipments
+        # Otherwise, set to null for release-from-fbc pipeline
         # Exception: For OpenShift groups, provide minimal release notes to satisfy validation (required)
         data = None
-        if kind == 'image' and self.group.startswith('openshift-'):
-            # Special case: This is NOT the normal usage for release-from-fbc, print warning
+        if kind == 'image' and release_notes:
+            self.logger.info("Using provided release notes (type=%s) for image shipment", release_notes.type)
+            data = Data(releaseNotes=release_notes)
+        elif kind == 'image' and self.group.startswith('openshift-'):
             self.logger.info(
                 f"[Warning] Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
                 f"to satisfy shipment validation requirements. This is a special situation case, "
                 f"PLEASE REVIEW!!"
             )
-            release_notes = ReleaseNotes(
-                type='RHBA', synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}'
-            )
-            data = Data(releaseNotes=release_notes)
+            rn = ReleaseNotes(type='RHBA', synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}')
+            data = Data(releaseNotes=rn)
 
         # Create shipment
         shipment = Shipment(metadata=metadata, environments=environments, snapshot=snapshot, data=data)
@@ -777,13 +812,18 @@ class ReleaseFromFbcPipeline:
         for fbc_nvr in fbc_nvrs:
             fbc_snapshots[fbc_nvr] = await self.create_snapshot([fbc_nvr])
 
+        # Generate release notes from JIRA bugs if provided
+        release_notes = None
+        if self.jira_bugs:
+            release_notes = await self.generate_release_notes()
+
         # Create shipment configurations
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         shipments_by_kind = {}
 
         # Create image shipment (shared for all FBC builds)
         if image_snapshot:
-            shipment_config = self.create_shipment_config('image', image_snapshot)
+            shipment_config = self.create_shipment_config('image', image_snapshot, release_notes=release_notes)
             shipments_by_kind['image'] = shipment_config
 
         # Create separate FBC shipment for each FBC build
@@ -852,6 +892,12 @@ class ReleaseFromFbcPipeline:
     '--shipment-path',
     help='Path to shipment data repository for elliott commands. If not provided, defaults to the OCP shipment data repository URL.',
 )
+@click.option(
+    '--jira-bugs',
+    default=None,
+    help='Comma-separated list of JIRA issue IDs to include in the advisory (e.g., OADP-7223,OADP-7222). '
+    'When provided, release notes with bug/CVE information are generated for the image shipment.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -862,6 +908,7 @@ async def release_from_fbc(
     create_mr: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
+    jira_bugs: Optional[str],
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
@@ -900,6 +947,13 @@ async def release_from_fbc(
     if not fbc_pullspecs_list:
         raise click.ClickException("At least one FBC pullspec must be provided")
 
+    # Parse comma-separated JIRA bugs
+    jira_bugs_list = None
+    if jira_bugs:
+        jira_bugs_list = [j.strip() for j in jira_bugs.split(',') if j.strip()]
+        if not jira_bugs_list:
+            jira_bugs_list = None
+
     # Create pipeline and run
     pipeline = ReleaseFromFbcPipeline(
         runtime=runtime,
@@ -909,6 +963,7 @@ async def release_from_fbc(
         create_mr=create_mr,
         shipment_data_repo_url=shipment_data_repo_url,
         shipment_path=shipment_path,
+        jira_bugs=jira_bugs_list,
     )
 
     await pipeline.run()
