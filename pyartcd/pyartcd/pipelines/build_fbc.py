@@ -14,6 +14,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
 from pyartcd.util import load_group_config
 
 
@@ -88,7 +89,6 @@ class BuildFbcPipeline:
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
-        self._slack_client.bind_channel(version)
 
     async def run(self):
         # Check for required environment variables
@@ -96,12 +96,25 @@ class BuildFbcPipeline:
         if not github_token:
             raise ValueError('GITHUB_TOKEN environment variable is required for accessing openshift-priv repos')
 
+        # Bind Slack channel based on product field from group config
+        group = f"openshift-{self.version}" if not self.group else self.group
+        group_config = await load_group_config(
+            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
+        )
+        product = group_config.get('product') or 'ocp'
+        if product != 'ocp':
+            self._slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
+        else:
+            self._slack_client.bind_channel(self.version)
+        self._logger.info('Slack channel bound to %s (product: %s)', self._slack_client.channel, product)
+
         try:
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
             self._logger.info('Rebasing and building FBC repo with release %s', release_str)
             build_records = await self._rebase_and_build(
                 release=release_str,
                 commit_message='Rebase FBC segment with release {}'.format(release_str),
+                group_config=group_config,
             )
 
             # Parse doozer record.log
@@ -114,7 +127,7 @@ class BuildFbcPipeline:
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
             await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
+                f'*:heavy_exclamation_mark: Error building FBC for {group} {self.version} assembly {self.assembly}*\n'
             )
             raise
 
@@ -139,7 +152,7 @@ class BuildFbcPipeline:
         self._logger.info(f'Running doozer command: {" ".join(cmd)}')
         await exectools.cmd_assert_async(cmd)
 
-    async def _rebase_and_build(self, release: str, commit_message: str):
+    async def _rebase_and_build(self, release: str, commit_message: str, group_config: dict):
         doozer_opts = [
             'beta:fbc:rebase-and-build',
             '--version',
@@ -153,12 +166,7 @@ class BuildFbcPipeline:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        # Load group config to get product information
-        group = f"openshift-{self.version}" if not self.group else self.group
-        group_config = await load_group_config(
-            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
-        )
-        product = group_config.get('product', 'ocp')
+        product = group_config.get('product') or 'ocp'
 
         # Set namespace based on product
         namespace = resolve_konflux_namespace_by_product(product)
