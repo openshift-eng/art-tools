@@ -77,8 +77,8 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
 
         handler = BaseImageHandler(self.runtime, self.nvr_list, dry_run=False)
 
-        # Mock empty component_map to cause failure
-        self.runtime.component_map = {}
+        # Mock empty image_map to cause failure
+        self.runtime.image_map = {}
 
         with patch.object(handler, "_fetch_build_records", return_value={}):
             result = await handler.process_base_image_completion()
@@ -110,7 +110,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         invalid_build_record.name = "invalid-base"
         invalid_build_record.image_pullspec = None
 
-        self.runtime.component_map = {"valid-base-container": self.metadata}
+        self.runtime.image_map = {"valid-base": self.metadata}
 
         build_records = {valid_nvr: valid_build_record, invalid_nvr: invalid_build_record}
 
@@ -152,7 +152,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         missing_metadata_record.name = "missing-metadata"
         missing_metadata_record.image_pullspec = "quay.io/test/missing:latest"
 
-        self.runtime.component_map = {"valid-base-container": self.metadata}
+        self.runtime.image_map = {"valid-base": self.metadata}
 
         build_records = {valid_nvr: valid_build_record, missing_metadata_nvr: missing_metadata_record}
 
@@ -192,7 +192,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         missing_name_record.name = None
         missing_name_record.image_pullspec = "quay.io/test/missing-name:latest"
 
-        self.runtime.component_map = {"valid-base-container": self.metadata}
+        self.runtime.image_map = {"valid-base": self.metadata}
 
         build_records = {valid_nvr: valid_build_record, missing_name_nvr: missing_name_record}
 

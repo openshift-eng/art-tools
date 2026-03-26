@@ -95,7 +95,7 @@ class BaseImageHandler:
                     critical_errors.append(f"No component name found for build record {nvr}")
                     continue
 
-                metadata = self.runtime.component_map.get(nvr.split('-v')[0] if '-v' in nvr else nvr)
+                metadata = self.runtime.image_map.get(build_record.name)
                 if not metadata:
                     critical_errors.append(f"Could not resolve metadata for component {build_record.name} from {nvr}")
                     continue
@@ -190,6 +190,8 @@ class BaseImageHandler:
         """
         try:
             group_safe = normalize_group_name_for_k8s(self.runtime.group)
+            app_name = KonfluxImageBuilder.get_application_name(self.runtime.group_config.name)
+
             if not group_safe:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
 
@@ -202,7 +204,6 @@ class BaseImageHandler:
 
             components = []
             for nvr, build_record in valid_records.items():
-                app_name = KonfluxImageBuilder.get_application_name(self.runtime.group_config.name)
                 comp_name = KonfluxImageBuilder.get_component_name(app_name, build_record.name)
                 component = {
                     "name": comp_name,
