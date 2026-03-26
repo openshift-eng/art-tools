@@ -212,6 +212,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.type, "RHBA")
         self.assertIsNone(result.cves)
+        fixed_ids = [i.id for i in result.issues.fixed]
+        self.assertIn("OADP-7777", fixed_ids)
         mock_get_delivery.assert_called_once_with(self.mock_runtime, "unknown/unknown-container")
         mock_get_konflux.assert_not_called()
 
@@ -237,6 +239,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.type, "RHBA")
         self.assertIsNone(result.cves)
+        fixed_ids = [i.id for i in result.issues.fixed]
+        self.assertIn("OADP-7777", fixed_ids)
         mock_get_delivery.assert_called_once_with(self.mock_runtime, "oadp/some-rhel9")
         mock_get_konflux.assert_called_once_with(self.mock_runtime, "some-container")
 
