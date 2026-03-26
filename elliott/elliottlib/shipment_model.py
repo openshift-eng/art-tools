@@ -80,8 +80,8 @@ class ReleaseNotes(StrictBaseModel):
     topic: str = None
     description: str = None
     solution: str = None
-    cves: Optional[List[CveAssociation]] = None
     issues: Optional[Issues] = None
+    cves: Optional[List[CveAssociation]] = None
     references: Optional[List[str]] = None
 
     # serialize special text fields, if they contain a new-line char
