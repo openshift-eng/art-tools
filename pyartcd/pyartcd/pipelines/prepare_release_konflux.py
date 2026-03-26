@@ -229,7 +229,12 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
             err = ex
         finally:
-            self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
+            msg = (
+                "Prep failed. Trying to update assembly in case of partial success"
+                if err
+                else "Prep succeeded. Updating assembly"
+            )
+            self.logger.info(msg)
             await self.create_update_build_data_pr()
 
         if err:
