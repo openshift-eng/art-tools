@@ -117,14 +117,12 @@ class TestGetGithubClientForOrg:
 
     @pytest.fixture(autouse=True)
     def _clear_caches(self):
-        """Reset module-level caches between tests."""
+        """Reset caches between tests."""
+        get_github_client_for_org.cache_clear()
         gh_auth._installation_map.clear()
-        gh_auth._client_cache.clear()
-        gh_auth._pat_client = None
         yield
+        get_github_client_for_org.cache_clear()
         gh_auth._installation_map.clear()
-        gh_auth._client_cache.clear()
-        gh_auth._pat_client = None
 
     @patch("artcommonlib.github_auth.Github")
     @patch("artcommonlib.github_auth.Auth.AppAuth")
@@ -199,7 +197,7 @@ class TestGetGithubClientForOrg:
     @patch("artcommonlib.github_auth.Github")
     @patch("artcommonlib.github_auth.GithubIntegration")
     @patch("artcommonlib.github_auth.Auth.AppAuth")
-    def test_caches_clients_per_installation(self, mock_app_auth_cls, mock_gi_cls, mock_github_cls, monkeypatch):
+    def test_caches_clients_per_org(self, mock_app_auth_cls, mock_gi_cls, mock_github_cls, monkeypatch):
         monkeypatch.setenv("GITHUB_APP_ID", "100")
         monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
         monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
@@ -247,7 +245,9 @@ class TestGetGithubClientForOrg:
         assert result is mock_client
 
     @patch("artcommonlib.github_auth.Github")
-    def test_pat_fallback_caches_client(self, mock_github_cls, monkeypatch):
+    def test_pat_fallback_is_cached_per_org(self, mock_github_cls, monkeypatch):
+        """Each org gets its own lru_cache entry, but the PAT path creates
+        a new Github() per entry.  Two different orgs -> two cache entries."""
         monkeypatch.delenv("GITHUB_APP_ID", raising=False)
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_my_pat_token")
 
@@ -255,16 +255,20 @@ class TestGetGithubClientForOrg:
         mock_github_cls.return_value = mock_client
 
         client1 = get_github_client_for_org("openshift-eng")
-        client2 = get_github_client_for_org("openshift-priv")
+        client1_again = get_github_client_for_org("openshift-eng")
+        get_github_client_for_org("openshift-priv")
 
-        assert client1 is client2
-        assert mock_github_cls.call_count == 1
+        # Same org -> same cached object
+        assert client1 is client1_again
+        # Different orgs -> separate lru_cache entries (both are mock_client
+        # because mock always returns the same object, but only 2 calls total)
+        assert mock_github_cls.call_count == 2
 
     def test_pat_fallback_no_token_raises(self, monkeypatch):
         monkeypatch.delenv("GITHUB_APP_ID", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-        with pytest.raises(EnvironmentError, match="Neither GitHub App credentials.*nor GITHUB_TOKEN"):
+        with pytest.raises(EnvironmentError, match=r"Neither GitHub App credentials.*nor GITHUB_TOKEN"):
             get_github_client_for_org("openshift-eng")
 
 
@@ -291,31 +295,27 @@ class TestGetGithubGitAuthEnv:
     """Tests for the GIT_ASKPASS-based git CLI auth helper."""
 
     @pytest.fixture(autouse=True)
-    def _clear_askpass_cache(self):
-        """Reset the cached askpass script path between tests."""
+    def _clear_caches(self):
+        """Reset caches between tests."""
         gh_auth._askpass_script_path = None
-        gh_auth._git_token_cache.clear()
+        get_github_client_for_org.cache_clear()
+        gh_auth._installation_map.clear()
         yield
-        # Clean up temp file if created
         if gh_auth._askpass_script_path and os.path.exists(gh_auth._askpass_script_path):
             os.unlink(gh_auth._askpass_script_path)
         gh_auth._askpass_script_path = None
-        gh_auth._git_token_cache.clear()
-
-    @pytest.fixture(autouse=True)
-    def _clear_installation_map(self):
-        """Reset the installation map cache between tests."""
-        gh_auth._installation_map.clear()
-        yield
+        get_github_client_for_org.cache_clear()
         gh_auth._installation_map.clear()
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", return_value="ghs_app_token_xyz")
-    def test_returns_auth_env_with_app_creds(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    @patch("artcommonlib.github_auth.get_github_client_for_org")
+    def test_returns_auth_env_with_url(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.auth.token = "ghs_app_token_xyz"
+        mock_get_client.return_value = mock_client
 
-        result = get_github_git_auth_env()
+        result = get_github_git_auth_env(url="https://github.com/openshift-eng/repo")
 
-        mock_gen_token.assert_called_once_with(None)
+        mock_get_client.assert_called_once_with("openshift-eng")
         assert "GIT_ASKPASS" in result
         assert result["GIT_PASSWORD"] == "ghs_app_token_xyz"
         assert result["GIT_TERMINAL_PROMPT"] == "0"
@@ -340,40 +340,43 @@ class TestGetGithubGitAuthEnv:
 
         assert result == {}
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", return_value="ghs_token")
-    def test_app_creds_take_precedence_over_pat(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    @patch("artcommonlib.github_auth.get_github_client_for_org")
+    def test_app_creds_take_precedence_over_pat(self, mock_get_client, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_should_not_use")
+        mock_client = MagicMock()
+        mock_client.auth.token = "ghs_app_token"
+        mock_get_client.return_value = mock_client
 
-        result = get_github_git_auth_env()
+        result = get_github_git_auth_env(url="https://github.com/openshift-eng/repo")
 
-        assert result["GIT_PASSWORD"] == "ghs_token"
+        assert result["GIT_PASSWORD"] == "ghs_app_token"
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", side_effect=EnvironmentError("missing key"))
-    def test_falls_back_to_pat_when_app_auth_fails(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    @patch("artcommonlib.github_auth.get_github_client_for_org", side_effect=EnvironmentError("no creds"))
+    def test_falls_back_to_pat_when_client_fails(self, mock_get_client, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fallback")
 
-        result = get_github_git_auth_env()
+        result = get_github_git_auth_env(url="https://github.com/openshift-eng/repo")
 
         assert result["GIT_PASSWORD"] == "ghp_fallback"
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", return_value="ghs_cached")
-    def test_askpass_script_is_cached(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    @patch("artcommonlib.github_auth.get_github_client_for_org")
+    def test_askpass_script_is_cached(self, mock_get_client, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_pat")
 
         result1 = get_github_git_auth_env()
         result2 = get_github_git_auth_env()
 
         assert result1["GIT_ASKPASS"] == result2["GIT_ASKPASS"]
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", return_value="ghs_url_token")
-    def test_passes_url_to_token_generator(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    @patch("artcommonlib.github_auth.get_github_client_for_org")
+    def test_url_resolves_org(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.auth.token = "ghs_url_token"
+        mock_get_client.return_value = mock_client
 
         result = get_github_git_auth_env(url="https://github.com/openshift-eng/ocp-build-data")
 
-        mock_gen_token.assert_called_once_with("https://github.com/openshift-eng/ocp-build-data")
+        mock_get_client.assert_called_once_with("openshift-eng")
         assert result["GIT_PASSWORD"] == "ghs_url_token"
 
     def test_non_github_url_returns_empty(self, monkeypatch):
@@ -385,33 +388,15 @@ class TestGetGithubGitAuthEnv:
         assert get_github_git_auth_env(url="https://gitlab.cee.redhat.com/some/repo") == {}
         assert get_github_git_auth_env(url="git@gitlab.com:org/repo.git") == {}
 
-    @patch("artcommonlib.github_auth._generate_app_token_for_url", return_value="ghs_generic")
-    def test_none_url_still_generates_credentials(self, mock_gen_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    def test_none_url_falls_back_to_pat(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_generic")
 
         result = get_github_git_auth_env(url=None)
 
-        mock_gen_token.assert_called_once_with(None)
-        assert result["GIT_PASSWORD"] == "ghs_generic"
+        assert result["GIT_PASSWORD"] == "ghp_generic"
 
-    @patch("artcommonlib.github_auth.get_github_app_token", return_value="ghs_resolved")
-    @patch("artcommonlib.github_auth._resolve_installation_id", return_value=42)
-    @patch("artcommonlib.github_auth._read_env_credentials", return_value=(100, FAKE_PEM, None))
-    def test_url_resolves_org_installation(self, mock_creds, mock_resolve, mock_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "100")
+    def test_none_url_no_creds_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-        result = get_github_git_auth_env(url="https://github.com/openshift-eng/ocp-build-data")
-
-        mock_resolve.assert_called_once_with("openshift-eng", 100, FAKE_PEM)
-        mock_token.assert_called_once_with(100, FAKE_PEM, 42)
-        assert result["GIT_PASSWORD"] == "ghs_resolved"
-
-    @patch("artcommonlib.github_auth.get_github_app_token", return_value="ghs_explicit")
-    @patch("artcommonlib.github_auth._read_env_credentials", return_value=(100, FAKE_PEM, 777))
-    def test_explicit_installation_id_overrides_url(self, mock_creds, mock_token, monkeypatch):
-        monkeypatch.setenv("GITHUB_APP_ID", "100")
-
-        result = get_github_git_auth_env(url="https://github.com/openshift-eng/ocp-build-data")
-
-        mock_token.assert_called_once_with(100, FAKE_PEM, 777)
-        assert result["GIT_PASSWORD"] == "ghs_explicit"
+        assert get_github_git_auth_env(url=None) == {}
