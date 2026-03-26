@@ -492,7 +492,6 @@ class TestSetMrApprovalRules(unittest.TestCase):
 
 
 class TestReleaseFromFbcPipelineInit(unittest.TestCase):
-
     def _make_pipeline(self, **kwargs):
         defaults = dict(
             runtime=MagicMock(),
@@ -522,7 +521,6 @@ class TestReleaseFromFbcPipelineInit(unittest.TestCase):
 
 
 class TestCategorizeNvrs(unittest.TestCase):
-
     def _make_pipeline(self):
         runtime = MagicMock()
         runtime.config = {}
@@ -545,7 +543,6 @@ class TestCategorizeNvrs(unittest.TestCase):
 
 
 class TestCliValidation(unittest.TestCase):
-
     def test_both_empty_raises_error(self):
         """Both --fbc-pullspecs and --extra-image-nvrs empty should raise ClickException."""
         fbc_pullspecs = ""
@@ -556,9 +553,7 @@ class TestCliValidation(unittest.TestCase):
 
         with self.assertRaises(click.ClickException) as ctx:
             if not fbc_pullspecs_list and not extra_image_nvrs_list:
-                raise click.ClickException(
-                    "At least one of --fbc-pullspecs or --extra-image-nvrs must be provided"
-                )
+                raise click.ClickException("At least one of --fbc-pullspecs or --extra-image-nvrs must be provided")
         self.assertIn("At least one of", str(ctx.exception))
 
     def test_fbc_only_does_not_raise(self):
