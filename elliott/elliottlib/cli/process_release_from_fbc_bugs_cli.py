@@ -3,6 +3,7 @@ import sys
 from typing import List
 
 import click
+from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.util import new_roundtrip_yaml_handler
 
 from elliottlib.bzutil import JIRABugTracker
@@ -16,6 +17,16 @@ YAML = new_roundtrip_yaml_handler()
 logger = logging.getLogger(__name__)
 
 
+def _create_jira_tracker() -> JIRABugTracker:
+    """Create a JIRABugTracker with minimal config, bypassing bug.yml from ocp-build-data.
+
+    Non-OpenShift products (OADP, MTA, MTC, etc.) may not have bug.yml in their
+    ocp-build-data group, so we construct the tracker directly.
+    """
+    config = {'server': JIRA_SERVER_URL}
+    return JIRABugTracker(config)
+
+
 async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
     """Process a list of JIRA IDs and produce a ReleaseNotes object.
 
@@ -26,7 +37,7 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
     The advisory type is RHSA if any CVE is found, RHBA otherwise.
     """
-    bug_tracker: JIRABugTracker = runtime.get_bug_tracker("jira")
+    bug_tracker: JIRABugTracker = _create_jira_tracker()
 
     cve_associations: list[CveAssociation] = []
     flaw_bug_ids: list[int] = []

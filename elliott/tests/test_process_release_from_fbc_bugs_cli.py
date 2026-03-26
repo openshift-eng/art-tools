@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, Mock, PropertyMock, patch
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from elliottlib.cli.process_release_from_fbc_bugs_cli import process_bugs
 
+PATCH_CREATE_TRACKER = "elliottlib.cli.process_release_from_fbc_bugs_cli._create_jira_tracker"
+PATCH_GET_COMPONENT = "elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component"
+
 
 class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -20,15 +23,16 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         type(bug).corresponding_flaw_bug_ids = PropertyMock(return_value=flaw_bug_ids or [])
         return bug
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_regular_bugs_produce_rhba(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_regular_bugs_produce_rhba(self, mock_create_tracker, mock_get_component):
         """Non-vulnerability JIRAs should produce an RHBA advisory."""
         bug1 = self._make_jira_bug("OADP-1111")
         bug2 = self._make_jira_bug("OADP-2222")
 
         mock_tracker = Mock()
         mock_tracker.get_bug.side_effect = lambda k: {"OADP-1111": bug1, "OADP-2222": bug2}[k]
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-1111", "OADP-2222"])
 
@@ -42,8 +46,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(issue.source, JIRA_DOMAIN_NAME)
         mock_get_component.assert_not_called()
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_cve_bug_produces_rhsa(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_cve_bug_produces_rhsa(self, mock_create_tracker, mock_get_component):
         """A Vulnerability JIRA with CVE should produce RHSA with CVE associations and flaw bugs."""
         mock_get_component.return_value = "oadp-1-4-oadp-velero"
 
@@ -57,7 +62,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.return_value = cve_bug
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-7223"])
 
@@ -75,8 +80,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("98765", "bugzilla.redhat.com"), fixed_by_source)
         self.assertIn(("OADP-7223", JIRA_DOMAIN_NAME), fixed_by_source)
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_mixed_cve_and_regular_bugs(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_mixed_cve_and_regular_bugs(self, mock_create_tracker, mock_get_component):
         """A mix of CVE and regular bugs should produce RHSA."""
         mock_get_component.return_value = "oadp-1-4-oadp-velero"
 
@@ -91,7 +97,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.side_effect = lambda k: {"OADP-7223": cve_bug, "OADP-6707": regular_bug}[k]
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-7223", "OADP-6707"])
 
@@ -103,8 +109,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIn("OADP-6707", fixed_ids)
         self.assertIn("98765", fixed_ids)
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_cve_without_cve_id_skipped(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_cve_without_cve_id_skipped(self, mock_create_tracker, mock_get_component):
         """A Vulnerability JIRA without a CVE ID should be skipped for CVE association but still listed as fixed."""
         bug = self._make_jira_bug(
             "OADP-9999",
@@ -115,7 +122,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.return_value = bug
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-9999"])
 
@@ -125,8 +132,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIn("OADP-9999", fixed_ids)
         mock_get_component.assert_not_called()
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_cve_without_pscomponent_skipped(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_cve_without_pscomponent_skipped(self, mock_create_tracker, mock_get_component):
         """A Vulnerability with CVE but no pscomponent should skip CVE association."""
         bug = self._make_jira_bug(
             "OADP-8888",
@@ -137,7 +145,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.return_value = bug
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-8888"])
 
@@ -145,8 +153,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.cves)
         mock_get_component.assert_not_called()
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_unmapped_component_skipped(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_unmapped_component_skipped(self, mock_create_tracker, mock_get_component):
         """When pscomponent can't be mapped to a Konflux component, CVE association is skipped."""
         mock_get_component.return_value = None
 
@@ -159,18 +168,19 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.return_value = bug
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-7777"])
 
         self.assertEqual(result.type, "RHBA")
         self.assertIsNone(result.cves)
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_empty_jira_list(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_empty_jira_list(self, mock_create_tracker, mock_get_component):
         """Empty/whitespace JIRA IDs should produce RHBA with no issues."""
         mock_tracker = Mock()
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["", "  ", ""])
 
@@ -178,8 +188,9 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.issues)
         self.assertIsNone(result.cves)
 
-    @patch("elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component")
-    async def test_multiple_cves(self, mock_get_component):
+    @patch(PATCH_GET_COMPONENT)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_multiple_cves(self, mock_create_tracker, mock_get_component):
         """Multiple CVE bugs should all appear in the CVE associations list."""
         mock_get_component.side_effect = lambda _rt, comp: {
             "oadp-velero-container": "oadp-1-4-oadp-velero",
@@ -203,7 +214,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
 
         mock_tracker = Mock()
         mock_tracker.get_bug.side_effect = lambda k: {"OADP-1001": cve1, "OADP-1002": cve2}[k]
-        self.mock_runtime.get_bug_tracker.return_value = mock_tracker
+        mock_create_tracker.return_value = mock_tracker
 
         result = await process_bugs(self.mock_runtime, ["OADP-1001", "OADP-1002"])
 
