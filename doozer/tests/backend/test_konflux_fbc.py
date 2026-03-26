@@ -767,6 +767,123 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(entries), 0)
 
+    def test_resolve_default_channel_multiple_versioned(self):
+        """Highest semver channel wins among same-prefix versioned channels"""
+        channels = ["stable-6.2", "stable-6.3", "stable-6.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_single_versioned(self):
+        """Single versioned channel returns itself"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(["release-1.8"], "release-1.8"),
+            "release-1.8",
+        )
+
+    def test_resolve_default_channel_non_versioned(self):
+        """Non-versioned channel names are returned unchanged"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(["stable", "candidate"], "stable"),
+            "stable",
+        )
+
+    def test_resolve_default_channel_with_v_prefix(self):
+        """Channels using v-prefixed versions (stable-v8.0) are resolved correctly"""
+        channels = ["stable-v8.0", "stable-v8.1"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-v8.0"),
+            "stable-v8.1",
+        )
+
+    def test_resolve_default_channel_ignores_different_prefix(self):
+        """Only channels sharing the same prefix are compared"""
+        channels = ["stable-6.3", "stable-6.4", "candidate-4.18"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_default_already_highest(self):
+        """When the bundle label's channel is already the highest, it is returned"""
+        channels = ["stable-6.2", "stable-6.3", "stable-6.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.4"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_major_only(self):
+        """Channels with only a major version component are handled"""
+        channels = ["release-5", "release-6"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "release-5"),
+            "release-6",
+        )
+
+    def test_resolve_default_channel_empty_list(self):
+        """Empty channel list returns original default unchanged"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel([], "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_all_invalid_versions(self):
+        """When all versions are invalid, returns original default"""
+        channels = ["stable-invalid", "stable-bad", "stable-xyz"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_default_not_in_list(self):
+        """Default channel not in list still finds highest version"""
+        channels = ["stable-6.4", "stable-6.5"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.5",
+        )
+
+    def test_resolve_default_channel_mixed_valid_invalid(self):
+        """Mixed valid and invalid versions skips invalid ones"""
+        channels = ["stable-6.2", "stable-invalid", "stable-6.4", "stable-bad"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_four_part_version(self):
+        """Versions with 4+ parts use first 3 for comparison"""
+        channels = ["stable-1.2.3.4", "stable-1.2.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-1.2.3"),
+            "stable-1.2.4",
+        )
+
+    def test_resolve_default_channel_duplicates(self):
+        """Duplicate channel names don't break comparison"""
+        channels = ["stable-6.3", "stable-6.3", "stable-6.2"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.2"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_no_matching_prefix(self):
+        """No channels with matching prefix returns original default"""
+        channels = ["candidate-4.18", "preview-4.19"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_different_component_counts(self):
+        """Version normalization handles different component counts"""
+        channels = ["stable-6", "stable-6.3.1"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3.1",
+        )
+
     @patch("doozerlib.opm.generate_dockerfile")
     @patch("pathlib.Path.unlink")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
@@ -1080,6 +1197,425 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         # v1.3.9 should be third and replace v1.3.8
         self.assertEqual(entries[2]['name'], 'oadp-operator.v1.3.9')
         self.assertEqual(entries[2]['replaces'], 'oadp-operator.v1.3.8')
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_resolves_highest_default_channel(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """For non-openshift groups, defaultChannel resolves to the highest versioned channel"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="logging-6.3",
+            assembly=self.assembly,
+            version="6.3.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "6"
+        metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["logging-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "logging-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="cluster-logging-operator-bundle-6.3.4-1",
+            operator_nvr="cluster-logging-operator-6.3.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/logging-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/cluster-logging-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "cluster-logging-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v6.3.4",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.3.4",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/logging-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.4.3"}],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.2.9",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "cluster-logging-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.3.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        package_blob = result_catalog_blobs["cluster-logging"]["olm.package"]["cluster-logging"]
+        self.assertEqual(package_blob["defaultChannel"], "stable-6.4")
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_openshift_group_no_resolution(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """For openshift groups, defaultChannel is NOT resolved (remains as-is)"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="openshift-4.17",
+            assembly=self.assembly,
+            version="4.17.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "17"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["test-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "test-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="test-operator-bundle-4.17.4-1",
+            operator_nvr="test-operator-4.17.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/test-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/test-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "test-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "test-package.v4.17.4",
+            "test-package",
+            {
+                "schema": "olm.bundle",
+                "name": "test-package.v4.17.4",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/test-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.4.3"}],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "test-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "4.17.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        package_blob = result_catalog_blobs["test-package"]["olm.package"]["test-package"]
+        self.assertEqual(package_blob["defaultChannel"], "stable-6.3")
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_logs_default_channel_change(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """Logging occurs when defaultChannel is set"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="logging-6.3",
+            assembly=self.assembly,
+            version="6.3.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "6"
+        metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["logging-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "logging-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="cluster-logging-operator-bundle-6.3.4-1",
+            operator_nvr="cluster-logging-operator-6.3.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/logging-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/cluster-logging-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "cluster-logging-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v6.3.4",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.3.4",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/logging-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.4.3"}],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "cluster-logging-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.3.4", "1", logger)
+
+        logger.info.assert_any_call("Setting default channel to %s", "stable-6.4")
 
 
 class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
