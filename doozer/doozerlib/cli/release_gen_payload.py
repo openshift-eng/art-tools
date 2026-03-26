@@ -858,7 +858,11 @@ class GenPayloadCli:
         """
         span = trace.get_current_span()
         self.logger.debug("Checking for mismatched sibling sources...")
-        group_images: List = list(assembly_inspector.get_group_release_images().values())
+        group_images: List = [
+            img
+            for img in assembly_inspector.get_group_release_images().values()
+            if img and img.get_image_meta().is_payload
+        ]
         issues = []
         for mismatched, sibling in self.payload_generator.find_mismatched_siblings(group_images):
             component = mismatched.get_image_meta().distgit_key
