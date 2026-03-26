@@ -431,7 +431,7 @@ class ReleaseFromFbcPipeline:
             self.logger.debug(f"Raw output was: {stdout}")
             raise
 
-    async def generate_release_notes(self) -> Optional[ReleaseNotes]:
+    def generate_release_notes(self) -> Optional[ReleaseNotes]:
         """
         Call elliott process-release-from-fbc-bugs to process JIRAs and return ReleaseNotes.
         """
@@ -818,7 +818,7 @@ class ReleaseFromFbcPipeline:
         # Generate release notes from JIRA bugs if provided
         release_notes = None
         if self.jira_bugs:
-            release_notes = await self.generate_release_notes()
+            release_notes = self.generate_release_notes()
 
         # Create shipment configurations
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -955,7 +955,7 @@ async def release_from_fbc(
     if jira_bugs:
         jira_bugs_list = [j.strip() for j in jira_bugs.split(',') if j.strip()]
         if not jira_bugs_list:
-            jira_bugs_list = None
+            raise click.ClickException("--jira-bugs was provided but contains no valid JIRA IDs")
 
     # Create pipeline and run
     pipeline = ReleaseFromFbcPipeline(

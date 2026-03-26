@@ -28,7 +28,7 @@ def _make_snapshot(app="oadp-1-4"):
     )
 
 
-class TestReleaseFromFbcPipeline(unittest.IsolatedAsyncioTestCase):
+class TestReleaseFromFbcPipeline(unittest.TestCase):
     def _make_pipeline(self, jira_bugs=None):
         runtime = MagicMock()
         runtime.dry_run = False
@@ -113,14 +113,14 @@ class TestReleaseFromFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rn.issues.fixed), 2)
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_assert")
-    async def test_generate_release_notes_calls_elliott(self, mock_cmd_assert):
+    def test_generate_release_notes_calls_elliott(self, mock_cmd_assert):
         """generate_release_notes should call elliott and parse YAML output."""
         pipeline = self._make_pipeline(jira_bugs=["OADP-1111", "OADP-2222"])
 
         yaml_output = "type: RHBA\nissues:\n  fixed:\n  - id: OADP-1111\n    source: issues.redhat.com\n  - id: OADP-2222\n    source: issues.redhat.com\n"
         mock_cmd_assert.return_value = (yaml_output, "")
 
-        result = await pipeline.generate_release_notes()
+        result = pipeline.generate_release_notes()
 
         self.assertIsNotNone(result)
         self.assertEqual(result.type, "RHBA")
@@ -131,10 +131,10 @@ class TestReleaseFromFbcPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn("process-release-from-fbc-bugs", call_args)
         self.assertIn("--jira-bugs=OADP-1111,OADP-2222", call_args)
 
-    async def test_generate_release_notes_returns_none_without_bugs(self):
+    def test_generate_release_notes_returns_none_without_bugs(self):
         """generate_release_notes should return None if no jira_bugs."""
         pipeline = self._make_pipeline(jira_bugs=None)
-        result = await pipeline.generate_release_notes()
+        result = pipeline.generate_release_notes()
         self.assertIsNone(result)
 
 
