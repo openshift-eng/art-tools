@@ -142,14 +142,32 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
     def test_detect_mismatched_siblings(self, fms_mock):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
-        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={})
+        payload_img = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "payload-img", is_payload=True
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"payload-img": payload_img})
         bbii = flexmock(Mock(BrewBuildRecordInspector), get_nvr="spam-1.0", get_source_git_commit="spamcommit")
         fms_mock.return_value = [(bbii, bbii)]
 
         gpcli.detect_mismatched_siblings(ai)
         self.assertIsInstance(gpcli.assembly_issues[-1], AssemblyIssue)
+        fms_mock.assert_called_once_with([payload_img])
 
-    def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False):
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
+    def test_detect_mismatched_siblings_skips_non_payload(self, fms_mock):
+        """Non-payload images should be excluded from the sibling mismatch check."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+        non_payload = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "non-payload-img", is_payload=False
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"non-payload-img": non_payload})
+        fms_mock.return_value = []
+
+        gpcli.detect_mismatched_siblings(ai)
+        fms_mock.assert_called_once_with([])
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False, is_payload=True):
         """Helper to build a mock BuildRecordInspector for sibling tests."""
         source_config = dict(
             git=dict(url=source_url),
@@ -160,6 +178,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         meta = MagicMock()
         meta.raw_config = raw_config
         meta.distgit_key = distgit_key
+        meta.is_payload = is_payload
         inspector = MagicMock()
         inspector.get_image_meta.return_value = meta
         inspector.get_source_git_commit.return_value = commit
