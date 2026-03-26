@@ -13,6 +13,7 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
 from elliottlib.shipment_utils import set_bugzilla_bug_ids, set_jira_bug_ids
+from elliottlib.util import get_component_by_delivery_repo
 
 YAML = new_roundtrip_yaml_handler()
 logger = logging.getLogger(__name__)
@@ -101,22 +102,33 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
             logger.warning("JIRA %s (CVE %s) has no pscomponent label, skipping CVE association", jira_id, cve_id)
             continue
 
-        konflux_component = get_konflux_component_by_component(runtime, pscomponent)
-        if not konflux_component:
+        distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
+        if not distgit_component:
             logger.warning(
-                "JIRA %s (CVE %s): pscomponent '%s' could not be mapped to a Konflux component, skipping",
+                "JIRA %s (CVE %s): pscomponent '%s' not found in delivery_repo_names, skipping",
                 jira_id,
                 cve_id,
                 pscomponent,
             )
             continue
 
+        konflux_component = get_konflux_component_by_component(runtime, distgit_component)
+        if not konflux_component:
+            logger.warning(
+                "JIRA %s (CVE %s): distgit component '%s' could not be mapped to a Konflux component, skipping",
+                jira_id,
+                cve_id,
+                distgit_component,
+            )
+            continue
+
         logger.info(
-            "JIRA %s: CVE %s mapped to component %s (from pscomponent %s)",
+            "JIRA %s: CVE %s -> pscomponent %s -> distgit %s -> konflux %s",
             jira_id,
             cve_id,
-            konflux_component,
             pscomponent,
+            distgit_component,
+            konflux_component,
         )
         cve_associations.append(CveAssociation(key=cve_id, component=konflux_component))
 
@@ -139,7 +151,7 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
         set_bugzilla_bug_ids(release_notes, flaw_bug_ids)
 
     if cve_associations:
-        cve_associations.sort(key=lambda x: x.key)
+        cve_associations.sort(key=lambda x: (x.key, x.component))
         release_notes.cves = cve_associations
 
     return release_notes

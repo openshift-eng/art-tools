@@ -447,7 +447,10 @@ class ReleaseFromFbcPipeline:
         ]
 
         self.logger.info("Running: %s", " ".join(cmd))
-        stdout, _ = exectools.cmd_assert(cmd)
+        stdout, stderr = exectools.cmd_assert(cmd)
+        if stderr:
+            for line in stderr.strip().splitlines():
+                self.logger.info("  elliott: %s", line)
 
         release_notes_data = stdlib_yaml.safe_load(stdout)
         release_notes = ReleaseNotes(**release_notes_data)
