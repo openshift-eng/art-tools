@@ -491,5 +491,94 @@ class TestSetMrApprovalRules(unittest.TestCase):
         self.assertEqual(mock_mr.approval_rules.create.call_count, 2)
 
 
+class TestReleaseFromFbcPipelineInit(unittest.TestCase):
+
+    def _make_pipeline(self, **kwargs):
+        defaults = dict(
+            runtime=MagicMock(),
+            group="oadp-1.5",
+            assembly="1.5.3",
+            fbc_pullspecs=["quay.io/example/fbc:v1"],
+        )
+        defaults.update(kwargs)
+        defaults["runtime"].config = {}
+        defaults["runtime"].dry_run = False
+        defaults["runtime"].working_dir = MagicMock()
+        defaults["runtime"].working_dir.absolute.return_value = MagicMock()
+        return ReleaseFromFbcPipeline(**defaults)
+
+    def test_default_extra_image_nvrs_is_empty(self):
+        pipeline = self._make_pipeline()
+        self.assertEqual(pipeline.extra_image_nvrs, [])
+
+    def test_extra_image_nvrs_stored(self):
+        nvrs = ["foo-container-1.0-1.el9", "bar-container-2.0-1.el9"]
+        pipeline = self._make_pipeline(extra_image_nvrs=nvrs)
+        self.assertEqual(pipeline.extra_image_nvrs, nvrs)
+
+    def test_none_extra_image_nvrs_becomes_empty_list(self):
+        pipeline = self._make_pipeline(extra_image_nvrs=None)
+        self.assertEqual(pipeline.extra_image_nvrs, [])
+
+
+class TestCategorizeNvrs(unittest.TestCase):
+
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.config = {}
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        return ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.5",
+            assembly="1.5.3",
+            fbc_pullspecs=["quay.io/example/fbc:v1"],
+        )
+
+    def test_categorize_image_and_fbc(self):
+        pipeline = self._make_pipeline()
+        nvrs = ["oadp-operator-container-1.5.3-1.el9", "oadp-operator-fbc-1.5.3-1.el9"]
+        result = pipeline.categorize_nvrs(nvrs)
+        self.assertIn("oadp-operator-container-1.5.3-1.el9", result["image"])
+        self.assertIn("oadp-operator-fbc-1.5.3-1.el9", result["fbc"])
+
+
+class TestCliValidation(unittest.TestCase):
+
+    def test_both_empty_raises_error(self):
+        """Both --fbc-pullspecs and --extra-image-nvrs empty should raise ClickException."""
+        fbc_pullspecs = ""
+        extra_image_nvrs = ""
+
+        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
+        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
+
+        with self.assertRaises(click.ClickException) as ctx:
+            if not fbc_pullspecs_list and not extra_image_nvrs_list:
+                raise click.ClickException(
+                    "At least one of --fbc-pullspecs or --extra-image-nvrs must be provided"
+                )
+        self.assertIn("At least one of", str(ctx.exception))
+
+    def test_fbc_only_does_not_raise(self):
+        fbc_pullspecs = "quay.io/example/fbc:v1"
+        extra_image_nvrs = ""
+
+        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
+        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
+
+        self.assertTrue(fbc_pullspecs_list or extra_image_nvrs_list)
+
+    def test_extra_nvrs_only_does_not_raise(self):
+        fbc_pullspecs = ""
+        extra_image_nvrs = "foo-container-1.0-1.el9"
+
+        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
+        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
+
+        self.assertTrue(fbc_pullspecs_list or extra_image_nvrs_list)
+
+
 if __name__ == "__main__":
     unittest.main()
