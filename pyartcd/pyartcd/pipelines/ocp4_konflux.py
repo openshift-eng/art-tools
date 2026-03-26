@@ -167,8 +167,8 @@ class KonfluxOcpPipeline:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
     async def update_rebase_fail_counters(self, failed_images):
-        if self.assembly == 'test':
-            # Ignore for test assembly
+        if self.assembly != 'stream':
+            # Only update fail counters for stream assembly
             return
 
         # Reset fail counters for images that were rebased successfully

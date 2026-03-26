@@ -40,9 +40,11 @@ class ImagesHealthPipeline:
         self.report = []
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
+        self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
 
     async def run(self):
         await asyncio.gather(*(self.get_report(v) for v in self.versions))
+        await asyncio.gather(*(self.get_rebase_failures(v) for v in self.versions))
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
         if self.send_to_release_channel:
@@ -88,6 +90,22 @@ class ImagesHealthPipeline:
         self.runtime.logger.info('images:health output for openshift-%s:\n%s', version, out)
         self.report.extend(report)
 
+    async def get_rebase_failures(self, version: str):
+        """
+        Fetch OCP rebase failure data from Redis for a specific version.
+        Checks both Brew and Konflux build systems.
+        Populates self.rebase_failures[version] with {image: {failure_count, url, build_system}}.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+        """
+        self.rebase_failures[version] = await util.get_rebase_failures(
+            version=version,
+            branches=['rebase-failure'],
+            build_systems=['brew', 'konflux'],
+            logger=self.runtime.logger,
+        )
+
     async def notify_release_channel(self, version):
         self.slack_client.bind_channel(version)
 
@@ -98,25 +116,62 @@ class ImagesHealthPipeline:
             and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED.value
         ]
 
+        # Get rebase failures for this version
+        rebase_failures = self.rebase_failures.get(version, {})
+
         version_tag = f'`openshift-{version}`'
         if self.assembly != 'stream':
             version_tag += f' (assembly `{self.assembly}`)'
 
-        if not concerns:
+        # If no concerns and no rebase failures, report all healthy
+        if not concerns and not rebase_failures:
             await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
             return
 
+        # Build summary message
+        summary_parts = []
+        if concerns:
+            summary_parts.append(self.get_component_tag(concerns))
+        if rebase_failures:
+            rebase_count = len(rebase_failures)
+            summary_parts.append(f'{rebase_count} image{"s" if rebase_count > 1 else ""} with rebase failures')
+
+        # Post parent message
+        issues = '\n- '.join(summary_parts)
         response = await self.slack_client.say(
-            f':alert: There are some issues to look into for {version_tag}. {self.get_component_tag(concerns)}'
+            f':alert: There are some issues to look into for {version_tag}:\n- {issues}'
         )
+
+        # Post detailed report in thread
         report = ''
-        for concern in concerns:
-            report += f'{self.get_message_for_release(concern)}\n'
+
+        # Add build concerns
+        if concerns:
+            report += '*Build Issues:*\n'
+            for concern in concerns:
+                report += f'{self.get_message_for_release(concern)}\n'
+            report += '\n'
+
+        # Add rebase failures
+        if rebase_failures:
+            report += '*Rebase Failures:*\n'
+            for image_name, failure_info in sorted(rebase_failures.items()):
+                failure_count = failure_info.get('failure_count', 0)
+                job_url = failure_info.get('url', '')
+                build_system = failure_info.get('build_system', 'unknown')
+                report += (
+                    f'- `{image_name}` ({build_system}): Failed {failure_count} time{"s" if failure_count != 1 else ""}'
+                )
+                if job_url:
+                    report += f' ({self.url_text(job_url, "Last failure job")})'
+                report += '\n'
+
         await self.slack_client.say(report, thread_ts=response['ts'])
 
     async def notify_forum_ocp_art(self):
         self.slack_client.bind_channel('#forum-ocp-art')
 
+        # Group build concerns by image name
         image_concerns = {}
         for concern in self.report:
             if (
@@ -128,20 +183,63 @@ class ImagesHealthPipeline:
             image_name = concern['image_name']
             image_concerns.setdefault(image_name, []).append(concern)
 
-        if not image_concerns:
+        # Group rebase failures by image name across all versions
+        image_rebase_failures = {}
+        for version, failures in self.rebase_failures.items():
+            for image_name, failure_info in failures.items():
+                if image_name not in image_rebase_failures:
+                    image_rebase_failures[image_name] = []
+                image_rebase_failures[image_name].append(
+                    {
+                        'version': version,
+                        'failure_count': failure_info.get('failure_count', 0),
+                        'url': failure_info.get('url', ''),
+                        'build_system': failure_info.get('build_system', 'unknown'),
+                    }
+                )
+
+        # If no concerns and no rebase failures, report all healthy
+        if not image_concerns and not image_rebase_failures:
             await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
             return
 
+        # Build summary message
+        summary_parts = []
+        if image_concerns:
+            n_build_issues = len(image_concerns)
+            summary_parts.append(f'{n_build_issues} image{"s" if n_build_issues > 1 else ""} with build issues')
+        if image_rebase_failures:
+            n_rebase_issues = len(image_rebase_failures)
+            summary_parts.append(f'{n_rebase_issues} image{"s" if n_rebase_issues > 1 else ""} with rebase failures')
+
+        issues = '\n- '.join(summary_parts)
         response = await self.slack_client.say(
-            f':alert: There are some issues to look into for Openshift builds:  {self.get_component_tag(image_concerns)}',
+            f':alert: There are some issues to look into for Openshift builds:\n- {issues}',
             link_build_url=False,
         )
 
+        # Post detailed report in thread
+        # Build concerns
         for image_name, concerns in image_concerns.items():
-            image_message = f'`{image_name}:`'
+            image_message = f'`{image_name}` (build issues):'
             for concern in concerns:
                 image_message += f'\n• {self.get_message_for_forum(concern)}'
+            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
 
+        # Rebase failures
+        for image_name, failures in sorted(image_rebase_failures.items()):
+            image_message = f'`{image_name}` (rebase failures):'
+            for failure in failures:
+                version = failure['version']
+                failure_count = failure['failure_count']
+                job_url = failure['url']
+                build_system = failure['build_system']
+                image_message += (
+                    f'\n• openshift-{version} ({build_system}): '
+                    f'Failed {failure_count} time{"s" if failure_count != 1 else ""}'
+                )
+                if job_url:
+                    image_message += f' ({self.url_text(job_url, "Last failure job")})'
             await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
 
     def get_message_for_release(self, concern: dict):
