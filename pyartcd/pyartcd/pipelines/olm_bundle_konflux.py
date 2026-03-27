@@ -361,7 +361,7 @@ async def olm_bundle_konflux(
                 for target_version in ocp_target_versions:
                     runtime.logger.info(f'Starting FBC job for target version: {target_version}')
                     if use_tekton:
-                        tekton.start_pipeline_run(
+                        created_name = tekton.start_pipeline_run(
                             pipeline_name="build-fbc",
                             params={
                                 "version": version,
@@ -373,6 +373,10 @@ async def olm_bundle_konflux(
                                 "force": "true",
                             },
                         )
+                        if created_name:
+                            tekton.annotate_current_pipelinerun({
+                                f"art.openshift.io/triggered-build-fbc-{target_version}": created_name,
+                            })
                     else:
                         jenkins.start_build_fbc(
                             version=version,
@@ -388,7 +392,7 @@ async def olm_bundle_konflux(
             else:
                 runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                 if use_tekton:
-                    tekton.start_pipeline_run(
+                    created_name = tekton.start_pipeline_run(
                         pipeline_name="build-fbc",
                         params={
                             "version": version,
@@ -398,6 +402,10 @@ async def olm_bundle_konflux(
                             "dry-run": str(runtime.dry_run).lower(),
                         },
                     )
+                    if created_name:
+                        tekton.annotate_current_pipelinerun({
+                            "art.openshift.io/triggered-build-fbc": created_name,
+                        })
                 else:
                     jenkins.start_build_fbc(
                         version=version,
@@ -410,7 +418,7 @@ async def olm_bundle_konflux(
         else:
             runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
             if use_tekton:
-                tekton.start_pipeline_run(
+                created_name = tekton.start_pipeline_run(
                     pipeline_name="build-fbc",
                     params={
                         "version": version,
@@ -420,6 +428,10 @@ async def olm_bundle_konflux(
                         "dry-run": str(runtime.dry_run).lower(),
                     },
                 )
+                if created_name:
+                    tekton.annotate_current_pipelinerun({
+                        "art.openshift.io/triggered-build-fbc": created_name,
+                    })
             else:
                 jenkins.start_build_fbc(
                     version=version,
