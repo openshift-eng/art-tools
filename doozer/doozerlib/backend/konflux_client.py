@@ -1070,4 +1070,3 @@ class KonfluxClient:
                     raise
 
         return await exectools.to_thread(_inner)
-
