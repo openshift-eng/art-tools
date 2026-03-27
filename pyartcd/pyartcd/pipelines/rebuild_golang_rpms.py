@@ -9,9 +9,9 @@ import click
 import koji
 from artcommonlib import exectools
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
-from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import jenkins
@@ -241,13 +241,10 @@ class RebuildGolangRPMsPipeline:
         await slack_client.say(message)
 
     def get_art_built_rpms(self):
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
-        api = GhApi(owner='openshift-eng', repo='ocp-build-data', token=github_token)
+        repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
         branch = f'openshift-{self.ocp_version}'
-        content = api.repos.get_content(path='rpms', ref=branch)
-        return [c['name'].removesuffix('.yml') for c in content if c['name'].endswith('.yml')]
+        contents = repo.get_contents('rpms', ref=branch)
+        return [c.name.removesuffix('.yml') for c in contents if c.name.endswith('.yml')]
 
     def rebuild_art_rpms(self, rpms):
         jenkins.start_ocp4_konflux(

@@ -12,6 +12,7 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.gitdata import SafeFormatter
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Model
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import get_nightly_pullspec
@@ -19,7 +20,7 @@ from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.util import get_advisory_boilerplate
 from errata_tool import Erratum
-from github import Github, GithubException
+from github import GithubException
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -77,7 +78,7 @@ class BuildMicroShiftPipeline:
         self.releases_config = None
         self.advisory_num = None
         self.slack_client = slack_client
-        self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        self.github_client = get_github_client_for_org("openshift-eng")
         # determines OCP version
         self._ocp_version = get_ocp_version_from_group(group)
 

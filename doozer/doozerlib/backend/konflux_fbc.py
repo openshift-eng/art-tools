@@ -107,16 +107,19 @@ async def _fetch_csv_from_git(
         shutil.rmtree(repo_dir)
 
     try:
-        # Convert HTTPS URL to SSH for authentication via SSH keys
-        clone_url = artlib_util.convert_remote_git_to_ssh(git_url)
+        clone_url = artlib_util.ensure_github_https_url(git_url)
         logger.info("Cloning %s at revision %s", clone_url, revision)
-        await git_helper.run_git_async(["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True)
+        await git_helper.run_git_async(
+            ["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True, github_url=clone_url
+        )
 
         # Fetch the specific revision
-        await git_helper.run_git_async(["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision], check=True)
+        await git_helper.run_git_async(
+            ["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision], check=True, github_url=clone_url
+        )
 
         # Checkout the revision
-        await git_helper.run_git_async(["-C", str(repo_dir), "checkout", revision], check=True)
+        await git_helper.run_git_async(["-C", str(repo_dir), "checkout", revision], check=True, github_url=clone_url)
 
         # Find the clusterserviceversion.yaml file in manifests/
         manifests_dir = repo_dir / "manifests"

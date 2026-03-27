@@ -48,9 +48,9 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_microshift_bootc.ShipmentConfig')
     @patch('pyartcd.pipelines.build_microshift_bootc.KonfluxImageBuilder.get_application_name')
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
     async def test_load_existing_shipment_config_extracts_timestamp(
-        self, mock_github, mock_get_app_name, mock_shipment_config_class
+        self, mock_get_client, mock_get_app_name, mock_shipment_config_class
     ):
         """
         Test that when loading an existing shipment config, the timestamp is correctly extracted
@@ -107,8 +107,8 @@ shipment:
         self.assertIsNotNone(shipment_config)
         self.assertEqual(pipeline.existing_shipment_timestamp, existing_timestamp)
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
-    async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_github):
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_get_client):
         """
         Test that when updating an existing MR, the existing timestamp is reused
         instead of generating a new one
@@ -166,8 +166,8 @@ shipment:
 
         self.assertTrue(str(written_filepath).endswith(expected_filename))
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.Github')
-    async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_github):
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_get_client):
         """
         Test that when creating a new MR (no existing shipment), a new timestamp is generated
         """

@@ -22,31 +22,33 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
     async def test_clone(self, gather_git: Mock, run_git: Mock):
         await self.repo.clone()
-        run_git.assert_any_call(["init", "/path/to/repo"])
+        run_git.assert_any_call(["init", "/path/to/repo"], github_url=self.repo.url)
         gather_git.assert_any_call(
-            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch],
+            check=False,
+            github_url=self.repo.url,
         )
 
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "deadbeef", ""))
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_commit(self, run_git: AsyncMock, gather_git: AsyncMock):
         await self.repo.commit("commit message")
-        run_git.assert_any_await(["-C", "/path/to/repo", "add", "."])
-        run_git.assert_any_await(["-C", "/path/to/repo", "commit", "-q", "-m", "commit message"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "add", "."], github_url=self.repo.url)
+        run_git.assert_any_await(["-C", "/path/to/repo", "commit", "-q", "-m", "commit message"], github_url=self.repo.url)
         gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "rev-parse", "HEAD"], check=False)
         self.assertEqual(self.repo.commit_hash, "deadbeef")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_push(self, run_git: AsyncMock):
         await self.repo.push()
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD"])
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD"], github_url=self.repo.url)
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=self.repo.url)
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_push_force(self, run_git: AsyncMock):
         await self.repo.push(force=True)
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD", "--force"])
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD", "--force"], github_url=self.repo.url)
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=self.repo.url)
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
@@ -55,9 +57,11 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     async def test_ensure_source_upcycle(self, gather_git: AsyncMock, run_git: AsyncMock, rmtree: Mock, _):
         await self.repo.ensure_source(upcycle=True)
         rmtree.assert_called_with("/path/to/repo")
-        run_git.assert_any_await(["init", "/path/to/repo"])
+        run_git.assert_any_await(["init", "/path/to/repo"], github_url=self.repo.url)
         gather_git.assert_any_await(
-            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch],
+            check=False,
+            github_url=self.repo.url,
         )
 
     @patch("doozerlib.backend.build_repo.BuildRepo.clone")
@@ -72,37 +76,38 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "origin", ""))
     async def test_set_remote_url(self, gather_git: AsyncMock, run_git: AsyncMock):
-        await self.repo.set_remote_url("https://git.example.com/new-repo.git")
-        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None)
-        run_git.assert_any_await(
-            ["-C", "/path/to/repo", "remote", "set-url", "origin", "https://git.example.com/new-repo.git"]
-        )
+        new_url = "https://git.example.com/new-repo.git"
+        await self.repo.set_remote_url(new_url)
+        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None, github_url=new_url)
+        run_git.assert_any_await(["-C", "/path/to/repo", "remote", "set-url", "origin", new_url], github_url=new_url)
 
         gather_git.reset_mock()
         gather_git.reset_mock()
         gather_git.return_value = (0, "other", "")
-        await self.repo.set_remote_url("https://git.example.com/new-repo.git")
-        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None)
-        run_git.assert_any_await(
-            ["-C", "/path/to/repo", "remote", "add", "origin", "https://git.example.com/new-repo.git"]
-        )
+        await self.repo.set_remote_url(new_url)
+        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None, github_url=new_url)
+        run_git.assert_any_await(["-C", "/path/to/repo", "remote", "add", "origin", new_url], github_url=new_url)
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_delete_all_files(self, run_git: AsyncMock):
         await self.repo.delete_all_files()
-        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "rm", "-rf", "--ignore-unmatch", "."])
+        run_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "rm", "-rf", "--ignore-unmatch", "."], github_url=self.repo.url
+        )
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash")
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_switch(self, run_git: AsyncMock, _):
         await self.repo.switch("new-branch")
-        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "switch", "new-branch"])
+        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "switch", "new-branch"], github_url=self.repo.url)
         self.assertEqual(self.repo.branch, "new-branch")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_tag(self, run_git: AsyncMock):
         await self.repo.tag("v1.0.0")
-        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "tag", "-fam", "v1.0.0", "--", "v1.0.0"])
+        run_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "tag", "-fam", "v1.0.0", "--", "v1.0.0"], github_url=self.repo.url
+        )
 
     @patch("pathlib.Path.exists", return_value=False)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "deadbeef", ""))
@@ -183,17 +188,19 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         await repo.clone()
 
         # Verify git init
-        run_git.assert_any_call(["init", "/path/to/repo"])
+        run_git.assert_any_call(["init", "/path/to/repo"], github_url=push_url)
 
         # Verify origin remote set to push URL
-        gather_git.assert_any_call(["-C", "/path/to/repo", "remote"], stderr=None)
-        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "origin", push_url])
+        gather_git.assert_any_call(["-C", "/path/to/repo", "remote"], stderr=None, github_url=push_url)
+        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "origin", push_url], github_url=push_url)
 
         # Verify pull remote set to pull URL
-        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "pull", pull_url])
+        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "pull", pull_url], github_url=pull_url)
 
         # Verify fetch from pull remote
-        gather_git.assert_any_call(["-C", "/path/to/repo", "fetch", "--depth=1", "pull", repo.branch], check=False)
+        gather_git.assert_any_call(
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "pull", repo.branch], check=False, github_url=pull_url
+        )
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
@@ -210,10 +217,12 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         await repo.clone()
 
         # Verify no separate pull remote is created
-        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "origin", push_url])
+        run_git.assert_any_call(["-C", "/path/to/repo", "remote", "add", "origin", push_url], github_url=push_url)
 
         # Verify fetch from origin remote
-        gather_git.assert_any_call(["-C", "/path/to/repo", "fetch", "--depth=1", "origin", repo.branch], check=False)
+        gather_git.assert_any_call(
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", repo.branch], check=False, github_url=push_url
+        )
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
@@ -230,8 +239,10 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         )
         await repo.fetch("test-branch")
 
-        # Verify fetch uses pull remote
-        gather_git.assert_called_with(["-C", "/path/to/repo", "fetch", "--depth=1", "pull", "test-branch"], check=False)
+        # Verify fetch uses pull remote with pull URL for auth
+        gather_git.assert_called_with(
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "pull", "test-branch"], check=False, github_url=pull_url
+        )
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
@@ -249,7 +260,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
 
         # Verify fetch uses origin remote
         gather_git.assert_called_with(
-            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", "test-branch"], check=False
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", "test-branch"], check=False, github_url=push_url
         )
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
@@ -282,9 +293,9 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         )
         await repo.push()
 
-        # Verify push uses origin remote (push URL)
-        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "HEAD"])
-        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "--tags"])
+        # Verify push uses origin remote (push URL) with push URL for auth
+        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "HEAD"], github_url=push_url)
+        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=push_url)
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash", return_value="deadbeef")
     @patch("doozerlib.backend.build_repo.Path")
