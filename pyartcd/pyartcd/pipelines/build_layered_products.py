@@ -10,7 +10,7 @@ from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, tekton
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -63,7 +63,8 @@ class BuildLayeredProductsPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
 
-        jenkins.init_jenkins()
+        if not tekton.is_tekton_context():
+            jenkins.init_jenkins()
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
@@ -82,18 +83,29 @@ class BuildLayeredProductsPipeline:
                 if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                     operator_nvrs.append(record['nvrs'].split(',')[0])
             if operator_nvrs:
-                # Automatically propagate parameters if set in environment
-                propagate_params = jenkins.get_propagatable_params()
-
-                jenkins.start_olm_bundle_konflux(
-                    build_version=self.version,
-                    assembly=self.assembly,
-                    group=self.group,
-                    operator_nvrs=operator_nvrs,
-                    doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
-                    doozer_data_gitref=self.data_gitref or '',
-                    propagate_params=propagate_params,
-                )
+                if tekton.is_tekton_context():
+                    tekton.start_pipeline_run(
+                        pipeline_name="olm-bundle-konflux",
+                        params={
+                            "version": self.version,
+                            "assembly": self.assembly,
+                            "group": self.group,
+                            "operator-nvrs": ",".join(operator_nvrs),
+                            "data-path": self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                            "data-gitref": self.data_gitref or '',
+                        },
+                    )
+                else:
+                    propagate_params = jenkins.get_propagatable_params()
+                    jenkins.start_olm_bundle_konflux(
+                        build_version=self.version,
+                        assembly=self.assembly,
+                        group=self.group,
+                        operator_nvrs=operator_nvrs,
+                        doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                        doozer_data_gitref=self.data_gitref or '',
+                        propagate_params=propagate_params,
+                    )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
 
