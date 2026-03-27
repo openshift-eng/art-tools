@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -171,6 +172,42 @@ class ConfigScanSources:
             return True
 
         return False
+
+    def _get_image_el_target(self, image_meta: ImageMetadata) -> str:
+        """
+        Get the el_target for an image based on its distgit branch.
+
+        For OKD variant, ALL images use the same el_target based on runtime.branch
+        because they all build from the same base image (e.g., all OKD 5.0 use scos10).
+
+        Arg(s):
+            image_meta (ImageMetadata): The image metadata.
+        Return Value(s):
+            str: The el_target (e.g., 'el9', 'scos10') extracted from the distgit branch.
+        """
+        try:
+            # For OKD, all images use the global runtime branch (they all build from same base)
+            # For OCP, use each image's individual branch
+            if self.variant == BuildVariant.OKD:
+                # Extract el version from runtime.branch (e.g., "rhaos-5.0-rhel-10" -> 10)
+                target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.runtime.branch))
+                if not target_match:
+                    raise IOError(f'Unable to determine rhel version from runtime branch: {self.runtime.branch}')
+                el_version = int(target_match.group(1))
+            else:
+                el_version = image_meta.branch_el_target()
+
+            # For OKD, use 'scos' prefix (Stream CentOS). For OCP, use 'el' prefix.
+            # This matches the logic in rebaser.py:_get_el_target_string()
+            prefix = 'scos' if self.variant == BuildVariant.OKD else 'el'
+            return f'{prefix}{el_version}'
+        except Exception as e:
+            self.logger.warning(
+                'Unable to determine el_target for %s: %s. Querying without el_target filter.',
+                image_meta.distgit_key,
+                e,
+            )
+            return None
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -464,14 +501,23 @@ class ConfigScanSources:
         # For OCP, need installed_packages column for RPM analysis in scan_rpm_changes
         # For OKD, exclude large columns to reduce BigQuery cost (OKD doesn't check RPM changes)
         exclude_large_columns = self.variant == BuildVariant.OKD
-        latest_image_builds = await asyncio.gather(
-            *[
-                self.runtime.image_map[name].get_latest_build(
-                    engine=Engine.KONFLUX.value, exclude_large_columns=exclude_large_columns
+
+        # Build list of tasks with proper el_target filtering
+        # This is critical for OKD where images may have different el_targets (e.g., el9 vs el10)
+        # than their upstream sources, preventing false change detection
+        tasks = []
+        for name in image_names:
+            image_meta = self.runtime.image_map[name]
+            el_target = self._get_image_el_target(image_meta)
+            tasks.append(
+                image_meta.get_latest_build(
+                    engine=Engine.KONFLUX.value,
+                    exclude_large_columns=exclude_large_columns,
+                    el_target=el_target,
                 )
-                for name in image_names
-            ]
-        )
+            )
+
+        latest_image_builds = await asyncio.gather(*tasks)
         self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
 
     async def scan_images(self, image_names: List[str]):
@@ -625,8 +671,12 @@ class ConfigScanSources:
 
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
+        el_target = self._get_image_el_target(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
-            engine=Engine.KONFLUX.value, extra_patterns={'commitish': upstream_commit_hash}, exclude_large_columns=True
+            engine=Engine.KONFLUX.value,
+            extra_patterns={'commitish': upstream_commit_hash},
+            exclude_large_columns=True,
+            el_target=el_target,
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -660,10 +710,12 @@ class ConfigScanSources:
         now = datetime.now(timezone.utc)
 
         # Check whether a build attempt with this commit has failed before.
+        el_target = self._get_image_el_target(image_meta)
         failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
             outcome=KonfluxBuildOutcome.FAILURE,
             exclude_large_columns=True,
+            el_target=el_target,
         )
 
         # If not, this is a net-new upstream commit. Build it.
