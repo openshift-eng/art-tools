@@ -33,12 +33,12 @@ Per-org overrides (optional, take precedence over auto-detection):
     GITHUB_APP_INSTALLATION_ID_OPENSHIFT_BOT
 """
 
-import functools
 import logging
 import os
 import re
 import stat
 import tempfile
+import time
 from pathlib import Path
 
 from github import Auth, Github, GithubIntegration
@@ -119,43 +119,53 @@ def get_github_app_token_from_env() -> str:
 
 _askpass_script_path: str | None = None
 
+_git_token_cache: dict[str | None, tuple[str, float]] = {}
+_GIT_TOKEN_TTL = 50 * 60  # 50 min (installation tokens last 60 min)
 
-def get_github_git_auth_env(url: str | None = None) -> dict[str, str]:
+
+def get_github_git_auth_env(url: str | None = None, force_refresh: bool = False) -> dict[str, str]:
     """
     Return environment variables that configure git CLI to authenticate
     against GitHub using App tokens or a PAT via GIT_ASKPASS.
 
-    When *url* is provided, the GitHub org is extracted and the token is
-    obtained from get_github_client_for_org(), which returns an
-    auto-refreshing client (no manual TTL needed).
-
     Priority:
-    1. *url* points to github.com -> reuse the auto-refreshing client's
-       token via get_github_client_for_org(org).auth.token
+    1. GITHUB_APP_ID is set -> generate an App installation token
+       (if *url* is provided, the GitHub org is extracted to select
+       the correct installation; without a URL, falls back to
+       GITHUB_APP_INSTALLATION_ID env var or PAT)
     2. GITHUB_TOKEN is set -> use it as the token
     3. Neither -> return {} (git falls through to SSH agent / other config)
 
+    Tokens are cached per org for up to 50 minutes to avoid repeated API calls.
+
     :param url: Optional GitHub repository URL; used to resolve the correct
                 App installation for multi-org setups.
+    :param force_refresh: If True, regenerate the token even if cached.
+                          Useful for pipelines that run longer than 1 hour.
     :return: Dict with GIT_ASKPASS, GIT_PASSWORD, GIT_TERMINAL_PROMPT; or {}
     """
-    org = _extract_org_from_github_url(url) if url else None
-
-    # Non-GitHub URL -> don't inject GitHub credentials
-    if url and not org:
+    # Only inject GitHub credentials for GitHub URLs; non-GitHub remotes
+    # (distgit, GitLab, etc.) keep their own auth mechanisms.
+    if url and not _extract_org_from_github_url(url):
         return {}
 
     token = None
+    cache_key = _extract_org_from_github_url(url) if url else None
 
-    if org:
+    if not force_refresh and cache_key in _git_token_cache:
+        cached_token, expiry = _git_token_cache[cache_key]
+        if time.time() < expiry:
+            token = cached_token
+
+    if token is None and os.environ.get("GITHUB_APP_ID"):
         try:
-            client = get_github_client_for_org(org)
-            token = client.auth.token
-            LOGGER.info("Using GitHub App/PAT token for git CLI auth (org '%s')", org)
+            token = _generate_app_token_for_url(url)
+            if cache_key is not None:
+                _git_token_cache[cache_key] = (token, time.time() + _GIT_TOKEN_TTL)
+            LOGGER.info("Using GitHub App token for git CLI auth")
         except (EnvironmentError, ValueError) as exc:
-            LOGGER.warning("GitHub client for org '%s' unavailable (%s); trying GITHUB_TOKEN", org, exc)
+            LOGGER.warning("GitHub App token generation failed (%s); checking GITHUB_TOKEN", exc)
 
-    # Fallback: PAT from environment (covers url=None and org-resolution failures)
     if token is None:
         token = os.environ.get("GITHUB_TOKEN")
         if token:
@@ -163,11 +173,28 @@ def get_github_git_auth_env(url: str | None = None) -> dict[str, str]:
     if not token:
         return {}
 
+    script = _ensure_askpass_script()
     return {
-        "GIT_ASKPASS": _ensure_askpass_script(),
+        "GIT_ASKPASS": script,
         "GIT_PASSWORD": token,
         "GIT_TERMINAL_PROMPT": "0",
     }
+
+
+def _generate_app_token_for_url(url: str | None) -> str:
+    """Generate an App installation token, using the URL's org when available."""
+    app_id, private_key, installation_id = _read_env_credentials()
+
+    if installation_id:
+        return get_github_app_token(app_id, private_key, installation_id)
+
+    if url:
+        org = _extract_org_from_github_url(url)
+        if org:
+            inst_id = _resolve_installation_id(org, app_id, private_key)
+            return get_github_app_token(app_id, private_key, inst_id)
+
+    return get_github_app_token(app_id, private_key)
 
 
 _GITHUB_ORG_RE = re.compile(r"(?:https?://github\.com/|git@github\.com:)([^/]+)", re.IGNORECASE)
@@ -194,22 +221,19 @@ def _ensure_askpass_script() -> str:
 
 
 _installation_map: dict[str, int] = {}
+_client_cache: dict[int, Github] = {}
+_pat_client: Github | None = None
 
 
-@functools.lru_cache(maxsize=32)
 def get_github_client_for_org(org: str) -> Github:
     """
     Get an authenticated Github client for the given org.
 
     Tries GitHub App auth first, falls back to GITHUB_TOKEN PAT:
     1. If GITHUB_APP_ID is set, resolves the org's installation and returns
-       an auto-refreshing App client (tokens refresh transparently before
-       each API call, so long-running pipelines never hit expiry).
-    2. Otherwise, returns a PAT client from GITHUB_TOKEN.
+       an auto-refreshing App client (cached per installation_id).
+    2. Otherwise, returns a PAT client from GITHUB_TOKEN (cached, shared across orgs).
     3. Raises EnvironmentError if neither is configured.
-
-    Results are cached per *org* via @lru_cache (thread-safe).
-    Use ``get_github_client_for_org.cache_clear()`` to reset in tests.
 
     :param org: GitHub organization name (e.g. "openshift-eng", "openshift-priv")
     :return: Authenticated Github client
@@ -218,21 +242,19 @@ def get_github_client_for_org(org: str) -> Github:
     """
     if not os.environ.get("GITHUB_APP_ID"):
         LOGGER.info("GITHUB_APP_ID not set; using GITHUB_TOKEN (PAT) for org '%s'", org)
-        token = os.environ.get("GITHUB_TOKEN")
-        if not token:
-            raise EnvironmentError(
-                "Neither GitHub App credentials (GITHUB_APP_ID + private key) nor GITHUB_TOKEN are configured."
-            )
-        return Github(auth=Auth.Token(token))
+        return _get_pat_client()
 
     LOGGER.info("Using GitHub App auth for org '%s'", org)
     app_id, private_key, _ = _read_env_credentials()
     installation_id = _resolve_installation_id(org, app_id, private_key)
 
-    app_auth = Auth.AppAuth(app_id, private_key)
-    install_auth = app_auth.get_installation_auth(installation_id)
-    LOGGER.info("Created Github client for org '%s'", org)
-    return Github(auth=install_auth)
+    if installation_id not in _client_cache:
+        app_auth = Auth.AppAuth(app_id, private_key)
+        install_auth = app_auth.get_installation_auth(installation_id)
+        _client_cache[installation_id] = Github(auth=install_auth)
+        LOGGER.info("Created cached Github client for org '%s'", org)
+
+    return _client_cache[installation_id]
 
 
 def _resolve_installation_id(org: str, app_id: int, private_key: str) -> int:
@@ -273,17 +295,21 @@ def _build_installation_map(app_id: int, private_key: str):
     LOGGER.info("Built installation map for orgs: %s", list(_installation_map.keys()))
 
 
+def _get_pat_client() -> Github:
+    """Return a cached Github client using GITHUB_TOKEN as a PAT."""
+    global _pat_client
+    if _pat_client is None:
+        token = os.environ.get("GITHUB_TOKEN")
+        if not token:
+            raise EnvironmentError(
+                "Neither GitHub App credentials (GITHUB_APP_ID + private key) nor GITHUB_TOKEN are configured."
+            )
+        _pat_client = Github(auth=Auth.Token(token))
+        LOGGER.info("Created PAT-based Github client from GITHUB_TOKEN")
+    return _pat_client
+
+
 def _read_env_credentials() -> tuple[int, str, int | None]:
-    """Read GitHub App credentials from environment variables.
-
-    Returns (app_id, private_key, installation_id_or_None).
-
-    Env vars:
-        GITHUB_APP_ID                (required -- numeric App ID)
-        GITHUB_APP_PRIVATE_KEY       (PEM string, checked first)
-        GITHUB_APP_PRIVATE_KEY_PATH  (path to .pem file, fallback)
-        GITHUB_APP_INSTALLATION_ID   (optional, numeric)
-    """
     app_id_str = os.environ.get("GITHUB_APP_ID")
     if not app_id_str:
         raise EnvironmentError("GITHUB_APP_ID environment variable is not set")
