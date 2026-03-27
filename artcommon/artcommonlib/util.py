@@ -656,6 +656,15 @@ async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_au
     if registry_auth_file:
         LOGGER.debug("Using registry auth file: %s", registry_auth_file)
         env["REGISTRY_AUTH_FILE"] = registry_auth_file
+        # cosign uses Docker credential store, not REGISTRY_AUTH_FILE (which is a containers/podman convention).
+        # Set DOCKER_CONFIG to a directory containing the auth file as config.json.
+        auth_path = Path(registry_auth_file)
+        if auth_path.is_file():
+            docker_config_dir = auth_path.parent
+            if auth_path.name != "config.json":
+                docker_config_dir = Path(tempfile.mkdtemp(prefix="cosign-docker-config-"))
+                (docker_config_dir / "config.json").symlink_to(auth_path.resolve())
+            env["DOCKER_CONFIG"] = str(docker_config_dir)
     _, out, _ = await cmd_gather_async(cmd, env=env)
 
     return out.strip()
