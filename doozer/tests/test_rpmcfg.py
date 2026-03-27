@@ -37,8 +37,8 @@ targets:
             path="/path/to/ocp-build-data/rpms/foo.yml",
             data=yaml.safe_load(TestRPMMetadata.FOO_RPM_CONFIG),
         )
-        koji_session.multicall.return_value.__enter__.return_value.getBuildTarget.side_effect = (
-            lambda target: MagicMock(result={"build_tag_name": target.replace("-candidate", "-build")})
+        koji_session.multicall.return_value.__enter__.return_value.getBuildTarget.side_effect = lambda target: (
+            MagicMock(result={"build_tag_name": target.replace("-candidate", "-build")})
         )
         metadata = RPMMetadata(runtime, data_obj, clone_source=False)
         metadata.targets = ["rhaos-4.7-rhel-7-candidate", "rhaos-4.7-rhel-8-candidate"]

@@ -91,10 +91,8 @@ class TestDetectEmbargoCli(TestCase):
         fake_runtime = MagicMock()
         parallel_exec.return_value.get.return_value = [release_pullspecs[k] for k in releases]
         with patch("doozerlib.cli.detect_embargo.detect_embargoes_in_pullspecs") as detect_embargoes_in_pullspecs:
-            detect_embargoes_in_pullspecs.side_effect = (
-                lambda _, pullspecs: (["example.com/repo:bar"], [builds[1]])
-                if "example.com/repo:bar" in pullspecs
-                else ([], [])
+            detect_embargoes_in_pullspecs.side_effect = lambda _, pullspecs: (
+                (["example.com/repo:bar"], [builds[1]]) if "example.com/repo:bar" in pullspecs else ([], [])
             )
             actual = detect_embargo.detect_embargoes_in_releases(fake_runtime, releases)
             detect_embargoes_in_pullspecs.assert_called()
