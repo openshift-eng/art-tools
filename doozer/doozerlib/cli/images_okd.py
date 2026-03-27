@@ -244,6 +244,7 @@ async def images_okd_rebase(
     Refresh a group's konflux content from source content.
     """
 
+    runtime.variant = BuildVariant.OKD  # Set variant so get_group_config() merges okd config
     runtime.network_mode_override = 'open'  # OKD builds must be done in open mode.
 
     await OkdRebaseCli(
