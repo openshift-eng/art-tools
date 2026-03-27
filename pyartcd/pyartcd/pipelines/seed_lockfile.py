@@ -11,7 +11,7 @@ from pyartcd import constants, jenkins
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix
+from pyartcd.util import build_history_link_url, default_release_suffix
 
 LOGGER = logging.getLogger(__name__)
 
@@ -392,6 +392,14 @@ class SeedLockfilePipeline:
         try:
             html = self._build_jenkins_description(test_failed, solved, stream_failed)
             jenkins.update_description(html)
+
+            # Add link to art-build-history
+            job_url = os.getenv('BUILD_URL', '')
+            build_history_url = build_history_link_url(
+                group=f'openshift-{self.version}', assembly=self.assembly, days=2, job_url=job_url
+            )
+            jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
+
             if solved:
                 jenkins.update_title(f' | solved: {", ".join(solved)}')
         except Exception:
