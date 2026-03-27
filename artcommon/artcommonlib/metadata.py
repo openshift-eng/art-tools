@@ -73,10 +73,14 @@ class MetadataBase(object):
         # For OKD variant, check if okd.distgit.branch is configured
         # runtime.variant is set by commands like scan-sources --variant=okd
         if self.runtime.variant == BuildVariant.OKD:
-            if self.config.okd is not Missing and self.config.okd.distgit is not Missing:
-                okd_branch = self.config.okd.distgit.branch
-                if okd_branch is not Missing:
-                    return okd_branch
+            if self.config.okd.distgit.branch is not Missing:
+                return self.config.okd.distgit.branch
+
+            # For OKD, prefer runtime.branch (which includes merged group okd.branch)
+            # over image's standard distgit.branch. This ensures group-level okd.branch
+            # takes precedence when there's no image-specific okd.distgit.branch override.
+            if self.runtime.branch:
+                return self.runtime.branch
 
         # Fall back to standard branch logic
         if self.config.distgit.branch is not Missing:

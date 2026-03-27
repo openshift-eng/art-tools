@@ -861,19 +861,27 @@ class KonfluxRebaser:
 
         el_ver = 0
         try:
-            # For OKD builds, use okd.branch from group config if available
-            # This allows a single setting in group.yml to control the scos version
-            # for all OKD builds (e.g., okd.branch: rhaos-{MAJOR}.{MINOR}-rhel-10)
+            # For OKD builds, check for image-specific okd.distgit.branch override first
+            # If not present, use group-level okd.branch (via runtime.branch)
+            # This ensures proper precedence:
+            #   1. metadata.config.okd.distgit.branch (image-specific override, e.g., rhel-9)
+            #   2. runtime.branch for OKD (group okd.branch merged, e.g., rhel-10)
+            #   3. metadata.branch_el_target() fallback (standard distgit.branch)
             if self.variant is BuildVariant.OKD:
-                okd_branch = self._runtime.group_config.get('okd', {}).get('branch')
-                if okd_branch:
-                    # Extract RHEL version from okd.branch (e.g., "rhaos-5.0-rhel-10" -> 10)
-                    # This will be used as the scos version (e.g., ".scos10")
-                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(okd_branch))
+                # Check for image-specific okd.distgit.branch override
+                if metadata.config.okd.distgit.branch is not Missing:
+                    # Image has an explicit okd.distgit.branch override, use it
+                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(metadata.config.okd.distgit.branch))
                     if target_match:
                         el_ver = int(target_match.group(1))
 
-            # If not OKD or okd.branch not found, use the image-specific branch
+                # If no override, use runtime.branch (which includes merged group okd.branch)
+                if not el_ver and self._runtime.branch:
+                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self._runtime.branch))
+                    if target_match:
+                        el_ver = int(target_match.group(1))
+
+            # If not OKD or no el_ver determined yet, use metadata.branch_el_target()
             if not el_ver:
                 el_ver = metadata.branch_el_target()
         except ValueError:
