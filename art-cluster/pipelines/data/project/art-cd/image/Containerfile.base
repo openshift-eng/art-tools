@@ -36,6 +36,14 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 RUN curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz &&  \
     tar xvzf tkn_0.37.0_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
 
+# Install opm (Operator Package Manager) for FBC builds
+ARG OPM_VERSION=v1.47.0
+ARG OPM_SHA256=502cb3ce30c979e0a486ca306677c3251c8315e66abe0fde0c25c96eff229061
+RUN curl -fsSLo /tmp/opm "https://github.com/operator-framework/operator-registry/releases/download/${OPM_VERSION}/linux-amd64-opm" \
+    && echo "${OPM_SHA256}  /tmp/opm" | sha256sum -c - \
+    && install -m 0755 /tmp/opm /usr/local/bin/opm \
+    && rm -f /tmp/opm
+
 # Install cosign for SLSA attestation verification
 COPY --from=ghcr.io/sigstore/cosign/cosign:v3.0.5 /ko-app/cosign /usr/local/bin/cosign
 
