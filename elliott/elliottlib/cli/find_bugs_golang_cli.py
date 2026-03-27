@@ -871,8 +871,6 @@ async def find_bugs_golang_cli(
     if fixed_in_nvrs:
         if not analyze:
             raise click.BadParameter('Cannot use --fixed-in-nvr without --analyze')
-        if not cve_ids and not tracker_ids:
-            raise click.BadParameter('Cannot use --fixed-in-nvr without --cve-id or --tracker-id')
 
     if cve_ids and tracker_ids:
         raise click.BadParameter('Cannot use --cve-id with --tracker-id. Please specify one or the other, not both.')

@@ -359,6 +359,11 @@ class UpdateGolangPipeline:
         # Tag builds into override tag
         await self.tag_build(el_v, nvr)
         # Wait for repo to be available (5 hours max)
+
+        if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have waited for {nvr} to be available in build tags")
+            return True
+
         for _ in range(30):
             await asyncio.sleep(600)  # 10 minutes
             if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
