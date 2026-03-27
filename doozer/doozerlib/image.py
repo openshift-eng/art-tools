@@ -50,7 +50,9 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
     try:
         # Try to extract versions from the tag (fast path)
         if ':' in pullspec:
-            tag = pullspec.split(':')[-1]
+            # Strip digest (@sha256:...) if present before extracting tag
+            pullspec_without_digest = pullspec.split('@')[0]
+            tag = pullspec_without_digest.split(':')[-1]
             # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
             match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', tag)
             if match:

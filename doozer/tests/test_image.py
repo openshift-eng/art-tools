@@ -1429,3 +1429,56 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         default_data = Model({'key': 'test-default', 'data': default_image, 'filename': 'test-default.yaml'})
         default_metadata = ImageMetadata(runtime, default_data)
         self.assertTrue(default_metadata.is_snapshot_release_enabled())
+
+
+class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
+    """
+    Test class for extract_builder_info_from_pullspec function
+    """
+
+    def test_extract_builder_info_with_digest(self):
+        """
+        Test that pullspecs with SHA digests are parsed correctly.
+        The digest portion should be stripped before parsing the tag.
+        """
+        # Clear cache to avoid interference
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec_with_digest = (
+            "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+            "@sha256:143123d85045df426c5bbafc6863659880ebe276eb02c77ee868b88d08dbd05d"
+        )
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_with_digest)
+
+        self.assertEqual(rhel_version, 9)
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_builder_info_without_digest(self):
+        """
+        Test that pullspecs without SHA digests still work correctly.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec_without_digest = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_without_digest)
+
+        self.assertEqual(rhel_version, 9)
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_builder_info_rhel8_with_digest(self):
+        """
+        Test RHEL 8 builder with digest.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec = (
+            "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.18"
+            "@sha256:abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+        )
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+
+        self.assertEqual(rhel_version, 8)
+        self.assertEqual(golang_version, (1, 21))
