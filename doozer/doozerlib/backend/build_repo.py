@@ -36,8 +36,8 @@ class BuildRepo:
         :param logger: A logger object to use for logging messages
         :param pull_url: The URL of the repository to pull from. If None, uses url for both pull and push.
         """
-        self.url = url
-        self.pull_url = pull_url or url
+        self.url = art_util.ensure_github_https_url(url)
+        self.pull_url = art_util.ensure_github_https_url(pull_url or url)
         self.branch = branch
         self.local_dir = Path(local_dir)
         self._username = username
