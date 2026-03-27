@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+import click
 from elliottlib.shipment_model import (
     ComponentSource,
     GitSource,
@@ -9,7 +10,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
-from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline
+from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline, _normalize_release_date
 
 
 def _make_snapshot(app="oadp-1-4"):
@@ -136,6 +137,64 @@ class TestReleaseFromFbcPipeline(unittest.TestCase):
         pipeline = self._make_pipeline(jira_bugs=None)
         result = pipeline.generate_release_notes()
         self.assertIsNone(result)
+
+
+class TestNormalizeReleaseDate(unittest.TestCase):
+    def test_abbreviated_month_passthrough(self):
+        self.assertEqual(_normalize_release_date("2026-Mar-31"), "2026-Mar-31")
+
+    def test_numeric_month_converted(self):
+        self.assertEqual(_normalize_release_date("2026-03-31"), "2026-Mar-31")
+
+    def test_numeric_month_january(self):
+        self.assertEqual(_normalize_release_date("2026-01-15"), "2026-Jan-15")
+
+    def test_abbreviated_month_december(self):
+        self.assertEqual(_normalize_release_date("2026-Dec-25"), "2026-Dec-25")
+
+    def test_whitespace_trimmed(self):
+        self.assertEqual(_normalize_release_date("  2026-Mar-31  "), "2026-Mar-31")
+
+    def test_invalid_format_raises(self):
+        with self.assertRaises(click.ClickException) as ctx:
+            _normalize_release_date("March 31, 2026")
+        self.assertIn("Invalid date format", str(ctx.exception))
+
+    def test_empty_string_raises(self):
+        with self.assertRaises(click.ClickException):
+            _normalize_release_date("")
+
+    def test_garbage_raises(self):
+        with self.assertRaises(click.ClickException):
+            _normalize_release_date("not-a-date")
+
+
+class TestTargetReleaseDate(unittest.TestCase):
+    def _make_pipeline(self, target_release_date=None):
+        runtime = MagicMock()
+        runtime.dry_run = True
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {"gitlab_url": "https://gitlab.example.com"}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.4",
+            assembly="1.4.8",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=True,
+            target_release_date=target_release_date,
+        )
+        pipeline.product = "oadp"
+        return pipeline
+
+    def test_target_release_date_stored(self):
+        pipeline = self._make_pipeline(target_release_date="2026-Mar-31")
+        self.assertEqual(pipeline.target_release_date, "2026-Mar-31")
+
+    def test_target_release_date_default_none(self):
+        pipeline = self._make_pipeline()
+        self.assertIsNone(pipeline.target_release_date)
 
 
 if __name__ == "__main__":
