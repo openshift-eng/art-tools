@@ -34,6 +34,24 @@ from tenacity import stop_after_attempt, wait_fixed
 SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
+
+_SENSITIVE_KEY_PATTERNS = frozenset({
+    'PASSWORD', 'TOKEN', 'SECRET', 'PRIVATE_KEY', 'API_KEY', 'CREDENTIAL',
+})
+
+
+def _redact_env_for_log(env_dict: Dict[str, str]) -> Dict[str, str]:
+    """Return a copy of *env_dict* with sensitive values replaced by '***'."""
+    if not env_dict:
+        return env_dict
+    redacted = {}
+    for key, value in env_dict.items():
+        upper_key = key.upper()
+        if any(pat in upper_key for pat in _SENSITIVE_KEY_PATTERNS):
+            redacted[key] = '***'
+        else:
+            redacted[key] = value
+    return redacted
 TRACER = trace.get_tracer(__name__)
 
 F = TypeVar('F', bound=Callable[..., Awaitable])
@@ -209,7 +227,7 @@ def cmd_gather(
 
     env = os.environ.copy()
     if set_env:
-        cmd_info = '{} [env={}]'.format(cmd_info, set_env)
+        cmd_info = '{} [env={}]'.format(cmd_info, _redact_env_for_log(set_env))
         env.update(set_env)
 
     # Make sure output of launched commands is utf-8

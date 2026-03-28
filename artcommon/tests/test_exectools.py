@@ -234,6 +234,42 @@ class TestExectools(IsolatedAsyncioTestCase):
         results = results.get()
         self.assertEqual(results, items)
 
+    def test_redact_env_for_log(self):
+        env = {
+            'HOME': '/home/user',
+            'GIT_PASSWORD': 'ghs_supersecret123',
+            'GITHUB_TOKEN': 'ghp_token456',
+            'MY_API_KEY': 'key789',
+            'SECRET_SAUCE': 'abc',
+            'SSH_PRIVATE_KEY': 'rsa-key-data',
+            'SOME_CREDENTIAL': 'cred',
+            'SAFE_VAR': 'visible',
+        }
+        redacted = exectools._redact_env_for_log(env)
+
+        self.assertEqual(redacted['HOME'], '/home/user')
+        self.assertEqual(redacted['SAFE_VAR'], 'visible')
+
+        for key in ('GIT_PASSWORD', 'GITHUB_TOKEN', 'MY_API_KEY', 'SECRET_SAUCE', 'SSH_PRIVATE_KEY', 'SOME_CREDENTIAL'):
+            self.assertEqual(redacted[key], '***', f'{key} should be redacted')
+
+        self.assertIsNone(exectools._redact_env_for_log(None))
+        self.assertEqual(exectools._redact_env_for_log({}), {})
+
+    def test_cmd_gather_redacts_env_in_logs(self):
+        with mock.patch("subprocess.Popen") as MockPopen:
+            mock_popen = MockPopen.return_value
+            mock_popen.communicate.return_value = (b"ok\n", b"")
+            mock_popen.returncode = 0
+
+            sensitive_env = {'GIT_PASSWORD': 'ghs_supersecret123', 'LANG': 'en_US'}
+            with self.assertLogs(level=logging.DEBUG) as cm:
+                exectools.cmd_gather(["/usr/bin/echo", "hi"], set_env=sensitive_env, timeout=3000)
+                log_text = "\n".join(cm.output)
+                self.assertNotIn('ghs_supersecret123', log_text)
+                self.assertIn('***', log_text)
+                self.assertIn('en_US', log_text)
+
     async def test_limit_concurrency(self):
         """Test that limit_concurrency actually limits concurrent execution"""
         concurrent_count = 0
