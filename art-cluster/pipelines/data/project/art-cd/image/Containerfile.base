@@ -47,6 +47,14 @@ RUN curl -fsSLo /tmp/opm "https://github.com/operator-framework/operator-registr
 # Install cosign for SLSA attestation verification
 COPY --from=ghcr.io/sigstore/cosign/cosign:v3.0.5 /ko-app/cosign /usr/local/bin/cosign
 
+# Install oras CLI (used for FBC artifact discovery)
+ARG ORAS_VERSION=1.3.0
+RUN curl -LO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+  && mkdir -p oras-install/ \
+  && tar -zxf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" -C oras-install/ \
+  && mv oras-install/oras /usr/local/bin/ \
+  && rm -rf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras-install/
+
 # Set workspace
 WORKDIR /home/dev
 
