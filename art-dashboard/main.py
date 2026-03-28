@@ -125,17 +125,28 @@ def fetch_all_nodes(hours, search, status_filter):
 def compute_edges(nodes):
     edges = []
     children_set = set()
+    # First pass: authoritative parent edges from the child's own label
+    declared_parents = {}
     for name, node in nodes.items():
         parent = node["parentPipelineRun"]
         if parent and parent in nodes:
             edges.append({"from": parent, "to": name})
             children_set.add(name)
+            declared_parents[name] = parent
+    # Second pass: triggered annotations, but only if the child hasn't
+    # declared a *different* parent (prevents rebuilds from absorbing
+    # the previous run's children into their chain)
+    for name, node in nodes.items():
         for _, child_name in node["triggered"].items():
-            if child_name in nodes:
-                edge = {"from": name, "to": child_name}
-                if edge not in edges:
-                    edges.append(edge)
-                children_set.add(child_name)
+            if child_name not in nodes:
+                continue
+            real_parent = declared_parents.get(child_name)
+            if real_parent and real_parent != name:
+                continue
+            edge = {"from": name, "to": child_name}
+            if edge not in edges:
+                edges.append(edge)
+            children_set.add(child_name)
     return edges, children_set
 
 
