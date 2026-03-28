@@ -118,10 +118,8 @@ def build_chain(root_name, nodes, edges):
 def get_pipelines(
     hours: int = Query(default=24, ge=1, le=168),
     search: str = Query(default=""),
-    pipeline: str = Query(default=""),
     status: str = Query(default=""),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=0, ge=0, le=200),
+    limit: int = Query(default=5, ge=1, le=50),
 ):
     api = get_k8s_client()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -167,39 +165,30 @@ def get_pipelines(
                 chains.append(chain)
     standalone = [nodes[n] for n in nodes if n not in seen]
 
-    by_pipeline = defaultdict(lambda: {"chains": [], "standalone": []})
-    for c in chains:
-        root_node = next((n for n in c["nodes"] if n["name"] == c["root"]), c["nodes"][0])
-        by_pipeline[root_node["pipeline"]]["chains"].append(c)
+    multi_chains = [c for c in chains if len(c["nodes"]) > 1]
+    single_chains = [c for c in chains if len(c["nodes"]) == 1]
+
+    standalone_by_pipeline = defaultdict(list)
+    for c in single_chains:
+        standalone_by_pipeline[c["nodes"][0]["pipeline"]].append(c["nodes"][0])
     for s in standalone:
-        by_pipeline[s["pipeline"]]["standalone"].append(s)
+        standalone_by_pipeline[s["pipeline"]].append(s)
 
-    if pipeline:
-        by_pipeline = {k: v for k, v in by_pipeline.items() if k == pipeline}
-
-    total_chains = sum(len(v["chains"]) for v in by_pipeline.values())
-    total_standalone = sum(len(v["standalone"]) for v in by_pipeline.values())
-
-    pipelines_list = sorted(by_pipeline.keys())
-    all_pipelines = sorted(
-        set(n["pipeline"] for n in nodes.values())
-    )
-
-    if per_page > 0:
-        for pname, pdata in by_pipeline.items():
-            start = (page - 1) * per_page
-            pdata["chains"] = pdata["chains"][start:start + per_page]
+    for runs in standalone_by_pipeline.values():
+        runs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
 
     return {
-        "byPipeline": dict(by_pipeline),
+        "chains": multi_chains[:limit],
+        "totalChains": len(multi_chains),
+        "standaloneByPipeline": {
+            k: {"runs": v[:limit], "total": len(v)}
+            for k, v in standalone_by_pipeline.items()
+        },
         "meta": {
-            "totalChains": total_chains,
-            "totalStandalone": total_standalone,
             "totalRuns": len(nodes),
-            "pipelines": all_pipelines,
-            "page": page,
-            "perPage": per_page,
+            "pipelines": sorted(set(n["pipeline"] for n in nodes.values())),
             "hours": hours,
+            "limit": limit,
         },
     }
 
