@@ -41,6 +41,9 @@ select:hover { border-color: var(--accent); }
   width: 200px; min-width: 200px; background: var(--bg2); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
 }
+.sidebar-filters { padding: 0 0 6px; border-bottom: 1px solid var(--border); }
+.filter-row { display: flex; gap: 6px; padding: 4px 10px 6px; }
+.filter-row select { flex: 1; font-size: 11px; padding: 4px 6px; }
 .sidebar-title { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px 4px; }
 .pipe-item {
   padding: 6px 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
@@ -123,20 +126,25 @@ svg.dag { display: block; }
 <div class="topbar">
   <h1>ART Pipelines</h1>
   <input class="search-box" id="search" placeholder="Search runs... (Ctrl+K)">
-  <select id="hours">
-    <option value="1">1h</option><option value="6">6h</option>
-    <option value="24" selected>24h</option><option value="48">48h</option><option value="168">7d</option>
-  </select>
-  <select id="status">
-    <option value="">All</option><option value="Succeeded">Succeeded</option>
-    <option value="Failed">Failed</option><option value="Running">Running</option>
-    <option value="Cancelled">Cancelled</option>
-  </select>
   <span class="topbar-meta" id="meta"></span>
 </div>
 
 <div class="layout">
   <div class="sidebar" id="sidebar">
+    <div class="sidebar-filters">
+      <div class="sidebar-title">Filters</div>
+      <div class="filter-row">
+        <select id="hours">
+          <option value="1">1h</option><option value="6">6h</option>
+          <option value="24" selected>24h</option><option value="48">48h</option><option value="168">7d</option>
+        </select>
+        <select id="status">
+          <option value="">All</option><option value="Succeeded">Succeeded</option>
+          <option value="Failed">Failed</option><option value="Running">Running</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+      </div>
+    </div>
     <div class="sidebar-title">Pipelines</div>
   </div>
   <div class="list-panel" id="runList"></div>
