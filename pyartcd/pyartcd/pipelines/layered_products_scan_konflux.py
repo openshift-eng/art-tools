@@ -5,7 +5,7 @@ import click
 import yaml
 from artcommonlib import exectools
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -102,26 +102,37 @@ class LayeredProductsScanPipeline:
         if not self.changes:
             return
 
-        jenkins.update_title(' [SOURCE CHANGES]')
         self.logger.info('Detected at least one updated layered product image')
 
         image_list = self.changes.get('images', [])
 
-        # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:
             self.logger.info('Would have triggered a layered products %s build', self.group)
             return
 
-        # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} layered product images<br/>')
-
-        # Trigger layered product build
         self.logger.info('Triggering a layered products %s build', self.group)
-        jenkins.start_layered_products(
-            group=self.group,
-            assembly=self.assembly,
-            image_list=image_list,
-        )
+
+        if tekton.is_tekton_context():
+            created_name = tekton.start_pipeline_run(
+                pipeline_name="build-layered-products",
+                params={
+                    "group": self.group,
+                    "assembly": self.assembly,
+                    "image-list": ",".join(image_list) if image_list else "",
+                },
+            )
+            if created_name:
+                tekton.annotate_current_pipelinerun({
+                    "art.openshift.io/triggered-build-layered-products": created_name,
+                })
+        else:
+            jenkins.update_title(' [SOURCE CHANGES]')
+            jenkins.update_description(f'Changed {len(image_list)} layered product images<br/>')
+            jenkins.start_layered_products(
+                group=self.group,
+                assembly=self.assembly,
+                image_list=image_list,
+            )
 
 
 @cli.command('layered-products-scan')
@@ -140,9 +151,13 @@ class LayeredProductsScanPipeline:
 async def layered_products_scan(
     runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str
 ):
-    # KUBECONFIG env var must be defined in order to scan sources
     if not os.getenv('KUBECONFIG'):
-        raise RuntimeError('Environment variable KUBECONFIG must be defined')
+        if tekton.is_tekton_context():
+            # Layered product groups don't start with 'openshift-', so doozer's
+            # RHCOS detection (the only consumer of --ci-kubeconfig) is skipped.
+            os.environ['KUBECONFIG'] = ''
+        else:
+            raise RuntimeError('Environment variable KUBECONFIG must be defined')
 
     jenkins.init_jenkins()
 
