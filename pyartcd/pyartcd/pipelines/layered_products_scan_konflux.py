@@ -159,7 +159,8 @@ async def layered_products_scan(
         else:
             raise RuntimeError('Environment variable KUBECONFIG must be defined')
 
-    jenkins.init_jenkins()
+    if not tekton.is_tekton_context():
+        jenkins.init_jenkins()
 
     pipeline = LayeredProductsScanPipeline(
         runtime=runtime,
