@@ -3,8 +3,10 @@ FROM registry.access.redhat.com/ubi9/python-311:latest
 USER 0
 WORKDIR /app
 
+RUN pip install --no-cache-dir uv
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
 COPY main.py .
 COPY templates/ templates/
