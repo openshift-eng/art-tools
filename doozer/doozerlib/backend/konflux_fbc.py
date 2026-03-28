@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import logging
 import os
+import re
 import shutil
 import ssl
 from collections import defaultdict
@@ -731,6 +732,46 @@ class KonfluxFbcRebaser:
                 # Each subsequent entry replaces the previous one
                 entries[i]['replaces'] = entries[i - 1]['name']
 
+    _VERSIONED_CHANNEL_RE = re.compile(r'^(.+)-v?(\d+(?:\.\d+)*)$')
+
+    @staticmethod
+    def _resolve_default_channel(channel_names: Collection[str], default_channel_name: str) -> str:
+        """Resolve the default channel to the highest versioned channel sharing the same prefix.
+
+        For versioned channels (e.g. stable-6.3, release-v1.8), finds all channels in the catalog
+        that share the same prefix and returns the one with the highest semver version.
+        For non-versioned channels (e.g. stable, candidate), returns the input unchanged.
+
+        :param channel_names: All channel names present in the catalog for the package.
+        :param default_channel_name: The default channel name from the bundle label.
+        :return: The channel name with the highest version among same-prefix channels,
+                 or default_channel_name if it is non-versioned.
+        """
+        match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(default_channel_name)
+        if not match:
+            return default_channel_name
+
+        prefix = match.group(1)
+        best_channel = default_channel_name
+        best_version: Optional[VersionInfo] = None
+
+        for name in channel_names:
+            ch_match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(name)
+            if not ch_match or ch_match.group(1) != prefix:
+                continue
+            parts = ch_match.group(2).split('.')
+            while len(parts) < 3:
+                parts.append('0')
+            try:
+                version = VersionInfo.parse('.'.join(parts[:3]))
+            except ValueError:
+                continue
+            if best_version is None or version > best_version:
+                best_version = version
+                best_channel = name
+
+        return best_channel
+
     def _find_future_release_assembly(
         self,
         releases_config,
@@ -1263,9 +1304,13 @@ class KonfluxFbcRebaser:
         # Set default channel
         if default_channel_name:
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            if package_blob.get("defaultChannel") != default_channel_name:
-                logger.info("Setting default channel to %s", default_channel_name)
-                package_blob["defaultChannel"] = default_channel_name
+            resolved_default = default_channel_name
+            if not self.group.startswith('openshift-'):
+                all_channel_names = list(categorized_catalog_blobs[olm_package].get("olm.channel", {}).keys())
+                resolved_default = self._resolve_default_channel(all_channel_names, default_channel_name)
+            if package_blob.get("defaultChannel") != resolved_default:
+                logger.info("Setting default channel to %s", resolved_default)
+                package_blob["defaultChannel"] = resolved_default
 
         # Replace pullspecs to use the prod registry
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
