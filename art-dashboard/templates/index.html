@@ -160,14 +160,14 @@ svg.dag { display: block; }
         </div>
       </div>
       <div class="sidebar-title">Pipelines</div>
-      <div class="pipe-item" :class="{ active: !activePipeline }"
-           @click="activePipeline = ''; refreshRuns()">
-        <span>All</span>
+      <div class="pipe-item" :class="{ active: !selectedPipelines.size }"
+           @click="selectedPipelines.clear(); refreshRuns()">
+        <span>All Pipelines</span>
         <span class="pipe-cnt">{{ totalCount }}</span>
       </div>
       <div v-for="p in pipelines" :key="p.name"
-           class="pipe-item" :class="{ active: activePipeline === p.name }"
-           @click="activePipeline = p.name; refreshRuns()">
+           class="pipe-item" :class="{ active: selectedPipelines.has(p.name) }"
+           @click="togglePipeline(p.name)">
         <span>{{ truncate(p.name, 22) }}</span>
         <span class="pipe-cnt">{{ p.count }}</span>
       </div>
@@ -326,7 +326,7 @@ createApp({
     const search = ref('');
     const hours = ref('24');
     const statusFilter = ref('');
-    const activePipeline = ref('');
+    const selectedPipelines = reactive(new Set());
     const activeRun = ref('');
 
     const runs = ref([]);
@@ -350,12 +350,18 @@ createApp({
       searchTimeout = setTimeout(refreshRuns, 300);
     }
 
+    function togglePipeline(name) {
+      if (selectedPipelines.has(name)) selectedPipelines.delete(name);
+      else selectedPipelines.add(name);
+      refreshRuns();
+    }
+
     async function refreshRuns() {
       const params = new URLSearchParams({
         hours: hours.value,
         search: search.value,
         status: statusFilter.value,
-        pipeline: activePipeline.value,
+        pipeline: selectedPipelines.size ? [...selectedPipelines].join(',') : '',
       });
       try {
         const res = await fetch('/api/runs?' + params);
@@ -430,11 +436,11 @@ createApp({
     });
 
     return {
-      search, hours, statusFilter, activePipeline, activeRun,
+      search, hours, statusFilter, selectedPipelines, activeRun,
       runs, pipelines, meta, detail, detailLoading, logsOpen,
       listWidth, resizing, chainBox, searchInput, totalCount,
       refreshRuns, debouncedRefresh, selectRun, startResize,
-      ago, truncate, dotCls,
+      togglePipeline, ago, truncate, dotCls,
     };
   },
 }).mount('#app');
