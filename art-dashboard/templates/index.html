@@ -12,8 +12,10 @@
   --green: #2ea043; --red: #f85149; --blue: #58a6ff;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); color: var(--text2); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+body { background: var(--bg); color: var(--text2); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; height: 100vh; overflow: hidden; }
+#app { display: flex; flex-direction: column; height: 100vh; }
 
+/* Topbar */
 .topbar {
   background: var(--bg2); border-bottom: 1px solid var(--border);
   padding: 8px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
@@ -51,20 +53,19 @@ select:hover { border-color: var(--accent); }
 }
 .pipe-item:hover { background: var(--bg3); color: var(--text2); }
 .pipe-item.active { background: var(--bg3); color: var(--text); border-left-color: var(--accent); }
-.pipe-item .cnt { font-size: 10px; background: var(--bg4); padding: 0 6px; border-radius: 8px; color: var(--dim); }
-.pipe-item.active .cnt { color: var(--accent); }
+.pipe-cnt { font-size: 10px; background: var(--bg4); padding: 0 6px; border-radius: 8px; color: var(--dim); }
+.pipe-item.active .pipe-cnt { color: var(--accent); }
 
 /* Run list */
-.list-panel { flex: 1; overflow-y: auto; border-right: 1px solid var(--border); min-width: 280px; }
+.list-panel { overflow-y: auto; flex-shrink: 0; }
 .run-item {
   padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s;
 }
 .run-item:hover { background: var(--bg3); }
 .run-item.active { background: var(--bg3); border-left: 2px solid var(--accent); }
-.run-item .ri-top { display: flex; align-items: center; gap: 6px; }
-.run-item .ri-name { font-size: 12px; font-weight: 500; color: var(--text2); }
-.run-item .ri-pipe { font-size: 10px; color: var(--dim); }
-.run-item .ri-bottom { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; color: var(--muted); }
+.ri-top { display: flex; align-items: center; gap: 6px; }
+.ri-name { font-size: 12px; font-weight: 500; color: var(--text2); }
+.ri-bottom { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; color: var(--muted); }
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .dot-ok { background: var(--green); }
 .dot-fail { background: var(--red); }
@@ -72,23 +73,29 @@ select:hover { border-color: var(--accent); }
 .dot-other { background: var(--dim); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
+/* Resize handle */
+.resize-handle {
+  width: 5px; cursor: col-resize; background: var(--border); flex-shrink: 0;
+  transition: background 0.15s; position: relative;
+}
+.resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
+.resize-handle::after { content: ''; position: absolute; top: 0; left: -4px; right: -4px; bottom: 0; }
+
 /* Detail panel */
-.detail-panel { flex: 1.5; overflow-y: auto; padding: 16px; min-width: 0; }
+.detail-panel { flex: 1; overflow-y: auto; padding: 16px; min-width: 0; }
 .detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--dim); font-size: 14px; }
 
 .detail-header { margin-bottom: 14px; }
-.detail-header .dh-name { font-size: 16px; font-weight: 600; color: var(--text); word-break: break-all; }
-.detail-header .dh-meta { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
-.detail-header .dh-status { display: flex; align-items: center; gap: 4px; }
-.detail-header a { color: var(--accent); text-decoration: none; font-size: 12px; }
-.detail-header a:hover { text-decoration: underline; }
+.dh-name { font-size: 16px; font-weight: 600; color: var(--text); word-break: break-all; }
+.dh-meta { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.dh-link { color: var(--accent); text-decoration: none; font-size: 12px; }
+.dh-link:hover { text-decoration: underline; }
 
 .detail-section { margin-bottom: 16px; }
 .detail-section-hdr {
   font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px;
   margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
 }
-
 .chain-box {
   background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
   padding: 12px; overflow-x: auto;
@@ -100,16 +107,14 @@ select:hover { border-color: var(--accent); }
   align-items: center; gap: 6px; width: 100%;
 }
 .log-toggle:hover { border-color: var(--accent); }
-.log-toggle .chevron { font-size: 9px; transition: transform 0.15s; }
-.log-toggle.open .chevron { transform: rotate(90deg); }
+.log-chevron { font-size: 9px; transition: transform 0.15s; display: inline-block; }
+.log-chevron.open { transform: rotate(90deg); }
 .log-box {
   background: #0b0e14; border: 1px solid var(--border); border-top: none;
   border-radius: 0 0 8px 8px; padding: 10px 14px; font-family: 'SF Mono', Monaco, Consolas, monospace;
   font-size: 11px; line-height: 1.6; color: #e6edf3; overflow-x: auto; white-space: pre-wrap;
-  word-break: break-all; max-height: 400px; overflow-y: auto; display: none;
+  word-break: break-all; max-height: 400px; overflow-y: auto;
 }
-.log-box.open { display: block; }
-.log-task { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 
 svg.dag { display: block; }
 .node rect { cursor: pointer; }
@@ -119,47 +124,127 @@ svg.dag { display: block; }
 .node-cancelled rect,.node-pending rect { fill: #1a1a1a; stroke: var(--dim); rx:6; ry:6; stroke-width:1.5; }
 .node rect:hover { filter: brightness(1.3); }
 .node-highlight rect { stroke-width: 3; filter: brightness(1.2); }
+
+.no-runs { padding: 20px; color: var(--dim); text-align: center; }
 </style>
 </head>
 <body>
 
-<div class="topbar">
-  <h1>ART Pipelines</h1>
-  <input class="search-box" id="search" placeholder="Search runs... (Ctrl+K)">
-  <span class="topbar-meta" id="meta"></span>
-</div>
+<div id="app">
+  <!-- Topbar -->
+  <div class="topbar">
+    <h1>ART Pipelines</h1>
+    <input class="search-box" ref="searchInput"
+           v-model="search" placeholder="Search runs... (Ctrl+K)"
+           @input="debouncedRefresh">
+    <span class="topbar-meta">{{ meta }}</span>
+  </div>
 
-<div class="layout">
-  <div class="sidebar" id="sidebar">
-    <div class="sidebar-filters">
-      <div class="sidebar-title">Filters</div>
-      <div class="filter-row">
-        <select id="hours">
-          <option value="1">1h</option><option value="6">6h</option>
-          <option value="24" selected>24h</option><option value="48">48h</option><option value="168">7d</option>
-        </select>
-        <select id="status">
-          <option value="">All</option><option value="Succeeded">Succeeded</option>
-          <option value="Failed">Failed</option><option value="Running">Running</option>
-          <option value="Cancelled">Cancelled</option>
-        </select>
+  <!-- Three-panel layout -->
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-filters">
+        <div class="sidebar-title">Filters</div>
+        <div class="filter-row">
+          <select v-model="hours" @change="refreshRuns">
+            <option value="1">1h</option><option value="6">6h</option>
+            <option value="24">24h</option><option value="48">48h</option><option value="168">7d</option>
+          </select>
+          <select v-model="statusFilter" @change="refreshRuns">
+            <option value="">All</option><option value="Succeeded">Succeeded</option>
+            <option value="Failed">Failed</option><option value="Running">Running</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+      </div>
+      <div class="sidebar-title">Pipelines</div>
+      <div class="pipe-item" :class="{ active: !activePipeline }"
+           @click="activePipeline = ''; refreshRuns()">
+        <span>All</span>
+        <span class="pipe-cnt">{{ totalCount }}</span>
+      </div>
+      <div v-for="p in pipelines" :key="p.name"
+           class="pipe-item" :class="{ active: activePipeline === p.name }"
+           @click="activePipeline = p.name; refreshRuns()">
+        <span>{{ truncate(p.name, 22) }}</span>
+        <span class="pipe-cnt">{{ p.count }}</span>
       </div>
     </div>
-    <div class="sidebar-title">Pipelines</div>
-    <div id="pipeList"></div>
-  </div>
-  <div class="list-panel" id="runList"></div>
-  <div class="detail-panel" id="detail">
-    <div class="detail-empty">Select a pipeline run to view details</div>
+
+    <!-- Run list (resizable) -->
+    <div class="list-panel" :style="{ width: listWidth + 'px' }">
+      <div v-if="!runs.length" class="no-runs">No runs found</div>
+      <div v-for="r in runs" :key="r.name"
+           class="run-item" :class="{ active: activeRun === r.name }"
+           @click="selectRun(r.name)">
+        <div class="ri-top">
+          <span class="dot" :class="dotCls(r.status)"></span>
+          <span class="ri-name">{{ truncate(r.name, 36) }}</span>
+        </div>
+        <div class="ri-bottom">
+          <span style="font-size:10px;color:var(--dim)">{{ r.pipeline }}</span>
+          <span>{{ r.status }}</span>
+          <span v-if="r.duration">{{ r.duration }}</span>
+          <span>{{ ago(r.startTime) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" :class="{ dragging: resizing }"
+         @mousedown.prevent="startResize"></div>
+
+    <!-- Detail panel -->
+    <div class="detail-panel">
+      <!-- Empty state -->
+      <div v-if="!detail" class="detail-empty">
+        {{ detailLoading ? 'Loading...' : 'Select a pipeline run to view details' }}
+      </div>
+
+      <!-- Detail content -->
+      <template v-if="detail">
+        <div class="detail-header">
+          <div class="dh-name">{{ detail.run.name }}</div>
+          <div class="dh-meta">
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="dot" :class="dotCls(detail.run.status)"></span>{{ detail.run.status }}
+            </span>
+            <span>{{ detail.run.pipeline }}</span>
+            <span v-if="detail.run.duration">{{ detail.run.duration }}</span>
+            <span>{{ ago(detail.run.startTime) }}</span>
+          </div>
+          <a class="dh-link" :href="detail.run.consoleUrl" target="_blank">Open in Console &#8599;</a>
+        </div>
+
+        <!-- Build chain -->
+        <div v-if="detail.chain" class="detail-section">
+          <div class="detail-section-hdr">Build Chain</div>
+          <div class="chain-box" ref="chainBox"></div>
+        </div>
+
+        <!-- Failure logs -->
+        <div v-if="detail.logs" class="detail-section">
+          <div class="detail-section-hdr">Failure Logs</div>
+          <div class="log-toggle" @click="logsOpen = !logsOpen">
+            <span class="log-chevron" :class="{ open: logsOpen }">&#9654;</span>
+            <span>Task: {{ detail.logs.task }}</span>
+            <span style="margin-left:auto;font-size:10px;color:var(--dim)">Pod: {{ detail.logs.pod }}</span>
+          </div>
+          <div v-show="logsOpen" class="log-box">{{ detail.logs.lines || 'No log output' }}</div>
+        </div>
+      </template>
+    </div>
+
   </div>
 </div>
 
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
 <script>
-let activePipeline = '';
-let activeRun = '';
-let logsOpen = false;
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } = Vue;
 
 function ago(ts) {
   if (!ts) return '';
@@ -169,127 +254,28 @@ function ago(ts) {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 }
-function trunc(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
-function dotCls(s) {
-  return s === 'Succeeded' ? 'dot-ok' : s === 'Failed' ? 'dot-fail' : s === 'Running' ? 'dot-run' : 'dot-other';
-}
-function dotColor(s) {
-  return s === 'Succeeded' ? '#2ea043' : s === 'Failed' ? '#f85149' : s === 'Running' ? '#58a6ff' : '#484f58';
+
+function truncate(s, n) {
+  return s && s.length > n ? s.slice(0, n) + '\u2026' : (s || '');
 }
 
-function renderSidebar(pipelines) {
-  const pl = document.getElementById('pipeList');
-  pl.innerHTML = '';
-  const all = document.createElement('div');
-  all.className = 'pipe-item' + (!activePipeline ? ' active' : '');
-  all.innerHTML = '<span>All</span><span class="cnt">' + pipelines.reduce((a, p) => a + p.count, 0) + '</span>';
-  all.onclick = () => { activePipeline = ''; refreshRuns(); };
-  pl.appendChild(all);
-  pipelines.forEach(p => {
-    const el = document.createElement('div');
-    el.className = 'pipe-item' + (activePipeline === p.name ? ' active' : '');
-    el.innerHTML = '<span>' + trunc(p.name, 20) + '</span><span class="cnt">' + p.count + '</span>';
-    el.onclick = () => { activePipeline = p.name; refreshRuns(); };
-    pl.appendChild(el);
-  });
+function dotCls(status) {
+  if (status === 'Succeeded') return 'dot-ok';
+  if (status === 'Failed') return 'dot-fail';
+  if (status === 'Running') return 'dot-run';
+  return 'dot-other';
 }
 
-function renderRunList(runs) {
-  const rl = document.getElementById('runList');
-  rl.innerHTML = '';
-  if (!runs.length) { rl.innerHTML = '<div style="padding:20px;color:var(--dim);text-align:center">No runs</div>'; return; }
-  runs.forEach(r => {
-    const el = document.createElement('div');
-    el.className = 'run-item' + (activeRun === r.name ? ' active' : '');
-    el.innerHTML =
-      '<div class="ri-top"><span class="dot ' + dotCls(r.status) + '"></span>' +
-      '<span class="ri-name">' + trunc(r.name, 36) + '</span></div>' +
-      '<div class="ri-bottom">' +
-        '<span class="ri-pipe">' + r.pipeline + '</span>' +
-        '<span>' + r.status + '</span>' +
-        (r.duration ? '<span>' + r.duration + '</span>' : '') +
-        '<span>' + ago(r.startTime) + '</span>' +
-      '</div>';
-    el.onclick = () => selectRun(r.name);
-    rl.appendChild(el);
-  });
+function dotColor(status) {
+  if (status === 'Succeeded') return '#2ea043';
+  if (status === 'Failed') return '#f85149';
+  if (status === 'Running') return '#58a6ff';
+  return '#484f58';
 }
 
-async function selectRun(name) {
-  activeRun = name;
-  document.querySelectorAll('.run-item').forEach(el =>
-    el.classList.toggle('active', el.querySelector('.ri-name')?.textContent?.startsWith(name.slice(0, 30))));
-
-  const dp = document.getElementById('detail');
-  dp.innerHTML = '<div class="detail-empty">Loading...</div>';
-
-  const hours = document.getElementById('hours').value;
-  try {
-    const r = await fetch('/api/run/' + name + '?hours=' + hours);
-    const data = await r.json();
-    if (data.error) { dp.innerHTML = '<div class="detail-empty">Run not found</div>'; return; }
-    renderDetail(data);
-  } catch (e) {
-    dp.innerHTML = '<div class="detail-empty">Error: ' + e.message + '</div>';
-  }
-}
-
-function renderDetail(data) {
-  const dp = document.getElementById('detail');
-  dp.innerHTML = '';
-  const run = data.run;
-
-  // Header
-  const hdr = document.createElement('div'); hdr.className = 'detail-header';
-  hdr.innerHTML =
-    '<div class="dh-name">' + run.name + '</div>' +
-    '<div class="dh-meta">' +
-      '<div class="dh-status"><span class="dot ' + dotCls(run.status) + '"></span>' + run.status + '</div>' +
-      '<span>' + run.pipeline + '</span>' +
-      (run.duration ? '<span>' + run.duration + '</span>' : '') +
-      '<span>' + ago(run.startTime) + '</span>' +
-    '</div>' +
-    '<a href="' + run.consoleUrl + '" target="_blank">Open in Console \u2197</a>';
-  dp.appendChild(hdr);
-
-  // Chain
-  if (data.chain) {
-    const sec = document.createElement('div'); sec.className = 'detail-section';
-    sec.innerHTML = '<div class="detail-section-hdr">Build Chain</div>';
-    const box = document.createElement('div'); box.className = 'chain-box';
-    sec.appendChild(box);
-    dp.appendChild(sec);
-    renderChain(data.chain, box, run.name);
-  }
-
-  // Logs
-  if (data.logs) {
-    const sec = document.createElement('div'); sec.className = 'detail-section';
-    sec.innerHTML = '<div class="detail-section-hdr">Failure Logs</div>';
-
-    const toggle = document.createElement('div');
-    toggle.className = 'log-toggle' + (logsOpen ? ' open' : '');
-    toggle.innerHTML = '<span class="chevron">\u25B6</span> ' +
-      '<span>Task: ' + data.logs.task + '</span>' +
-      '<span style="margin-left:auto;font-size:10px;color:var(--dim)">Pod: ' + data.logs.pod + '</span>';
-
-    const logBox = document.createElement('div');
-    logBox.className = 'log-box' + (logsOpen ? ' open' : '');
-    logBox.textContent = data.logs.lines || 'No log output';
-
-    toggle.onclick = () => {
-      logsOpen = !logsOpen;
-      toggle.classList.toggle('open');
-      logBox.classList.toggle('open');
-    };
-
-    sec.appendChild(toggle);
-    sec.appendChild(logBox);
-    dp.appendChild(sec);
-  }
-}
-
-function renderChain(chain, el, highlightName) {
+function renderChainSVG(el, chain, highlightName, onNodeClick) {
+  if (!el || !chain) return;
+  el.innerHTML = '';
   const g = new dagre.graphlib.Graph()
     .setGraph({ rankdir: 'LR', nodesep: 16, ranksep: 55, marginx: 10, marginy: 10 })
     .setDefaultEdgeLabel(() => ({}));
@@ -297,14 +283,17 @@ function renderChain(chain, el, highlightName) {
   chain.nodes.forEach(n => g.setNode(n.name, { width: W, height: H, data: n }));
   chain.edges.forEach(e => g.setEdge(e.from, e.to));
   dagre.layout(g);
+
   const gi = g.graph(), sw = gi.width + 20, sh = gi.height + 20;
   const svg = d3.select(el).append('svg').attr('class', 'dag')
     .attr('width', sw).attr('height', sh).attr('viewBox', '0 0 ' + sw + ' ' + sh);
+
   const mid = 'a' + Math.random().toString(36).slice(2, 8);
   svg.append('defs').append('marker').attr('id', mid)
     .attr('viewBox', '0 0 10 10').attr('refX', 10).attr('refY', 5)
     .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
     .append('path').attr('d', 'M0 0L10 5L0 10Z').attr('fill', '#484f58');
+
   g.edges().forEach(e => {
     const ed = g.edge(e);
     svg.append('path')
@@ -312,55 +301,143 @@ function renderChain(chain, el, highlightName) {
       .attr('marker-end', 'url(#' + mid + ')')
       .style('stroke', '#484f58').style('stroke-width', 1.5).style('fill', 'none');
   });
+
   g.nodes().forEach(n => {
     const nd = g.node(n), d = nd.data;
     const isHL = d.name === highlightName;
     const cls = 'node node-' + (d.status || 'pending').toLowerCase() + (isHL ? ' node-highlight' : '');
     const gr = svg.append('g').attr('class', cls)
       .attr('transform', 'translate(' + (nd.x - W/2 + 10) + ',' + (nd.y - H/2 + 10) + ')')
-      .style('cursor', 'pointer').on('click', () => selectRun(d.name));
+      .style('cursor', 'pointer')
+      .on('click', () => onNodeClick(d.name));
     gr.append('rect').attr('width', W).attr('height', H);
     gr.append('text').attr('x', 8).attr('y', 16).attr('font-size', '11px')
       .attr('font-weight', '600').attr('fill', '#f0f6fc').text(d.pipeline);
     gr.append('text').attr('x', 8).attr('y', 30).attr('font-size', '10px')
-      .attr('fill', '#8b949e').text(trunc(d.name, 30));
+      .attr('fill', '#8b949e').text(truncate(d.name, 30));
     gr.append('circle').attr('cx', 8).attr('cy', 44).attr('r', 3).attr('fill', dotColor(d.status));
     gr.append('text').attr('x', 15).attr('y', 47).attr('font-size', '9.5px').attr('fill', '#8b949e')
       .text(d.status + (d.duration ? ' (' + d.duration + ')' : '') + ' \u00B7 ' + ago(d.startTime));
   });
 }
 
-async function refreshRuns() {
-  const p = new URLSearchParams({
-    hours: document.getElementById('hours').value,
-    search: document.getElementById('search').value,
-    status: document.getElementById('status').value,
-    pipeline: activePipeline,
-  });
-  try {
-    const r = await fetch('/api/runs?' + p);
-    const data = await r.json();
-    renderSidebar(data.pipelines);
-    renderRunList(data.runs);
-    document.getElementById('meta').textContent = data.total + ' runs \u00B7 ' + new Date().toLocaleTimeString();
-  } catch (e) {
-    document.getElementById('runList').innerHTML = '<div style="padding:20px;color:var(--dim)">Error: ' + e.message + '</div>';
-  }
-}
+createApp({
+  setup() {
+    const search = ref('');
+    const hours = ref('24');
+    const statusFilter = ref('');
+    const activePipeline = ref('');
+    const activeRun = ref('');
 
-let searchTimer;
-document.getElementById('search').addEventListener('input', () => {
-  clearTimeout(searchTimer); searchTimer = setTimeout(refreshRuns, 300);
-});
-['hours', 'status'].forEach(id => document.getElementById(id).addEventListener('change', refreshRuns));
+    const runs = ref([]);
+    const pipelines = ref([]);
+    const meta = ref('');
+    const detail = ref(null);
+    const detailLoading = ref(false);
+    const logsOpen = ref(false);
 
-document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search').focus(); }
-  if (e.key === 'Escape') document.getElementById('search').blur();
-});
+    const listWidth = ref(340);
+    const resizing = ref(false);
 
-refreshRuns();
-setInterval(() => { if (document.getElementById('autoRefresh')?.checked !== false) refreshRuns(); }, 30000);
+    const chainBox = ref(null);
+    const searchInput = ref(null);
+
+    const totalCount = computed(() => pipelines.value.reduce((a, p) => a + p.count, 0));
+
+    let searchTimeout = null;
+    function debouncedRefresh() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(refreshRuns, 300);
+    }
+
+    async function refreshRuns() {
+      const params = new URLSearchParams({
+        hours: hours.value,
+        search: search.value,
+        status: statusFilter.value,
+        pipeline: activePipeline.value,
+      });
+      try {
+        const res = await fetch('/api/runs?' + params);
+        const data = await res.json();
+        runs.value = data.runs;
+        pipelines.value = data.pipelines;
+        meta.value = data.total + ' runs \u00B7 ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        meta.value = 'Error: ' + e.message;
+      }
+    }
+
+    async function selectRun(name) {
+      activeRun.value = name;
+      detail.value = null;
+      detailLoading.value = true;
+      logsOpen.value = false;
+      try {
+        const res = await fetch('/api/run/' + name + '?hours=' + hours.value);
+        const data = await res.json();
+        if (data.error) { detailLoading.value = false; return; }
+        detail.value = data;
+        detailLoading.value = false;
+        if (data.chain) {
+          await nextTick();
+          renderChainSVG(chainBox.value, data.chain, name, selectRun);
+        }
+      } catch (e) {
+        detailLoading.value = false;
+      }
+    }
+
+    // Resizable list panel
+    function startResize() {
+      resizing.value = true;
+      const onMove = (e) => {
+        const sidebarWidth = 200;
+        const newWidth = e.clientX - sidebarWidth;
+        if (newWidth >= 200 && newWidth <= 700) {
+          listWidth.value = newWidth;
+        }
+      };
+      const onUp = () => {
+        resizing.value = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    // Keyboard shortcuts
+    function onKeydown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInput.value?.focus();
+      }
+      if (e.key === 'Escape') searchInput.value?.blur();
+      if (e.key === 'r' && document.activeElement?.tagName !== 'INPUT') refreshRuns();
+    }
+
+    let refreshInterval;
+    onMounted(() => {
+      refreshRuns();
+      refreshInterval = setInterval(refreshRuns, 30000);
+      document.addEventListener('keydown', onKeydown);
+    });
+
+    onUnmounted(() => {
+      clearInterval(refreshInterval);
+      document.removeEventListener('keydown', onKeydown);
+    });
+
+    return {
+      search, hours, statusFilter, activePipeline, activeRun,
+      runs, pipelines, meta, detail, detailLoading, logsOpen,
+      listWidth, resizing, chainBox, searchInput, totalCount,
+      refreshRuns, debouncedRefresh, selectRun, startResize,
+      ago, truncate, dotCls,
+    };
+  },
+}).mount('#app');
 </script>
 </body>
 </html>
