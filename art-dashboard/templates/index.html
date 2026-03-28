@@ -399,6 +399,9 @@ createApp({
       detail.value = null;
       detailLoading.value = true;
       logsOpen.value = false;
+      const url = new URL(window.location);
+      url.searchParams.set('run', name);
+      history.pushState(null, '', url);
       try {
         const res = await fetch('/api/run/' + name + '?hours=' + hours.value);
         const data = await res.json();
@@ -444,10 +447,16 @@ createApp({
     }
 
     let refreshInterval;
-    onMounted(() => {
-      refreshRuns();
+    onMounted(async () => {
+      await refreshRuns();
+      const urlRun = new URLSearchParams(window.location.search).get('run');
+      if (urlRun) selectRun(urlRun);
       refreshInterval = setInterval(refreshRuns, 30000);
       document.addEventListener('keydown', onKeydown);
+      window.addEventListener('popstate', () => {
+        const r = new URLSearchParams(window.location.search).get('run');
+        if (r) selectRun(r);
+      });
     });
 
     onUnmounted(() => {
