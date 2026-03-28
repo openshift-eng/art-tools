@@ -234,6 +234,20 @@ class TestExectools(IsolatedAsyncioTestCase):
         results = results.get()
         self.assertEqual(results, items)
 
+    def test_cmd_gather_redacts_env_in_logs(self):
+        with mock.patch("subprocess.Popen") as MockPopen:
+            mock_popen = MockPopen.return_value
+            mock_popen.communicate.return_value = (b"ok\n", b"")
+            mock_popen.returncode = 0
+
+            sensitive_env = {'GIT_PASSWORD': 'ghs_supersecret123', 'LANG': 'en_US'}
+            with self.assertLogs(level=logging.DEBUG) as cm:
+                exectools.cmd_gather(["/usr/bin/echo", "hi"], set_env=sensitive_env, timeout=3000)
+                log_text = "\n".join(cm.output)
+                self.assertNotIn('ghs_supersecret123', log_text)
+                self.assertIn('***', log_text)
+                self.assertIn('en_US', log_text)
+
     async def test_limit_concurrency(self):
         """Test that limit_concurrency actually limits concurrent execution"""
         concurrent_count = 0

@@ -34,6 +34,7 @@ from tenacity import stop_after_attempt, wait_fixed
 SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
+
 TRACER = trace.get_tracer(__name__)
 
 _SENSITIVE_ENV_KEY_PATTERNS = frozenset({'PASSWORD', 'TOKEN', 'SECRET', 'KEY', 'CREDENTIAL'})
