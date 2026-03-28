@@ -12,149 +12,145 @@
   --green: #2ea043; --red: #f85149; --blue: #58a6ff;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); color: var(--text2); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; }
+body { background: var(--bg); color: var(--text2); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
 
-.header {
+.topbar {
   background: var(--bg2); border-bottom: 1px solid var(--border);
-  padding: 10px 20px; display: flex; align-items: center; justify-content: space-between;
-  position: sticky; top: 0; z-index: 100;
+  padding: 8px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
 }
-.header h1 { font-size: 15px; font-weight: 600; color: var(--text); }
-.header .sub { color: var(--muted); font-size: 11px; margin-left: 8px; }
-
-.toolbar {
-  background: var(--bg2); border-bottom: 1px solid var(--border);
-  padding: 8px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-}
+.topbar h1 { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; }
 .search-box {
   background: var(--bg4); border: 1px solid var(--border); border-radius: 6px;
-  padding: 5px 10px 5px 28px; color: var(--text2); font-size: 12px; width: 240px; outline: none;
+  padding: 5px 10px 5px 28px; color: var(--text2); font-size: 12px; flex: 1; max-width: 350px; outline: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23484f58' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.44.456a5 5 0 1 1 0-10 5 5 0 0 1 0 10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: 8px center;
 }
 .search-box:focus { border-color: var(--accent); }
 .search-box::placeholder { color: var(--dim); }
-select, button {
+select {
   background: var(--bg4); color: var(--text2); border: 1px solid var(--border);
-  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer;
 }
-select:hover, button:hover { border-color: var(--accent); }
-.spacer { flex: 1; }
-.meta { font-size: 10px; color: var(--dim); }
+select:hover { border-color: var(--accent); }
+.topbar-meta { font-size: 10px; color: var(--dim); margin-left: auto; white-space: nowrap; }
 
-.legend { display: flex; gap: 10px; font-size: 11px; color: var(--muted); }
-.legend-item { display: flex; align-items: center; gap: 3px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+.sidebar {
+  width: 200px; min-width: 200px; background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+}
+.sidebar-title { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px 4px; }
+.pipe-item {
+  padding: 6px 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--muted); border-left: 2px solid transparent; transition: all 0.1s;
+}
+.pipe-item:hover { background: var(--bg3); color: var(--text2); }
+.pipe-item.active { background: var(--bg3); color: var(--text); border-left-color: var(--accent); }
+.pipe-item .cnt { font-size: 10px; background: var(--bg4); padding: 0 6px; border-radius: 8px; color: var(--dim); }
+.pipe-item.active .cnt { color: var(--accent); }
+
+/* Run list */
+.list-panel { flex: 1; overflow-y: auto; border-right: 1px solid var(--border); min-width: 280px; }
+.run-item {
+  padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s;
+}
+.run-item:hover { background: var(--bg3); }
+.run-item.active { background: var(--bg3); border-left: 2px solid var(--accent); }
+.run-item .ri-top { display: flex; align-items: center; gap: 6px; }
+.run-item .ri-name { font-size: 12px; font-weight: 500; color: var(--text2); }
+.run-item .ri-pipe { font-size: 10px; color: var(--dim); }
+.run-item .ri-bottom { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; color: var(--muted); }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .dot-ok { background: var(--green); }
 .dot-fail { background: var(--red); }
 .dot-run { background: var(--blue); animation: pulse 2s infinite; }
 .dot-other { background: var(--dim); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-.main { padding: 14px 20px; }
+/* Detail panel */
+.detail-panel { flex: 1.5; overflow-y: auto; padding: 16px; min-width: 0; }
+.detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--dim); font-size: 14px; }
 
-.section {
+.detail-header { margin-bottom: 14px; }
+.detail-header .dh-name { font-size: 16px; font-weight: 600; color: var(--text); word-break: break-all; }
+.detail-header .dh-meta { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.detail-header .dh-status { display: flex; align-items: center; gap: 4px; }
+.detail-header a { color: var(--accent); text-decoration: none; font-size: 12px; }
+.detail-header a:hover { text-decoration: underline; }
+
+.detail-section { margin-bottom: 16px; }
+.detail-section-hdr {
+  font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px;
+  margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+
+.chain-box {
   background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
-  margin-bottom: 12px; overflow: hidden;
+  padding: 12px; overflow-x: auto;
 }
-.sec-hdr {
-  padding: 8px 14px; background: var(--bg3); display: flex; align-items: center;
-  justify-content: space-between; cursor: pointer; user-select: none;
+
+.log-toggle {
+  background: var(--bg4); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; font-size: 12px; color: var(--text2); cursor: pointer; display: flex;
+  align-items: center; gap: 6px; width: 100%;
 }
-.sec-hdr:hover { background: #252c35; }
-.sec-hdr .left { display: flex; align-items: center; gap: 6px; }
-.sec-hdr .chevron { color: var(--dim); font-size: 9px; transition: transform 0.15s; }
-.sec-hdr.collapsed .chevron { transform: rotate(-90deg); }
-.sec-hdr .name { font-size: 13px; font-weight: 600; color: var(--text); }
-.sec-hdr .info { display: flex; gap: 6px; }
-.tag { font-size: 10px; padding: 1px 7px; border-radius: 10px; }
-.tag-ok { background: #1a3a2a; color: var(--green); }
-.tag-fail { background: #3d1a1a; color: var(--red); }
-.tag-run { background: #1a2a3d; color: var(--blue); }
-.tag-total { background: var(--bg4); color: var(--muted); }
-
-.sec-body { padding: 10px 14px; }
-.sec-body.hide { display: none; }
-
-.chain { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #21262d; overflow-x: auto; }
-.chain:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
-
-.card-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.card {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 10px; font-size: 11px; cursor: pointer; min-width: 170px;
+.log-toggle:hover { border-color: var(--accent); }
+.log-toggle .chevron { font-size: 9px; transition: transform 0.15s; }
+.log-toggle.open .chevron { transform: rotate(90deg); }
+.log-box {
+  background: #0b0e14; border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 8px 8px; padding: 10px 14px; font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 11px; line-height: 1.6; color: #e6edf3; overflow-x: auto; white-space: pre-wrap;
+  word-break: break-all; max-height: 400px; overflow-y: auto; display: none;
 }
-.card:hover { border-color: var(--accent); }
-.card .cname { font-weight: 600; color: var(--text2); }
-.card .cmeta { color: var(--muted); font-size: 10px; margin-top: 1px; }
-.card-ok { border-left: 3px solid var(--green); }
-.card-fail { border-left: 3px solid var(--red); }
-.card-run { border-left: 3px solid var(--blue); }
-.card-other { border-left: 3px solid var(--dim); }
-
-.more { font-size: 11px; color: var(--muted); padding: 6px 0 2px; font-style: italic; }
+.log-box.open { display: block; }
+.log-task { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 
 svg.dag { display: block; }
-.node-succeeded rect { fill: #1a3a2a; stroke: var(--green); rx:6; ry:6; stroke-width:1.5; cursor:pointer; }
-.node-failed rect { fill: #3d1a1a; stroke: var(--red); rx:6; ry:6; stroke-width:1.5; cursor:pointer; }
-.node-running rect { fill: #1a2a3d; stroke: var(--blue); rx:6; ry:6; stroke-width:1.5; cursor:pointer; }
-.node-cancelled rect,.node-pending rect { fill: #1a1a1a; stroke: var(--dim); rx:6; ry:6; stroke-width:1.5; cursor:pointer; }
-.node-succeeded rect:hover,.node-failed rect:hover,.node-running rect:hover,.node-cancelled rect:hover { filter:brightness(1.3); }
-
-.empty { text-align: center; padding: 50px; color: var(--dim); }
+.node rect { cursor: pointer; }
+.node-succeeded rect { fill: #1a3a2a; stroke: var(--green); rx:6; ry:6; stroke-width:1.5; }
+.node-failed rect { fill: #3d1a1a; stroke: var(--red); rx:6; ry:6; stroke-width:1.5; }
+.node-running rect { fill: #1a2a3d; stroke: var(--blue); rx:6; ry:6; stroke-width:1.5; }
+.node-cancelled rect,.node-pending rect { fill: #1a1a1a; stroke: var(--dim); rx:6; ry:6; stroke-width:1.5; }
+.node rect:hover { filter: brightness(1.3); }
+.node-highlight rect { stroke-width: 3; filter: brightness(1.2); }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div style="display:flex;align-items:baseline">
-    <h1>ART Pipeline Dashboard</h1>
-    <span class="sub">Build Chain Visualization</span>
-  </div>
-  <div class="legend">
-    <div class="legend-item"><span class="dot dot-ok"></span>Passed</div>
-    <div class="legend-item"><span class="dot dot-run"></span>Running</div>
-    <div class="legend-item"><span class="dot dot-fail"></span>Failed</div>
-    <div class="legend-item"><span class="dot dot-other"></span>Other</div>
-  </div>
-</div>
-
-<div class="toolbar">
+<div class="topbar">
+  <h1>ART Pipelines</h1>
   <input class="search-box" id="search" placeholder="Search runs... (Ctrl+K)">
   <select id="hours">
-    <option value="1">1h</option>
-    <option value="6">6h</option>
-    <option value="24" selected>24h</option>
-    <option value="48">48h</option>
-    <option value="168">7d</option>
+    <option value="1">1h</option><option value="6">6h</option>
+    <option value="24" selected>24h</option><option value="48">48h</option><option value="168">7d</option>
   </select>
   <select id="status">
-    <option value="">All</option>
-    <option value="Succeeded">Succeeded</option>
-    <option value="Failed">Failed</option>
-    <option value="Running">Running</option>
+    <option value="">All</option><option value="Succeeded">Succeeded</option>
+    <option value="Failed">Failed</option><option value="Running">Running</option>
     <option value="Cancelled">Cancelled</option>
   </select>
-  <select id="limit">
-    <option value="5" selected>5 per section</option>
-    <option value="10">10 per section</option>
-    <option value="25">25 per section</option>
-  </select>
-  <span class="spacer"></span>
-  <label style="font-size:11px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px">
-    <input type="checkbox" id="autoRefresh" checked style="accent-color:var(--blue)"> Auto-refresh
-  </label>
-  <button onclick="refresh()">Refresh</button>
-  <span class="meta" id="meta"></span>
+  <span class="topbar-meta" id="meta"></span>
 </div>
 
-<div class="main" id="content"><div class="empty">Loading...</div></div>
+<div class="layout">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-title">Pipelines</div>
+  </div>
+  <div class="list-panel" id="runList"></div>
+  <div class="detail-panel" id="detail">
+    <div class="detail-empty">Select a pipeline run to view details</div>
+  </div>
+</div>
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
 <script>
-const PIPE_ORDER = ['build-layered-products', 'olm-bundle-konflux', 'build-fbc'];
-const collapsed = new Set();
+let activePipeline = '';
+let activeRun = '';
+let logsOpen = false;
 
 function ago(ts) {
   if (!ts) return '';
@@ -165,16 +161,134 @@ function ago(ts) {
   return Math.floor(s / 86400) + 'd ago';
 }
 function trunc(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
+function dotCls(s) {
+  return s === 'Succeeded' ? 'dot-ok' : s === 'Failed' ? 'dot-fail' : s === 'Running' ? 'dot-run' : 'dot-other';
+}
+function dotColor(s) {
+  return s === 'Succeeded' ? '#2ea043' : s === 'Failed' ? '#f85149' : s === 'Running' ? '#58a6ff' : '#484f58';
+}
 
-function renderChain(chain, el) {
+function renderSidebar(pipelines) {
+  const sb = document.getElementById('sidebar');
+  sb.innerHTML = '<div class="sidebar-title">Pipelines</div>';
+  const all = document.createElement('div');
+  all.className = 'pipe-item' + (!activePipeline ? ' active' : '');
+  all.innerHTML = '<span>All</span><span class="cnt">' + pipelines.reduce((a, p) => a + p.count, 0) + '</span>';
+  all.onclick = () => { activePipeline = ''; refreshRuns(); };
+  sb.appendChild(all);
+  pipelines.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'pipe-item' + (activePipeline === p.name ? ' active' : '');
+    el.innerHTML = '<span>' + trunc(p.name, 20) + '</span><span class="cnt">' + p.count + '</span>';
+    el.onclick = () => { activePipeline = p.name; refreshRuns(); };
+    sb.appendChild(el);
+  });
+}
+
+function renderRunList(runs) {
+  const rl = document.getElementById('runList');
+  rl.innerHTML = '';
+  if (!runs.length) { rl.innerHTML = '<div style="padding:20px;color:var(--dim);text-align:center">No runs</div>'; return; }
+  runs.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'run-item' + (activeRun === r.name ? ' active' : '');
+    el.innerHTML =
+      '<div class="ri-top"><span class="dot ' + dotCls(r.status) + '"></span>' +
+      '<span class="ri-name">' + trunc(r.name, 36) + '</span></div>' +
+      '<div class="ri-bottom">' +
+        '<span class="ri-pipe">' + r.pipeline + '</span>' +
+        '<span>' + r.status + '</span>' +
+        (r.duration ? '<span>' + r.duration + '</span>' : '') +
+        '<span>' + ago(r.startTime) + '</span>' +
+      '</div>';
+    el.onclick = () => selectRun(r.name);
+    rl.appendChild(el);
+  });
+}
+
+async function selectRun(name) {
+  activeRun = name;
+  document.querySelectorAll('.run-item').forEach(el =>
+    el.classList.toggle('active', el.querySelector('.ri-name')?.textContent?.startsWith(name.slice(0, 30))));
+
+  const dp = document.getElementById('detail');
+  dp.innerHTML = '<div class="detail-empty">Loading...</div>';
+
+  const hours = document.getElementById('hours').value;
+  try {
+    const r = await fetch('/api/run/' + name + '?hours=' + hours);
+    const data = await r.json();
+    if (data.error) { dp.innerHTML = '<div class="detail-empty">Run not found</div>'; return; }
+    renderDetail(data);
+  } catch (e) {
+    dp.innerHTML = '<div class="detail-empty">Error: ' + e.message + '</div>';
+  }
+}
+
+function renderDetail(data) {
+  const dp = document.getElementById('detail');
+  dp.innerHTML = '';
+  const run = data.run;
+
+  // Header
+  const hdr = document.createElement('div'); hdr.className = 'detail-header';
+  hdr.innerHTML =
+    '<div class="dh-name">' + run.name + '</div>' +
+    '<div class="dh-meta">' +
+      '<div class="dh-status"><span class="dot ' + dotCls(run.status) + '"></span>' + run.status + '</div>' +
+      '<span>' + run.pipeline + '</span>' +
+      (run.duration ? '<span>' + run.duration + '</span>' : '') +
+      '<span>' + ago(run.startTime) + '</span>' +
+    '</div>' +
+    '<a href="' + run.consoleUrl + '" target="_blank">Open in Console \u2197</a>';
+  dp.appendChild(hdr);
+
+  // Chain
+  if (data.chain) {
+    const sec = document.createElement('div'); sec.className = 'detail-section';
+    sec.innerHTML = '<div class="detail-section-hdr">Build Chain</div>';
+    const box = document.createElement('div'); box.className = 'chain-box';
+    sec.appendChild(box);
+    dp.appendChild(sec);
+    renderChain(data.chain, box, run.name);
+  }
+
+  // Logs
+  if (data.logs) {
+    const sec = document.createElement('div'); sec.className = 'detail-section';
+    sec.innerHTML = '<div class="detail-section-hdr">Failure Logs</div>';
+
+    const toggle = document.createElement('div');
+    toggle.className = 'log-toggle' + (logsOpen ? ' open' : '');
+    toggle.innerHTML = '<span class="chevron">\u25B6</span> ' +
+      '<span>Task: ' + data.logs.task + '</span>' +
+      '<span style="margin-left:auto;font-size:10px;color:var(--dim)">Pod: ' + data.logs.pod + '</span>';
+
+    const logBox = document.createElement('div');
+    logBox.className = 'log-box' + (logsOpen ? ' open' : '');
+    logBox.textContent = data.logs.lines || 'No log output';
+
+    toggle.onclick = () => {
+      logsOpen = !logsOpen;
+      toggle.classList.toggle('open');
+      logBox.classList.toggle('open');
+    };
+
+    sec.appendChild(toggle);
+    sec.appendChild(logBox);
+    dp.appendChild(sec);
+  }
+}
+
+function renderChain(chain, el, highlightName) {
   const g = new dagre.graphlib.Graph()
-    .setGraph({ rankdir: 'LR', nodesep: 14, ranksep: 50, marginx: 8, marginy: 8 })
+    .setGraph({ rankdir: 'LR', nodesep: 16, ranksep: 55, marginx: 10, marginy: 10 })
     .setDefaultEdgeLabel(() => ({}));
-  const W = 190, H = 52;
+  const W = 200, H = 54;
   chain.nodes.forEach(n => g.setNode(n.name, { width: W, height: H, data: n }));
   chain.edges.forEach(e => g.setEdge(e.from, e.to));
   dagre.layout(g);
-  const gi = g.graph(), sw = gi.width + 16, sh = gi.height + 16;
+  const gi = g.graph(), sw = gi.width + 20, sh = gi.height + 20;
   const svg = d3.select(el).append('svg').attr('class', 'dag')
     .attr('width', sw).attr('height', sh).attr('viewBox', '0 0 ' + sw + ' ' + sh);
   const mid = 'a' + Math.random().toString(36).slice(2, 8);
@@ -185,168 +299,59 @@ function renderChain(chain, el) {
   g.edges().forEach(e => {
     const ed = g.edge(e);
     svg.append('path')
-      .attr('d', d3.line().x(d => d.x + 8).y(d => d.y + 8).curve(d3.curveBasis)(ed.points))
+      .attr('d', d3.line().x(d => d.x + 10).y(d => d.y + 10).curve(d3.curveBasis)(ed.points))
       .attr('marker-end', 'url(#' + mid + ')')
       .style('stroke', '#484f58').style('stroke-width', 1.5).style('fill', 'none');
   });
   g.nodes().forEach(n => {
     const nd = g.node(n), d = nd.data;
-    const cls = 'node-' + (d.status || 'pending').toLowerCase();
-    const gr = svg.append('g').attr('class', 'node ' + cls)
-      .attr('transform', 'translate(' + (nd.x - W/2 + 8) + ',' + (nd.y - H/2 + 8) + ')')
-      .style('cursor', 'pointer').on('click', () => window.open(d.consoleUrl, '_blank'));
+    const isHL = d.name === highlightName;
+    const cls = 'node node-' + (d.status || 'pending').toLowerCase() + (isHL ? ' node-highlight' : '');
+    const gr = svg.append('g').attr('class', cls)
+      .attr('transform', 'translate(' + (nd.x - W/2 + 10) + ',' + (nd.y - H/2 + 10) + ')')
+      .style('cursor', 'pointer').on('click', () => selectRun(d.name));
     gr.append('rect').attr('width', W).attr('height', H);
     gr.append('text').attr('x', 8).attr('y', 16).attr('font-size', '11px')
       .attr('font-weight', '600').attr('fill', '#f0f6fc').text(d.pipeline);
     gr.append('text').attr('x', 8).attr('y', 30).attr('font-size', '10px')
-      .attr('fill', '#8b949e').text(trunc(d.name, 28));
-    const col = d.status === 'Succeeded' ? '#2ea043' : d.status === 'Failed' ? '#f85149'
-      : d.status === 'Running' ? '#58a6ff' : '#484f58';
-    gr.append('circle').attr('cx', 8).attr('cy', 43).attr('r', 3).attr('fill', col);
-    gr.append('text').attr('x', 15).attr('y', 46).attr('font-size', '9.5px')
-      .attr('fill', '#8b949e')
+      .attr('fill', '#8b949e').text(trunc(d.name, 30));
+    gr.append('circle').attr('cx', 8).attr('cy', 44).attr('r', 3).attr('fill', dotColor(d.status));
+    gr.append('text').attr('x', 15).attr('y', 47).attr('font-size', '9.5px').attr('fill', '#8b949e')
       .text(d.status + (d.duration ? ' (' + d.duration + ')' : '') + ' \u00B7 ' + ago(d.startTime));
   });
 }
 
-function cardClass(s) {
-  return s === 'Succeeded' ? 'card-ok' : s === 'Failed' ? 'card-fail' : s === 'Running' ? 'card-run' : 'card-other';
-}
-
-function makeSection(id, title, badges, bodyFn) {
-  const sec = document.createElement('div'); sec.className = 'section';
-  const hdr = document.createElement('div');
-  hdr.className = 'sec-hdr' + (collapsed.has(id) ? ' collapsed' : '');
-  hdr.innerHTML =
-    '<div class="left"><span class="chevron">\u25BC</span><span class="name">' + title + '</span></div>' +
-    '<div class="info">' + badges + '</div>';
-  hdr.onclick = () => { collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(window._data); };
-  sec.appendChild(hdr);
-  const body = document.createElement('div');
-  body.className = 'sec-body' + (collapsed.has(id) ? ' hide' : '');
-  bodyFn(body);
-  sec.appendChild(body);
-  return sec;
-}
-
-function statusBadges(nodes) {
-  const ok = nodes.filter(n => n.status === 'Succeeded').length;
-  const fail = nodes.filter(n => n.status === 'Failed').length;
-  const run = nodes.filter(n => n.status === 'Running').length;
-  return (ok ? '<span class="tag tag-ok">' + ok + ' passed</span>' : '') +
-    (fail ? '<span class="tag tag-fail">' + fail + ' failed</span>' : '') +
-    (run ? '<span class="tag tag-run">' + run + ' running</span>' : '');
-}
-
-function render(data) {
-  window._data = data;
-  const ct = document.getElementById('content');
-  ct.innerHTML = '';
-  const chains = data.chains || [];
-  const sbp = data.standaloneByPipeline || {};
-  const meta = data.meta || {};
-
-  document.getElementById('meta').textContent =
-    meta.totalRuns + ' runs \u00B7 ' + new Date().toLocaleTimeString();
-
-  if (!chains.length && !Object.keys(sbp).length) {
-    ct.innerHTML = '<div class="empty">No runs found.</div>';
-    return;
-  }
-
-  const deferred = [];
-
-  // Build Chains section
-  if (chains.length) {
-    const allChainNodes = chains.flatMap(c => c.nodes);
-    const badges = statusBadges(allChainNodes) +
-      '<span class="tag tag-total">' + data.totalChains + ' chains</span>';
-
-    ct.appendChild(makeSection('chains', 'Build Chains', badges, body => {
-      chains.forEach(c => {
-        const row = document.createElement('div'); row.className = 'chain';
-        body.appendChild(row);
-        deferred.push({ chain: c, el: row });
-      });
-      if (data.totalChains > chains.length) {
-        const m = document.createElement('div'); m.className = 'more';
-        m.textContent = '+ ' + (data.totalChains - chains.length) + ' more chains not shown';
-        body.appendChild(m);
-      }
-    }));
-  }
-
-  // Standalone runs by pipeline
-  const pipeNames = PIPE_ORDER.filter(p => p in sbp)
-    .concat(Object.keys(sbp).filter(p => !PIPE_ORDER.includes(p)));
-
-  pipeNames.forEach(name => {
-    const pd = sbp[name];
-    const runs = pd.runs || [];
-    if (!runs.length) return;
-
-    const badges = statusBadges(runs) +
-      '<span class="tag tag-total">' + pd.total + ' runs</span>';
-
-    ct.appendChild(makeSection('s-' + name, name, badges, body => {
-      const grid = document.createElement('div'); grid.className = 'card-grid';
-      runs.forEach(s => {
-        const card = document.createElement('div');
-        card.className = 'card ' + cardClass(s.status);
-        card.onclick = () => window.open(s.consoleUrl, '_blank');
-        card.innerHTML = '<div class="cname">' + trunc(s.name, 28) + '</div>' +
-          '<div class="cmeta">' + s.status + (s.duration ? ' (' + s.duration + ')' : '') +
-          ' \u00B7 ' + ago(s.startTime) + '</div>';
-        grid.appendChild(card);
-      });
-      body.appendChild(grid);
-      if (pd.total > runs.length) {
-        const m = document.createElement('div'); m.className = 'more';
-        m.textContent = '+ ' + (pd.total - runs.length) + ' more runs not shown';
-        body.appendChild(m);
-      }
-    }));
-  });
-
-  deferred.forEach(d => renderChain(d.chain, d.el));
-}
-
-async function refresh() {
+async function refreshRuns() {
   const p = new URLSearchParams({
     hours: document.getElementById('hours').value,
     search: document.getElementById('search').value,
     status: document.getElementById('status').value,
-    limit: document.getElementById('limit').value,
+    pipeline: activePipeline,
   });
   try {
-    const r = await fetch('/api/pipelines?' + p);
-    render(await r.json());
+    const r = await fetch('/api/runs?' + p);
+    const data = await r.json();
+    renderSidebar(data.pipelines);
+    renderRunList(data.runs);
+    document.getElementById('meta').textContent = data.total + ' runs \u00B7 ' + new Date().toLocaleTimeString();
   } catch (e) {
-    document.getElementById('content').innerHTML = '<div class="empty">Error: ' + e.message + '</div>';
+    document.getElementById('runList').innerHTML = '<div style="padding:20px;color:var(--dim)">Error: ' + e.message + '</div>';
   }
-}
-
-let timer;
-function resetTimer() {
-  clearInterval(timer);
-  if (document.getElementById('autoRefresh').checked) timer = setInterval(refresh, 30000);
 }
 
 let searchTimer;
 document.getElementById('search').addEventListener('input', () => {
-  clearTimeout(searchTimer); searchTimer = setTimeout(refresh, 300);
+  clearTimeout(searchTimer); searchTimer = setTimeout(refreshRuns, 300);
 });
-['hours', 'status', 'limit'].forEach(id =>
-  document.getElementById(id).addEventListener('change', refresh));
-document.getElementById('autoRefresh').addEventListener('change', resetTimer);
+['hours', 'status'].forEach(id => document.getElementById(id).addEventListener('change', refreshRuns));
 
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search').focus(); }
-  if (e.key === 'r' && document.activeElement.tagName !== 'INPUT') refresh();
   if (e.key === 'Escape') document.getElementById('search').blur();
 });
 
-refresh(); resetTimer();
+refreshRuns();
+setInterval(() => { if (document.getElementById('autoRefresh')?.checked !== false) refreshRuns(); }, 30000);
 </script>
 </body>
 </html>

@@ -17,13 +17,20 @@ CONSOLE_BASE = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshif
 NAMESPACE = os.environ.get("WATCH_NAMESPACE", "art-cd")
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "index.html"
 
+_k8s_custom = None
+_k8s_core = None
 
-def get_k8s_client():
-    try:
-        config.load_incluster_config()
-    except Exception:
-        config.load_kube_config()
-    return client.CustomObjectsApi()
+
+def get_clients():
+    global _k8s_custom, _k8s_core
+    if _k8s_custom is None:
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+        _k8s_custom = client.CustomObjectsApi()
+        _k8s_core = client.CoreV1Api()
+    return _k8s_custom, _k8s_core
 
 
 def parse_time(ts):
@@ -95,38 +102,12 @@ def build_node(pr):
     }
 
 
-def build_chain(root_name, nodes, edges):
-    visited = set()
-    queue = [root_name]
-    chain_nodes, chain_edges = [], []
-    while queue:
-        current = queue.pop(0)
-        if current in visited or current not in nodes:
-            continue
-        visited.add(current)
-        chain_nodes.append(nodes[current])
-        for e in edges:
-            if e["from"] == current:
-                chain_edges.append(e)
-                queue.append(e["to"])
-            if e["to"] == current:
-                queue.append(e["from"])
-    return {"root": root_name, "nodes": chain_nodes, "edges": chain_edges}
-
-
-@app.get("/api/pipelines")
-def get_pipelines(
-    hours: int = Query(default=24, ge=1, le=168),
-    search: str = Query(default=""),
-    status: str = Query(default=""),
-    limit: int = Query(default=5, ge=1, le=50),
-):
-    api = get_k8s_client()
+def fetch_all_nodes(hours, search, status_filter):
+    custom_api, _ = get_clients()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    result = api.list_namespaced_custom_object(
+    result = custom_api.list_namespaced_custom_object(
         group="tekton.dev", version="v1", namespace=NAMESPACE, plural="pipelineruns"
     )
-
     nodes = {}
     for pr in result.get("items", []):
         node = build_node(pr)
@@ -135,10 +116,13 @@ def get_pipelines(
             continue
         if search and search.lower() not in node["name"].lower():
             continue
-        if status and node["status"] != status:
+        if status_filter and node["status"] != status_filter:
             continue
         nodes[node["name"]] = node
+    return nodes
 
+
+def compute_edges(nodes):
     edges = []
     children_set = set()
     for name, node in nodes.items():
@@ -152,45 +136,107 @@ def get_pipelines(
                 if edge not in edges:
                     edges.append(edge)
                 children_set.add(child_name)
+    return edges, children_set
 
-    roots = [n for n in nodes if n not in children_set]
 
-    chains, seen = [], set()
-    for r in sorted(roots, key=lambda x: nodes[x].get("startTime", ""), reverse=True):
-        if r not in seen:
-            chain = build_chain(r, nodes, edges)
-            for cn in chain["nodes"]:
-                seen.add(cn["name"])
-            if chain["nodes"]:
-                chains.append(chain)
-    standalone = [nodes[n] for n in nodes if n not in seen]
+def find_chain(target, nodes, edges):
+    """Find the full chain containing target node."""
+    connected = set()
+    queue = [target]
+    while queue:
+        current = queue.pop(0)
+        if current in connected or current not in nodes:
+            continue
+        connected.add(current)
+        for e in edges:
+            if e["from"] == current:
+                queue.append(e["to"])
+            if e["to"] == current:
+                queue.append(e["from"])
+    if len(connected) <= 1:
+        return None
+    chain_nodes = [nodes[n] for n in connected]
+    chain_edges = [e for e in edges if e["from"] in connected and e["to"] in connected]
+    root = None
+    children = {e["to"] for e in chain_edges}
+    for n in connected:
+        if n not in children:
+            root = n
+            break
+    return {"root": root or target, "nodes": chain_nodes, "edges": chain_edges}
 
-    multi_chains = [c for c in chains if len(c["nodes"]) > 1]
-    single_chains = [c for c in chains if len(c["nodes"]) == 1]
 
-    standalone_by_pipeline = defaultdict(list)
-    for c in single_chains:
-        standalone_by_pipeline[c["nodes"][0]["pipeline"]].append(c["nodes"][0])
-    for s in standalone:
-        standalone_by_pipeline[s["pipeline"]].append(s)
-
-    for runs in standalone_by_pipeline.values():
-        runs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
-
+@app.get("/api/runs")
+def get_runs(
+    hours: int = Query(default=24, ge=1, le=168),
+    search: str = Query(default=""),
+    status: str = Query(default=""),
+    pipeline: str = Query(default=""),
+):
+    nodes = fetch_all_nodes(hours, search, status)
+    all_runs = sorted(nodes.values(), key=lambda x: x.get("startTime", ""), reverse=True)
+    if pipeline:
+        all_runs = [r for r in all_runs if r["pipeline"] == pipeline]
+    pipelines = sorted(set(n["pipeline"] for n in nodes.values()))
+    pipeline_counts = defaultdict(int)
+    for n in nodes.values():
+        pipeline_counts[n["pipeline"]] += 1
     return {
-        "chains": multi_chains[:limit],
-        "totalChains": len(multi_chains),
-        "standaloneByPipeline": {
-            k: {"runs": v[:limit], "total": len(v)}
-            for k, v in standalone_by_pipeline.items()
-        },
-        "meta": {
-            "totalRuns": len(nodes),
-            "pipelines": sorted(set(n["pipeline"] for n in nodes.values())),
-            "hours": hours,
-            "limit": limit,
-        },
+        "runs": all_runs,
+        "pipelines": [{"name": p, "count": pipeline_counts[p]} for p in pipelines],
+        "total": len(all_runs),
     }
+
+
+@app.get("/api/run/{name}")
+def get_run_detail(name: str, hours: int = Query(default=24, ge=1, le=168)):
+    nodes = fetch_all_nodes(hours, "", "")
+    if name not in nodes:
+        return {"error": "not found"}
+    node = nodes[name]
+    edges, _ = compute_edges(nodes)
+    chain = find_chain(name, nodes, edges)
+
+    logs = None
+    if node["status"] in ("Failed", "Cancelled"):
+        logs = get_failure_logs(name)
+
+    return {"run": node, "chain": chain, "logs": logs}
+
+
+def get_failure_logs(pr_name, tail=80):
+    """Get logs from the failed task in a PipelineRun."""
+    custom_api, core_api = get_clients()
+    try:
+        trs = custom_api.list_namespaced_custom_object(
+            group="tekton.dev", version="v1", namespace=NAMESPACE, plural="taskruns",
+            label_selector=f"tekton.dev/pipelineRun={pr_name}",
+        )
+        for tr in trs.get("items", []):
+            tr_status = get_status(tr)
+            if tr_status not in ("Failed", "Cancelled"):
+                continue
+            tr_name = tr["metadata"]["name"]
+            pod_name = tr.get("status", {}).get("podName", "")
+            task_name = tr["metadata"].get("labels", {}).get("tekton.dev/pipelineTask", tr_name)
+            if not pod_name:
+                continue
+            try:
+                log = core_api.read_namespaced_pod_log(
+                    name=pod_name, namespace=NAMESPACE,
+                    container="step-main", tail_lines=tail,
+                )
+            except Exception:
+                try:
+                    log = core_api.read_namespaced_pod_log(
+                        name=pod_name, namespace=NAMESPACE, tail_lines=tail,
+                    )
+                except Exception as e:
+                    log = f"Could not fetch logs: {e}"
+            return {"task": task_name, "pod": pod_name, "lines": log}
+    except Exception as e:
+        logger.warning("Failed to fetch logs for %s: %s", pr_name, e)
+    return None
 
 
 @app.get("/", response_class=HTMLResponse)
