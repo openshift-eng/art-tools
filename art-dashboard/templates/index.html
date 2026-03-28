@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ART Pipeline Dashboard</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2128;
+  --bg-input: #21262d;
+  --border: #30363d;
+  --border-hover: #58a6ff;
+  --text-primary: #f0f6fc;
+  --text-secondary: #c9d1d9;
+  --text-muted: #8b949e;
+  --text-dim: #484f58;
+  --green: #2ea043;
+  --red: #f85149;
+  --blue: #58a6ff;
+  --orange: #d29922;
+  --green-bg: #1a3a2a;
+  --red-bg: #3d1a1a;
+  --blue-bg: #1a2a3d;
+  --grey-bg: #1a1a1a;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Header */
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-left { display: flex; align-items: baseline; gap: 10px; }
+.header h1 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.header .subtitle { color: var(--text-muted); font-size: 12px; }
+
+/* Toolbar */
+.toolbar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.search-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px 5px 30px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  width: 260px;
+  outline: none;
+  transition: border-color 0.2s;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23484f58' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.44.456a5 5 0 1 1 0-10 5 5 0 0 1 0 10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 8px center;
+}
+.search-box:focus { border-color: var(--border-hover); }
+.search-box::placeholder { color: var(--text-dim); }
+select, button {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+select:hover, button:hover { border-color: var(--border-hover); }
+button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+button.primary:hover { background: #2ea043; }
+.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.auto-refresh-toggle {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none;
+}
+.auto-refresh-toggle input { accent-color: var(--blue); }
+
+/* Stats bar */
+.stats-bar {
+  padding: 6px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+.stat { display: flex; align-items: center; gap: 4px; }
+.stat-value { color: var(--text-primary); font-weight: 600; }
+.stat-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+/* Legend */
+.legend { display: flex; gap: 12px; align-items: center; font-size: 11px; color: var(--text-muted); }
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+.dot-succeeded { background: var(--green); }
+.dot-failed { background: var(--red); }
+.dot-running { background: var(--blue); animation: pulse 2s infinite; }
+.dot-cancelled, .dot-pending { background: var(--text-dim); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+/* Main content */
+.main { padding: 16px 20px; }
+
+/* Pipeline sections */
+.pipeline-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+.pipeline-header {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.pipeline-header:hover { background: #252c35; }
+.pipeline-header .left { display: flex; align-items: center; gap: 8px; }
+.pipeline-header .chevron {
+  color: var(--text-dim);
+  font-size: 10px;
+  transition: transform 0.2s;
+  width: 16px;
+  text-align: center;
+}
+.pipeline-header.collapsed .chevron { transform: rotate(-90deg); }
+.pipeline-header .label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.pipeline-header .badges { display: flex; gap: 6px; }
+.badge {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.badge-total { background: var(--bg-input); color: var(--text-muted); }
+.badge-succeeded { background: #1a3a2a; color: var(--green); }
+.badge-failed { background: #3d1a1a; color: var(--red); }
+.badge-running { background: #1a2a3d; color: var(--blue); }
+
+.pipeline-body { padding: 10px 14px; }
+.pipeline-body.hidden { display: none; }
+
+/* Chains */
+.chain-row {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #21262d;
+  overflow-x: auto;
+}
+.chain-row:last-of-type { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+
+/* Standalone cards */
+.section-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  margin-top: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.standalone-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.standalone-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  min-width: 180px;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.standalone-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+.standalone-card .sname { font-weight: 600; color: var(--text-secondary); font-size: 11px; }
+.standalone-card .smeta { color: var(--text-muted); font-size: 10px; margin-top: 2px; }
+.sc-succeeded { border-left: 3px solid var(--green); }
+.sc-failed { border-left: 3px solid var(--red); }
+.sc-running { border-left: 3px solid var(--blue); }
+.sc-cancelled, .sc-pending { border-left: 3px solid var(--text-dim); }
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 0 4px;
+  border-top: 1px solid #21262d;
+  margin-top: 8px;
+}
+.pagination button {
+  min-width: 28px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.pagination button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-info { font-size: 11px; color: var(--text-muted); padding: 0 8px; }
+
+/* SVG nodes */
+svg.dag { display: block; }
+.node-succeeded rect { fill: var(--green-bg); stroke: var(--green); rx: 6; ry: 6; stroke-width: 1.5; cursor: pointer; }
+.node-failed rect { fill: var(--red-bg); stroke: var(--red); rx: 6; ry: 6; stroke-width: 1.5; cursor: pointer; }
+.node-running rect { fill: var(--blue-bg); stroke: var(--blue); rx: 6; ry: 6; stroke-width: 1.5; cursor: pointer; }
+.node-cancelled rect, .node-pending rect { fill: var(--grey-bg); stroke: var(--text-dim); rx: 6; ry: 6; stroke-width: 1.5; cursor: pointer; }
+.node-succeeded rect:hover, .node-failed rect:hover, .node-running rect:hover, .node-cancelled rect:hover { filter: brightness(1.3); }
+
+/* Empty state */
+.empty { text-align: center; padding: 60px 20px; color: var(--text-dim); font-size: 14px; }
+.empty .big { font-size: 32px; margin-bottom: 8px; }
+
+/* Refresh indicator */
+.refresh-indicator { font-size: 10px; color: var(--text-dim); }
+
+/* Keyboard shortcut hint */
+.shortcut-hint {
+  font-size: 10px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 4px;
+}
+kbd {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: monospace;
+  font-size: 10px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>ART Pipeline Dashboard</h1>
+    <span class="subtitle">Build Chain Visualization</span>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><span class="status-dot dot-succeeded"></span>Succeeded</div>
+    <div class="legend-item"><span class="status-dot dot-running"></span>Running</div>
+    <div class="legend-item"><span class="status-dot dot-failed"></span>Failed</div>
+    <div class="legend-item"><span class="status-dot dot-cancelled"></span>Cancelled</div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="text" class="search-box" id="searchInput" placeholder="Search pipeline runs... (Ctrl+K)">
+  <select id="timeRange">
+    <option value="1">Last 1 hour</option>
+    <option value="6">Last 6 hours</option>
+    <option value="24" selected>Last 24 hours</option>
+    <option value="48">Last 48 hours</option>
+    <option value="168">Last 7 days</option>
+  </select>
+  <select id="pipelineFilter">
+    <option value="">All Pipelines</option>
+  </select>
+  <select id="statusFilter">
+    <option value="">All Statuses</option>
+    <option value="Succeeded">Succeeded</option>
+    <option value="Failed">Failed</option>
+    <option value="Running">Running</option>
+    <option value="Cancelled">Cancelled</option>
+    <option value="Pending">Pending</option>
+  </select>
+  <select id="perPage">
+    <option value="5">5 per section</option>
+    <option value="10" selected>10 per section</option>
+    <option value="25">25 per section</option>
+    <option value="0">Show all</option>
+  </select>
+  <div class="toolbar-right">
+    <label class="auto-refresh-toggle">
+      <input type="checkbox" id="autoRefresh" checked>
+      Auto-refresh (30s)
+    </label>
+    <button class="primary" onclick="refresh()">Refresh</button>
+    <span class="refresh-indicator" id="lastRefresh"></span>
+  </div>
+</div>
+
+<div class="stats-bar" id="statsBar">
+  <div class="stat">Total runs: <span class="stat-value" id="statTotal">-</span></div>
+  <div class="stat"><span class="stat-dot" style="background:var(--green)"></span>Succeeded: <span class="stat-value" id="statSucceeded">-</span></div>
+  <div class="stat"><span class="stat-dot" style="background:var(--red)"></span>Failed: <span class="stat-value" id="statFailed">-</span></div>
+  <div class="stat"><span class="stat-dot" style="background:var(--blue)"></span>Running: <span class="stat-value" id="statRunning">-</span></div>
+  <div class="stat" style="margin-left:auto">
+    <span class="shortcut-hint"><kbd>Ctrl</kbd>+<kbd>K</kbd> Search &nbsp; <kbd>R</kbd> Refresh</span>
+  </div>
+</div>
+
+<div class="main" id="content">
+  <div class="empty"><div class="big">&#8987;</div>Loading pipeline data...</div>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script>
+const PIPELINE_ORDER = ['build-layered-products', 'olm-bundle-konflux', 'build-fbc'];
+const collapsedSections = new Set();
+let currentPage = {};
+let lastData = null;
+let refreshTimer = null;
+
+function statusClass(s) { return 'node-' + (s || 'pending').toLowerCase(); }
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
+
+function renderChain(chain, el) {
+  const g = new dagre.graphlib.Graph()
+    .setGraph({ rankdir: 'LR', nodesep: 14, ranksep: 50, marginx: 10, marginy: 10 })
+    .setDefaultEdgeLabel(() => ({}));
+  const nW = 190, nH = 52;
+  chain.nodes.forEach(n => g.setNode(n.name, { width: nW, height: nH, data: n }));
+  chain.edges.forEach(e => g.setEdge(e.from, e.to));
+  dagre.layout(g);
+
+  const gi = g.graph();
+  const svgW = gi.width + 20, svgH = gi.height + 20;
+  const svg = d3.select(el).append('svg')
+    .attr('class', 'dag').attr('width', svgW).attr('height', svgH)
+    .attr('viewBox', '0 0 ' + svgW + ' ' + svgH);
+
+  const markerId = 'ah-' + Math.random().toString(36).slice(2, 8);
+  svg.append('defs').append('marker')
+    .attr('id', markerId).attr('viewBox', '0 0 10 10')
+    .attr('refX', 10).attr('refY', 5).attr('markerWidth', 5).attr('markerHeight', 5)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0 0L10 5L0 10Z').attr('fill', '#484f58');
+
+  g.edges().forEach(e => {
+    const ed = g.edge(e);
+    const ln = d3.line().x(d => d.x + 10).y(d => d.y + 10).curve(d3.curveBasis);
+    svg.append('path').attr('d', ln(ed.points))
+      .attr('marker-end', 'url(#' + markerId + ')')
+      .style('stroke', '#484f58').style('stroke-width', 1.5).style('fill', 'none');
+  });
+
+  g.nodes().forEach(n => {
+    const nd = g.node(n), d = nd.data;
+    const gr = svg.append('g')
+      .attr('class', 'node ' + statusClass(d.status))
+      .attr('transform', 'translate(' + (nd.x - nW / 2 + 10) + ',' + (nd.y - nH / 2 + 10) + ')')
+      .style('cursor', 'pointer')
+      .on('click', () => window.open(d.consoleUrl, '_blank'));
+
+    gr.append('rect').attr('width', nW).attr('height', nH);
+
+    gr.append('text').attr('x', 8).attr('y', 16)
+      .attr('font-size', '11px').attr('font-weight', '600').attr('fill', '#f0f6fc')
+      .text(d.pipeline);
+
+    gr.append('text').attr('x', 8).attr('y', 30)
+      .attr('font-size', '10px').attr('fill', '#8b949e')
+      .text(truncate(d.name, 28));
+
+    const sc = d.status === 'Succeeded' ? '#2ea043' : d.status === 'Failed' ? '#f85149' :
+               d.status === 'Running' ? '#58a6ff' : '#484f58';
+    gr.append('circle').attr('cx', 8).attr('cy', 43).attr('r', 3).attr('fill', sc);
+    gr.append('text').attr('x', 15).attr('y', 46)
+      .attr('font-size', '9.5px').attr('fill', '#8b949e')
+      .text(d.status + (d.duration ? ' (' + d.duration + ')' : '') + ' \u00B7 ' + timeAgo(d.startTime));
+  });
+}
+
+function renderPipelines(data) {
+  const ct = document.getElementById('content');
+  ct.innerHTML = '';
+  const bp = data.byPipeline || {};
+  const meta = data.meta || {};
+  const sf = document.getElementById('statusFilter').value;
+  const perPage = parseInt(document.getElementById('perPage').value) || 0;
+
+  const pipelines = PIPELINE_ORDER.filter(p => p in bp)
+    .concat(Object.keys(bp).filter(p => !PIPELINE_ORDER.includes(p)));
+
+  // Update stats
+  let totalS = 0, totalF = 0, totalR = 0;
+  for (const pData of Object.values(bp)) {
+    const allNodes = [...(pData.chains || []).flatMap(c => c.nodes), ...(pData.standalone || [])];
+    allNodes.forEach(n => {
+      if (n.status === 'Succeeded') totalS++;
+      else if (n.status === 'Failed') totalF++;
+      else if (n.status === 'Running') totalR++;
+    });
+  }
+  document.getElementById('statTotal').textContent = meta.totalRuns || 0;
+  document.getElementById('statSucceeded').textContent = totalS;
+  document.getElementById('statFailed').textContent = totalF;
+  document.getElementById('statRunning').textContent = totalR;
+
+  // Populate pipeline filter dropdown
+  const pf = document.getElementById('pipelineFilter');
+  const currentVal = pf.value;
+  const opts = pf.querySelectorAll('option:not(:first-child)');
+  opts.forEach(o => o.remove());
+  (meta.pipelines || []).forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p;
+    pf.appendChild(opt);
+  });
+  pf.value = currentVal;
+
+  if (!pipelines.length) {
+    ct.innerHTML = '<div class="empty"><div class="big">&#128269;</div>No pipeline runs match your filters.</div>';
+    return;
+  }
+
+  const deferred = [];
+  pipelines.forEach(pName => {
+    const pData = bp[pName];
+    let chains = pData.chains || [];
+    let standalone = pData.standalone || [];
+
+    if (!chains.length && !standalone.length) return;
+
+    const allNodes = [...chains.flatMap(c => c.nodes), ...standalone];
+    const countS = allNodes.filter(n => n.status === 'Succeeded').length;
+    const countF = allNodes.filter(n => n.status === 'Failed').length;
+    const countR = allNodes.filter(n => n.status === 'Running').length;
+
+    // Pagination
+    const page = currentPage[pName] || 1;
+    const totalChains = chains.length;
+    let pagedChains = chains;
+    if (perPage > 0 && chains.length > perPage) {
+      const start = (page - 1) * perPage;
+      pagedChains = chains.slice(start, start + perPage);
+    }
+
+    const sec = document.createElement('div');
+    sec.className = 'pipeline-section';
+
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'pipeline-header' + (collapsedSections.has(pName) ? ' collapsed' : '');
+    hdr.innerHTML =
+      '<div class="left">' +
+        '<span class="chevron">&#9660;</span>' +
+        '<span class="label">' + pName + '</span>' +
+      '</div>' +
+      '<div class="badges">' +
+        (countS ? '<span class="badge badge-succeeded">' + countS + ' passed</span>' : '') +
+        (countF ? '<span class="badge badge-failed">' + countF + ' failed</span>' : '') +
+        (countR ? '<span class="badge badge-running">' + countR + ' running</span>' : '') +
+        '<span class="badge badge-total">' + allNodes.length + ' total</span>' +
+      '</div>';
+    hdr.addEventListener('click', () => {
+      if (collapsedSections.has(pName)) collapsedSections.delete(pName);
+      else collapsedSections.add(pName);
+      renderPipelines(lastData);
+    });
+    sec.appendChild(hdr);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'pipeline-body' + (collapsedSections.has(pName) ? ' hidden' : '');
+
+    if (pagedChains.length) {
+      pagedChains.forEach(c => {
+        const row = document.createElement('div');
+        row.className = 'chain-row';
+        body.appendChild(row);
+        deferred.push({ chain: c, el: row });
+      });
+    }
+
+    if (standalone.length) {
+      if (chains.length) {
+        const lbl = document.createElement('div');
+        lbl.className = 'section-label';
+        lbl.textContent = 'Standalone runs';
+        body.appendChild(lbl);
+      }
+      const grid = document.createElement('div');
+      grid.className = 'standalone-grid';
+      standalone.sort((a, b) => (b.startTime || '').localeCompare(a.startTime || ''));
+      standalone.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'standalone-card sc-' + s.status.toLowerCase();
+        card.onclick = () => window.open(s.consoleUrl, '_blank');
+        card.innerHTML =
+          '<div class="sname">' + truncate(s.name, 28) + '</div>' +
+          '<div class="smeta">' + s.status + (s.duration ? ' (' + s.duration + ')' : '') +
+          ' \u00B7 ' + timeAgo(s.startTime) + '</div>';
+        grid.appendChild(card);
+      });
+      body.appendChild(grid);
+    }
+
+    // Pagination controls
+    if (perPage > 0 && totalChains > perPage) {
+      const totalPages = Math.ceil(totalChains / perPage);
+      const pg = document.createElement('div');
+      pg.className = 'pagination';
+
+      const prevBtn = document.createElement('button');
+      prevBtn.textContent = '\u2190';
+      prevBtn.disabled = page <= 1;
+      prevBtn.onclick = (e) => { e.stopPropagation(); currentPage[pName] = page - 1; renderPipelines(lastData); };
+      pg.appendChild(prevBtn);
+
+      const maxButtons = 5;
+      let startPage = Math.max(1, page - Math.floor(maxButtons / 2));
+      let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+      if (endPage - startPage < maxButtons - 1) startPage = Math.max(1, endPage - maxButtons + 1);
+
+      for (let i = startPage; i <= endPage; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i;
+        if (i === page) btn.className = 'active';
+        btn.onclick = ((p) => (e) => { e.stopPropagation(); currentPage[pName] = p; renderPipelines(lastData); })(i);
+        pg.appendChild(btn);
+      }
+
+      const nextBtn = document.createElement('button');
+      nextBtn.textContent = '\u2192';
+      nextBtn.disabled = page >= totalPages;
+      nextBtn.onclick = (e) => { e.stopPropagation(); currentPage[pName] = page + 1; renderPipelines(lastData); };
+      pg.appendChild(nextBtn);
+
+      const info = document.createElement('span');
+      info.className = 'page-info';
+      info.textContent = page + ' / ' + totalPages + ' (' + totalChains + ' chains)';
+      pg.appendChild(info);
+
+      body.appendChild(pg);
+    }
+
+    sec.appendChild(body);
+    ct.appendChild(sec);
+  });
+
+  deferred.forEach(d => renderChain(d.chain, d.el));
+  document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function refresh() {
+  const params = new URLSearchParams({
+    hours: document.getElementById('timeRange').value,
+    search: document.getElementById('searchInput').value,
+    pipeline: document.getElementById('pipelineFilter').value,
+    status: document.getElementById('statusFilter').value,
+  });
+  try {
+    const r = await fetch('/api/pipelines?' + params);
+    const data = await r.json();
+    lastData = data;
+    renderPipelines(data);
+  } catch (e) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><div class="big">&#9888;</div>Error loading data: ' + e.message + '</div>';
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  if (document.getElementById('autoRefresh').checked) {
+    refreshTimer = setInterval(refresh, 30000);
+  }
+}
+
+// Debounced search
+let searchTimeout;
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(refresh, 300);
+});
+
+// Filter changes
+['timeRange', 'pipelineFilter', 'statusFilter', 'perPage'].forEach(id =>
+  document.getElementById(id).addEventListener('change', () => {
+    currentPage = {};
+    refresh();
+  })
+);
+
+document.getElementById('autoRefresh').addEventListener('change', startAutoRefresh);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    document.getElementById('searchInput').focus();
+  }
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
+    refresh();
+  }
+  if (e.key === 'Escape') {
+    document.getElementById('searchInput').blur();
+  }
+});
+
+refresh();
+startAutoRefresh();
+</script>
+</body>
+</html>

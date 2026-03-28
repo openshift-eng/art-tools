@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: art-dashboard
+  namespace: art-cd
+  labels:
+    app: art-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: art-dashboard
+  template:
+    metadata:
+      labels:
+        app: art-dashboard
+    spec:
+      serviceAccountName: art-dashboard
+      containers:
+        - name: dashboard
+          image: image-registry.openshift-image-registry.svc:5000/art-cd/art-dashboard:latest
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: WATCH_NAMESPACE
+              value: art-cd
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /api/pipelines?hours=1
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 60
