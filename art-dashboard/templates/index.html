@@ -125,6 +125,20 @@ svg.dag { display: block; }
 .node rect:hover { filter: brightness(1.3); }
 .node-highlight rect { stroke-width: 3; filter: brightness(1.2); }
 
+.status-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px 6px; }
+.status-chip {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border); color: var(--muted); background: transparent;
+  transition: all 0.1s; user-select: none;
+}
+.status-chip:hover { border-color: var(--accent); color: var(--text2); }
+.status-chip.active { color: var(--text); }
+.status-chip.active.chip-succeeded { background: #1a3a2a; border-color: var(--green); color: var(--green); }
+.status-chip.active.chip-failed { background: #3d1a1a; border-color: var(--red); color: var(--red); }
+.status-chip.active.chip-running { background: #1a2a3d; border-color: var(--blue); color: var(--blue); }
+.status-chip.active.chip-cancelled { background: #2a2a1a; border-color: #d29922; color: #d29922; }
+.status-chip.active.chip-pending { background: #1a1a2a; border-color: var(--dim); color: var(--dim); }
+
 .no-runs { padding: 20px; color: var(--dim); text-align: center; }
 </style>
 </head>
@@ -146,28 +160,29 @@ svg.dag { display: block; }
     <!-- Sidebar -->
     <div class="sidebar">
       <div class="sidebar-filters">
-        <div class="sidebar-title">Filters</div>
+        <div class="sidebar-title">Time Range</div>
         <div class="filter-row">
           <select v-model="hours" @change="refreshRuns">
             <option value="1">1h</option><option value="6">6h</option>
             <option value="24">24h</option><option value="48">48h</option><option value="168">7d</option>
           </select>
-          <select v-model="statusFilter" @change="refreshRuns">
-            <option value="">All</option><option value="Succeeded">Succeeded</option>
-            <option value="Failed">Failed</option><option value="Running">Running</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
+        </div>
+        <div class="sidebar-title">Status</div>
+        <div class="status-chips">
+          <span v-for="s in allStatuses" :key="s"
+                class="status-chip" :class="{ active: selectedStatuses.has(s), [statusChipCls(s)]: true }"
+                @click="toggleStatus(s)">{{ s }}</span>
         </div>
       </div>
       <div class="sidebar-title">Pipelines</div>
-      <div class="pipe-item" :class="{ active: !selectedPipelines.size }"
-           @click="selectedPipelines.clear(); refreshRuns()">
+      <div class="pipe-item" :class="{ active: !activePipeline }"
+           @click="activePipeline = ''; refreshRuns()">
         <span>All Pipelines</span>
         <span class="pipe-cnt">{{ totalCount }}</span>
       </div>
       <div v-for="p in pipelines" :key="p.name"
-           class="pipe-item" :class="{ active: selectedPipelines.has(p.name) }"
-           @click="togglePipeline(p.name)">
+           class="pipe-item" :class="{ active: activePipeline === p.name }"
+           @click="activePipeline = p.name; refreshRuns()">
         <span>{{ truncate(p.name, 22) }}</span>
         <span class="pipe-cnt">{{ p.count }}</span>
       </div>
@@ -325,8 +340,9 @@ createApp({
   setup() {
     const search = ref('');
     const hours = ref('24');
-    const statusFilter = ref('');
-    const selectedPipelines = reactive(new Set());
+    const selectedStatuses = reactive(new Set());
+    const allStatuses = ['Succeeded', 'Failed', 'Running', 'Cancelled', 'Pending'];
+    const activePipeline = ref('');
     const activeRun = ref('');
 
     const runs = ref([]);
@@ -350,18 +366,22 @@ createApp({
       searchTimeout = setTimeout(refreshRuns, 300);
     }
 
-    function togglePipeline(name) {
-      if (selectedPipelines.has(name)) selectedPipelines.delete(name);
-      else selectedPipelines.add(name);
+    function toggleStatus(s) {
+      if (selectedStatuses.has(s)) selectedStatuses.delete(s);
+      else selectedStatuses.add(s);
       refreshRuns();
+    }
+
+    function statusChipCls(s) {
+      return 'chip-' + s.toLowerCase();
     }
 
     async function refreshRuns() {
       const params = new URLSearchParams({
         hours: hours.value,
         search: search.value,
-        status: statusFilter.value,
-        pipeline: selectedPipelines.size ? [...selectedPipelines].join(',') : '',
+        status: selectedStatuses.size ? [...selectedStatuses].join(',') : '',
+        pipeline: activePipeline.value,
       });
       try {
         const res = await fetch('/api/runs?' + params);
@@ -436,11 +456,11 @@ createApp({
     });
 
     return {
-      search, hours, statusFilter, selectedPipelines, activeRun,
+      search, hours, selectedStatuses, allStatuses, activePipeline, activeRun,
       runs, pipelines, meta, detail, detailLoading, logsOpen,
       listWidth, resizing, chainBox, searchInput, totalCount,
       refreshRuns, debouncedRefresh, selectRun, startResize,
-      togglePipeline, ago, truncate, dotCls,
+      toggleStatus, statusChipCls, ago, truncate, dotCls,
     };
   },
 }).mount('#app');

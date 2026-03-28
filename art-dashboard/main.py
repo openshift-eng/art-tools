@@ -116,8 +116,10 @@ def fetch_all_nodes(hours, search, status_filter):
             continue
         if search and search.lower() not in node["name"].lower():
             continue
-        if status_filter and node["status"] != status_filter:
-            continue
+        if status_filter:
+            allowed = set(status_filter.split(","))
+            if node["status"] not in allowed:
+                continue
         nodes[node["name"]] = node
     return nodes
 
@@ -187,8 +189,7 @@ def get_runs(
     nodes = fetch_all_nodes(hours, search, status)
     all_runs = sorted(nodes.values(), key=lambda x: x.get("startTime", ""), reverse=True)
     if pipeline:
-        selected = set(pipeline.split(","))
-        all_runs = [r for r in all_runs if r["pipeline"] in selected]
+        all_runs = [r for r in all_runs if r["pipeline"] == pipeline]
     pipelines = sorted(set(n["pipeline"] for n in nodes.values()))
     pipeline_counts = defaultdict(int)
     for n in nodes.values():
