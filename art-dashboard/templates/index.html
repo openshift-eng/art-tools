@@ -146,6 +146,7 @@ svg.dag { display: block; }
       </div>
     </div>
     <div class="sidebar-title">Pipelines</div>
+    <div id="pipeList"></div>
   </div>
   <div class="list-panel" id="runList"></div>
   <div class="detail-panel" id="detail">
@@ -177,19 +178,19 @@ function dotColor(s) {
 }
 
 function renderSidebar(pipelines) {
-  const sb = document.getElementById('sidebar');
-  sb.innerHTML = '<div class="sidebar-title">Pipelines</div>';
+  const pl = document.getElementById('pipeList');
+  pl.innerHTML = '';
   const all = document.createElement('div');
   all.className = 'pipe-item' + (!activePipeline ? ' active' : '');
   all.innerHTML = '<span>All</span><span class="cnt">' + pipelines.reduce((a, p) => a + p.count, 0) + '</span>';
   all.onclick = () => { activePipeline = ''; refreshRuns(); };
-  sb.appendChild(all);
+  pl.appendChild(all);
   pipelines.forEach(p => {
     const el = document.createElement('div');
     el.className = 'pipe-item' + (activePipeline === p.name ? ' active' : '');
     el.innerHTML = '<span>' + trunc(p.name, 20) + '</span><span class="cnt">' + p.count + '</span>';
     el.onclick = () => { activePipeline = p.name; refreshRuns(); };
-    sb.appendChild(el);
+    pl.appendChild(el);
   });
 }
 
