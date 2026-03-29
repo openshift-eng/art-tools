@@ -124,6 +124,49 @@ def fetch_all_nodes(hours, search, status_filter):
     return nodes
 
 
+def fetch_single_run(name):
+    """Fetch a single PipelineRun by name, no time filter."""
+    custom_api, _ = get_clients()
+    try:
+        pr = custom_api.get_namespaced_custom_object(
+            group="tekton.dev", version="v1", namespace=NAMESPACE,
+            plural="pipelineruns", name=name,
+        )
+        return build_node(pr)
+    except Exception:
+        return None
+
+
+def fetch_chain_nodes(name):
+    """Fetch PipelineRuns related to `name` via parent/triggered labels."""
+    custom_api, _ = get_clients()
+    nodes = {}
+    try:
+        result = custom_api.list_namespaced_custom_object(
+            group="tekton.dev", version="v1", namespace=NAMESPACE,
+            plural="pipelineruns",
+            label_selector=f"art.openshift.io/parent-pipelinerun={name}",
+        )
+        for pr in result.get("items", []):
+            node = build_node(pr)
+            nodes[node["name"]] = node
+    except Exception:
+        pass
+    try:
+        pr = custom_api.get_namespaced_custom_object(
+            group="tekton.dev", version="v1", namespace=NAMESPACE,
+            plural="pipelineruns", name=name,
+        )
+        parent = pr.get("metadata", {}).get("labels", {}).get("art.openshift.io/parent-pipelinerun", "")
+        if parent:
+            parent_node = fetch_single_run(parent)
+            if parent_node:
+                nodes[parent_node["name"]] = parent_node
+    except Exception:
+        pass
+    return nodes
+
+
 def compute_edges(nodes):
     edges = []
     children_set = set()
@@ -205,7 +248,12 @@ def get_runs(
 def get_run_detail(name: str, hours: int = Query(default=24, ge=1, le=168)):
     nodes = fetch_all_nodes(hours, "", "")
     if name not in nodes:
-        return {"error": "not found"}
+        node = fetch_single_run(name)
+        if not node:
+            return {"error": "not found"}
+        nodes[name] = node
+        chain_nodes = fetch_chain_nodes(name)
+        nodes.update(chain_nodes)
     node = nodes[name]
     edges, _ = compute_edges(nodes)
     chain = find_chain(name, nodes, edges)
