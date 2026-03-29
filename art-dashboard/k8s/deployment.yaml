@@ -5,6 +5,10 @@ metadata:
   namespace: art-cd
   labels:
     app: art-dashboard
+  annotations:
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"art-dashboard:latest"},
+      "fieldPath":"spec.template.spec.containers[?(@.name==\"dashboard\")].image"}]
 spec:
   replicas: 1
   selector:
