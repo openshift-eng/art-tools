@@ -138,32 +138,38 @@ def fetch_single_run(name):
 
 
 def fetch_chain_nodes(name):
-    """Fetch PipelineRuns related to `name` via parent/triggered labels."""
+    """Walk the full build chain (parent, children, grandchildren, etc.) via BFS."""
     custom_api, _ = get_clients()
     nodes = {}
-    try:
-        result = custom_api.list_namespaced_custom_object(
-            group="tekton.dev", version="v1", namespace=NAMESPACE,
-            plural="pipelineruns",
-            label_selector=f"art.openshift.io/parent-pipelinerun={name}",
-        )
-        for pr in result.get("items", []):
-            node = build_node(pr)
-            nodes[node["name"]] = node
-    except Exception:
-        pass
-    try:
-        pr = custom_api.get_namespaced_custom_object(
-            group="tekton.dev", version="v1", namespace=NAMESPACE,
-            plural="pipelineruns", name=name,
-        )
-        parent = pr.get("metadata", {}).get("labels", {}).get("art.openshift.io/parent-pipelinerun", "")
-        if parent:
-            parent_node = fetch_single_run(parent)
-            if parent_node:
-                nodes[parent_node["name"]] = parent_node
-    except Exception:
-        pass
+    visited = set()
+    queue = [name]
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        node = nodes.get(current) or fetch_single_run(current)
+        if not node:
+            continue
+        nodes[current] = node
+        try:
+            result = custom_api.list_namespaced_custom_object(
+                group="tekton.dev", version="v1", namespace=NAMESPACE,
+                plural="pipelineruns",
+                label_selector=f"art.openshift.io/parent-pipelinerun={current}",
+            )
+            for pr in result.get("items", []):
+                child = build_node(pr)
+                nodes[child["name"]] = child
+                queue.append(child["name"])
+        except Exception:
+            pass
+        for triggered_name in node["triggered"].values():
+            if triggered_name not in visited:
+                queue.append(triggered_name)
+        if node["parentPipelineRun"] and node["parentPipelineRun"] not in visited:
+            queue.append(node["parentPipelineRun"])
+    nodes.pop(name, None)
     return nodes
 
 
