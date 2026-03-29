@@ -1,0 +1,94 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: release-from-fbc
+  namespace: art-cd
+  labels:
+    app: artcd
+spec:
+  description: Create releases from FBC (File-Based Catalogs) for non-OpenShift products
+    (OADP, MTA, MTC, logging, etc.) using artcd release-from-fbc command.
+  params:
+  - default: oadp-1.3
+    description: The group to use with artcd release-from-fbc command (e.g. oadp-1.5,
+      mta-7.0, mtc-1.8, logging-6.3)
+    name: group
+    type: string
+  - default: ""
+    description: The assembly version to create release for (e.g. 1.5.3, 6.3.3)
+    name: assembly
+    type: string
+  - default: ""
+    description: Comma-separated list of FBC image pullspecs to create release from
+    name: fbc-pullspecs
+    type: string
+  - default: "false"
+    description: Take no action, just echo what the job would have done
+    name: dry-run
+    type: string
+  - default: ""
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
+      ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: release-from-fbc
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        # Ensure oras can find registry credentials via ~/.docker/config.json
+        auth_file = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE", "/tmp/konflux-art-images-auth/config.json")
+        if os.path.exists(auth_file):
+            os.makedirs("/root/.docker", exist_ok=True)
+            docker_config = "/root/.docker/config.json"
+            if not os.path.exists(docker_config):
+                os.symlink(auth_file, docker_config)
+
+        os.makedirs("/root/.config", exist_ok=True)
+        open("/root/.config/artcd.toml", "a").close()
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-cd/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+        os.environ["DOOZER_DB_NAME"] = "art_dash"
+        os.environ["ELLIOTT_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+        os.environ["DOOZER_DATA_PATH"] = "https://github.com/openshift-eng/ocp-build-data"
+
+        art_tools_commit = "$(params.art-tools-commit)"
+        if art_tools_commit:
+            owner, branch = art_tools_commit.split("@")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        os.makedirs("./artcd_working", exist_ok=True)
+
+        cmd = [
+            "artcd",
+            "-v",
+            "--working-dir=./artcd_working",
+            "--config=/root/.config/artcd.toml",
+        ]
+
+        if "$(params.dry-run)" == "true":
+            cmd.append("--dry-run")
+
+        cmd.extend([
+            "release-from-fbc",
+            "--group", "$(params.group)",
+            "--assembly=$(params.assembly)",
+            "--fbc-pullspecs=$(params.fbc-pullspecs)",
+            "--create-mr",
+        ])
+
+        print(f"Running {cmd}...")
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd

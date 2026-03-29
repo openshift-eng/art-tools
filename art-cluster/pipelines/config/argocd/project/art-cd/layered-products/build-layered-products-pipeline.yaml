@@ -1,0 +1,122 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-layered-products
+  namespace: art-cd
+  labels:
+    app: artcd
+spec:
+  description: Rebase and build layered product operator images (OADP, MTC, Logging,
+    etc.) via Konflux, then trigger downstream bundle build.
+  params:
+  - default: oadp-1.5
+    description: The group to use with -g flag (e.g. oadp-1.5, mtc-1.8)
+    name: group
+    type: string
+  - default: test
+    description: The name of an assembly to rebase and build for
+    name: assembly
+    type: string
+  - default: oadp-operator
+    description: Comma/space-separated list of image names to build
+    name: image-list
+    type: string
+  - default: https://github.com/openshift-eng/ocp-build-data
+    description: ocp-build-data fork to use
+    name: data-path
+    type: string
+  - default: ""
+    description: (Optional) Doozer data path git [branch / tag / sha] to use
+    name: data-gitref
+    type: string
+  - default: ""
+    description: '(Optional) Override the Pipeline Run template commit; Format: ghuser@commitish'
+    name: plr-template
+    type: string
+  - default: ""
+    description: Override network mode for Konflux builds (hermetic, internal-only,
+      open)
+    name: network-mode
+    type: string
+  - default: "false"
+    description: Skip the rebase step (for testing)
+    name: skip-rebase
+    type: string
+  - default: "false"
+    description: Do not wait for other builds in this version to complete
+    name: ignore-locks
+    type: string
+  - default: "false"
+    description: Take no action, just echo what the job would have done
+    name: dry-run
+    type: string
+  - default: ""
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
+      ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: build-layered-products
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        os.makedirs("/root/.config", exist_ok=True)
+        open("/root/.config/artcd.toml", "a").close()
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-cd/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+
+        art_tools_commit = "$(params.art-tools-commit)"
+        if art_tools_commit:
+            owner, branch = art_tools_commit.split("@")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        os.makedirs("./artcd_working", exist_ok=True)
+
+        cmd = [
+            "artcd",
+            "-v",
+            "--working-dir=./artcd_working",
+            "--config=/root/.config/artcd.toml",
+        ]
+
+        if "$(params.dry-run)" == "true":
+            cmd.append("--dry-run")
+
+        cmd.extend([
+            "build-layered-products",
+            "-g", "$(params.group)",
+            "--assembly=$(params.assembly)",
+            "--data-path=$(params.data-path)",
+            "--image-list=$(params.image-list)",
+        ])
+
+        if "$(params.data-gitref)":
+            cmd.append("--data-gitref=$(params.data-gitref)")
+
+        if "$(params.ignore-locks)" == "true":
+            cmd.append("--ignore-locks")
+
+        if "$(params.skip-rebase)" == "true":
+            cmd.append("--skip-rebase")
+
+        if "$(params.network-mode)":
+            cmd.append(f"--network-mode=$(params.network-mode)")
+
+        if "$(params.plr-template)":
+            cmd.append(f"--plr-template=$(params.plr-template)")
+
+        print(f"Running {cmd}...")
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd
