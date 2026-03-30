@@ -40,6 +40,21 @@ from pyartcd.runtime import Runtime
 yaml = new_roundtrip_yaml_handler()
 
 
+def _normalize_release_date(date_str: str) -> str:
+    """Normalize a release date string to YYYY-Mon-DD format (e.g. 2026-Mar-31).
+
+    Accepts both abbreviated month names (2026-Mar-31) and numeric months (2026-03-31).
+    """
+    for fmt in ("%Y-%b-%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(date_str.strip(), fmt).strftime("%Y-%b-%d")
+        except ValueError:
+            continue
+    raise click.ClickException(
+        f"Invalid date format '{date_str}'. Use YYYY-Mon-DD (e.g. 2026-Mar-31) or YYYY-MM-DD (e.g. 2026-03-31)"
+    )
+
+
 class ReleaseFromFbcPipeline:
     """
     Pipeline for creating simplified shipment files from FBC images.
@@ -59,6 +74,7 @@ class ReleaseFromFbcPipeline:
         shipment_data_repo_url: Optional[str] = None,
         shipment_path: Optional[str] = None,
         jira_bugs: Optional[List[str]] = None,
+        target_release_date: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -95,6 +111,7 @@ class ReleaseFromFbcPipeline:
         self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
 
         self.jira_bugs = jira_bugs
+        self.target_release_date = target_release_date
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -558,7 +575,10 @@ class ReleaseFromFbcPipeline:
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
         # Create MR title and description
-        mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
+        if self.target_release_date:
+            mr_title = f"Draft: Shipment for {self.product} {self.assembly} (ship date: {self.target_release_date})"
+        else:
+            mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Shipment files created for {self.assembly} using release-from-fbc command"
 
         if self.dry_run:
@@ -901,6 +921,12 @@ class ReleaseFromFbcPipeline:
     help='Comma-separated list of JIRA issue IDs to include in the advisory (e.g., OADP-7223,OADP-7222). '
     'When provided, release notes with bug/CVE information are generated for the image shipment.',
 )
+@click.option(
+    '--target-release-date',
+    default=None,
+    help='Target ship date for the release (e.g., 2026-Mar-31 or 2026-03-31). '
+    'When provided, the date is included in the shipment MR title.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -912,6 +938,7 @@ async def release_from_fbc(
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
+    target_release_date: Optional[str],
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
@@ -957,6 +984,11 @@ async def release_from_fbc(
         if not jira_bugs_list:
             raise click.ClickException("--jira-bugs was provided but contains no valid JIRA IDs")
 
+    # Normalize target release date if provided
+    normalized_date = None
+    if target_release_date:
+        normalized_date = _normalize_release_date(target_release_date)
+
     # Create pipeline and run
     pipeline = ReleaseFromFbcPipeline(
         runtime=runtime,
@@ -967,6 +999,7 @@ async def release_from_fbc(
         shipment_data_repo_url=shipment_data_repo_url,
         shipment_path=shipment_path,
         jira_bugs=jira_bugs_list,
+        target_release_date=normalized_date,
     )
 
     await pipeline.run()
