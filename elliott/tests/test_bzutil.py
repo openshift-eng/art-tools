@@ -171,6 +171,34 @@ class TestJIRABugTracker(unittest.TestCase):
         expected = {"foo": 1, "bar": 2, "server": "https://redhat.atlassian.net"}
         self.assertEqual(actual, expected)
 
+    def test_create_issue_applies_tracker_defaults(self):
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "version": ["4.23"],
+            "target_release": ["4.23.z", "4.23.0"],
+        }
+        mock_issue = flexmock(key="OCPBUGS-1")
+        mock_jira_client = flexmock()
+        mock_jira_client.should_receive("create_issue").with_args(
+            fields={
+                "summary": "Bridge bug",
+                "description": "Bridge description",
+                "project": {"key": "OCPBUGS"},
+                "versions": [{"name": "4.23"}],
+                JIRABugTracker.field_target_version: [{"name": "4.23.z"}, {"name": "4.23.0"}],
+            }
+        ).and_return(mock_issue)
+
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        tracker = JIRABugTracker(config)
+        bug = tracker.create_issue({"summary": "Bridge bug", "description": "Bridge description"})
+
+        self.assertIsInstance(bug, JIRABug)
+        self.assertEqual(bug.id, "OCPBUGS-1")
+
     def test_security_filtering_in_query(self):
         """Test that security filtering is included in JQL query when enabled"""
         # Create a minimal tracker for testing
