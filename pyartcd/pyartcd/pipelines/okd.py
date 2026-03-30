@@ -91,7 +91,6 @@ class KonfluxOkdPipeline:
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             '--build-system=konflux',
-            '--load-okd-only',
             '--variant=okd',
             f'--arches={",".join(OKD_ARCHES)}',
             group_param,
@@ -123,7 +122,7 @@ class KonfluxOkdPipeline:
             working_dir=Path(self.runtime.doozer_working),
             doozer_data_path=self.data_path,
             doozer_data_gitref=self.data_gitref,
-            load_okd_only=True,
+            variant='okd',
         )
 
         # For OKD, do NOT filter to payload-only images

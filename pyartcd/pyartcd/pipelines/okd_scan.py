@@ -78,7 +78,6 @@ class OkdScanPipeline:
             f'--group={group_param}',
             f'--assembly={self.assembly}',
             '--build-system=konflux',
-            '--load-okd-only',
             '--variant=okd',
         ]
 

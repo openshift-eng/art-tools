@@ -215,8 +215,9 @@ class LockManager(Aioredlock):
             await super().unlock(lock)
             self.logger.info('Lock released')
         except LockError:
+            # Log the error but don't re-raise - lock release failures during cleanup
+            # should not crash the job. The lock will expire eventually.
             self.logger.error('Failed releasing lock %s', lock.resource)
-            raise
 
     async def is_locked(self, resource_or_lock):
         locked = await super().is_locked(resource_or_lock)

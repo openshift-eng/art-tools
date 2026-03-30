@@ -67,7 +67,6 @@ class ImagesHealthPipeline:
             'doozer',
             f'--working-dir={doozer_working}',
             f'--data-path={self.data_path}',
-            '--load-okd-only',
             '--variant=okd',
             group_param,
         ]
