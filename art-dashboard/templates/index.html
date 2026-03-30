@@ -20,7 +20,14 @@ body { background: var(--bg); color: var(--text2); font-family: -apple-system, B
   background: var(--bg2); border-bottom: 1px solid var(--border);
   padding: 8px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
 }
-.topbar h1 { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.topbar h1 { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; cursor: pointer; }
+.topbar h1:hover { color: var(--accent); }
+.reset-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 10px; color: var(--muted); cursor: pointer;
+  margin: 6px 10px; transition: all 0.1s; text-align: center;
+}
+.reset-btn:hover { border-color: var(--accent); color: var(--text2); }
 .search-box {
   background: var(--bg4); border: 1px solid var(--border); border-radius: 6px;
   padding: 5px 10px 5px 28px; color: var(--text2); font-size: 12px; flex: 1; max-width: 350px; outline: none;
@@ -147,7 +154,7 @@ svg.dag { display: block; }
 <div id="app">
   <!-- Topbar -->
   <div class="topbar">
-    <h1>ART Pipelines</h1>
+    <h1 @click="resetFilters">ART Pipelines</h1>
     <input class="search-box" ref="searchInput"
            v-model="search" placeholder="Search runs... (Ctrl+K)"
            @input="debouncedRefresh">
@@ -173,6 +180,7 @@ svg.dag { display: block; }
                 class="status-chip" :class="{ active: selectedStatuses.has(s), [statusChipCls(s)]: true }"
                 @click="toggleStatus(s)">{{ s }}</span>
         </div>
+      <button class="reset-btn" @click="resetFilters">Reset Filters</button>
       </div>
       <div class="sidebar-title">Pipelines</div>
       <div class="pipe-item" :class="{ active: !activePipeline }"
@@ -366,6 +374,19 @@ createApp({
       searchTimeout = setTimeout(refreshRuns, 300);
     }
 
+    function resetFilters() {
+      search.value = '';
+      hours.value = '24';
+      selectedStatuses.clear();
+      activePipeline.value = '';
+      activeRun.value = '';
+      detail.value = null;
+      const url = new URL(window.location);
+      url.search = '';
+      history.pushState(null, '', url);
+      refreshRuns();
+    }
+
     function toggleStatus(s) {
       if (selectedStatuses.has(s)) selectedStatuses.delete(s);
       else selectedStatuses.add(s);
@@ -468,7 +489,7 @@ createApp({
       search, hours, selectedStatuses, allStatuses, activePipeline, activeRun,
       runs, pipelines, meta, detail, detailLoading, logsOpen,
       listWidth, resizing, chainBox, searchInput, totalCount,
-      refreshRuns, debouncedRefresh, selectRun, startResize,
+      refreshRuns, debouncedRefresh, selectRun, startResize, resetFilters,
       toggleStatus, statusChipCls, ago, truncate, dotCls,
     };
   },
