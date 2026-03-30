@@ -936,7 +936,7 @@ async def get_group_images(
     working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
-    load_okd_only: bool = False,
+    variant: str = None,
 ) -> List[str]:
     """
     Get the list of images for a given group and assembly.
@@ -947,7 +947,7 @@ async def get_group_images(
     :param working_dir: Working directory for doozer
     :param doozer_data_path: Path to ocp-build-data repository
     :param doozer_data_gitref: Git reference to use in ocp-build-data
-    :param load_okd_only: Whether to load OKD-only images (mode: disabled, okd.mode: enabled)
+    :param variant: Build variant ('ocp' or 'okd'). If None, uses doozer's default (runtime.variant, which defaults to 'ocp').
     :return: List of image distgit keys
     """
 
@@ -960,8 +960,8 @@ async def get_group_images(
         f'--working-dir={working_dir}',
         f'--data-path={doozer_data_path}',
     ]
-    if load_okd_only:
-        command.append('--load-okd-only')
+    if variant:
+        command.append(f'--variant={variant}')
     if build_system:
         command.append(f'--build-system={build_system}')
     command.extend(

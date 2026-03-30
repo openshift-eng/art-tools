@@ -90,7 +90,6 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.load_wip = False
         self.load_disabled = False
-        self.load_okd_only = False
         self.variant = BuildVariant.OCP  # Default to OCP variant
         self.data_path = None
         self.data_dir = None
@@ -620,15 +619,15 @@ class Runtime(GroupRuntime):
 
             def filter_enabled(n, d):
                 mode = d.get('mode', 'enabled')
-                # Include if generally enabled
-                if mode == 'enabled':
-                    return True
-                # Include if has okd.mode: enabled AND --load-okd-only flag is set
-                if mode == 'disabled' and self.load_okd_only:
-                    okd_config = d.get('okd', {})
-                    if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
-                        return True
-                return False
+
+                # For OKD variant, check okd.mode if present (enabled/disabled), otherwise fall back to top-level mode
+                if self.variant == BuildVariant.OKD:
+                    okd_mode = d.get('okd', {}).get('mode')
+                    if okd_mode is not None:
+                        return okd_mode == 'enabled'
+
+                # For OCP variant or OKD fallback, use top-level mode
+                return mode == 'enabled'
 
             def filter_disabled(n, d):
                 return d.get('mode', 'enabled') in ['enabled', 'disabled']
@@ -1137,11 +1136,11 @@ class Runtime(GroupRuntime):
 
         mode = data_obj.data.get("mode", "enabled")
 
-        # Check if image has OKD mode override that enables it (only when load_okd_only is set)
+        # Check if image has OKD mode override that enables it (only when variant is OKD)
         okd_config = data_obj.data.get("okd", {})
-        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.load_okd_only
+        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.variant == BuildVariant.OKD
 
-        # Skip loading if disabled (unless okd.mode: enabled with load_okd_only or load_disabled is set)
+        # Skip loading if disabled (unless okd.mode: enabled with variant=OKD or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))

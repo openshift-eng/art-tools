@@ -242,7 +242,16 @@ class Runtime(GroupRuntime):
             return d.get('mode', 'enabled') in ['wip', 'enabled']
 
         def filter_enabled(n, d):
-            return d.get('mode', 'enabled') == 'enabled'
+            mode = d.get('mode', 'enabled')
+
+            # For OKD variant, check okd.mode if present (enabled/disabled), otherwise fall back to top-level mode
+            if self.variant == BuildVariant.OKD:
+                okd_mode = d.get('okd', {}).get('mode')
+                if okd_mode is not None:
+                    return okd_mode == 'enabled'
+
+            # For OCP variant or OKD fallback, use top-level mode
+            return mode == 'enabled'
 
         def filter_disabled(n, d):
             return d.get('mode', 'enabled') in ['enabled', 'disabled']
