@@ -57,7 +57,7 @@ class BaseImageHandler:
         self.logger = LOGGER
 
         self.konflux_db = konflux_db
-        if self.konflux_db is None and hasattr(runtime, 'konflux_db') and runtime.konflux_db:
+        if not self.konflux_db and runtime.konflux_db:
             self.konflux_db = runtime.konflux_db
 
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
@@ -85,11 +85,10 @@ class BaseImageHandler:
             critical_errors = []
 
             for nvr in self.nvr_list:
-                if nvr not in build_records:
+                build_record = build_records.get(nvr, None)
+                if build_record is None:
                     self.logger.warning(f"No build record found for {nvr}, skipping")
                     continue
-
-                build_record = build_records[nvr]
 
                 if not build_record.name:
                     critical_errors.append(f"No component name found for build record {nvr}")

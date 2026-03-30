@@ -35,6 +35,8 @@ from doozerlib.source_resolver import SourceResolution
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from pyartcd import jenkins
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -1001,6 +1003,9 @@ class KonfluxImageBuilder:
     async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
         """Trigger base image release for a single successful base image build.
 
+        Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
+        version extraction. Falls back to full group_name if format doesn't match.
+
         Returns:
             bool: True if base image release was triggered successfully, False otherwise
         """
@@ -1012,9 +1017,8 @@ class KonfluxImageBuilder:
 
         logger.info(f"Triggering base image release for {nvr}")
 
-        from pyartcd import jenkins
-
         try:
+            # Extract build_version from group_name (expected: openshift-X.Y)
             version_parts = self._config.group_name.split('-')
             if len(version_parts) >= 2:
                 build_version = '-'.join(version_parts[1:])
